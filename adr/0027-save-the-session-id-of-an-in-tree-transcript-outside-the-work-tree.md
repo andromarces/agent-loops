@@ -219,5 +219,5 @@ Andro Marces
 - [Issue #658](https://github.com/andromarces/agent-loops/issues/658)
 - [Pull request #661](https://github.com/andromarces/agent-loops/pull/661)
 - Supersedes [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md)
-- Implementation: `src/lib/session-record.mjs`, `onSessionAssigned` in `src/cli.mjs`, and `readContinuation` in `src/lib/continuation.mjs`. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run), [Transcript](../docs/reference/usage.md#transcript), and [Session resume after a failed turn](../docs/reference/session-resume.md#session-resume-after-a-failed-turn).
+- Implementation: `src/lib/session-record.mjs`, `onSessionAssigned` in `src/lib/transcript.mjs`, and `readContinuation` in `src/lib/continuation.mjs`. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run), [Transcript](../docs/reference/usage.md#transcript), and [Session resume after a failed turn](../docs/reference/session-resume.md#session-resume-after-a-failed-turn).
 - [ADR Index](README.md)

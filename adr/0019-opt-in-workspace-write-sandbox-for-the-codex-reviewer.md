@@ -67,7 +67,7 @@ Live probe on the unelevated Windows sandbox, Windows 11 Pro 10.0.26220, codex-c
 - Elevated Windows sandbox: attempted and not recorded. A `codex exec` run with `[windows] sandbox = "elevated"`, `sandbox_mode="workspace-write"`, and `network_access=false` first ran the machine setup of that mode. The setup log shows `ensuring sandbox users` for `CodexSandboxOffline` and `CodexSandboxOnline`, firewall rules, and WFP filters. The first shell command then never finished, and the run ended at the 150 s bound with exit 124. The elevated mode therefore changed machine state without an interactive prompt and gave no result. It was not run again, and no reviewer turn ran under it. Not verified: the elevated Windows sandbox.
 - Not run: Linux. No Linux host was available.
 
-The headless orchestrator has three guards that this change leaves in place: `readOnly: true` on the first and the repair turn in `decide`, the Codex `read-only` flag that follows from it, and the `withMutationCheck(cwd, "orchestrator", ...)` wrapper in `orchAdapter`. The adapter and `runChild` shared one `readOnly` boolean, so the opt-in needs a separate reviewer-only input.
+The headless orchestrator has three guards that this change leaves in place: `readOnly: true` on the first and the repair turn in `decide`, the Codex `read-only` flag that follows from it, and the `withMutationCheck(cwd, "orchestrator", ...)` wrapper in `createOrchestratorAdapter`. The adapter and `runChild` shared one `readOnly` boolean, so the opt-in needs a separate reviewer-only input.
 
 ## Decision
 
