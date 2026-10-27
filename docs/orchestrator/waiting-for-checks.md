@@ -95,8 +95,9 @@ head read (`gh pr view`), the check list read (`gh pr checks`, with or without `
 and the required names read (`gh pr checks --required --json name`). A server error that lasts to the bound
 exits 1 with `status: "error"` that names it, never `timedOut: true` and never a pass (#1025). A
 read that fails with any other status, such as a 4xx, a failure whose text names no HTTP
-status, a status that appears only after the opening of the text, and a reply that cannot be
-parsed, still ends the wait at once. This retry belongs to `wait-checks`: the `--require-ci`
+status, a status that appears only after the opening of the text, and a failure that wrote
+output the wait cannot parse, still ends the wait at once. The error that ends the wait at the
+bound carries the `gh` error text, so it names the server status. This retry belongs to `wait-checks`: the `--require-ci`
 finish gate reads the same names once and still fails closed.
 
 The PR head is the one read at the start of the poll, so the PR can have moved on by
@@ -144,7 +145,7 @@ both settle nothing and no source names a check, as on a private repository on t
 GitHub Free plan (#301), the required wait refuses at once on the first poll with the
 unresolved-source error below, because no check can be known to report. A readable
 source keeps the wait running, whether it names a required check or states the absence,
-whatever the other source returned. A server error (500, 502, 503, 504) on a source read is
+whatever the other source returned. A server error (500, 502, 503, 504) on a source read, or on the required names read, is
 retried on the next poll, and one that lasts to the bound exits 1 with `status: "error"`.
 If the bound arrives with only that reply, the wait returns `timedOut: true` and an
 empty `checks`, which is never a pass. Any other exit 1, and any output that

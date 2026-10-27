@@ -114,9 +114,10 @@ function isFailing(check) {
  * The error of a failed `gh pr` read. It carries `transient` when `gh` named a server error, so the
  * wait retries the read on its next poll (#1121). Every other failure ends the wait.
  */
-function readFailure(label, { status, stderr }) {
+function readFailure(label, { status, stdout, stderr }) {
   const err = new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
-  if (isServerErrorText(stderr)) {
+  // An unparseable reply is no clean server-error failure, so it ends the wait.
+  if (stdout.trim() === "" && isServerErrorText(stderr)) {
     err.transient = true;
   }
   return err;
@@ -192,9 +193,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     return { settled: false, checks, noChecksYet: true };
   }
   if (status !== 0) {
-    throw text === ""
-      ? readFailure(label, { status, stderr })
-      : new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
+    throw readFailure(label, { status, stdout, stderr });
   }
   return { settled: false, checks };
 }
@@ -272,7 +271,7 @@ export function isFullSha(value) {
 function readHead(pr, { status, stdout, stderr }) {
   const label = `gh pr view ${pr}`;
   if (status !== 0) {
-    throw readFailure(label, { status, stderr });
+    throw readFailure(label, { status, stdout, stderr });
   }
   let parsed = null;
   try {
@@ -655,11 +654,13 @@ export async function waitChecks({
     }
     return true;
   };
-  // The error of a refusal to judge the required contexts. A names read that failed with a server
-  // error, and no reply that could not be parsed, makes it retryable on the next poll (#1121).
+  // Whether a refusal comes from a names read that failed with a server error and no reply that
+  // could not be parsed. The next poll retries it, and the error names the server error (#1121).
+  const namesRetryable = (required) => required.namesTransient && required.unparsed.length === 0;
+  const namesCause = (required) => (namesRetryable(required) ? `: ${required.namesFailure}` : "");
   const unresolved = (required, refusal) => {
     const err = new Error(`${refusal}; the read is unresolved.`);
-    if (required.namesTransient && required.unparsed.length === 0) {
+    if (namesRetryable(required)) {
       err.transient = true;
     }
     return err;
@@ -670,7 +671,7 @@ export async function waitChecks({
     const required = await requiredContexts(bounded, slug, base, pr, cwd);
     // The gate's own refusals, and any source that settled nothing: such a source may hold a
     // required check or an app qualifier that this read never saw, so no pass can follow.
-    const refusal = requiredResolutionRefusal(required, pr);
+    const refusal = requiredResolutionRefusal(required, pr, namesCause(required));
     if (refusal) {
       throw unresolved(required, refusal);
     }
@@ -704,7 +705,11 @@ export async function waitChecks({
     const required = await requiredContexts(bounded, slug, base, pr, cwd, {
       retryable: noChecksYet,
     });
-    const namesRefusal = noChecksYet ? null : requiredNamesRefusal(required, pr);
+    // A no-checks-reported poll judges no names read, except one that failed with a server error.
+    const namesRefusal =
+      noChecksYet && !namesRetryable(required)
+        ? null
+        : requiredNamesRefusal(required, pr, namesCause(required));
     if (namesRefusal) {
       throw unresolved(required, namesRefusal);
     }

@@ -914,7 +914,9 @@ async function ghRequiredNames(gh, pr, cwd) {
     };
   }
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
-  return { names: [], ok: none, transient: stdout.trim() === "" && isServerErrorText(stderr) };
+  // A clean server-error failure only: an unparseable reply is never retried (#1121).
+  const transient = stdout.trim() === "" && isServerErrorText(stderr);
+  return { names: [], ok: none, transient, failure: transient ? stderr.trim() : "" };
 }
 
 // A required status context: its name, plus the id of the app whose check run
@@ -1016,8 +1018,10 @@ export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = fa
     unknown,
     unparsed,
     namesRead: listed.ok,
-    // A failed names read that named a server error. Only the wait retries it, the gate ignores it.
+    // A failed names read that named a server error, and the error text. Only the wait retries it,
+    // the gate ignores both.
     namesTransient: Boolean(listed.transient),
+    namesFailure: listed.failure ?? "",
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal. It contributes no contexts. It leaves
     // the per-check path to the other sources, as it did before the ruleset read
