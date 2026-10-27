@@ -1,8 +1,8 @@
-// Detects an ephemeral package root (npx, pnpm dlx, yarn dlx, bunx) and finds the stable root
-// that installed files must name (#205, #207, #305, #311).
+// Detects an ephemeral package root (npx, pnpm dlx, yarn dlx, bunx) that installed files must
+// not name (#205, #207). The pnpm stable root lives in `stable-root.mjs`.
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, parse, posix, relative, resolve, win32 } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { INHERITED_TMPDIR_ENV, readInheritedTmpdirs } from "../lib/inherited-tmpdir.mjs";
 
 // `npx` installs the package under `<npm-cache>/_npx/<hash>/node_modules` and
@@ -38,40 +38,46 @@ export const EPHEMERAL_ROOT_MESSAGE =
 
 const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
 
+// The path module and the realpath of a platform. On Windows the native realpath expands an 8.3
+// short segment, which the JS realpath keeps (#1068).
+const platformApi = (platform) =>
+  platform === "win32"
+    ? { path: win32, realpath: realpathSync.native }
+    : { path: posix, realpath: realpathSync };
+
+// A path for this platform is first resolved against the working directory. A path for another
+// platform is only normalized.
+function absolutePath(path, platform) {
+  const { path: pathApi } = platformApi(platform);
+  return platform === process.platform ? pathApi.resolve(path) : pathApi.normalize(path);
+}
+
+/**
+ * Records `folder` as the first one that a check of the current `packageRootRefusal` call could
+ * not read, so the refusal can name it, and returns `null`, the fail-closed result. `failures`
+ * is that call's own record.
+ */
+function failAt(failures, folder) {
+  failures.unreadable ??= folder;
+  return null;
+}
+
 /**
  * The canonical spelling of `path`: the realpath of its deepest existing ancestor joined to the
  * rest, normalized, so a link such as macOS `/var` resolves to `/private/var` and a `..`
  * segment is resolved even when the path does not exist (#962). A path for another platform
  * is only normalized. Returns `null` when a realpath fails for a reason other than a missing
- * path, such as EACCES or ELOOP, so the caller can fail closed. On Windows the native realpath
- * expands an 8.3 short segment, which the JS realpath keeps (#1068). A path for this platform is
- * first resolved against the working directory.
+ * path, such as EACCES or ELOOP, so the caller can fail closed.
  */
-function absolutePath(path, platform) {
-  const pathApi = platform === "win32" ? win32 : posix;
-  return platform === process.platform ? pathApi.resolve(path) : pathApi.normalize(path);
-}
-
-// The first folder that a check of the current `packageRootRefusal` call could not read, so the
-// refusal can name it. The checks are synchronous, so one slot per call is enough.
-let unreadableFolder = null;
-
-/** Records `folder` as the first unreadable one and returns `null`, the fail-closed result. */
-function failAt(folder) {
-  unreadableFolder ??= folder;
-  return null;
-}
-
-function canonicalPath(path, platform = process.platform) {
-  const pathApi = platform === "win32" ? win32 : posix;
-  const realpath = platform === "win32" ? realpathSync.native : realpathSync;
+function canonicalPath(path, platform, failures) {
+  const { path: pathApi, realpath } = platformApi(platform);
   const normalized = absolutePath(path, platform);
   if (platform !== process.platform) return normalized;
   for (let dir = normalized, tail = ""; ;) {
     try {
       return pathApi.join(realpath(dir), tail);
     } catch (error) {
-      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return failAt(dir);
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return failAt(failures, dir);
     }
     const parent = pathApi.dirname(dir);
     if (parent === dir) return normalized;
@@ -117,28 +123,14 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * the second check, such as a runner that deletes its folder while the installer writes files, is
  * not detected either, and that deletion is the one that the refusal exists for.
  *
- * Verified on 2026-10-25, Windows 11, Node 26.8.1, commit 0cea15e (#709):
- * - Access failure: an icacls deny of the list permission on the `bunx-<uid>-<package>` folder of
- *   a bunx package root under an 8.3 temporary root makes the listing fail with EPERM.
- *   `install --harness claude --dry-run` then refuses. The same deny on the parent of a stable
- *   package root also refuses, and that root is accepted without the deny.
- * - Cost: median of 5 runs of `install --harness claude --dry-run`, with the in-process
- *   `installRefusal` time in parentheses. Each layout is a bunx package root in a temporary root.
- *   - 3 siblings in the temporary root and in its parent: 267 ms (7 ms), or 280 ms (11 ms) with
- *     an 8.3 spelling of the temporary root.
- *   - 10,000 siblings in the same two folders: 294 ms (25 ms), or 724 ms (405 ms) with an 8.3
- *     spelling. A short segment stats each sibling until the file id matches.
- *   - `\\127.0.0.1\C$` spelling of the package root and the temporary root: 1102 ms (50 ms) with
- *     3 siblings, 1182 ms (103 ms) with 10,000. Most of the run is the module load over SMB.
- *   - The same UNC package root with the local temporary root is accepted, as the known-limit in
- *     the file header states: 1137 ms (43 ms) with 3 siblings, 1137 ms (112 ms) with 10,000.
+ * Access failure and cost were verified on Windows 11 on 2026-10-25 (#709).
  */
-function expandShortSegments(path, related) {
+function expandShortSegments(path, related, failures) {
   const { root } = win32.parse(path);
   const segments = splitPath(path.slice(root.length));
   let expanded = root;
   for (const [i, segment] of segments.entries()) {
-    const name = longName(expanded, segment);
+    const name = longName(expanded, segment, failures);
     if (name === null) return null;
     if (name === MISSING) {
       const canStandForRoot = SHORT_NAME_SHAPE.test(segment) && related(expanded);
@@ -156,7 +148,7 @@ const MISSING = Symbol("missing");
  * unreadable result records the segment when its stat fails, and otherwise `parent`: a failed
  * listing, a failed stat of a sibling entry that may be a file, or a listing with no match.
  */
-function longName(parent, segment) {
+function longName(parent, segment, failures) {
   let reading = join(parent, segment);
   try {
     const id = lstatSync(reading, { bigint: true }).ino;
@@ -166,10 +158,12 @@ function longName(parent, segment) {
     return (
       names.find((name) => name.toLowerCase() === lower) ??
       names.find((name) => lstatSync(join(parent, name), { bigint: true }).ino === id) ??
-      failAt(parent)
+      failAt(failures, parent)
     );
   } catch (error) {
-    return error?.code === "ENOENT" || error?.code === "ENOTDIR" ? MISSING : failAt(reading);
+    return error?.code === "ENOENT" || error?.code === "ENOTDIR"
+      ? MISSING
+      : failAt(failures, reading);
   }
 }
 
@@ -191,9 +185,8 @@ function isDanglingLink(path) {
  * have named a temporary root (#1074). Returns `null` when a realpath fails for another reason,
  * so the caller can fail closed.
  */
-function resolvedParentSpellings(path, platform) {
-  const pathApi = platform === "win32" ? win32 : posix;
-  const realpath = platform === "win32" ? realpathSync.native : realpathSync;
+function resolvedParentSpellings(path, platform, failures) {
+  const { path: pathApi, realpath } = platformApi(platform);
   const { root } = pathApi.parse(path);
   const segments = splitPath(path.slice(root.length));
   const found = [];
@@ -207,8 +200,8 @@ function resolvedParentSpellings(path, platform) {
       );
     } catch (error) {
       const ancestor = pathApi.join(root, ...segments.slice(0, depth));
-      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return failAt(ancestor);
-      if (isDanglingLink(ancestor)) return failAt(ancestor);
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return failAt(failures, ancestor);
+      if (isDanglingLink(ancestor)) return failAt(failures, ancestor);
     }
   }
   return found;
@@ -222,16 +215,17 @@ function resolvedParentSpellings(path, platform) {
  * `null` when the canonical path, a parent, or an 8.3 expansion cannot be resolved.
  * `related` is passed to `expandShortSegments`.
  */
-function spellings(path, platform, related = () => false) {
-  const canonical = canonicalPath(path, platform);
+function spellings(path, platform, failures, related = () => false) {
+  const canonical = canonicalPath(path, platform, failures);
   if (canonical === null) return null;
   const normalized = absolutePath(path, platform);
   const own =
     platform === "win32" && platform === process.platform
-      ? expandShortSegments(normalized, related)
+      ? expandShortSegments(normalized, related, failures)
       : normalized;
   if (own === null) return null;
-  const parents = platform === process.platform ? resolvedParentSpellings(own, platform) : [];
+  const parents =
+    platform === process.platform ? resolvedParentSpellings(own, platform, failures) : [];
   return parents === null ? null : [...new Set([normalized, own, canonical, ...parents])];
 }
 
@@ -253,7 +247,7 @@ function temporaryRoots() {
  */
 function presentPrefixes(packageRoot, platform) {
   if (platform !== process.platform) return [];
-  const pathApi = platform === "win32" ? win32 : posix;
+  const { path: pathApi } = platformApi(platform);
   const absolute = absolutePath(packageRoot, platform);
   const { root } = pathApi.parse(absolute);
   const segments = splitPath(absolute.slice(root.length));
@@ -332,34 +326,43 @@ export function isEphemeralPackageRoot(
   return packageRootRefusal(packageRoot, platform, tempRoots) !== null;
 }
 
-const UNREADABLE = "unreadable";
-const EPHEMERAL = "ephemeral";
+const EPHEMERAL = { kind: "ephemeral" };
 
-/** `UNREADABLE` when a check fails closed on a folder it cannot read, `EPHEMERAL` for any other refusal, else `null`. */
+/**
+ * `{ kind: "unreadable", folder }` when a check fails closed on a folder it cannot read, `EPHEMERAL`
+ * for any other refusal, else `null`. `folder` is the first folder that a check could not read.
+ */
 function packageRootRefusal(packageRoot, platform, tempRoots) {
-  unreadableFolder = null;
+  const failures = { unreadable: null };
   if (tempRoots.invalid === true) return EPHEMERAL;
   const seen = presentPrefixes(packageRoot, platform);
-  const initial = canonicalPath(packageRoot, platform);
+  const initial = canonicalPath(packageRoot, platform, failures);
   // A path that cannot be resolved is a runner cache only when a spelling of it shows the layout,
   // under a temporary root as given or as its realpath resolves it.
   const unresolved = () => {
     const absolute = absolutePath(packageRoot, platform);
-    const resolve = (roots) => [...roots, ...roots.map((root) => canonicalPath(root, platform))];
+    const resolve = (roots) => [
+      ...roots,
+      ...roots.map((root) => canonicalPath(root, platform, failures)),
+    ];
     const roots = { bunx: resolve(tempRoots.bunx), yarn: resolve(tempRoots.yarn) };
     roots.bunx = roots.bunx.filter(Boolean);
     roots.yarn = roots.yarn.filter(Boolean);
-    const candidates = [absolute, initial, ...(resolvedParentSpellings(absolute, platform) ?? [])];
+    const candidates = [
+      absolute,
+      initial,
+      ...(resolvedParentSpellings(absolute, platform, failures) ?? []),
+    ];
     return candidates.some(
       (spelling) =>
         spelling !== null &&
         (isCacheRoot(spelling, platform) || isTempRunnerRoot(spelling, platform, roots)),
     )
       ? EPHEMERAL
-      : UNREADABLE;
+      : { kind: "unreadable", folder: failures.unreadable };
   };
-  const bunx = tempRoots.bunx.map((root) => spellings(root, platform));
-  const yarn = tempRoots.yarn.map((root) => spellings(root, platform));
+  const bunx = tempRoots.bunx.map((root) => spellings(root, platform, failures));
+  const yarn = tempRoots.yarn.map((root) => spellings(root, platform, failures));
   if (bunx.includes(null) || yarn.includes(null)) return unresolved();
   const rootSegments = [...bunx.flat(), ...yarn.flat()].map((root) =>
     splitPath(root.toLowerCase()),
@@ -375,7 +378,7 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
         isCacheRoot(spelling, platform) ||
         isTempRunnerRoot(spelling, platform, { bunx: bunx.flat(), yarn: yarn.flat() }),
     );
-  const packageSpellings = spellings(packageRoot, platform, related);
+  const packageSpellings = spellings(packageRoot, platform, failures, related);
   // A path that cannot be canonicalized cannot be ruled out, so the check refuses it.
   if (packageSpellings === null) return unresolved();
   if (matches(packageSpellings)) return EPHEMERAL;
@@ -383,7 +386,7 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
   // path taken before the temporary roots were read is among them, so a path that changes while
   // the check runs is refused (#1074). So is a prefix that the first look saw and that is gone now
   // (#1077).
-  const again = spellings(packageRoot, platform, related);
+  const again = spellings(packageRoot, platform, failures, related);
   if (seen.some((prefix) => !existsSync(prefix))) return EPHEMERAL;
   if (initial === null || again === null) return unresolved();
   const changed =
@@ -407,7 +410,7 @@ export function installRefusal(packageRoot) {
   const tempRoots = temporaryRoots();
   if (tempRoots.invalid) return INHERITED_TMPDIR_INVALID_MESSAGE;
   const refusal = packageRootRefusal(packageRoot, process.platform, tempRoots);
-  if (refusal === UNREADABLE) return unreadableRootMessage(packageRoot, unreadableFolder);
+  if (refusal?.kind === "unreadable") return unreadableRootMessage(packageRoot, refusal.folder);
   return refusal === EPHEMERAL ? EPHEMERAL_ROOT_MESSAGE : null;
 }
 
@@ -415,212 +418,3 @@ const unreadableRootMessage = (packageRoot, folder) =>
   `Refusing to install: the folder ${folder ?? packageRoot} cannot be read or resolved, so the ` +
   `installer cannot tell whether the package path ${packageRoot} is a temporary root. ` +
   "Fix the folder permissions, then run install again.";
-
-// pnpm resolves a global package into a version-named virtual store entry
-// (`.pnpm/<name>@<version>/node_modules/<name>`) and links it to a
-// version-independent path, which a global upgrade repoints. pnpm 12 keeps the
-// store entry in an install directory's `node_modules` and links that directory
-// into the global directory as `<hash>`, the path the bin shim calls. pnpm 10
-// keeps `.pnpm` beside its global `node_modules` and links the package under that
-// `node_modules`, which `pnpm root -g` reports. Node resolves a module to the
-// store entry, which the upgrade replaces, so the store entry must not be written
-// into installed files (#305). pnpm 12 links a project install into the global
-// virtual store at `store/v11/links/<name>/<version>/<hash>/node_modules/<name>`,
-// and that path names a version but no project, so only the script path the bin
-// shim calls names the project link (#311).
-const VIRTUAL_STORE_DIR = ".pnpm";
-const VIRTUAL_STORE_LINKS_DIR = "links";
-const VIRTUAL_STORE_MODULES_DIR = "node_modules";
-
-/**
- * The symlink in `dir` that resolves to `target`, or `null`. pnpm 12 keeps one
- * hash-named symlink per install directory beside it, and a global upgrade
- * repoints that symlink at the new install directory. Returns `null` rather than
- * throwing when the target or the directory cannot be read, so a caller can fall
- * back to the next candidate.
- */
-function symlinkResolvingTo(dir, target) {
-  try {
-    const resolved = realpathSync(target);
-    for (const name of readdirSync(dir)) {
-      const candidate = join(dir, name);
-      try {
-        if (lstatSync(candidate).isSymbolicLink() && realpathSync(candidate) === resolved) {
-          return candidate;
-        }
-      } catch {
-        // A broken or unreadable entry is not the link being looked for.
-      }
-    }
-  } catch {
-    // A missing target or an unreadable directory yields no candidate.
-  }
-  return null;
-}
-
-/**
- * `path` with its drive letter upper cased, which is the only case difference
- * Windows ignores in a path. `realpathSync` returns the drive letter spelled as the
- * caller spelled it, so a link reached through a lower-case drive letter would
- * otherwise never compare equal to the same path. Every other character keeps its
- * case on both platforms, and POSIX returns `path` unchanged.
- */
-function normalizeDrive(path) {
-  return process.platform === "win32"
-    ? path.replace(/^([a-z]):/, (_, drive) => `${drive.toUpperCase()}:`)
-    : path;
-}
-
-/** True when the two paths name the same location, ignoring only drive letter case. */
-function samePath(left, right) {
-  return normalizeDrive(left) === normalizeDrive(right);
-}
-
-/**
- * The candidate when it resolves to `target`, or `null`. A candidate that does
- * not exist is a normal outcome, since which link a pnpm layout writes differs by
- * version, so each one is checked on its own.
- */
-function linkResolvingTo(candidate, target) {
-  try {
-    return samePath(realpathSync(candidate), realpathSync(target)) ? candidate : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * True when `hashDir` is the `<hash>` level of a pnpm 12 global virtual store
- * entry, which sits below `links/<name>/<version>`. No store entry a project keeps
- * under its own `.pnpm` carries a bare hex hash name, so the two shapes never
- * collide.
- */
-function isVirtualStoreLinkEntry(hashDir) {
-  if (!/^[0-9a-f]{16,}$/.test(basename(hashDir))) {
-    return false;
-  }
-  for (let dir = dirname(hashDir); dir !== dirname(dir); dir = dirname(dir)) {
-    if (basename(dir) === VIRTUAL_STORE_LINKS_DIR) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * The package name as the segments `basename` produces, so a scoped name such as
- * `@scope/name` counts as two. The name is a relative fragment, so it is peeled one
- * `basename` at a time until nothing is left rather than walked with `dirname`,
- * which would report `.` forever.
- */
-function nameSegments(name) {
-  const parts = [];
-  for (let rest = name; rest && rest !== "."; rest = dirname(rest)) {
-    parts.unshift(basename(rest));
-    if (basename(rest) === rest) {
-      break;
-    }
-  }
-  return parts;
-}
-
-/**
- * True when `dir` ends in `node_modules/<parts>`, walking up one `basename` per
- * part so a scoped name and the `node_modules` level are both matched by segment.
- */
-function isNodeModulesLink(dir, parts) {
-  let cursor = dir;
-  for (let i = parts.length - 1; i >= 0; i--) {
-    if (basename(cursor) !== parts[i]) {
-      return false;
-    }
-    cursor = dirname(cursor);
-  }
-  return basename(cursor) === VIRTUAL_STORE_MODULES_DIR;
-}
-
-/**
- * The `<project>/node_modules/<name>` link the invocation path names, or `null`.
- *
- * The walk uses the platform `path` functions, so it stops at the root `parse`
- * reports and a Windows UNC root, a Windows drive letter, and a backslash inside a
- * POSIX directory name are all handled by the platform rather than by string
- * handling here. The deepest directory that ends in `node_modules/<name>` and
- * resolves to this same package wins, since a nested dependency is reached through
- * the innermost link. A path naming no such link, or naming only links that resolve
- * elsewhere, yields nothing so the caller falls back to the resolved package root.
- */
-function projectLinkFor(scriptPath, packageRoot, name) {
-  if (typeof scriptPath !== "string" || scriptPath === "") {
-    return null;
-  }
-  const parts = nameSegments(name);
-  const { root } = parse(resolve(scriptPath));
-  for (let dir = dirname(resolve(scriptPath)); ; dir = dirname(dir)) {
-    if (isNodeModulesLink(dir, parts) && !samePath(dir, packageRoot)) {
-      const linked = linkResolvingTo(dir, packageRoot);
-      if (linked) {
-        // Normalized so the rendered path does not depend on the drive letter case
-        // the caller happened to use to reach the project.
-        return normalizeDrive(linked);
-      }
-    }
-    if (dir === root) {
-      return null;
-    }
-  }
-}
-
-/**
- * The version-independent package root to render into installed files. A pnpm 12
- * project layout yields the project link, which only `scriptPath` names. A pnpm 12
- * global layout yields the hash-named symlink the bin shim calls. A pnpm 10 layout
- * yields the link under the `node_modules` beside its virtual store directory.
- * Every one of them is repointed by an upgrade. Every other layout (an npm global
- * install, a clone, a linked package) has no version in its root and returns
- * `packageRoot` unchanged, as does a layout with no link that resolves to this same
- * package.
- */
-export function stablePackageRoot(packageRoot, scriptPath) {
-  // Two levels up is the store entry's `node_modules`, and two more is the `.pnpm`
-  // directory holding that entry. The `node_modules` a pnpm layout links the
-  // package under is either that directory (pnpm 12, a project install) or a
-  // sibling of it (a pnpm 10 global install), so both are candidates.
-  const store = dirname(dirname(packageRoot));
-  const pnpmDir = dirname(dirname(store));
-  if (basename(store) !== "node_modules") {
-    return packageRoot;
-  }
-  const tail = relative(store, packageRoot);
-  // A pnpm 12 project install resolves into the global virtual store, where the
-  // entry carries the version and no `.pnpm` directory names it. No candidate below
-  // applies there, so the project link comes from the script path.
-  if (isVirtualStoreLinkEntry(dirname(store))) {
-    return projectLinkFor(scriptPath, packageRoot, tail) ?? packageRoot;
-  }
-  if (basename(pnpmDir) !== VIRTUAL_STORE_DIR) {
-    return packageRoot;
-  }
-  const pnpmParent = dirname(pnpmDir);
-  // pnpm 12 keeps `.pnpm` inside the install directory's `node_modules` and links
-  // that directory into the global directory under a hash name, which the bin
-  // shim calls. pnpm 10 keeps `.pnpm` beside its `node_modules` and has no such
-  // link, so the scan runs only in the pnpm 12 shape.
-  const installDir = basename(pnpmParent) === "node_modules" ? dirname(pnpmParent) : null;
-  const hashLink = installDir && symlinkResolvingTo(dirname(installDir), installDir);
-  for (const candidate of [
-    hashLink && join(hashLink, basename(store), tail),
-    // The `node_modules` holding `.pnpm`. A pnpm 10 project install reaches it
-    // directly, and a pnpm 12 global install reaches it only when no hash link
-    // resolves, since the first candidate above wins whenever one does.
-    join(pnpmParent, tail),
-    // pnpm 10: the `node_modules` beside the `.pnpm` directory.
-    join(pnpmParent, basename(store), tail),
-  ]) {
-    const resolved = candidate && linkResolvingTo(candidate, packageRoot);
-    if (resolved) {
-      return resolved;
-    }
-  }
-  return packageRoot;
-}

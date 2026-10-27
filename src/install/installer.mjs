@@ -274,6 +274,13 @@ function keepPriorRecords(records, targets, priorRecords) {
   }
 }
 
+function withManifestLock(home, fn) {
+  return withStateLock(manifestLockFile(home), fn, {
+    label: "The install manifest",
+    noun: "install manifest",
+  });
+}
+
 /**
  * Installs one or more harnesses at user scope under the manifest lock. A dry
  * run takes no lock and writes nothing.
@@ -286,10 +293,74 @@ export async function install(options = {}) {
   if (options.dryRun) {
     return runInstall(options);
   }
-  return withStateLock(manifestLockFile(home), () => runInstall(options), {
-    label: "The install manifest",
-    noun: "install manifest",
-  });
+  return withManifestLock(home, () => runInstall(options));
+}
+
+/** Plans every file and settings write of one harness, with no write. */
+async function planHarness(harness, previous, { home, packageRoot, copilotHome }) {
+  const targets = await buildTargets(harness, { home, packageRoot, copilotHome });
+  const entry = {
+    harness,
+    previous,
+    dirs: new Set(previous?.dirs ?? []),
+    files: [],
+    settings: [],
+    notes: targets.notes,
+  };
+  for (const file of targets.files) {
+    const prior = previous?.files?.find((record) => record.path === file.path) ?? null;
+    entry.files.push({ path: file.path, plan: await planFileWrite(file, prior) });
+  }
+  for (const target of targets.settings) {
+    const prior = previous?.settings?.find((record) => record.path === target.path) ?? null;
+    const plan = await planSettingsWrite(target, prior);
+    entry.settings.push({ path: target.path, plan });
+  }
+
+  // No harness installs an entry point without its guard. When a settings
+  // target cannot be merged (a conflicting key, or a recorded entry the user
+  // removed), leave every entry-point file for that harness unchanged.
+  const guardBlocked = entry.settings.some(
+    ({ plan }) => plan.action === "skip" || plan.action === "refuse",
+  );
+  if (guardBlocked) {
+    entry.files = entry.files.map(({ path }) => {
+      const prior = previous?.files?.find((record) => record.path === path) ?? null;
+      return {
+        path,
+        plan: {
+          kind: "file",
+          action: "skip",
+          path,
+          detail: "guard settings were not installed; entry point left unchanged",
+          record: prior ?? undefined,
+        },
+      };
+    });
+  }
+  return entry;
+}
+
+/** The note reports of the planned harnesses; a dry run keeps only the notes that mark themselves for it. */
+function noteReports(plans, dryRun) {
+  const reports = [];
+  // Codex notes precede Claude notes whatever order the harnesses were selected in.
+  for (const harness of [...HARNESS_ORDER].reverse()) {
+    const planned = plans.find((entry) => entry.harness === harness);
+    for (const note of planned?.notes ?? []) {
+      if (dryRun && !note.dryRun) {
+        continue;
+      }
+      reports.push({
+        harness,
+        kind: "settings",
+        action: "note",
+        path: note.path,
+        detail: note.detail,
+      });
+    }
+  }
+  return reports;
 }
 
 /** Runs the install once the caller owns the manifest lock, or for a dry run. */
@@ -308,49 +379,15 @@ async function runInstall({
   // Plan every write before any write. An unparseable settings file stops the
   // command with no write at all.
   for (const harness of harnesses) {
-    const targets = await buildTargets(harness, { home, packageRoot, copilotHome });
-    const previous = manifest.harnesses[harness] ?? null;
-    const entry = {
-      harness,
-      previous,
-      dirs: new Set(previous?.dirs ?? []),
-      files: [],
-      settings: [],
-      notes: targets.notes,
-    };
-    for (const file of targets.files) {
-      const prior = previous?.files?.find((record) => record.path === file.path) ?? null;
-      entry.files.push({ path: file.path, plan: await planFileWrite(file, prior) });
-    }
-    for (const target of targets.settings) {
-      const prior = previous?.settings?.find((record) => record.path === target.path) ?? null;
-      const plan = await planSettingsWrite(target, prior);
+    const entry = await planHarness(harness, manifest.harnesses[harness] ?? null, {
+      home,
+      packageRoot,
+      copilotHome,
+    });
+    for (const { plan } of entry.settings) {
       if (plan.action === "refuse" && !refusal) {
         refusal = plan;
       }
-      entry.settings.push({ path: target.path, plan });
-    }
-
-    // No harness installs an entry point without its guard. When a settings
-    // target cannot be merged (a conflicting key, or a recorded entry the user
-    // removed), leave every entry-point file for that harness unchanged.
-    const guardBlocked = entry.settings.some(
-      ({ plan }) => plan.action === "skip" || plan.action === "refuse",
-    );
-    if (guardBlocked) {
-      entry.files = entry.files.map(({ path }) => {
-        const prior = previous?.files?.find((record) => record.path === path) ?? null;
-        return {
-          path,
-          plan: {
-            kind: "file",
-            action: "skip",
-            path,
-            detail: "guard settings were not installed; entry point left unchanged",
-            record: prior ?? undefined,
-          },
-        };
-      });
     }
     plans.push(entry);
   }
@@ -418,22 +455,7 @@ async function runInstall({
     throw err;
   }
 
-  // Codex notes precede Claude notes whatever order the harnesses were selected in.
-  for (const harness of [...HARNESS_ORDER].reverse()) {
-    const planned = plans.find((entry) => entry.harness === harness);
-    for (const note of planned?.notes ?? []) {
-      if (dryRun && !note.dryRun) {
-        continue;
-      }
-      reports.push({
-        harness,
-        kind: "settings",
-        action: "note",
-        path: note.path,
-        detail: note.detail,
-      });
-    }
-  }
+  reports.push(...noteReports(plans, dryRun));
 
   if (!dryRun) {
     await writeManifest(home, manifest);
@@ -545,10 +567,7 @@ export async function uninstall(options = {}) {
   if (options.dryRun) {
     return runUninstall(options);
   }
-  return withStateLock(manifestLockFile(home), () => runUninstall(options), {
-    label: "The install manifest",
-    noun: "install manifest",
-  });
+  return withManifestLock(home, () => runUninstall(options));
 }
 
 function homeIsMissing(home) {

@@ -1,6 +1,6 @@
 // Atomic file writes: a private temp file in the target directory is renamed over the destination.
 import { readlinkSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -93,12 +93,19 @@ export async function resolveWriteTarget(file) {
 // goes to the final target, with the temp beside it (#658). A failed write or
 // rename removes the temp on a best-effort basis and rethrows the original error
 // (#353). `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and
-// suppresses a cleanup failure that persists, so the temp can remain.
-export async function writeFileAtomic(file, text) {
+// suppresses a cleanup failure that persists, so the temp can remain. The temp is created
+// exclusively, so a stale file of the same name fails the write instead of being overwritten. With
+// `mode`, the temp is created with those permission bits and chmod-ed to them before the rename, so
+// the destination is never briefly more open. Without it, the file gets the default mode of a new
+// file.
+export async function writeFileAtomic(file, text, { mode } = {}) {
   const destination = await resolveWriteTarget(file);
   const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
-    await writeFile(temp, text, "utf8");
+    await writeFile(temp, text, { encoding: "utf8", mode, flag: "wx" });
+    if (mode !== undefined && process.platform !== "win32") {
+      await chmod(temp, mode);
+    }
     await renameWithRetry(temp, destination);
   } catch (err) {
     await removeTemp(temp);

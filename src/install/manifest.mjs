@@ -3,16 +3,10 @@
 // pre-install bytes and remove only entries it inserted. The baseline recorded
 // by the first install is immutable: later installs carry it forward untouched
 // and only uninstall consumes it.
-import { stat } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import {
-  ensureDir,
-  readTextOrNull,
-  removeDirQuiet,
-  removeFileQuiet,
-  writeTextAtomic,
-} from "./fsutil.mjs";
+import { readTextOrNull, removeDirQuiet, removeFileQuiet, writeTextAtomic } from "./fsutil.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 
 const MANIFEST_VERSION = 1;
@@ -209,7 +203,7 @@ export async function readManifest(home = resolveHome()) {
 
 export async function writeManifest(home, manifest) {
   const path = manifestPath(home);
-  await ensureDir(dirname(path), new Set());
+  await mkdir(dirname(path), { recursive: true });
   await writeTextAtomic(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 

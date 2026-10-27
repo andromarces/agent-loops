@@ -1,19 +1,8 @@
 // Filesystem helpers for the user-scope installer (#139). Every write is atomic
 // (temp file plus rename).
-import { randomUUID } from "node:crypto";
-import {
-  access,
-  chmod,
-  lstat,
-  mkdir,
-  readFile,
-  rm,
-  rmdir,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { access, lstat, mkdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { renameWithRetry, resolveWriteTarget } from "../lib/atomic-write.mjs";
+import { writeFileAtomic } from "../lib/atomic-write.mjs";
 
 /**
  * Reads a file as UTF-8; returns null when the path does not exist. With
@@ -55,30 +44,11 @@ export async function fileMode(path) {
 }
 
 /**
- * Writes through a temp file in the same directory, then renames. A file
- * symlink keeps its link: the write lands at the final target, with the temp
- * beside it (#790). A rename that fails with EPERM, EACCES, or EBUSY is retried.
- * Preserves the destination's permission bits unless `mode` is given, so a private settings
- * file stays private after install, backup, and restore. The temp file is
- * created exclusively with a name unique to this call and with that mode, so it
- * is never briefly world-readable. A failed write removes the temp file and
- * rethrows the original error.
+ * `writeFileAtomic` that preserves the destination's permission bits unless `mode` is given, so a
+ * private settings file stays private after install, backup, and restore (#790).
  */
 export async function writeTextAtomic(path, text, { mode } = {}) {
-  const destination = await resolveWriteTarget(path);
-  const temp = `${destination}.${process.pid}.${randomUUID()}.tmp`;
-  const targetMode = mode ?? (await fileMode(destination));
-  try {
-    await writeFile(temp, text, { encoding: "utf8", mode: targetMode ?? 0o666, flag: "wx" });
-    if (targetMode !== null && process.platform !== "win32") {
-      await chmod(temp, targetMode);
-    }
-    await renameWithRetry(temp, destination);
-  } catch (err) {
-    // A cleanup failure must not replace the original error.
-    await rm(temp, { force: true }).catch(() => {});
-    throw err;
-  }
+  await writeFileAtomic(path, text, { mode: mode ?? (await fileMode(path)) ?? undefined });
 }
 
 export async function removeFileQuiet(path) {

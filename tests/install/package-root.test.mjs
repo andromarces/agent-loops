@@ -9,8 +9,8 @@ import { install } from "../../src/install/installer.mjs";
 import {
   INHERITED_TMPDIR_INVALID_MESSAGE,
   installRefusal,
-  stablePackageRoot,
 } from "../../src/install/package-root.mjs";
+import { stablePackageRoot } from "../../src/install/stable-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
