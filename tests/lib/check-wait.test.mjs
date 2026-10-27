@@ -180,15 +180,6 @@ test.each([
   await expect(noRequiredChecksWait(sources)).rejects.toThrow(message);
 });
 
-// Usefulness: verifies a failed read of the required names refuses the no-required-checks
-// answer, as it refuses every other required wait, so the wait never reports an absence while
-// the names read has failed (issue #1013).
-test("waitChecks refuses the no-required-checks answer when the names read failed", async () => {
-  await expect(
-    noRequiredChecksWait({ ...ABSENT_SOURCES, names: { status: 1, stdout: "", stderr: "boom" } }),
-  ).rejects.toThrow(/required check names/);
-});
-
 // Usefulness: verifies the wait agrees with the `--require-ci` gate on a ruleset read that found
 // no rule beside a classic-protection required check: the gate judges that check and does not
 // refuse, so the wait goes on to judge it instead of erroring (issue #1013).
@@ -378,14 +369,97 @@ test.each(["rules", "protection"])(
   },
 );
 
+/** Runs one required wait over `reads`, and records the `gh` calls it makes. */
+async function recordedRequiredWait(reads, sources = {}) {
+  const clock = fakeClock();
+  const calls = [];
+  const inner = scriptedGh(reads, sources);
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    gh: async (args, cwd, options) => {
+      calls.push(args);
+      return inner(args, cwd, options);
+    },
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  return { result, calls };
+}
+
+const isRequiredChecksRead = (args) =>
+  args[0] === "pr" && args[1] === "checks" && args.includes("--required");
+
+// Usefulness: verifies each poll of a required wait reads `gh pr checks --required` once, so the
+// required names come from the same read as the check list and the poll costs no second `gh` call
+// (issue #1125).
+test.each([
+  [
+    "a pending poll then a pass",
+    [
+      { status: 8, checks: [PENDING_ITEM] },
+      { status: 0, checks: [PASSED_ITEM] },
+    ],
+    2,
+  ],
+  [
+    "a no-checks-reported poll then a pass",
+    [
+      { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" },
+      { status: 0, checks: [PASSED_ITEM] },
+    ],
+    2,
+  ],
+  [
+    "a no-required-checks answer",
+    [{ status: 1, stdout: "", stderr: "no required checks reported on the 'main' branch\n" }],
+    1,
+  ],
+])("waitChecks reads the required checks once per poll over %s", async (_name, reads, polls) => {
+  const { calls } = await recordedRequiredWait(reads, ABSENT_SOURCES);
+  expect(calls.filter(isRequiredChecksRead)).toHaveLength(polls);
+});
+
+// Usefulness: verifies the check runs and the commit statuses of a head are read together, so a poll
+// does not pay the two latencies one after the other (issue #1125).
+test("waitChecks reads the check runs and commit statuses of the head together", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }]);
+  const clock = fakeClock();
+  let inFlight = 0;
+  let peak = 0;
+  const gh = async (args, cwd, options) => {
+    const commitRead = args[0] === "api" && String(args[1]).includes("/commits/");
+    if (!commitRead) {
+      return inner(args, cwd, options);
+    }
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise((resolve) => setImmediate(resolve));
+    try {
+      return await inner(args, cwd, options);
+    } finally {
+      inFlight -= 1;
+    }
+  };
+  await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    gh,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(peak).toBe(2);
+});
+
 const PR_READS = {
   head: (args) => args[0] === "pr" && args[1] === "view",
   checks: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name,state,bucket",
-  names: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name",
 };
 
 /**
- * One required wait whose passing `gh pr` read named by `which` ("head", "checks", or "names")
+ * One required wait whose passing `gh pr` read named by `which` ("head" or "checks")
  * answers with `failure` on its first call, or on every call when `always` is set. `stdout` and
  * `reads` replace the empty output and the scripted check list reads. `result` is the wait, and
  * `attempts()` counts the failing reads it made.
@@ -420,10 +494,6 @@ function prReadFailsWait(
 
 const GRAPHQL_504 = "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n";
 const GRAPHQL_502 = "HTTP 502: 502 Bad Gateway (https://api.github.com/graphql)\n";
-const NO_CHECKS_THEN_PASS = [
-  { status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" },
-  { status: 0, checks: [PASSED_ITEM] },
-];
 
 // Usefulness: verifies a server error of any `gh` pr read of a poll is retried on the next poll, so
 // the wait ends in the check result instead of an error that gives the parent no check evidence
@@ -432,8 +502,6 @@ test.each([
   ["the head read (HTTP 504)", "head", GRAPHQL_504],
   ["the check list read (HTTP 502)", "checks", GRAPHQL_502],
   ["the check list read (HTTP 504)", "checks", GRAPHQL_504],
-  ["the required names read (HTTP 504)", "names", GRAPHQL_504],
-  ["the required names read (HTTP 502)", "names", GRAPHQL_502],
 ])("waitChecks retries %s that fails with a server error", async (_name, which, failure) => {
   expect(await prReadFailsWait(which, failure).result).toEqual({
     timedOut: false,
@@ -444,16 +512,10 @@ test.each([
 
 // Usefulness: verifies a server error that lasts to the bound is an error that names the server
 // error, after the wait read again on each poll, never a timeout envelope and never a pass
-// (issues #1025, #1121). The names read is also covered on a no-checks-reported poll.
+// (issues #1025, #1121).
 test.each([
   ["head", /gh pr view 42 could not be read: HTTP 504: 504 Gateway Timeout/, undefined],
   ["checks", /gh pr checks 42 --required could not be read: HTTP 504: 504 Gateway/, undefined],
-  ["names", /required check names for PR 42 could not be read: HTTP 504: 504 Gateway/, undefined],
-  [
-    "names",
-    /required check names for PR 42 could not be read: HTTP 504: 504 Gateway/,
-    NO_CHECKS_THEN_PASS,
-  ],
 ])(
   "waitChecks reports an error when the %s read fails with a server error until the bound",
   async (which, message, reads) => {
@@ -465,39 +527,20 @@ test.each([
 
 // Usefulness: verifies the acceptance item that a 4xx reply of each `gh pr` read still ends the wait
 // at once, after the one read (issue #1121).
-test.each(["head", "checks", "names"])(
-  "waitChecks ends at once on a 404 of the %s read",
-  async (which) => {
-    const wait = prReadFailsWait(which, "HTTP 404: Not Found (https://api.github.com/graphql)\n");
-    await expect(wait.result).rejects.toThrow(/could not be read/);
-    expect(wait.attempts()).toBe(1);
-  },
-);
+test.each(["head", "checks"])("waitChecks ends at once on a 404 of the %s read", async (which) => {
+  const wait = prReadFailsWait(which, "HTTP 404: Not Found (https://api.github.com/graphql)\n");
+  await expect(wait.result).rejects.toThrow(/could not be read/);
+  expect(wait.attempts()).toBe(1);
+});
 
 // Usefulness: verifies the acceptance item that an unparseable reply still ends the wait at once
 // even when the failed read also names HTTP 504, so only a clean server error is retried
 // (issue #1121).
-test.each(["head", "checks", "names"])(
+test.each(["head", "checks"])(
   "waitChecks ends at once when the %s read fails with HTTP 504 and an unparseable reply",
   async (which) => {
     const wait = prReadFailsWait(which, GRAPHQL_504, { stdout: "<html>Gateway Timeout</html>" });
     await expect(wait.result).rejects.toThrow();
-    expect(wait.attempts()).toBe(1);
-  },
-);
-
-// Usefulness: verifies a failed required names read that is no clean server error ends a
-// no-checks-reported poll at once, as it ends any other poll, instead of being ignored until a
-// later poll passes (issue #1121 acceptance: a 4xx and an unparseable reply end the wait at once).
-test.each([
-  ["HTTP 501", "HTTP 501: Not Implemented (https://api.github.com/graphql)\n", ""],
-  ["HTTP 403", "HTTP 403: Forbidden (https://api.github.com/graphql)\n", ""],
-  ["HTTP 504 and an unparseable reply", GRAPHQL_504, "<html>Gateway Timeout</html>"],
-])(
-  "waitChecks ends at once when the names read of a no-checks-reported poll fails with %s",
-  async (_name, failure, stdout) => {
-    const wait = prReadFailsWait("names", failure, { stdout, reads: NO_CHECKS_THEN_PASS });
-    await expect(wait.result).rejects.toThrow(/required check names for PR 42 could not be read/);
     expect(wait.attempts()).toBe(1);
   },
 );
@@ -1047,6 +1090,10 @@ test("waitChecks refuses a commit read that fails", async () => {
   ).rejects.toThrow(/gh api repos\/owner\/repo\/commits\/.+ failed: boom/);
 });
 
+// A poll reads the check runs and the commit statuses together, so a wait that does not retry a failed
+// read makes exactly these two commit reads.
+const COMMIT_READS_PER_POLL = 2;
+
 /**
  * A `gh` whose commit reads fail as `fail(n)` says, for the nth such read. A failure is the whole
  * result of the failed `gh api --paginate --include` read: `{ status, stdout, stderr }`, with the
@@ -1317,7 +1364,7 @@ test.each([
 ])("waitChecks does not retry %s on a commit read", async (_name, reply, message) => {
   const { gh, commitReads } = failingCommitGh(() => reply);
   await expect(waitOn(gh, false)).rejects.toThrow(message);
-  expect(commitReads).toHaveLength(1);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
 });
 
 // Usefulness: verifies a 4xx reply is never retryable, whatever text its body or its error holds:
@@ -1355,7 +1402,7 @@ test.each([
   for (const reply of replies) {
     const { gh, commitReads } = failingCommitGh((n) => n === 1 && reply, { all });
     await expect(waitOn(gh, all)).rejects.toThrow(/gh api/);
-    expect(commitReads).toHaveLength(1);
+    expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
   }
 });
 
@@ -1405,7 +1452,7 @@ test.each([
         },
       );
       await expect(waitOn(gh, all)).rejects.toThrow(/gh api/);
-      expect(commitReads).toHaveLength(1);
+      expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
     }
   },
 );
@@ -1430,7 +1477,7 @@ test.each([
     });
   } else {
     await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
-    expect(commitReads).toHaveLength(1);
+    expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
   }
 });
 
@@ -1448,7 +1495,7 @@ test.each([
     (n) => n === 1 && { status: 1, stdout, stderr: "gh: HTTP 502" },
   );
   await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
-  expect(commitReads).toHaveLength(1);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
 });
 
 // Usefulness: verifies a failure that `gh pr checks` lists on a later poll survives the bound that
@@ -1471,7 +1518,14 @@ test.each([
     const gh = (args, cwd, options) => {
       if (args[0] === "api" && args[1].includes("/commits/")) {
         commitReads += 1;
-        return commitReads === 1 ? Promise.resolve(serverError(500)) : new Promise(() => {});
+        // The first poll reads the check runs and the statuses together: the first read fails, the
+        // second passes. Every later read hangs.
+        if (commitReads === 1) {
+          return Promise.resolve(serverError(500));
+        }
+        if (commitReads > COMMIT_READS_PER_POLL) {
+          return new Promise(() => {});
+        }
       }
       return inner(args, cwd, options);
     };
@@ -1498,7 +1552,14 @@ test("waitChecks ends with the earlier error when the next commit read hangs", a
   const gh = (args, cwd, options) => {
     if (args[0] === "api" && args[1].includes("/commits/")) {
       commitReads += 1;
-      return commitReads === 1 ? Promise.resolve(serverError(500)) : new Promise(() => {});
+      // The first poll reads the check runs and the statuses together: the first read fails, the
+      // second passes. Every later read hangs.
+      if (commitReads === 1) {
+        return Promise.resolve(serverError(500));
+      }
+      if (commitReads > COMMIT_READS_PER_POLL) {
+        return new Promise(() => {});
+      }
     }
     return inner(args, cwd, options);
   };
@@ -1542,8 +1603,7 @@ const FORBIDDEN = {
 const NOT_FOUND = { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
 
 // Usefulness: verifies a required-check source that cannot be resolved never yields a pass:
-// an unreadable ruleset or protection source, a reply that cannot be parsed, and a failed
-// read of the required names each end the required wait with an error before any state is
+// an unreadable ruleset or protection source and a reply that cannot be parsed each end the required wait with an error before any state is
 // judged (issue #961).
 test.each([
   ["an unreadable ruleset source", { rules: FORBIDDEN }, /repository rulesets/],
@@ -1552,11 +1612,6 @@ test.each([
     "a ruleset reply that cannot be parsed",
     { rules: { status: 0, stdout: "not json", stderr: "" } },
     /repository rulesets/,
-  ],
-  [
-    "a failed read of the required names",
-    { names: { status: 1, stdout: "", stderr: "boom" } },
-    /required check names/,
   ],
 ])("waitChecks refuses %s", async (_name, sources, message) => {
   await expect(
@@ -1866,7 +1921,7 @@ test.each([
   };
   const { gh, commitReads } = failingCommitGh((n) => n === 1 && foreign, { all });
   await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
-  expect(commitReads).toHaveLength(1);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
 });
 
 // The `--all` wait's no-check-source early return (issue #1054). After the PR head itself showed no

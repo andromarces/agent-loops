@@ -130,6 +130,18 @@ export async function commitStatuses(gh, slug, sha, cwd, strict = false) {
   return statuses;
 }
 
+/**
+ * The check runs and commit statuses of `sha`, read together. A failure throws as `inOrder` does,
+ * so a caller unwraps it with `failureOf`.
+ */
+export async function commitEntries(gh, slug, sha, cwd, strict = false) {
+  const [runs, statuses] = await inOrder(gh, [
+    (read) => checkRuns(read, slug, sha, cwd, strict),
+    (read) => commitStatuses(read, slug, sha, cwd, strict),
+  ]);
+  return { runs, statuses };
+}
+
 // The commit GitHub evaluates: the test merge commit when it carries a check
 // run or a commit status, the head commit otherwise. The same selection yields
 // the result GitHub shows for the pull request.
@@ -137,19 +149,12 @@ async function evaluatedState(gh, slug, info, cwd, strict = false) {
   const head = info.headRefOid;
   const merge = info.potentialMergeCommit?.oid ?? null;
   if (merge && merge !== head) {
-    const [runs, statuses] = await inOrder(gh, [
-      (read) => checkRuns(read, slug, merge, cwd, strict),
-      (read) => commitStatuses(read, slug, merge, cwd, strict),
-    ]);
-    if (runs.length > 0 || statuses.length > 0) {
-      return { commit: merge, runs, statuses };
+    const entries = await commitEntries(gh, slug, merge, cwd, strict);
+    if (entries.runs.length > 0 || entries.statuses.length > 0) {
+      return { commit: merge, ...entries };
     }
   }
-  const [runs, statuses] = await inOrder(gh, [
-    (read) => checkRuns(read, slug, head, cwd, strict),
-    (read) => commitStatuses(read, slug, head, cwd, strict),
-  ]);
-  return { commit: head, runs, statuses };
+  return { commit: head, ...(await commitEntries(gh, slug, head, cwd, strict)) };
 }
 
 // A timestamp as the instant to the millisecond plus the fractional digits below

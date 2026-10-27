@@ -899,11 +899,11 @@ export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' bran
 // #950).
 export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 
-async function ghRequiredNames(gh, pr, cwd) {
-  const { status, stdout, stderr } = await gh(
-    ["pr", "checks", String(pr), "--required", "--json", "name"],
-    cwd,
-  );
+/**
+ * The required names of one `gh pr checks --required --json` reply. Any field list that includes
+ * `name` serves, so the wait passes the reply of its own check-list read instead of a second one.
+ */
+export function requiredNamesOf({ status, stdout, stderr }) {
   let parsed = null;
   try {
     parsed = JSON.parse(stdout);
@@ -921,8 +921,13 @@ async function ghRequiredNames(gh, pr, cwd) {
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
   // A clean server-error failure only: an unparseable reply is never retried (#1121).
   const transient = stdout.trim() === "" && isServerErrorText(stderr);
-  const noChecksYet = stdout.trim() === "" && status === 1 && NO_CHECKS_YET.test(stderr.trim());
-  return { names: [], ok: none, transient, noChecksYet, failure: transient ? stderr.trim() : "" };
+  return { names: [], ok: none, transient, failure: transient ? stderr.trim() : "" };
+}
+
+async function ghRequiredNames(gh, pr, cwd) {
+  return requiredNamesOf(
+    await gh(["pr", "checks", String(pr), "--required", "--json", "name"], cwd),
+  );
 }
 
 // A required status context: its name, plus the id of the app whose check run
@@ -958,7 +963,17 @@ function addContext(contexts, name, appId = null) {
 // With `retryable`, the protection read is a status-classified `--include` read like the paged
 // rules read, so a failed read of either source with a retryable status carries `transient`
 // and a caller can retry it on its next poll (#1091). The default reads stay as the gate pins them.
-export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = false } = {}) {
+//
+// With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is
+// not repeated (#1125).
+export async function requiredContexts(
+  gh,
+  slug,
+  base,
+  pr,
+  cwd,
+  { retryable = false, names = null } = {},
+) {
   const contexts = new Map();
   const unknown = [];
   const unparsed = [];
@@ -987,7 +1002,7 @@ export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = fa
           malformed: isProtectionMalformed,
         },
       ),
-    (read) => ghRequiredNames(read, pr, cwd),
+    (read) => (names ? Promise.resolve(names) : ghRequiredNames(read, pr, cwd)),
   ]);
   if (rules.state === UNKNOWN) {
     unknown.push(RULESETS);
@@ -1028,8 +1043,6 @@ export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = fa
     // the gate ignores both.
     namesTransient: Boolean(listed.transient),
     namesFailure: listed.failure ?? "",
-    // The names read answered `no checks reported`, so it failed for no fault of its own.
-    namesNoChecksYet: Boolean(listed.noChecksYet),
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal. It contributes no contexts. It leaves
     // the per-check path to the other sources, as it did before the ruleset read

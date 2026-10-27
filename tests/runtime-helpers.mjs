@@ -489,7 +489,6 @@ export function scriptedGh(
     required = [],
     rules,
     protection,
-    names,
   } = {},
 ) {
   let n = 0;
@@ -512,9 +511,6 @@ export function scriptedGh(
       protection
     ) {
       return protection;
-    }
-    if (args.includes("--required") && args.at(-1) === "name" && names) {
-      return names;
     }
     if (isPagedRead(args, "/rules/branches/main")) {
       return ok(

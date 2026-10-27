@@ -4,8 +4,7 @@
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  checkRuns,
-  commitStatuses,
+  commitEntries,
   evaluateContext,
   latestBy,
   matchingEntries,
@@ -23,6 +22,7 @@ import {
   pagedRead,
   readOne,
   requiredContexts,
+  requiredNamesOf,
   runGh,
   UNKNOWN,
 } from "./ci-required-sources.mjs";
@@ -626,9 +626,7 @@ export async function waitChecks({
   // body is not exactly one JSON value.
   const readCommit = async (sha) => {
     await ensureSlug();
-    const runs = await checkRuns(bounded, slug, sha, cwd, true);
-    const statuses = await commitStatuses(bounded, slug, sha, cwd, true);
-    return { runs, statuses };
+    return commitEntries(bounded, slug, sha, cwd, true);
   };
   // False when the bound is spent, so the caller reports it instead of sleeping.
   const pause = async () => {
@@ -663,8 +661,8 @@ export async function waitChecks({
   };
   // The contexts the required wait judges: every source of the gate, so an app-qualified
   // context keeps its app, plus the names `gh pr checks --required` listed.
-  const contextsOf = async (base, listed) => {
-    const required = await requiredContexts(bounded, slug, base, pr, cwd);
+  const contextsOf = async (base, listed, names) => {
+    const required = await requiredContexts(bounded, slug, base, pr, cwd, { names });
     // The gate's own refusals, and any source that settled nothing: such a source may hold a
     // required check or an app qualifier that this read never saw, so no pass can follow.
     const refusal = requiredResolutionRefusal(required, pr, namesCause(required));
@@ -687,27 +685,27 @@ export async function waitChecks({
   // Whether the `gh` no-required-checks answer is an established absence, decided by the same
   // `requiredAbsence` the `--require-ci` gate uses (#1013). A source that settled nothing, and a
   // ruleset read that found no rule beside no named check, are errors that name the cause,
-  // because the gate refuses the same states. A failed names read is an error too, where the
-  // wait is stricter than the gate, which ignores that read. A source that names a required
+  // because the gate refuses the same states. A source that names a required
   // check is no absence, so the wait goes on to judge it. The `no checks reported` reply (#1091)
   // refuses only when no source can state the required checks: both configuration sources are
-  // unreadable and no check is named. Its names read answers the same `no checks reported`, which is
-  // no failure, so only a names read that failed otherwise is refused, and a malformed reply of
+  // unreadable and no check is named. A malformed reply of
   // one source says nothing about the other, so it is not judged. A source that names a check or
   // states the absence keeps the wait running whatever the other returned (#941). A server error
-  // of a source read or of the names read carries `transient` and the poll retries it.
-  const absenceOf = async (base, reply = "no required check") => {
+  // of a source read carries `transient` and the poll retries it. The names are those of the poll's
+  // own `gh pr checks --required` read, which is the reply that raised the question, so no names
+  // read can fail here (#1125).
+  const absenceOf = async (base, names, reply = "no required check") => {
     await ensureSlug();
     const noChecksYet = reply === "no checks";
     const required = await requiredContexts(bounded, slug, base, pr, cwd, {
       retryable: noChecksYet,
+      names,
     });
-    // A no-checks-reported poll accepts the names read that answered the same `no checks reported`.
-    // Any other failed names read refuses, and only a clean server error is retried (#1121).
-    const namesRefusal =
-      noChecksYet && (required.namesRead || required.namesNoChecksYet)
-        ? null
-        : requiredNamesRefusal(required, pr, namesCause(required));
+    // A no-checks-reported poll accepts its names read, which is the `no checks reported` reply
+    // itself. Any other refusal stands, and only a clean server error is retried (#1121).
+    const namesRefusal = noChecksYet
+      ? null
+      : requiredNamesRefusal(required, pr, namesCause(required));
     if (namesRefusal) {
       throw unresolved(required, namesRefusal);
     }
@@ -851,9 +849,8 @@ export async function waitChecks({
         return false;
       }
     }
-    const runs = await checkRuns(bounded, slug, baseSha, cwd, true);
-    const statuses = await commitStatuses(bounded, slug, baseSha, cwd, true);
-    if (runs.length > 0 || statuses.length > 0) {
+    const onBase = await commitEntries(bounded, slug, baseSha, cwd, true);
+    if (onBase.runs.length > 0 || onBase.statuses.length > 0) {
       return false;
     }
     // A provider that reports on PR heads only never shows on the base head, so the heads of the
@@ -863,9 +860,8 @@ export async function waitChecks({
       return false;
     }
     for (const mergedHead of mergedHeads) {
-      const mergedRuns = await checkRuns(bounded, slug, mergedHead, cwd, true);
-      const mergedStatuses = await commitStatuses(bounded, slug, mergedHead, cwd, true);
-      if (mergedRuns.length > 0 || mergedStatuses.length > 0) {
+      const onMerged = await commitEntries(bounded, slug, mergedHead, cwd, true);
+      if (onMerged.runs.length > 0 || onMerged.statuses.length > 0) {
         return false;
       }
     }
@@ -886,12 +882,15 @@ export async function waitChecks({
     if (head !== null && sha !== head) {
       return { sha, base, listed: null };
     }
-    const listed = readOutcome(pr, await bounded(checksArgv), all);
-    if (listed.noRequiredChecks && !(await absenceOf(base))) {
+    const read = await bounded(checksArgv);
+    const listed = readOutcome(pr, read, all);
+    // The required names come from this read, so the poll makes no second `gh pr checks` call (#1125).
+    const names = all ? null : requiredNamesOf(read);
+    if (listed.noRequiredChecks && !(await absenceOf(base, names))) {
       listed.noRequiredChecks = false;
       listed.settled = false;
     }
-    return { sha, base, listed };
+    return { sha, base, listed, names };
   };
   const poll = async () => {
     for (;;) {
@@ -910,10 +909,10 @@ export async function waitChecks({
         failed = err;
       }
       if (state?.listed) {
-        const { sha, base, listed } = state;
+        const { sha, base, listed, names } = state;
         if (listed.noChecksYet && !all) {
           try {
-            await absenceOf(base, "no checks");
+            await absenceOf(base, names, "no checks");
           } catch (raw) {
             // A server error of a source read is retried on the next poll. The bound and every
             // other failure still end the wait.
@@ -938,7 +937,7 @@ export async function waitChecks({
             headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
             items = all
               ? allItems(entries)
-              : requiredItems(entries, await contextsOf(base, listed), sha);
+              : requiredItems(entries, await contextsOf(base, listed, names), sha);
           } catch (raw) {
             // A failure that `gh pr checks` lists settles the wait, so a commit or source read
             // that fails never delays it. The bound and every other failure still end it.
