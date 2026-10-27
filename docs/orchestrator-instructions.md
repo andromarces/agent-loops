@@ -325,7 +325,16 @@ The copy duplicates secrets such as `.env` into the run work tree, so remove tha
 work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
 the copy off. It is an init field, so a later call cannot change it.
 
-When the run ends, remove the work tree with `git worktree remove --force "<work tree>"`,
+Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
+with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused
+`finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its
+lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation
+or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run
+`active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)):
+remove the work tree after it reads `halted`. Run the removal as a separate command
+after you read the result. Never chain it after `finish` or `abort` in one command.
+
+Remove the work tree with `git worktree remove --force "<work tree>"`,
 then check whether the folder still exists. On Windows, the remove can leave the
 folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into
 the shared pnpm store and no file. When the folder remains, check that it holds
