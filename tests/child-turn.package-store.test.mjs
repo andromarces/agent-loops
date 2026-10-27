@@ -8,7 +8,7 @@ import {
   failedPackageStoreEntries,
   snapshotPackageStore,
 } from "../src/lib/package-store-entries.mjs";
-import { failedInheritedTmpdirEntries } from "../src/lib/inherited-tmpdir-entries.mjs";
+import { failedInheritedTmpdirEntries } from "../src/lib/tmpdir-entries.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";

@@ -17,9 +17,12 @@ const AGENT_KINDS = {
   copilot: { reportsResolvedModel: true, networkedReadOnly: true, waitsForChecks: false },
 };
 
-/** Maps the `antigravity` alias to its adapter kind `agy`. */
+/** Alias names that a user may pass for an adapter kind, each mapped to that kind. */
+export const AGENT_ALIASES = new Map([["antigravity", "agy"]]);
+
+/** Maps an alias in `AGENT_ALIASES` to its adapter kind and keeps any other kind. */
 export function normalizeAgent(kind) {
-  return kind === "antigravity" ? "agy" : kind;
+  return AGENT_ALIASES.get(kind) ?? kind;
 }
 
 /** Reports whether the exact `kind` (no alias mapping) has `capability`; false for an unknown kind. */

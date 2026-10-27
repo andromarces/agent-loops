@@ -1,6 +1,5 @@
-import { execa } from "execa";
-import { killTreeOnExit } from "./exec-tree.mjs";
 import { readProp } from "./error-message.mjs";
+import { execBounded } from "./exec.mjs";
 import { logError, logInfo, logWarn } from "./log.mjs";
 import { redactEnvSecrets } from "./redact.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
@@ -75,33 +74,18 @@ export function redactAndClean(text) {
   return redactEnvSecrets(stripControl(redactEnvSecrets(text)));
 }
 
-/**
- * The command text as every output shows it (ADR 0017): secret-named environment values
- * redacted and control characters removed. The runtime runs the original text.
- * @param {string} command
- */
-export function redactCommandText(command) {
-  return redactAndClean(command);
-}
-
-/**
- * Kills what the runtime owns and nothing else. execa starts the command as the
- * leader of a process group of its own on POSIX, so SIGKILL to that group reaches
- * the command and the descendants and orphans that stayed in the group. On Windows
- * execa runs `taskkill /T /F`, which walks the parent links of the command. The
- * runtime never signals a process by name, by environment, or by a host-wide scan.
- * Approved limit (maintainer, 2026-10-04, ADR 0017): an orphan that left the group,
- * for example through `setsid`, survives on POSIX, and an orphan whose parent
- * exited survives on Windows. Neither Node nor execa exposes a Windows job object.
- */
-function killTree(subprocess) {
-  subprocess.kill("SIGKILL");
+// The error that a canceled run throws, which carries the advisory `canceled` result.
+function canceledError(testRun) {
+  const err = new Error("test command canceled");
+  err.isCanceled = true;
+  err.testRun = testRun;
+  return err;
 }
 
 // The advisory result of a command that the runtime did not start (ADR 0040).
 function notRunResult(command, status, summary, durationMs) {
   const testRun = {
-    command: redactCommandText(command),
+    command: redactAndClean(command),
     status,
     exitCode: null,
     timedOut: false,
@@ -150,15 +134,14 @@ async function holdSlotFor(command, signal) {
   }
   const durationMs = Date.now() - startedAt;
   if (signal?.aborted) {
-    const err = new Error("test command canceled");
-    err.isCanceled = true;
-    err.testRun = notRunResult(
-      command,
-      "canceled",
-      "canceled while the command waited for a test slot; the command did not run",
-      durationMs,
+    throw canceledError(
+      notRunResult(
+        command,
+        "canceled",
+        "canceled while the command waited for a test slot; the command did not run",
+        durationMs,
+      ),
     );
-    throw err;
   }
   logWarn(`no test slot won within ${options.waitSeconds}s; the test command did not run`);
   return {
@@ -221,30 +204,31 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
 
-  const subprocess = killTreeOnExit(
-    execa(command, {
-      cwd,
-      env,
-      shell: true,
-      reject: false,
-      stdin: "ignore",
-      all: true,
-      buffer: false,
-      cleanup: true,
-      killDescendants: true,
-    }),
-  );
-  // The runtime owns the bound and the cancel. Both kill the process group of the command on
-  // POSIX and its tree on Windows, and an orphan that left it can survive (ADR 0017).
+  const subprocess = execBounded(command, [], {
+    cwd,
+    env,
+    shell: true,
+    stdin: "ignore",
+    all: true,
+    buffer: false,
+  });
+  // The runtime owns the bound and the cancel, and kills what it owns and nothing else. execa
+  // starts the command as the leader of a process group of its own on POSIX, so SIGKILL to that
+  // group reaches the command and the descendants and orphans that stayed in the group. On Windows
+  // execa runs `taskkill /T /F`, which walks the parent links of the command. The runtime never
+  // signals a process by name, by environment, or by a host-wide scan.
+  // Approved limit (maintainer, 2026-10-04, ADR 0017): an orphan that left the group, for example
+  // through `setsid`, survives on POSIX, and an orphan whose parent exited survives on Windows.
+  // Neither Node nor execa exposes a Windows job object.
   let timedOut = false;
   let canceled = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    killTree(subprocess);
+    subprocess.kill("SIGKILL");
   }, timeoutSeconds * 1000);
   const onAbort = () => {
     canceled = true;
-    killTree(subprocess);
+    subprocess.kill("SIGKILL");
   };
   if (signal?.aborted) {
     onAbort();
@@ -316,7 +300,7 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   logInfo(`test command finished in ${durationMs}ms: ${status}`);
 
   const testRun = {
-    command: redactCommandText(command),
+    command: redactAndClean(command),
     status,
     exitCode,
     timedOut,
@@ -334,10 +318,7 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
     finalSnapshots.set(testRun, finalSnapshot);
   }
   if (canceled) {
-    const err = new Error("test command canceled");
-    err.isCanceled = true;
-    err.testRun = testRun;
-    throw err;
+    throw canceledError(testRun);
   }
   return testRun;
 }

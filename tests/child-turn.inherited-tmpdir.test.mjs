@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import { failedInheritedTmpdirEntries } from "../src/lib/inherited-tmpdir-entries.mjs";
+import { failedInheritedTmpdirEntries } from "../src/lib/tmpdir-entries.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";

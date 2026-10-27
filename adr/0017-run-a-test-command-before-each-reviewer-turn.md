@@ -32,7 +32,7 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
 6. **Output as prompt content.** The tail goes to a model, the result, the state file, and the transcript.
    - The tail is untrusted data. It can hold text that reads as an instruction, so the prompt says so before the tail and puts the tail in a fence that is longer than any backtick run in it. Control characters other than newline and tab are removed.
    - The runtime redacts by exact value: the value of every environment variable whose name contains `token`, `secret`, `passw`, `key`, `credential`, or `auth`, and is at least 8 characters long, becomes `[redacted:NAME]`, in the tail and in the reported command. The runtime does not detect other secrets: a secret that the command derives, encodes, reads from a file, or holds in a variable with another name reaches the reviewer. The prompt tells the reviewer not to repeat one. This is a mitigation, not a guarantee.
-   - **Command text rule (issue #431).** The runtime redacts the command text with the same exact-value rule, and never refuses a command. It shows the command only through `redactCommandText`, in every output: the `testRun.command` field of the reviewer prompt, the interactive envelope, `lastResult` in the state file, the headless result prompt, the transcript event, and the fatal error report on stderr, plus the `testCmd` option that the headless transcript records. The runtime runs the original text. The runtime also redacts the same values from every error text and log line that it prints or records: the parser refusals and usage errors of both CLI entry points (an unknown argument, a bad `--mode` or agent value, a stray argument that an unquoted command leaves behind), the refusal of a changed or missing `--test-cmd`, the error envelope, the `error` of `lastResult`, the transcript `error`, the stderr report, and the log lines. A non-string message or a thrown non-Error is serialized first and then redacted, and a value that cannot be read or serialized prints a fixed placeholder. The transcript write warning and the stdout failure warning go through the same redaction. A refusal for a changed or missing `--test-cmd` prints no command and no stored value.
+   - **Command text rule (issue #431).** The runtime redacts the command text with the same exact-value rule, and never refuses a command. It shows the command only through `redactAndClean`, in every output: the `testRun.command` field of the reviewer prompt, the interactive envelope, `lastResult` in the state file, the headless result prompt, the transcript event, and the fatal error report on stderr, plus the `testCmd` option that the headless transcript records. The runtime runs the original text. The runtime also redacts the same values from every error text and log line that it prints or records: the parser refusals and usage errors of both CLI entry points (an unknown argument, a bad `--mode` or agent value, a stray argument that an unquoted command leaves behind), the refusal of a changed or missing `--test-cmd`, the error envelope, the `error` of `lastResult`, the transcript `error`, the stderr report, and the log lines. A non-string message or a thrown non-Error is serialized first and then redacted, and a value that cannot be read or serialized prints a fixed placeholder. The transcript write warning and the stdout failure warning go through the same redaction. A refusal for a changed or missing `--test-cmd` prints no command and no stored value.
    - **JSON-escaped form.** The redaction also matches the JSON-escaped form of each value, so a value with a quote or a backslash does not survive in a serialized error.
    - **Overlapping values (issue #521).** Each round finds every occurrence of every value, raw and escaped, on the current text, merges the overlapping ones, and replaces each merged run in one pass. A round is a linear scan for each value. The first two rounds use `[redacted:NAME]`, one marker for each distinct marker text of the variables in the run, with the name as the environment reports it. A variable whose marker would hold a value gets `[*]`. The second round exists because a marker next to text can form a value, and it names the variable as the earlier per-value replacement did. Later rounds use `[*]`, which is shorter than the match. After at most 5 rounds, text that still holds a value becomes `[*]`, so the cost is bound for any input at the price of the text in an adversarial case. An escaped form that holds the raw form, as for a value that starts with a quote or a backslash or ends with a backslash, adds no match, and the raw match leaves the escape backslash, as the earlier replacement did. Guarantees: the result holds no complete value, raw or escaped, and a second redaction of the result returns it unchanged. Two variables with one value share one match, named for the first variable in the environment, as before. Guarantee: no complete value survives in the result, raw or escaped. Every occurrence of a value that the input holds, and every occurrence that a round forms from a marker and the text next to it, is replaced in full, so no part of an occurrence stays. Two exceptions: the escape backslash that the raw match leaves for an escaped form that holds the raw form, and text that holds only a piece of a value, which stays as it is. Parity with the earlier per-value replacement, tested for one secret-named variable: the result is byte-identical when the occurrences of its value, raw and escaped, do not overlap, and the earlier result holds no complete value, in a marker or across a marker and the text next to it. With several values, a value that occurs in marker text, or an occurrence that overlaps another, the result can differ from the earlier result. The differences are not a closed list, and the tests pin examples: a merged run gives one marker where the earlier result gave one for each match, and a value in the marker of another variable gives `[*]` where the earlier result nested a marker in the marker. A marker holds the variable name, which can hold control or non-ASCII characters, so the control-character cleanup of the command text and of the tail can change a marker, and both paths redact again after that cleanup. The cut of a log line to 300 characters is also followed by a redaction in which every marker is `[*]`, so the line never exceeds 303 characters. Limits: the guarantee covers the text that the redaction returns and the paths above. A later serialization of the result, for example into JSON, is not covered.
    - **No execa command line in a message.** An execa `message`, `shortMessage`, `command`, and `escapedCommand` hold the arguments in the quoting of the platform shell, for example `'\''` on POSIX, which no fixed list of escaped forms covers. A runtime-authored message never embeds them. The Copilot launcher failure report is built from the exit code, the signal, and the error code, plus a fixed description, and then goes through the same redaction. The fallback detail of a failed `git` call in `src/lib/local-files.mjs` is the stderr of git or the error code. The other execa callers build their messages from their own fields.
@@ -68,7 +68,7 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
      Probe601_Ab,Probe601_aB -> Probe601_Ab=B
      ```
 
-   - **POSIX casing probe (issue #601).** Save the script as `probe-posix.mjs` and run `node probe-posix.mjs <repo-root> <git-work-dir>`. The script spawns a child with two casings of one secret name and two different values. The child imports `redactCommandText`, `readableErrorText`, `logInfo`, and `runTestCmd` from `src/lib` and prints each output. `<git-work-dir>` is an empty Git repository for the snapshot of `runTestCmd`.
+   - **POSIX casing probe (issue #601).** Save the script as `probe-posix.mjs` and run `node probe-posix.mjs <repo-root> <git-work-dir>`. The script spawns a child with two casings of one secret name and two different values. The child imports `redactAndClean`, `readableErrorText`, `logInfo`, and `runTestCmd` from `src/lib` and prints each output. `<git-work-dir>` is an empty Git repository for the snapshot of `runTestCmd`.
 
      ```js
      import { spawnSync } from "node:child_process";
@@ -77,7 +77,7 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
      if (process.argv[2] === "--inner") {
        const [, , , r, w] = process.argv;
        const m = (f) => import(pathToFileURL(`${r}/src/lib/${f}`).href);
-       const { redactCommandText, runTestCmd } = await m("test-cmd.mjs");
+       const { redactAndClean, runTestCmd } = await m("test-cmd.mjs");
        const { readableErrorText } = await m("error-message.mjs");
        const { logInfo } = await m("log.mjs");
        const upper = process.env.Probe601_Token;
@@ -85,7 +85,7 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
        const names = Object.keys(process.env).filter((k) => k.toLowerCase() === "probe601_token");
        console.log("names in process.env:", names.join(","));
        const text = `cmd ${upper} and ${lower}`;
-       console.log("command text:", redactCommandText(text));
+       console.log("command text:", redactAndClean(text));
        console.log("error text:", readableErrorText(new Error(text)));
        const logs = [];
        const orig = console.log;
@@ -96,7 +96,7 @@ Issue #420 asks for an optional `--test-cmd` that the runtime runs before each r
        const run = await runTestCmd({ command: `echo ${upper} ${lower}`, cwd: w });
        console.log("runTestCmd command:", run.command);
        console.log("runTestCmd tail:", run.tail.trim());
-       const outputs = [redactCommandText(text), run.command, run.tail];
+       const outputs = [redactAndClean(text), run.command, run.tail];
        console.log(
          "raw value left anywhere:",
          [upper, lower].some((v) => outputs.some((s) => s.includes(v))),
@@ -169,7 +169,7 @@ Andro Marces
 - [Issue #601: Clarify the ADR 0017 child-env casing rule and probe the casing on POSIX](https://github.com/andromarces/agent-loops/issues/601)
 - [Issue #342: Document that a Codex reviewer on Windows cannot spawn the test runner](https://github.com/andromarces/agent-loops/issues/342)
 - Implementation:
-  - Source: `runTestCmd` and `redactCommandText` in `src/lib/test-cmd.mjs`
+  - Source: `runTestCmd` and `redactAndClean` in `src/lib/test-cmd.mjs`
   - Source: `redactEnvSecrets` in `src/lib/redact.mjs`
   - Source: `reportFailure` in `src/entrypoints/copilot.mjs`
   - Source: The error text in `src/lib/error-message.mjs` and `src/lib/log.mjs`

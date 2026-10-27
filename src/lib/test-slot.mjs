@@ -1,12 +1,12 @@
 // Machine-wide test slot (#847, ADR 0039). `agent-loop test-slot` runs one command only while
 // it holds one of the slot lock files that every work tree and project of the OS user on the
 // host shares, so parallel full-suite runs do not oversubscribe the host.
-import { execa } from "execa";
 import { readdir } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { killLiveTrees, killTreeOnExit } from "./exec-tree.mjs";
+import { killLiveTrees } from "./exec-tree.mjs";
+import { execBounded } from "./exec.mjs";
 import { logDebug, logError, logInfo, logWarn, setLogsToStderr } from "./log.mjs";
 import { ownerAlive } from "./process-identity.mjs";
 import { lockHeld, readLockOwner, tryStateLock } from "./state-lock.mjs";
@@ -206,9 +206,9 @@ async function tryAcquireSlot(root, slots) {
   return slot;
 }
 
-// Counts the held slot files (`lockHeld`: an unreadable file counts, a stale one does not) and,
-// while fewer than `slots` are held, takes the lowest free index. Runs under the table lock.
-async function claimSlot(root, slots) {
+// The indexes of the slot files that a live owner holds (`lockHeld`: an unreadable file counts, a
+// stale one does not). Throws when `root` cannot be read.
+async function heldSlotIndexes(root) {
   const held = new Set();
   for (const entry of await readdir(root)) {
     const match = SLOT_FILE.exec(entry);
@@ -216,6 +216,13 @@ async function claimSlot(root, slots) {
       held.add(Number(match[1]));
     }
   }
+  return held;
+}
+
+// Counts the held slot files and, while fewer than `slots` are held, takes the lowest free index.
+// Runs under the table lock.
+async function claimSlot(root, slots) {
+  const held = await heldSlotIndexes(root);
   for (let index = 0; held.size < slots; index++) {
     if (held.has(index)) {
       continue;
@@ -268,21 +275,14 @@ async function acquireSlot({ root, slots, waitMs, signal }) {
 // True when any slot file under `root` is held by a live owner. A missing directory holds none.
 // Reads only, with no table lock, so a slot taken right after the read is not seen.
 async function anySlotHeld(root) {
-  let entries;
   try {
-    entries = await readdir(root);
+    return (await heldSlotIndexes(root)).size > 0;
   } catch (err) {
     if (err?.code === "ENOENT") {
       return false;
     }
     throw err;
   }
-  for (const entry of entries) {
-    if (SLOT_FILE.test(entry) && (await lockHeld(join(root, entry)))) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // True when `marker` names a slot file that still holds the named nonce and a live owner.
@@ -344,18 +344,14 @@ const signalExit = (name) => 128 + (constants.signals[name] ?? 0);
 // reaches it. The command text is never logged.
 async function runCommand(command, { env, ownGroup }) {
   logInfo("test slot command started");
-  const result = await killTreeOnExit(
-    execa(command, {
-      shell: true,
-      reject: false,
-      stdin: "ignore",
-      stdout: "inherit",
-      stderr: "inherit",
-      env,
-      cleanup: true,
-      killDescendants: ownGroup,
-    }),
-  );
+  const result = await execBounded(command, [], {
+    shell: true,
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+    env,
+    killDescendants: ownGroup,
+  });
   if (typeof result.exitCode === "number") {
     logInfo(`test slot command finished: exit ${result.exitCode}`);
     return result.exitCode;

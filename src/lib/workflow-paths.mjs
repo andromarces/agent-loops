@@ -116,7 +116,9 @@ export function prEventsFilteredOut(text, files) {
     const patterns = pathsOf(event);
     return (
       patterns !== null &&
-      !patterns.some((pattern) => files.some((file) => patternRegExp(pattern).test(file)))
+      !patterns
+        .map((pattern) => patternRegExp(pattern))
+        .some((re) => files.some((file) => re.test(file)))
     );
   });
 }

@@ -8,7 +8,7 @@ import {
   carryInheritedTmpdirEntries,
   failedInheritedTmpdirEntries,
   snapshotInheritedTmpdir,
-} from "./lib/inherited-tmpdir-entries.mjs";
+} from "./lib/tmpdir-entries.mjs";
 import {
   carryPackageStoreEntries,
   changedInPackageStore,
