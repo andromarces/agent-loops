@@ -144,7 +144,9 @@ and each flag fails with a clear error.
   and through `gh pr checks --required` while the classic-protection source stays
   unknown. A required check that never started cannot escape the gate: the per-check
   pass refuses it when a source names it, and the blocked-merge-state refusal covers
-  it when no source names it. The gate cannot tell a missing check from an unmet
+  it when no source names it. A blocked merge state refuses after the per-check
+  pass, so a refusal for a named check keeps its name, and each refusal names the
+  failed condition. The gate cannot tell a missing check from an unmet
   review or another required rule, so a repository with required approvals also
   refuses until they are met, and a branch that states it has no required check still
   refuses while its merge state is blocked. GitHub computes the merge state lazily,

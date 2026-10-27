@@ -9,7 +9,7 @@ PR head to complete before you dispatch the reviewer. When a reviewer turn
 reports a pending required check in `Checks`, wait for those checks to complete
 before you call `finish`.
 
-The wait is the status read the role rule excepts, and it changes nothing. The
+The wait is the status read the role rule excepts, and it changes nothing (issue #348). The
 runtime owns the bound, because `gh pr checks --watch` takes no timeout and a
 shell `timeout` exists on neither Windows nor macOS by default:
 
@@ -291,7 +291,7 @@ command omits it, so an empty list means no required check has reported yet and
 the wait continues.
 
 A required check still pending after a wait, whether it failed or the bound
-elapsed, is not a finish condition. The `--require-ci` gate refuses a finish
+elapsed, is not a finish condition (issue #319). The `--require-ci` gate refuses a finish
 while a required check is pending, so a finish summary cannot carry it. Wait
 again, dispatch the reviewer again, or `abort` with the pending check named in
 the reason.
@@ -299,7 +299,7 @@ the reason.
 ## Headless loop waits
 
 The headless `agent-loop` command runs its own orchestrator and renders its own wait
-prompt (ADR 0013). A `role` parent does not follow that prompt. It follows the wait
+prompt ([ADR 0013](../../adr/0013-bound-the-headless-required-check-wait.md)). A `role` parent does not follow that prompt. It follows the wait
 rules above, and it runs the wait itself.
 
 The `--require-ci` finish gate is the only check read that enforces; the advisory status read of a named PR does not. The gate refuses a finish while a required check is pending. A reviewer dispatch corrects that refusal.

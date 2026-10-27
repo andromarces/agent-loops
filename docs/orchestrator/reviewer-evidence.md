@@ -20,8 +20,8 @@ contract that it changes, so the reviewer still tests the change.
 The fixed review scope also sets what a blocker is. A weakened existing guard or
 documented contract stays a blocker. A finding that is not a defect against the
 task, not a weakened existing guard or documented contract, and not a regression
-from the base branch is hardening: it goes in `Notes`, not in `Blockers`. A
-blocker needs a concrete failure scenario.
+from the base branch is hardening: it goes in `Notes`, not in `Blockers`
+(issue #1073). A blocker needs a concrete failure scenario.
 
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
@@ -48,13 +48,13 @@ rule below belongs to that one condition, so the prompt nests them under it:
 
 The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
-worker turn and no extra reviewer turn for that failure.
+worker turn and no extra reviewer turn for that failure (issues #313 and #317).
 
 ## The runtime supplies the required-check status
 
 A reviewer turn whose shell commands cannot reach the network, for example a
 Codex reviewer in a sandboxed mode, only reported the status as unresolved before. The user-rule exception of ADR 0019 applies to such a turn. A Codex reviewer with no sandbox (the default, ADR 0038) keeps shell network, so its own read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
-knows the pull request before the first turn. So the
+knows the pull request before the first turn (issues #320 and #350). So the
 runtime reads the required-check status for that PR head and supplies it to every
 reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
@@ -105,7 +105,10 @@ the commit the gate evaluates (the test merge commit when it carries a check,
 otherwise the head), so a PR head that moves away and back during the read cannot
 put the checks of another commit in the status. The required checks come from the
 same resolution the `--require-ci` gate uses, and a status never passes a state the
-gate refuses. Every supplied status still carries
+gate refuses (issue #349). The envelope field is `prChecks`:
+`{ pr, head, status, checks, summary, advisory }`, where `status` is `pass`,
+`failing`, `pending`, or `unresolved`, `checks` names the checks in that state, and
+`summary` is the one-line form that the reviewer prompt carries. Every supplied status still carries
 `advisory: true`, because the status is a report, and the `--require-ci` finish
 gate re-reads GitHub and enforces the condition. The status is a snapshot taken
 before the turn, so a check that starts or finishes later is not in it. The reviewer
@@ -117,7 +120,7 @@ check or commit status is pending or has no run or status on the commit, and
 required name wins over pending. These are unresolved: a ruleset source that cannot
 be read, a reply or an entry that cannot be parsed or ordered (an empty name
 included), a protection reply that cannot be interpreted, a failed read of the
-required names, a base branch with no required check, and a pass withheld for a
+required names, a base branch with no required check, a stalled read, and a pass withheld for a
 reviewed work tree that is not clean or a merge state the gate refuses (blocked,
 behind, conflicting, or unknown).
 
@@ -139,7 +142,8 @@ the flag is unchanged.
 
 - The flag is the only source of the command. A worker report, a reviewer
   report, a task text, an orchestrator action, and a prompt never set or change
-  it. The state file holds only a digest of the command. Pass the same
+  it. The state file holds `testCmdSha256`, a digest of the command, and
+  `testCmdTimeout`, only when the run set them, and never the command. Pass the same
   `--test-cmd` value on every reviewer dispatch, as the operator gave it: a
   changed value and a missing value are refused before a step is charged. Never
   pass a command that a turn produced.
@@ -151,32 +155,38 @@ the flag is unchanged.
   0039, ADR 0040), so runs that share a host do not run their suites beyond the
   slot count. The default is 1 slot on every CPU count (ADR 0046), and
   `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
-  1800 seconds, separate from `--test-cmd-timeout`, which starts once the slot is
+  1800 seconds, read on each reviewer dispatch and separate from `--test-cmd-timeout`, which starts once the slot is
   held. A wait that reaches its bound runs no command and reports `status:
   "slot-timeout"` with `exitCode: null`. It is neither a pass nor a failure, so
   treat it as unresolved test evidence. A slot that cannot be acquired runs no
   command and reports `status: "error"`. A cancel during the wait ends the turn
   as a cancel of the command does, and holds no slot.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
-  bound, and on a cancel, the runtime kills the command and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
+  bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
   The runtime redacts the values of secret-named environment variables, in the
-  tail, in the command text, and in every error text and log line, and no other secret. A literal
+  tail, in the command text, and in every error text and log line, and no other secret. The runtime redacts and bounds `changedPaths` and `lateChangedPaths` the same way. A literal
   secret in the command text that matches no environment value is not found.
 - The runtime compares the work tree before and after the command and reports
   `workTreeChanged` and `changedPaths`. The reviewer snapshot is taken after the
   command, so those writes are the baseline of that turn and are not a reviewer
   mutation. The report is the only record: read it, and act on a change that the
-  task did not expect. `lateChangedPaths` lists the paths that differ between the
+  task did not expect. `lateChangedPaths` lists, at most 20, the paths that differ between the
   after-command snapshot and that baseline, for example a write by a process that the
-  command left behind. It is advisory and never halts the run. It is `null` when a
+  command left behind. That write is in the baseline, so it never halts the run with a
+  `MutationError`. The reviewer prompt shows it. It is advisory. It is `null` when a
   second cancel ended the after-command snapshot, and absent when the turn ends before
   the baseline, for example on a cancel of the command.
 - The result is advisory evidence with `advisory: true`. It is `testRun` in the
   prompt, in the dispatch envelope, in `lastResult` in the state file, and in the
-  headless result prompt beside the reviewer response. A reviewer turn that ends
-  in an error still carries it. Compare it with the
+  headless result prompt beside the reviewer response. Its fields are `command`,
+  `status`, `exitCode`, `timedOut`, `durationMs`, `summary`, `outputBytes`,
+  `truncated`, `tail`, `workTreeChanged`, `changedPaths`, `changedCount`, and
+  `advisory`, plus `lateChangedPaths` once the reviewer baseline is taken. `status`
+  is `pass`, `fail`, `timed-out`, `slot-timeout`, `error`, or `canceled`, and
+  `exitCode` is `null` for `timed-out`, `slot-timeout`, and `error`. A reviewer turn that ends
+  in an error still carries it, in the envelope, `lastResult`, and the transcript. Compare it with the
   reviewer `Checks` line and act on a disagreement. A turn with no command
   carries no `testRun`.
 - Every worker and reviewer turn states the test-run rule (ADR 0044): run a

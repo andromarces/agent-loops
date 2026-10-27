@@ -39,7 +39,9 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
   state directory — never through the hook `cwd`, so a parent whose run targets
   a different `--cwd` stays guarded wherever it edits. The reader unions that
   directory with the legacy single-path `<runs root>/sessions/<parent-session>`
-  file; init writes only the per-run entries.
+  file; init writes only the per-run entries. A later init call from the same
+  session in the same work tree overwrites only its own entry, so simultaneous
+  inits in different work trees each keep their entry.
   No environment variable is required at parent start-up; the harness entry
   points (#56) pass their session id as `--parent-session` on init.
 - Deny only when the hook session id equals `parentSession` in any registered

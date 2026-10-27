@@ -2,7 +2,7 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a turn reports a replacement conversation, a missing session, a cancel, or a task-only turn.
 
-The init task (`--task` or `--task-file`) reaches each child conversation once. The first turn of a
+The init task (`--task` or `--task-file`, which refuses an empty file) reaches each child conversation once. The first turn of a
 conversation shows the task under its own `Init task:` label, before `Instructions:`.
 
 - The role state records `taskSentTo`, the session id of the conversation that last carried the task. A turn

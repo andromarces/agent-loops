@@ -5,7 +5,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 ## The Codex reviewer sandbox mode
 
 A Codex reviewer turn runs with no sandbox by default, with
-`sandbox_mode="danger-full-access"` (ADR 0038), and with the app connectors off
+`sandbox_mode="danger-full-access"` ([ADR 0038](../../adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md),
+which partially supersedes [ADR 0019](../../adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)), and with the app connectors off
 (`features.apps=false`, issue #496). It can run the test suite and
 `gh pr checks`. An operator can choose a sandbox at init with
 `--reviewer-sandbox read-only` or `--reviewer-sandbox workspace-write`. The
@@ -52,8 +53,11 @@ The mode table is in
 - The runtime pins `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` to the paths that it resolves for every worker and reviewer turn, on every adapter, unless the user set them (issue #970, ADR 0049). A `TMP`, `TEMP`, or `TMPDIR` override inside the turn cannot move the test-slot directory, so the machine-wide slot limit holds. The runtime also sets `npm_config_logs_max=0` for those turns, so npm writes no debug log to its cache, unless the user set `npm_config_logs_dir` or `npm_config_logs_max` (issue #995, ADR 0049).
 - Each Codex turn runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`. The Codex CLI leaves two empty `.tmp*` directories there on every turn (issue #955, ADR 0047). The runtime removes them with the directory after the turn. The reviewer prompt tells the reviewer to build a temporary path from the directory that those variables name when one is set, and never to write a literal path to the system temporary directory, because the removal covers only the private directory. The runtime lists an entry that appears directly in the inherited directory during a reviewer turn as `inheritedTmpdirEntries`, and deletes none (issue #1024). `AGENT_LOOP_SESSION_RECORDS_ROOT` overrides the default `<os tmpdir>/agent-loops/session-records`.
 - The runtime lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`, as a JSON array of absolute paths, for the installer check of a package-runner root. The parent resolves every entry before it forwards the list, and forwards `unusable` for a value that it cannot resolve. A value that is present but is not a valid list makes the installer refuse every root. A helper process removes the turn directory only when its device and inode match the recorded ones, and ends at a 30-second bound. A replacement between the final check and `rmdir` loses at most an empty directory, because Node has no directory-handle delete.
-- Choose the mode at init, and never change it later. A later call may repeat the
-  flag or omit it. Any other value is refused, in either direction. A headless
+- Choose the mode at init, and never change it later. The state file holds
+  `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) for a Codex reviewer
+  only. A later call may repeat the
+  flag or omit it, which reads the stored value. Any other value is refused with
+  `cannot be changed after init`, in either direction. A headless
   `--continue-from` run keeps the mode of the earlier run, and a flag that names
   another mode is refused. No turn sets it.
 - A state file or a transcript from before ADR 0038 has no recorded mode. It gets
