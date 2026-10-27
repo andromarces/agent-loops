@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test } from "vite-plus/test";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { processExists, removePath } from "../runtime-helpers.mjs";
 
 // The start-time query runs the real command here: a fake `ps` (`powershell.exe` on
 // Windows, as a `.cmd` that PATHEXT resolves) first on PATH hangs on purpose, so the bound and the end of the whole query tree are observed, not stubbed.
@@ -45,15 +45,6 @@ afterAll(async () => {
   delete process.env.FAKE_PS_PIDFILE;
   await removePath(dir);
 });
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
 
 const pidFile = () => join(dir, "ps.pid");
 
@@ -98,5 +89,5 @@ test("a hung start-time query returns null and leaves no query process", async (
     .not.toBeNull()
     .catch(() => ctx.skip());
   const pid = await queryPid();
-  await expect.poll(() => isAlive(pid), { timeout: 5000 }).toBe(false);
+  await expect.poll(() => processExists(pid), { timeout: 5000 }).toBe(false);
 }, 20_000);

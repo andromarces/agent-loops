@@ -5,21 +5,13 @@ import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import {
   cleanup,
   dispatchArgv,
-  INIT_OVERRIDES,
   readRepoState,
   recordingAdapter,
-  repos,
-  setup,
+  startRun as startRunWith,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import {
-  createTempRepo,
-  freePlanGh,
-  PASSING_RUN,
-  prGateGh,
-  unreachableGh,
-} from "./runtime-helpers.mjs";
+import { freePlanGh, PASSING_RUN, prGateGh, unreachableGh } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {
@@ -38,19 +30,8 @@ const declareArgv = (pr, ...flags) => [
   ...flags,
 ];
 
-/** Starts a run in a new work tree with the given extra init flags; no PR is declared by default. */
-async function startRun(initFlags = [], role = "worker") {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
-  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
-  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, ...initFlags], role), repo), {
-    agents,
-    stdin: stdinPrompt,
-    gh: prGateGh("1".repeat(40)),
-  });
-  return { repo, agents };
-}
+/** Starts a run with the given init options; `gh` answers the start read of a declared PR. */
+const startRun = (options) => startRunWith({ gh: prGateGh("1".repeat(40)), ...options });
 
 const declare = (repo, pr, ...flags) =>
   executeRoleCommand(withRepo(declareArgv(pr, ...flags), repo), {
@@ -110,7 +91,7 @@ test("a PR declared after init refuses a finish without the gate for that PR", a
 // Usefulness: verifies the transition is one-way — a run that holds a PR, from init or from an
 // earlier declare, refuses another declaration, so a declared PR cannot be moved to another PR.
 test("declare-pr refuses a run that already has a PR", async () => {
-  const atInit = await startRun(["--pr", "42"]);
+  const atInit = await startRun({ initFlags: ["--pr", "42"] });
   const sameNumber = await declare(atInit.repo, 42);
   const otherNumber = await declare(atInit.repo, 43);
   for (const result of [sameNumber, otherNumber]) {
@@ -178,7 +159,7 @@ test("declare-pr refuses a missing PR, a missing parent session, and a wrong one
 // Usefulness: verifies a review-only run, which refuses `--pr` at init because it cannot pass the
 // `--require-ci` gate, refuses a declaration after init too.
 test("declare-pr refuses a review-only run", async () => {
-  const { repo } = await startRun(["--mode", "review-only"], "reviewer");
+  const { repo } = await startRun({ initFlags: ["--mode", "review-only"], role: "reviewer" });
   const refused = await declare(repo, 42);
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("review-only");

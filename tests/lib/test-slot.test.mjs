@@ -134,15 +134,11 @@ function inProcess(ctx, script) {
   return `node -e "process.chdir(process.argv[1]); import(require('url').pathToFileURL(process.argv[2]).href)" "${ctx.cwd}" "${join(ctx.cwd, script)}"`;
 }
 
-async function waitForFile(path, ms = 10_000) {
-  const deadline = Date.now() + ms;
-  while (!existsSync(path)) {
-    if (Date.now() > deadline) {
-      throw new Error(`${path} did not appear`);
-    }
-    await delay(50);
-  }
-}
+const waitForFile = (path, ms = 10_000) =>
+  vi.waitFor(() => expect(existsSync(path), `${path} did not appear`).toBe(true), {
+    timeout: ms,
+    interval: 50,
+  });
 
 // Usefulness: acceptance (#847) — with one slot, two concurrent wrappers run their
 // commands one after the other, which is the whole point of the slot.

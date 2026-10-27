@@ -1,11 +1,11 @@
-import { access, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { createTempRepo, exists, removePath } from "../runtime-helpers.mjs";
 
 // The `--test-cmd` run inside a machine-wide test slot (issue #848, ADR 0040). Each test points
 // the slot directory at a scratch directory of its own and drops any marker that a wrapped test
@@ -37,11 +37,6 @@ afterEach(async () => {
   }
 });
 
-const exists = (file) =>
-  access(file).then(
-    () => true,
-    () => false,
-  );
 const slash = (path) => path.replaceAll("\\", "/");
 
 // A work tree, a scratch directory with the helper scripts, and one slot.

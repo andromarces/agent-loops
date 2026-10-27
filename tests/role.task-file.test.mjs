@@ -7,13 +7,13 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
   repos,
   setup,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -31,9 +31,7 @@ const INIT_WITHOUT_TASK = INIT_OVERRIDES.filter(
 
 // Usefulness: acceptance (#211) — role init takes the task from a file, verbatim, into the state file.
 test("role init --task-file stores the file content as the task", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const path = join(await createInputDir(), "role-task.md");
   await writeFile(path, "Multi-line\ntask.\n");
   const result = await executeRoleCommand(
@@ -49,9 +47,7 @@ test("role init --task-file stores the file content as the task", async () => {
 
 // Usefulness: acceptance (#211) — `--task-file -` reads the task from stdin, with the prompt from --prompt-file.
 test("role init --task-file - reads the task from stdin", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const prompt = join(await createInputDir(), "role-prompt.md");
   await writeFile(prompt, "Do the work.");
   const result = await executeRoleCommand(
@@ -70,9 +66,7 @@ test("role init --task-file - reads the task from stdin", async () => {
 
 // Usefulness: stdin holds one input, so the task and the prompt cannot both come from it.
 test("role init --task-file - without --prompt-file fails", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const result = await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_WITHOUT_TASK, "--task-file", "-"]), repo),
     {
@@ -94,9 +88,7 @@ test("role --task with --task-file fails", async () => {
 
 // Usefulness: acceptance (#211) — the empty-task check applies to the file content on init.
 test("role init with an empty task file fails and writes no state", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const path = join(await createInputDir(), "role-empty.md");
   await writeFile(path, "  \n");
   const result = await executeRoleCommand(
@@ -113,9 +105,7 @@ test("role init with an empty task file fails and writes no state", async () => 
 // Usefulness: acceptance (#211, review) — `--task-file` is an init flag like `--task`, so
 // every later operation that refuses `--task` refuses it too, and the run stays untouched.
 test("--task-file after init is refused wherever --task is refused", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const deps = {
     agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
     stdin: async () => "continue working",

@@ -12,14 +12,8 @@ const EXECA_URL = import.meta.resolve("execa");
 const IS_WINDOWS = process.platform === "win32";
 const MISSING_ROOT = "Z:/exec-tree-missing-root";
 
-async function waitUntil(predicate, ms) {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (await predicate()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return predicate();
-}
+const waitUntil = (predicate, timeout) =>
+  vi.waitFor(async () => expect(await predicate()).toBe(true), { timeout, interval: 100 });
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -133,12 +127,12 @@ test.skipIf(!IS_WINDOWS)(
       );
 
       parentPid = await startOutsideRunner(join(dir, "parent.mjs"));
-      expect(await waitUntil(() => !processExists(parentPid), 30000)).toBe(true);
+      await waitUntil(() => !processExists(parentPid), 30000);
       expect(await readFile(failedFile, "utf8").catch(() => "")).toBe("");
 
       const tree = await Promise.all([shellPidFile, childPidFile, pidFile].map(readPid));
       expect(tree.every((pid) => typeof pid === "number")).toBe(true);
-      expect(await waitUntil(() => tree.every((pid) => !processExists(pid)), 8000)).toBe(true);
+      await waitUntil(() => tree.every((pid) => !processExists(pid)), 8000);
     } finally {
       await endRecorded([parentPid], [shellPidFile, childPidFile, pidFile]);
       await removePath(dir);
@@ -285,11 +279,9 @@ test("killLiveTrees ends a live child that ignores SIGTERM", async () => {
   );
   let pid;
   try {
-    expect(await waitUntil(async () => (pid = await readPid(pidFile)) !== undefined, 20_000)).toBe(
-      true,
-    );
+    await waitUntil(async () => (pid = await readPid(pidFile)) !== undefined, 20_000);
     killLiveTrees();
-    expect(await waitUntil(() => !processExists(pid), 5000)).toBe(true);
+    await waitUntil(() => !processExists(pid), 5000);
   } finally {
     endProcess(pid);
     await subprocess;

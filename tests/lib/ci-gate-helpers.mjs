@@ -1,5 +1,12 @@
 // Fixtures shared by the ci-gate test files: the PR, check-run, and ruleset replies and the `gh` double that serves them.
-import { equalsArgs, pagedApiArgs, pageStdout } from "../runtime-helpers.mjs";
+import {
+  equalsArgs,
+  pagedApiArgs,
+  pageStdout,
+  prChecksArgs,
+  prViewArgs,
+  REPO_VIEW_ARGS,
+} from "../runtime-helpers.mjs";
 
 export const HEAD = "1111111111111111111111111111111111111111";
 
@@ -119,12 +126,11 @@ export function fakeGh(routes) {
 
 // The `gh` calls the gate makes, each as the exact argument elements it passes, so
 // a call that merges two elements into one gets no route (issue #538).
-export const PR_VIEW =
-  "pr view 42 --json headRefOid,baseRefName,mergeStateStatus,potentialMergeCommit,state";
+export const PR_VIEW = prViewArgs(42).join(" ");
 
-export const PR_CHECKS = "pr checks 42 --required --json name";
+export const PR_CHECKS = prChecksArgs(42).join(" ");
 
-export const REPO_VIEW = "repo view --json nameWithOwner -q .nameWithOwner";
+export const REPO_VIEW = REPO_VIEW_ARGS.join(" ");
 
 export const RULES_PAGE = pageRoute(`repos/${SLUG}/rules/branches/main`);
 

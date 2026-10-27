@@ -18,21 +18,11 @@ import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
+  createTempRepo,
   expectBoundKillsShim,
   removePath,
   withGitHangingAfter,
 } from "../runtime-helpers.mjs";
-
-async function createTempRepo() {
-  const dir = await mkdtemp(join(tmpdir(), "agent-loops-snap-test-"));
-  await execa("git", ["init"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Tester"], { cwd: dir });
-  await execa("git", ["config", "user.email", "test@example.com"], { cwd: dir });
-  await writeFile(join(dir, "initial.txt"), "hello world\n");
-  await execa("git", ["add", "initial.txt"], { cwd: dir });
-  await execa("git", ["commit", "-m", "initial commit"], { cwd: dir });
-  return dir;
-}
 
 // Usefulness: verifies assertGitWorkTree passes inside a git repository and rejects a non-git directory.
 test("assertGitWorkTree validates git directory", async () => {
@@ -231,9 +221,9 @@ test("diffSnapshots detects modified tracked file", async () => {
   const repo = await createTempRepo();
   try {
     const s1 = await snapshot(repo);
-    await writeFile(join(repo, "initial.txt"), "modified content\n");
+    await writeFile(join(repo, "init.txt"), "modified content\n");
     const s2 = await snapshot(repo);
-    expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
+    expect(diffSnapshots(s1, s2)).toEqual(["init.txt"]);
   } finally {
     await removePath(repo);
   }
@@ -243,11 +233,11 @@ test("diffSnapshots detects modified tracked file", async () => {
 test("diffSnapshots detects when already-dirty file is modified again", async () => {
   const repo = await createTempRepo();
   try {
-    await writeFile(join(repo, "initial.txt"), "first dirty modification\n");
+    await writeFile(join(repo, "init.txt"), "first dirty modification\n");
     const s1 = await snapshot(repo);
-    await writeFile(join(repo, "initial.txt"), "second dirty modification\n");
+    await writeFile(join(repo, "init.txt"), "second dirty modification\n");
     const s2 = await snapshot(repo);
-    expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
+    expect(diffSnapshots(s1, s2)).toEqual(["init.txt"]);
   } finally {
     await removePath(repo);
   }
@@ -257,7 +247,7 @@ test("diffSnapshots detects when already-dirty file is modified again", async ()
 test("diffSnapshots detects when renamed dirty file is modified", async () => {
   const repo = await createTempRepo();
   try {
-    await execa("git", ["mv", "initial.txt", "renamed.txt"], { cwd: repo });
+    await execa("git", ["mv", "init.txt", "renamed.txt"], { cwd: repo });
     const s1 = await snapshot(repo);
     await writeFile(join(repo, "renamed.txt"), "modified renamed file content\n");
     const s2 = await snapshot(repo);
@@ -303,9 +293,9 @@ test("diffSnapshots detects file deletion", async () => {
   const repo = await createTempRepo();
   try {
     const s1 = await snapshot(repo);
-    await rm(join(repo, "initial.txt"));
+    await rm(join(repo, "init.txt"));
     const s2 = await snapshot(repo);
-    expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
+    expect(diffSnapshots(s1, s2)).toEqual(["init.txt"]);
   } finally {
     await removePath(repo);
   }
@@ -320,7 +310,7 @@ test("diffSnapshots detects index modification via update-index", async () => {
       cwd: repo,
       input: "staged blob content\n",
     });
-    await execa("git", ["update-index", "--cacheinfo", "100644", hash.trim(), "initial.txt"], {
+    await execa("git", ["update-index", "--cacheinfo", "100644", hash.trim(), "init.txt"], {
       cwd: repo,
     });
     const s2 = await snapshot(repo);
@@ -419,11 +409,11 @@ test("snapshot from subdirectory detects second edit to already-modified root fi
   try {
     const sub = join(repo, "sub");
     await mkdir(sub);
-    await writeFile(join(repo, "initial.txt"), "first dirty modification\n");
+    await writeFile(join(repo, "init.txt"), "first dirty modification\n");
     const s1 = await snapshot(sub);
-    await writeFile(join(repo, "initial.txt"), "second dirty modification\n");
+    await writeFile(join(repo, "init.txt"), "second dirty modification\n");
     const s2 = await snapshot(sub);
-    expect(diffSnapshots(s1, s2)).toEqual(["initial.txt"]);
+    expect(diffSnapshots(s1, s2)).toEqual(["init.txt"]);
   } finally {
     await removePath(repo);
   }
@@ -679,7 +669,7 @@ test.skipIf(!canSimulateReadFailure)(
   async () => {
     const repo = await createTempRepo();
     try {
-      const file = join(repo, "initial.txt");
+      const file = join(repo, "init.txt");
       await chmod(file, 0o000);
       try {
         await expect(snapshot(repo)).rejects.toMatchObject({ name: "SnapshotError" });

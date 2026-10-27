@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
-import { prGateGh, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
+import { createTempRepo, prGateGh, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 export const WORKER_REPLY = `${REPORT}\nContinuing next turn.`;
@@ -94,6 +94,38 @@ export async function setup() {
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
   return runsRoot;
 }
+
+/** Starts a test case: a fresh runs root and a temp repo that `cleanup` removes. */
+export async function newRunRepo() {
+  await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  return repo;
+}
+
+/**
+ * Initializes a run in `repo` with the standard init flags plus `initFlags`.
+ * The `gh` stub answers the start read of a declared PR. Returns the adapters the run used.
+ */
+export async function initRun(
+  repo,
+  { initFlags = [], role = "worker", agents = defaultAgents(), gh = undefined } = {},
+) {
+  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, ...initFlags], role), repo), {
+    agents,
+    stdin: stdinPrompt,
+    ...(gh && { gh }),
+  });
+  return agents;
+}
+
+/** Starts a run in a new work tree under a fresh runs root. */
+export async function startRun(options = {}) {
+  const repo = await newRunRepo();
+  return { repo, agents: await initRun(repo, options) };
+}
+
+const defaultAgents = () => ({ fake1: recordingAdapter([]), fake2: recordingAdapter([]) });
 
 export async function cleanup() {
   generation += 1;

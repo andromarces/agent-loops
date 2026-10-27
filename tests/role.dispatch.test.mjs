@@ -27,6 +27,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
   REPORT,
@@ -35,8 +36,8 @@ import {
   setup,
   spyStdoutWrite,
   stdinPrompt,
-  WORKER_REPLY,
   withRepo,
+  WORKER_REPLY,
 } from "./role-helpers.mjs";
 import {
   createTempRepo,
@@ -68,9 +69,7 @@ afterEach(async () => {
 // the same worker session; the adapter receives the persisted session id on
 // the second call.
 test("two consecutive worker dispatches resume the same worker session", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
 
@@ -123,9 +122,7 @@ test("session entry resolves a run dispatched into a different --cwd", async () 
 // Usefulness: verifies acceptance — a worker dispatch under mode review-only
 // exits non-zero and spawns no CLI.
 test("review-only mode rejects a worker dispatch without spawning a CLI", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const init = withRepo(
     dispatchArgv(
@@ -167,9 +164,7 @@ test("review-only mode rejects a worker dispatch without spawning a CLI", async 
 // that is not inside a Git work tree, is refused before it writes a run state, so
 // a refused init leaves nothing behind that a later call could resume (issue #327).
 test("an init dispatch on a refused --cwd writes no run state", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const notARepo = await mkdtemp(join(tmpdir(), "role-test-plain-"));
   repos.push(notARepo);
   const removed = join(repo, "removed-work-tree");
@@ -271,9 +266,7 @@ test("a later dispatch at the live run's own --cwd is refused and changes no run
 // the null worker of a review-only run is rejected as a change after init
 // instead of throwing on the missing role.
 test("a later --worker against a null review-only worker is rejected", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const init = withRepo(
     dispatchArgv(
@@ -310,9 +303,7 @@ test("a later --worker against a null review-only worker is rejected", async () 
 // Usefulness: verifies acceptance — a dispatch past the step budget or in any
 // terminal lifecycle exits non-zero and spawns no CLI.
 test("dispatch past the step budget or in a terminal lifecycle is rejected", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
@@ -349,9 +340,7 @@ test("dispatch past the step budget or in a terminal lifecycle is rejected", asy
 // the payload, and the reviewer session id is recorded in state. Parser edge
 // cases are unit-tested in tests/lib/report.test.mjs.
 test("reviewer dispatch exposes the parsed verdict in the payload", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -384,9 +373,7 @@ test("reviewer dispatch exposes the parsed verdict in the payload", async () => 
 // runtime-owned reviewed state, and that all four fields match the work tree as
 // the turn starts — a clean tree at a real head (issue #217).
 test("reviewer dispatch carries the runtime reviewed state in envelope and state", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([]);
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -414,9 +401,7 @@ test("reviewer dispatch carries the runtime reviewed state in envelope and state
 // change reports clean: false, so the parent can reject PR work on a dirty tree
 // (issue #217).
 test("reviewer dispatch reports clean: false on an uncommitted work tree", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   await writeFile(join(repo, "init.txt"), "uncommitted change\n");
@@ -434,9 +419,7 @@ test("reviewer dispatch reports clean: false on an uncommitted work tree", async
 // taken after the turn" (issue #910): a worker that leaves an uncommitted change shows clean: false
 // before any reviewer runs, and a worker that leaves none shows clean: true at the real head.
 test("worker dispatch reports the work tree state from after the turn", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const dirtyingWorker = recordingAdapter([
     async (_state, _prompt, options) => {
       await writeFile(join(options.cwd, "init.txt"), "left uncommitted\n");
@@ -466,9 +449,7 @@ test("worker dispatch reports the work tree state from after the turn", async ()
 // names beside workTree, and a turn that changes none carries no field" (issue #984). The
 // work tree snapshot alone shows clean: true for a hook or remote change made from a linked work tree.
 test("worker dispatch reports shared Git state changed outside the work tree", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
   const linked = join(parent, "linked");
   await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
@@ -510,9 +491,7 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
 // Runs `body(linked, repo)` with a linked work tree of a fresh repository. The worker adapters of
 // the shared Git tests act on the linked work tree.
 async function withLinkedWorkTree(body) {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
   const linked = join(parent, "linked");
   await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
@@ -619,9 +598,7 @@ test("a failed shared Git read warns without a marker and reports no shared Git 
 // and Deferred labels from a reviewer turn into the envelope (issue #214,
 // issue #217).
 test("reviewer dispatch carries the optional Checks, Notes, and Deferred labels", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -670,9 +647,7 @@ test.each([
     expected: "dropped item",
   },
 ])("worker dispatch carries $name into raw", async ({ extra, expected }) => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const worker = recordingAdapter([]);
   worker.run = async (state) => {
@@ -692,9 +667,7 @@ test.each([
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.
 test("reviewer dispatch exposes a null report and the raw response when the block does not parse", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -717,9 +690,7 @@ test("reviewer dispatch exposes a null report and the raw response when the bloc
 // flagged line still fails safe when the block is long (issue #268). A tail-only
 // fallback loses the head of the block, so this test fails against that behavior.
 test("worker dispatch carries the whole response in raw when the closing block is long", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const response = [
     "Conclusion: done",
@@ -747,9 +718,7 @@ test("worker dispatch carries the whole response in raw when the closing block i
 // event per dispatched turn, in the headless event shape, accumulated across
 // calls.
 test("dispatch appends invocation and result events to the transcript", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   const transcriptPath = join(paths.stateDir, "transcript.jsonl");
 
@@ -780,9 +749,7 @@ test("dispatch appends invocation and result events to the transcript", async ()
 
 // Usefulness: verifies --prompt-file feeds the child prompt instead of stdin.
 test("dispatch reads the prompt from --prompt-file", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const promptFile = join(repo, "prompt.txt");
   await writeFile(promptFile, "work from the file", "utf8");
 
@@ -810,9 +777,7 @@ test("dispatch reads the prompt from --prompt-file", async () => {
 // an identical repeated flag passes through, a changed one is rejected with
 // the change message.
 test("later dispatch rejects changed init flags and accepts identical ones", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "5"]), repo),
@@ -843,9 +808,7 @@ test("later dispatch rejects changed init flags and accepts identical ones", asy
 // Usefulness: verifies an empty stdin prompt exits non-zero, charges no step,
 // and spawns no CLI (regression: the empty check only covered --prompt-file).
 test("empty stdin prompt is rejected without charging a step", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const before = await readRepoState(repo);
@@ -868,9 +831,7 @@ test("empty stdin prompt is rejected without charging a step", async () => {
 // `interrupted`, exits non-zero, and spawns no child, even with an explicit
 // `--resume-interrupted`; a maintainer can resume on a later call.
 test("resume-interrupted from dispatched marks interrupted first and runs no child", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -902,9 +863,7 @@ test("resume-interrupted from dispatched marks interrupted first and runs no chi
 
 // Usefulness: verifies `--resume-interrupted` refuses a claude session that a live process holds, before the step is charged (#671, ADR 0031), which no other test covers.
 test("resume-interrupted refuses a claude session that a live process holds", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   const heldId = "11111111-2222-4333-8444-555555555555";
   const worker = recordingAdapter([]);
@@ -946,9 +905,7 @@ test("resume-interrupted refuses a claude session that a live process holds", as
 
 // Usefulness: verifies a cancel of the process-table read during `--resume-interrupted` exits 130 with the SIGINT envelope and charges no step (#725, ADR 0031 decision 2), which the refusal test does not cover.
 test("resume-interrupted exits 130 when the process-table read is canceled", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   const worker = recordingAdapter([]);
   const deps = {
@@ -985,9 +942,7 @@ test("resume-interrupted exits 130 when the process-table read is canceled", asy
 // an identical `--worker-model antigravity` passes and a changed one is
 // rejected (regression: normalizeAgent mangled the model string).
 test("identical model and effort flags pass comparison verbatim", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(
     withRepo(
@@ -1024,9 +979,7 @@ test("identical model and effort flags pass comparison verbatim", async () => {
 // Usefulness: verifies the `antigravity` kind alias passes the change
 // comparison through normalization while model strings stay verbatim.
 test("antigravity kind alias passes comparison, model strings do not normalize", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(
     withRepo(
@@ -1056,9 +1009,7 @@ test("antigravity kind alias passes comparison, model strings do not normalize",
 // Usefulness: verifies acceptance — stdout holds exactly one JSON object on
 // every path, including errors (verified through the main entry point).
 test("main prints exactly one JSON object on stdout on success and error paths", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const logSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
@@ -1106,9 +1057,7 @@ test.each([
 ])(
   "main prints one error envelope when the message getter throws (isCanceled=%s, exit %i)",
   async (isCanceled, exitCode) => {
-    await setup();
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await newRunRepo();
     const logSpy = spyStdoutWrite();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const origExitCode = process.exitCode;
@@ -1156,9 +1105,7 @@ test.each([
 // fires, so the execa exit handler finds another listener and does not re-raise it before the
 // envelope prints.
 test("the SIGINT listener of role main stays registered after the signal fires", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const logSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
@@ -1227,9 +1174,7 @@ test.each([
   ["NaN", () => Number.NaN, null],
   ["Infinity", () => Number.POSITIVE_INFINITY, null],
 ])("main prints one error envelope when the message is %s", async (_label, makeMessage, text) => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const writeSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
@@ -1269,9 +1214,7 @@ test.each([
 // Usefulness: verifies a fatal child error whose message getter throws still ends the turn with a
 // terminal lifecycle and a recorded turn, so the state file never keeps the dispatched lifecycle.
 test("dispatch records the turn when reading the fatal error message throws", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
   Object.defineProperty(fatal, "message", {
     get() {
@@ -1303,9 +1246,7 @@ test("dispatch records the turn when reading the fatal error message throws", as
 // Usefulness: verifies a fatal child error whose testRun getter throws still ends the turn with a
 // terminal lifecycle and a recorded turn, so the state file never keeps the dispatched lifecycle.
 test("dispatch records the turn when reading the fatal error testRun throws", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
   Object.defineProperty(fatal, "testRun", {
     get() {
@@ -1338,9 +1279,7 @@ test("dispatch records the turn when reading the fatal error testRun throws", as
 test.each(["name", "timedOut"])(
   "dispatch returns an error result when the child error %s getter throws",
   async (property) => {
-    await setup();
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await newRunRepo();
     const failure = new Error("child failed");
     Object.defineProperty(failure, property, {
       get() {
@@ -1375,9 +1314,7 @@ test.each(["name", "timedOut"])(
 // Usefulness: verifies a child error with a non-string message returns an error result through the
 // runtime, instead of the TypeError that splitting the message raised.
 test("dispatch returns an error result when a child error has a non-string message", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const agents = {
     fake1: {
       async run() {
@@ -1403,9 +1340,7 @@ test.each([
   ["through the write callback", false],
   ["by throwing", true],
 ])("main reports a failed stdout write %s", async (_label, throws) => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const failure = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
   const writeSpy = spyStdoutWrite({ failure, throws });
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1440,9 +1375,7 @@ test.each([
 // Usefulness: verifies a non-string message prints exactly as the base envelope printed it, under
 // the key "error", so a toJSON that redacts by key still redacts and discloses nothing more.
 test("main serializes a non-string message under the error key like the base envelope", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const writeSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
@@ -1482,9 +1415,7 @@ test("main serializes a non-string message under the error key like the base env
 // Usefulness: verifies a stateful toJSON is called once, so the envelope and the state file both
 // hold the first (redacted) value and a later call cannot change what was printed or persisted.
 test("main calls a message toJSON once and prints and persists the same value", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const writeSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
@@ -1537,9 +1468,7 @@ test.each([
 ])(
   "main consumes the stdout error event and keeps a non-zero exit code (isCanceled=%s, exit %i)",
   async (isCanceled, exitCode) => {
-    await setup();
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await newRunRepo();
     const failure = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
     const writeSpy = spyStdoutWrite({ failure, emitsErrorEvent: true });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1587,9 +1516,7 @@ test.each([
 // Usefulness: verifies coercing a non-string message never prints more than the base envelope
 // did: a value that its toJSON redacts stays redacted, and its toString is never read.
 test("main keeps a non-string message redacted by its toJSON", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const writeSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const origExitCode = process.exitCode;
@@ -1649,9 +1576,7 @@ const failingCheckGh = (localHead) =>
 // read in the envelope and in the state file, so the parent can compare it with
 // the reviewer Checks line (issue #320).
 test("a declared PR supplies the runtime-read required-check status to the reviewer", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const reviewer = recordingAdapter([]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
   const init = dispatchArgv([...INIT_OVERRIDES, "--pr", "42"], "worker");
@@ -1681,9 +1606,7 @@ test("a declared PR supplies the runtime-read required-check status to the revie
 // dispatch resumes that session, and a missing resumed session clears the stored id and reruns as
 // a first turn without a second step (issue #360, ADR 0016).
 test("a failed first turn keeps its session id and a missing session falls back in one step", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const prompts = [];
   const worker = {
     async run(state, prompt) {
@@ -1726,9 +1649,7 @@ test("a failed first turn keeps its session id and a missing session falls back 
 // Usefulness: verifies a cancel that ends the turn after the CLI reported its session still
 // persists the id for the resume that follows.
 test("a canceled turn keeps the session id the CLI reported", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const worker = {
     async run(state) {
       state.sessionId = "sess-canceled";
@@ -1748,9 +1669,7 @@ test("a canceled turn keeps the session id the CLI reported", async () => {
 // Usefulness: verifies a cancel that lands after the CLI exits and before the adapter returns ends
 // the turn interrupted with exit 130, not recorded ok with the run left active (#587).
 test("a cancel after the child exits records the turn as canceled", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const controller = new AbortController();
   const worker = recordingAdapter([
     () => {
@@ -1773,9 +1692,7 @@ test("a cancel after the child exits records the turn as canceled", async () => 
 // Usefulness: verifies a cancel that lands during the post-turn snapshot of a reviewer turn, after the
 // adapter returned, ends the turn interrupted with exit 130 and records no ok result (#587).
 test("a cancel during the post-turn snapshot records the reviewer turn as canceled", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const controller = new AbortController();
   const post = gitAbortingPostTurn(controller);
@@ -1802,9 +1719,7 @@ test("a cancel during the post-turn snapshot records the reviewer turn as cancel
 // Usefulness: verifies ADR 0027 decision 5 for a replaced conversation: a canceled dispatch persists the
 // id the CLI reported with the replaced mark, and the next worker dispatch sends the preamble (#587).
 test("a canceled dispatch persists the reported id and the next worker turn sends the preamble", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
     stdin: stdinPrompt,
@@ -1845,9 +1760,7 @@ test("a canceled dispatch persists the reported id and the next worker turn send
 // stays an unguarded run, as before the statePaths call-site cleanup (#189),
 // while statePaths itself still rejects a null session id.
 test("dispatch init with an empty parentSession succeeds without a session entry", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const args = { ...withRepo(dispatchArgv(INIT_OVERRIDES), repo), parentSession: "" };
   const result = await executeRoleCommand(args, {
@@ -1862,9 +1775,7 @@ test("dispatch init with an empty parentSession succeeds without a session entry
 // a parent crash during a first turn still leaves the id that the resume after
 // `--resume-interrupted` needs (issue #395). No other test reads the state file mid-turn.
 test("a pre-assigned session id is persisted before the child turn runs", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   let midTurn = null;
   const worker = {
@@ -1904,9 +1815,7 @@ test("a pre-assigned session id is persisted before the child turn runs", async 
 // reports it rejected, so a parent crash right after the rejection cannot leave an id that
 // `--resume-interrupted` would resume (issue #395). The result write alone cannot cover that window.
 test("a rejected pre-assigned id is cleared from the state file before the turn ends", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   let afterRejection = null;
   const worker = {
@@ -1930,9 +1839,7 @@ test("a rejected pre-assigned id is cleared from the state file before the turn 
 // Usefulness: verifies a turn that fails with no id on its role state clears the id persisted
 // before the turn, so a rejected pre-assigned id never becomes a resume target (issue #395).
 test("a failed first turn that keeps no id clears the pre-assigned id from the state file", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const worker = {
     async run(state, _prompt, options) {
       await options.onSessionAssigned("pre-rejected");
@@ -1952,9 +1859,7 @@ test("a failed first turn that keeps no id clears the pre-assigned id from the s
 // id the CLI never confirmed from one it did, and that a turn which confirms it clears the saved
 // mark (issue #395).
 test("the state file marks a pre-assigned id unconfirmed until the turn confirms it", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   let midTurn = null;
   const worker = {
@@ -1979,9 +1884,7 @@ test("the state file marks a pre-assigned id unconfirmed until the turn confirms
 
 // Usefulness: verifies requirement "a denied shell call shows in the result of the turn" (issue #713) at the envelope: the parent sees `shellDenied`, and the role state keeps no stale flag.
 test("worker dispatch carries shellDenied in the envelope when the adapter flags a denied shell call", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const worker = recordingAdapter([]);
   worker.run = async (state) => {
@@ -2002,9 +1905,7 @@ test("worker dispatch carries shellDenied in the envelope when the adapter flags
 
 // Usefulness: verifies requirement "the flag follows read-only turns too" (issue #713, ADR 0035): a reviewer envelope carries `shellDenied`, and a later reviewer turn with no denial carries none.
 test("reviewer dispatch carries shellDenied only for the turn that had it", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([
     (state) => {
@@ -2026,9 +1927,7 @@ test("reviewer dispatch carries shellDenied only for the turn that had it", asyn
 
 // Usefulness: verifies requirement "the envelope names a transient failure" (issue #1012): a reviewer turn that fails with a flagged error carries `transient`, the step stays charged, and a later plain failure carries no field.
 test("reviewer dispatch carries transient in the error envelope only for a flagged failure", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([
     () => {
@@ -2056,9 +1955,7 @@ test("reviewer dispatch carries transient in the error envelope only for a flagg
 // none carries no field" (issue #1024). The child-turn tests cover the read; only a dispatch
 // covers the envelope and the state file.
 test("reviewer dispatch reports a directory left in the inherited temporary directory", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const temp = await mkdtemp(join(tmpdir(), "role-dispatch-inherited-"));
   try {
     await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -2091,9 +1988,7 @@ test("reviewer dispatch reports a directory left in the inherited temporary dire
 // and the state file" (issue #1024): a mutation halts the run through a thrown error, and the
 // envelope is built from that error.
 test("a halted reviewer dispatch reports a directory left in the inherited temporary directory", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const temp = await mkdtemp(join(tmpdir(), "role-dispatch-inherited-"));
   try {
     await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -2125,9 +2020,7 @@ test("a halted reviewer dispatch reports a directory left in the inherited tempo
 // none carries no field" (issue #1045). The child-turn tests cover the read; only a dispatch covers
 // the envelope and the state file.
 test("reviewer dispatch reports a package store change, halted or not", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const store = await mkdtemp(join(tmpdir(), "role-dispatch-store-"));
   try {
     await mkdir(join(store, "v11", "projects"), { recursive: true });

@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
@@ -10,16 +10,15 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
-  spyStdoutWrite,
-  repos,
   reviewerTurn,
-  setup,
+  spyStdoutWrite,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { exists, removePath } from "./runtime-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Every test body runs through a body barrier (issue #943)
@@ -34,11 +33,6 @@ const SYNTHETIC_SECRET = "synthetic-probe-value-8f3a1c";
 // A command that leaves a marker file, so a test can tell which command ran.
 const marker = (file) =>
   node(`require('fs').writeFileSync('${file.replaceAll("\\", "/")}', 'ran')`);
-const exists = (file) =>
-  access(file).then(
-    () => true,
-    () => false,
-  );
 const scratch = [];
 async function scratchDir() {
   const dir = await mkdtemp(join(tmpdir(), "role-test-cmd-"));
@@ -52,9 +46,7 @@ afterEach(async () => {
 });
 
 async function start(extra = []) {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const reviewer = recordingAdapter([]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
   const init = await executeRoleCommand(
@@ -215,9 +207,7 @@ test("a later call rejects a changed or added test command", async () => {
 // (issue #420, ADR 0017).
 test("an adapter error keeps the test result in the envelope and the state", async () => {
   const cmd = node("require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')");
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const failing = {
     async run() {
       throw new Error("reviewer CLI crashed");
@@ -242,9 +232,7 @@ test("an adapter error keeps the test result in the envelope and the state", asy
 // Usefulness: verifies init refuses a bound with no command and a blank command,
 // so a run never starts with a half-set pair (issue #420).
 test("init refuses a bound without a command and a blank command", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const deps = { agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) } };
   for (const [extra, message] of [
     [["--test-cmd-timeout", "5"], "--test-cmd-timeout requires --test-cmd."],
@@ -380,9 +368,7 @@ test.each([
   ],
   ["an unsupported worker at init", ["--worker=SECRET"]],
 ])("an interactive refusal for %s redacts the secret", async (_name, extra) => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const origExitCode = process.exitCode;
   const writeSpy = spyStdoutWrite();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -483,9 +469,7 @@ test.each([
 // secret-named environment value as `[redacted:NAME]`, because both print an error value or a
 // path directly (issue #431, ADR 0017).
 test("the role transcript and stdout failure warnings redact a secret value", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
