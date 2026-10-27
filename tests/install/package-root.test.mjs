@@ -75,6 +75,10 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
   expect(existsSync(cliPath)).toBe(true);
 });
 
+// Usefulness: verifies the acceptance of #311 end to end. The hook command must
+// name the project link the bin shim calls, so a project upgrade that repoints
+// that link and deletes the old store entry leaves the installed files pointing
+// at a package that still exists.
 test("hooks installed in a pnpm 12 project layout survive an upgrade", async () => {
   const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-home-"));
   const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-")));
