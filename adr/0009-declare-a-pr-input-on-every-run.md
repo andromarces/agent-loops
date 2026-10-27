@@ -162,7 +162,7 @@ Andro Marces
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
 - Implementation:
   - Source: `missingGateRefusal` in `src/lib/ci-gate.mjs`
-  - Source: The finish gate in `src/role.mjs`
+  - Source: The finish gate in `src/role-finish.mjs`
   - Source: The `--pr` flag in `src/cli.mjs`
   - Source: The prompt block in `src/prompts/orchestrator.mjs`
   - Test: `tests/runtime*.test.mjs`

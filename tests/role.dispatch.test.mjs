@@ -861,6 +861,32 @@ test("resume-interrupted from dispatched marks interrupted first and runs no chi
   expect(resumedState.resumeDecision).toBeTruthy();
 });
 
+// Usefulness: verifies an init whose session entry write fails leaves a run that `--resume-interrupted` can still dispatch under `--max-steps 1`, which no other test covers because the other init failures write no state.
+test("init whose session entry write fails keeps the step budget for a resume", async () => {
+  const runsRoot = await setup();
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  // A file where the session entry directory belongs makes the entry write fail after the state write.
+  await writeFile(join(runsRoot, "session-runs"), "not a directory", "utf8");
+
+  const init = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "1"]), repo),
+    basicDeps(),
+  );
+  expect(init.exitCode).toBe(1);
+  expect(init.payload.status).toBe("error");
+
+  const worker = recordingAdapter([]);
+  const resumed = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(resumed.exitCode).toBe(0);
+  expect(worker.recorded.length).toBe(1);
+  expect(await readState(paths.stateFile)).toMatchObject({ stepsUsed: 1, maxSteps: 1 });
+});
+
 // Usefulness: verifies `--resume-interrupted` refuses a claude session that a live process holds, before the step is charged (#671, ADR 0031), which no other test covers.
 test("resume-interrupted refuses a claude session that a live process holds", async () => {
   const repo = await newRunRepo();
