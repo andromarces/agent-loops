@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { logDebug, logInfo } from "./log.mjs";
-import { rootPins, withNpmLogSettings } from "./root-pins.mjs";
+import { rootPins, withNpmLogSettings, withPnpmDepsCheckWarn } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
 
 /**
@@ -91,7 +91,8 @@ export async function exec(command, args = [], options = {}) {
       ...(marked && { [SPAWNED_RUN_ENV]: markerFor(cwdHash(cwd ?? process.cwd())) }),
     };
     if (marked) {
-      execaOptions.env = withNpmLogSettings({ ...process.env, ...childEnv }, env);
+      const markedEnv = withNpmLogSettings({ ...process.env, ...childEnv }, env);
+      execaOptions.env = role === "reviewer" ? withPnpmDepsCheckWarn(markedEnv) : markedEnv;
       execaOptions.extendEnv = false;
     } else {
       execaOptions.env = childEnv;

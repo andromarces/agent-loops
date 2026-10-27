@@ -99,9 +99,11 @@ const remoteWriteRule =
 // A package-manager install writes to the shared store outside the repository and to `node_modules`,
 // both ignored, so the mutation check passes and every work tree that links the store is exposed.
 // `vp` starts an install by itself when it finds no usable `node_modules`, so a probe copy needs a
-// link to the work tree's own (issue #1026). The runtime does not detect a breach.
+// link to the work tree's own (issue #1026). A package manager can also install from its own
+// dependency check before a run or exec command, so the runtime sets that check to warn in the
+// reviewer environment (issue #1145). The runtime does not detect a breach.
 const noInstallRule =
-  "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there. When the copy cannot link it, report the probe as unresolved in Checks.";
+  "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there. When the copy cannot link it, report the probe as unresolved in Checks. The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, call the installed binary directly instead of a package manager run or exec command, or report the probe as unresolved in Checks.";
 
 // The file-change rule bars a change to the work tree and Git state only. Without this scope a
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The

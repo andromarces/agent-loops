@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
+import { testSlotRule } from "../../src/prompts/report.mjs";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
 
@@ -663,11 +664,30 @@ test.each([
   );
 });
 
+// The reviewer prompt without the test slot rule, which embeds the absolute paths of the checkout that
+// runs the test. The remaining text is the fixed reviewer text, so a tool name check on it does not
+// depend on where the checkout lives.
+const fixedReviewerText = () =>
+  reviewerPrompt("check the fix")
+    .replace(/\s+/g, " ")
+    .replace(testSlotRule().replace(/\s+/g, " "), "");
+const TOOL_NAME = /pnpm|vitest|npm|yarn|node_modules|vp/;
+
+// Usefulness: verifies the fixed-text helper drops only the run-specific test slot rule, and that a
+// tool name planted in the fixed text still fails the tool name check.
+test("fixed reviewer text excludes the test slot rule paths and still catches a planted tool name", () => {
+  const fixed = fixedReviewerText();
+  expect(fixed).not.toContain(testSlotRule().replace(/\s+/g, " "));
+  expect(fixed).toContain("Review scope, in addition to the task below");
+  expect(fixed).not.toMatch(TOOL_NAME);
+  expect(`${fixed} Run pnpm install.`).toMatch(TOOL_NAME);
+});
+
 // Usefulness: verifies acceptance #1026 — the instructions say how a probe of old source avoids an
 // install: the probe copy links the work tree's `node_modules`, and an unreachable one is reported
 // as unresolved instead of letting a tool install into the copy.
 test("reviewer prompt tells a probe copy to link the work tree dependencies and names no tool", () => {
-  const prompt = reviewerPrompt("check the fix").replace(/\s+/g, " ");
+  const prompt = fixedReviewerText();
   expect(prompt).toContain(
     "A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there.",
   );
@@ -675,5 +695,15 @@ test("reviewer prompt tells a probe copy to link the work tree dependencies and 
     "When the copy cannot link it, report the probe as unresolved in Checks.",
   );
   // The prompt fits any repository (ADR 0038), so the rule names no tool or directory.
-  expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules|vp/);
+  expect(prompt).not.toMatch(TOOL_NAME);
+});
+
+// Usefulness: verifies acceptance #1145 — the instructions say how a probe copy avoids the install
+// that a package manager can start from its own dependency check, without naming a tool (ADR 0038).
+test("reviewer prompt tells a probe copy to avoid the package manager dependency check install", () => {
+  const prompt = fixedReviewerText();
+  const rule =
+    "The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, call the installed binary directly instead of a package manager run or exec command, or report the probe as unresolved in Checks.";
+  expect(prompt).toContain(rule);
+  expect(prompt).not.toMatch(TOOL_NAME);
 });

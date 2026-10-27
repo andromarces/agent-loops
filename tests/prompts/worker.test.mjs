@@ -276,3 +276,12 @@ test("first worker turn tells a probe copy to link the work tree node_modules an
     "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write.",
   );
 });
+
+// Usefulness: verifies acceptance #1145: pnpm installs from its dependency check before `pnpm run`
+// and `pnpm exec`, so a probe copy sets the check to `warn` or calls the installed binary directly.
+test("first worker turn tells a probe copy to avoid the pnpm dependency check install", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly, because pnpm installs from its dependency check by default.",
+  );
+});

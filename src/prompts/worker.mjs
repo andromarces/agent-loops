@@ -5,9 +5,10 @@ const prBodyRule =
   "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";
 
 // A probe copy without a usable `node_modules` makes `vp` install into the shared package store
-// (issue #1026).
+// (issue #1026). pnpm also installs from its dependency check before `pnpm run` and `pnpm exec`
+// (issue #1145).
 const probeCopyRule =
-  "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there. A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write.";
+  "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there. A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write. Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly, because pnpm installs from its dependency check by default.";
 
 // A junction to another checkout's `node_modules` lets `vp` rewrite that checkout's links
 // (issue #1057).
