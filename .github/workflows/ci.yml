@@ -39,8 +39,11 @@ jobs:
             sleep 15
           done
           exit 1
-      - run: pnpm fmt:check
-      - run: pnpm lint
+      # OS-independent checks: one leg is enough.
+      - if: runner.os == 'Linux'
+        run: pnpm fmt:check
+      - if: runner.os == 'Linux'
+        run: pnpm lint
       - run: pnpm test
       # Exercise install and uninstall against the PR checkout on every runner,
       # so macOS gets installer evidence before merge, not only after a release.
