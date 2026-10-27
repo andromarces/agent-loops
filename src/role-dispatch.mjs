@@ -283,24 +283,21 @@ async function dispatchLocked(
 
   const prompt = await readPrompt(args, stdin);
 
+  const localFiles = init
+    ? await applyInitSideEffects(state, existing, args, {
+        paths,
+        signal,
+        onEvent,
+        readProcessCommands,
+      })
+    : null;
   const localFilesDiffer = init ? [] : await differingLocalFiles(state, args.cwd, signal);
 
-  // Charge the step before execution, matching the headless runtime. An init dispatch charges before
-  // its first state write, so the init writes the state once.
+  // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
   state.lifecycle = "dispatched";
   state.lastDispatch = { role: roleName, prompt, at: new Date().toISOString() };
-  let localFiles = null;
-  if (init) {
-    localFiles = await applyInitSideEffects(state, existing, args, {
-      paths,
-      signal,
-      onEvent,
-      readProcessCommands,
-    });
-  } else {
-    await writeState(paths.stateFile, state);
-  }
+  await writeState(paths.stateFile, state);
 
   const role = { ...state.roles[roleName] };
   let result;
@@ -425,8 +422,8 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
 
 /**
  * Runs the side effects of an init dispatch after every check and the prompt read passed:
- * session holder check, local file copy, archive of the old state, and the first state write,
- * which holds the step that the caller charged. Returns the local file copy result, or null when none ran.
+ * session holder check, local file copy, archive of the old state, and the first state write.
+ * Returns the local file copy result, or null when none ran.
  */
 async function applyInitSideEffects(
   state,
