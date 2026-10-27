@@ -421,6 +421,8 @@ of this file.
   write a reviewer prompt, when a reviewer envelope carries `prChecks` or `testRun`, when the
   run sets `--test-cmd`, and when the reviewer could not run tests. Read it after any worker or
   reviewer envelope that carries `shellDenied`, before the next dispatch.
+- [A change outside the work tree](orchestrator/out-of-tree-change.md): read it before init when the
+  task changes state outside the work tree, and before the reviewer prompt of such a task.
 - [Codex reviewer sandbox mode](orchestrator/reviewer-sandbox.md): read it when the run uses a
   Codex reviewer, sets `--reviewer-sandbox`, or halts on a reviewer mutation.
 - [Waiting for required checks](orchestrator/waiting-for-checks.md): read it before a run that ends

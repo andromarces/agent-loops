@@ -146,6 +146,14 @@ const SHARED_PARENT_RULES = [
       /local probe/i,
       /machine-specific path/i,
     ),
+  // Issue #1162: a task whose change is outside the work tree has an accept that is a reviewer
+  // report, a reviewer prompt that names the read-only limits, and a `verified` that says
+  // `reviewed` identifies no change.
+  (text) =>
+    expectRule(text, /accept/i, /reviewer report/i, /out-of-tree state/i, /not an identity/i),
+  (text) => expectRule(text, /reviewer prompt/i, /read-only limits/i, /out-of-tree system/i),
+  (text) =>
+    expectRule(text, /verified/, /reviewed`? identifies no change/i, /what the reviewer checked/i),
 ];
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

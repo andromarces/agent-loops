@@ -7,7 +7,7 @@ import { setVerbose } from "../../src/lib/log.mjs";
 import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
 import { stateRoot } from "../../src/lib/runstate.mjs";
-import { slotsRoot } from "../../src/lib/test-slot.mjs";
+import { slotsRoot } from "../../src/lib/slots-root.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 afterEach(() => {
@@ -332,7 +332,7 @@ test("a worker child that overrides TMP resolves the parent slot directory", asy
   const other = await mkdtemp(join(tmpdir(), "other-tmp-"));
   try {
     const script = `
-const slots = ${JSON.stringify(new URL("../../src/lib/test-slot.mjs", import.meta.url).href)};
+const slots = ${JSON.stringify(new URL("../../src/lib/slots-root.mjs", import.meta.url).href)};
 for (const name of ["TMP", "TEMP", "TMPDIR"]) process.env[name] = ${JSON.stringify(other)};
 const { slotsRoot } = await import(slots);
 console.log(slotsRoot());`;

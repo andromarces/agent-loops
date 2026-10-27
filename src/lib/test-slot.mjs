@@ -2,13 +2,14 @@
 // it holds one of the slot lock files that every work tree and project of the OS user on the
 // host shares, so parallel full-suite runs do not oversubscribe the host.
 import { readdir } from "node:fs/promises";
-import { constants, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { constants } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { killLiveTrees } from "./exec-tree.mjs";
 import { execBounded } from "./exec.mjs";
 import { logDebug, logError, logInfo, logWarn, setLogsToStderr } from "./log.mjs";
 import { ownerAlive } from "./process-identity.mjs";
+import { slotsRoot } from "./slots-root.mjs";
 import { lockHeld, readLockOwner, tryStateLock } from "./state-lock.mjs";
 
 export const TEST_SLOT_USAGE_EXIT = 64;
@@ -158,12 +159,6 @@ export function testSlotOptions(
     ? waitSeconds(env.AGENT_LOOP_TEST_SLOT_WAIT, "AGENT_LOOP_TEST_SLOT_WAIT")
     : DEFAULT_WAIT_SECONDS;
   return { slots, waitSeconds: wait };
-}
-
-/** The slot directory: `AGENT_LOOP_TEST_SLOTS_ROOT`, else `<os tmpdir>/agent-loops/test-slots`. */
-export function slotsRoot() {
-  const override = process.env.AGENT_LOOP_TEST_SLOTS_ROOT;
-  return override ? resolve(override) : join(tmpdir(), "agent-loops", "test-slots");
 }
 
 // One pass under the short `acquire.lock`: counts the slot files held by live owners and, while
