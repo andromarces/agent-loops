@@ -737,13 +737,16 @@ The conditions that the `--require-accept` and `--require-ci` gates check at `fi
   is the name of the run's state directory, the hash each subcommand uses to find
   the run state. A path spelled another way, such as a symlink alias, finds no
   state. A child that names the work tree as the run does is refused even when the
-  work tree is gone. A
+  work tree is gone, and a parent `abort` over a missing work tree still works
+  (issues #392 and #548, ADR 0014 point 8). The runtime sets no marker for the
+  orchestrator or the parent session. A
   process keeps a marker it inherited. A parent session that another run's child
   started holds a different key for its own work tree and is not refused. A worker
   that a nested run starts holds the keys of the outer run and the nested run, so
   it is refused against both. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
   session id. The id check alone does not identify the caller, so a child that
-  clears its environment passes. An orchestrator or parent that a child of the same
+  clears its environment passes, and so does a harness that filters the variable
+  from shell commands. An orchestrator or parent that a child of the same
   run started, in that run's work tree, inherits the key and is refused. The prompt
   rule backs the marker.
 - `extend` changes the budget in place on the same state file, so each role
@@ -795,7 +798,7 @@ each subcommand treats `--parent-session` as follows:
   id.
 - `wait-checks`: reads no run state and ignores the flag.
 
-A run that a new session resumes is therefore unguarded for that session. No
+A run that a new session resumes is therefore unguarded for that session (issue #435). No
 call moves the stored id to the new session. The new session can run `dispatch`,
 `finish`, and `abort` by omitting `--parent-session`. It can run `extend` and
 `declare-pr` only by passing the stored id. Both compare the id only, so that call succeeds for
