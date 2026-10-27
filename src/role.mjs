@@ -14,7 +14,7 @@ import {
   REVIEW_ONLY_GATE_REFUSAL,
   REVIEW_ONLY_PR_REFUSAL,
   parseFlags,
-  readPositiveInt,
+  roleState,
   readTaskFile,
   readStdinText,
   roleFlags,
@@ -51,8 +51,7 @@ import { assertGitWorkTree, reviewedState, snapshot } from "./lib/snapshot.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
-import { RoleError } from "./role-error.mjs";
-import { printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
+import { RoleError, printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
 import {
   normalizedLocalPaths,
   rejectInitFlagChanges,
@@ -83,9 +82,9 @@ const ROLE_USAGE = [
 
 /**
  * Parses `agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]`. Reuses the flag
- * reading rules and OpenCode validation of the headless CLI. Semantics that
- * depend on the state file (init detection, change rejection) are checked at
- * execution time, not parse time.
+ * reading rules of the headless CLI. The OpenCode validation runs later through
+ * `validateInitFlags`. Semantics that depend on the state file (init detection, change rejection)
+ * are checked at execution time, not parse time.
  */
 export function parseRoleArgs(argv) {
   const args = {
@@ -134,7 +133,6 @@ export function parseRoleArgs(argv) {
   parseFlags(argv, args, {
     start: index,
     roleFlagMap: ROLE_FLAGS,
-    ErrorType: RoleError,
     onFlag: (arg, readInline) => {
       switch (arg) {
         case "--role":
@@ -168,10 +166,6 @@ export function parseRoleArgs(argv) {
           args.expect.push(name);
           return true;
         }
-
-        case "--compare-head":
-          args.compareHead = readPositiveInt(arg, readInline(arg));
-          return true;
 
         case "--head":
           args.head = readInline(arg);
@@ -307,20 +301,6 @@ async function refuseUnreadableGate(label, { pr, cwd, gh, signal }) {
   if (reason) {
     throw new RoleError(unreadableGateRefusal(label, reason, ROLE_UNREADABLE_FINISH));
   }
-}
-
-/** Role state, or null when the role was not configured at init. */
-function roleState(source, roleName) {
-  const kind = source[roleName];
-  if (kind === null) {
-    return null;
-  }
-  return {
-    kind: normalizeAgent(kind),
-    model: source[`${roleName}Model`] ?? null,
-    effort: source[`${roleName}Effort`] ?? null,
-    sessionId: null,
-  };
 }
 
 /**

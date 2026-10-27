@@ -124,7 +124,7 @@ function readMaxSteps(value) {
  * must be non-blank, and the bound has no meaning without it.
  * @returns {string | null} the refusal, or null when the pair is valid
  */
-export function testCmdError(testCmd, testCmdTimeout) {
+function testCmdError(testCmd, testCmdTimeout) {
   if (testCmd !== null && testCmd.trim() === "") {
     return "--test-cmd must not be blank.";
   }
@@ -150,12 +150,23 @@ export function legacyReviewerSandbox(reviewerWorkspaceWrite) {
 }
 
 /**
+ * The mode a run recorded, or the legacy mode when it recorded none.
+ * @param {unknown} recorded the recorded `reviewerSandbox` field
+ * @param {boolean | undefined} legacyFlag the legacy `reviewerWorkspaceWrite` field
+ * @returns {"none" | "read-only" | "workspace-write" | null} null when the recorded value is not a mode
+ */
+export function recordedReviewerSandbox(recorded, legacyFlag) {
+  if (recorded === undefined) return legacyReviewerSandbox(legacyFlag);
+  return REVIEWER_SANDBOX_MODES.includes(recorded) ? recorded : null;
+}
+
+/**
  * The `--reviewer-sandbox` flag, validated once for both paths (ADR 0038). Only the Codex adapter
  * reads the reviewer sandbox input, so any other reviewer would run as before while the prompt
  * said otherwise.
  * @returns {string | null} the refusal, or null when the flag is absent or valid
  */
-export function reviewerSandboxError(reviewerSandbox, reviewerKind) {
+function reviewerSandboxError(reviewerSandbox, reviewerKind) {
   if (reviewerSandbox !== null && reviewerKind !== "codex") {
     return "--reviewer-sandbox requires --reviewer codex.";
   }
@@ -165,12 +176,12 @@ export function reviewerSandboxError(reviewerSandbox, reviewerKind) {
 // The parsed option objects that used the `--reviewer-workspace-write` alias, for the conflict text.
 const aliasUsers = new WeakSet();
 
-function setReviewerSandbox(args, value, viaAlias, ErrorType) {
+function setReviewerSandbox(args, value, viaAlias) {
   const earlier = args.reviewerSandbox;
   if (earlier !== null && earlier !== value) {
     const alias = viaAlias || aliasUsers.has(args);
     const shown = viaAlias ? earlier : value;
-    throw new ErrorType(
+    throw new Error(
       alias
         ? `--reviewer-workspace-write conflicts with --reviewer-sandbox ${shown}.`
         : `--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`,
@@ -221,11 +232,25 @@ export const ROLE_FLAG_BY_OPTION = Object.fromEntries(
   Object.entries(roleFlags(ROLE_KINDS)).map(([flag, option]) => [option, flag]),
 );
 
+/** Role state, or null when the role was not configured at init. */
+export function roleState(source, roleName) {
+  const kind = source[roleName];
+  if (kind === null) {
+    return null;
+  }
+  return {
+    kind: normalizeAgent(kind),
+    model: source[`${roleName}Model`] ?? null,
+    effort: source[`${roleName}Effort`] ?? null,
+    sessionId: null,
+  };
+}
+
 /**
  * The OpenCode model and effort pair of one role, validated once for both paths.
  * @returns {string | null} the refusal, or null when the pair is valid or the kind is not OpenCode
  */
-export function openCodeOptionsError(role, kind, model, effort) {
+function openCodeOptionsError(role, kind, model, effort) {
   if (kind && normalizeAgent(kind) !== "opencode") {
     return null;
   }
@@ -340,9 +365,8 @@ export function initRefusal(
  * @param {number} [config.start] index of the first flag
  * @param {Record<string, string>} config.roleFlagMap `--<role>[-model|-effort]` flag to option key
  * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean} config.onFlag
- * @param {new (message: string) => Error} [config.ErrorType] class of the errors raised here
  */
-export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag, ErrorType = Error }) {
+export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag }) {
   for (let i = start; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
@@ -358,21 +382,18 @@ export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag, ErrorTy
 
     if (Object.hasOwn(roleFlagMap, arg)) {
       args[roleFlagMap[arg]] = readInline(arg);
-    } else if (
-      !applyCommonFlag(args, arg, readInline, ErrorType) &&
-      !onFlag(arg, readInline, inline)
-    ) {
-      throw new ErrorType(`Unknown argument: ${raw}`);
+    } else if (!applyCommonFlag(args, arg, readInline) && !onFlag(arg, readInline, inline)) {
+      throw new Error(`Unknown argument: ${raw}`);
     }
 
     if (inline && !inlineUsed) {
-      throw new ErrorType(`${arg} does not take a value.`);
+      throw new Error(`${arg} does not take a value.`);
     }
   }
 }
 
 // The flags that both commands read into the same option keys. Returns false for any other flag.
-function applyCommonFlag(args, arg, readInline, ErrorType) {
+function applyCommonFlag(args, arg, readInline) {
   switch (arg) {
     case "--cwd":
       args.cwd = resolve(readInline(arg));
@@ -418,20 +439,23 @@ function applyCommonFlag(args, arg, readInline, ErrorType) {
     case "--reviewer-sandbox": {
       const value = readInline(arg);
       if (!REVIEWER_SANDBOX_FLAG_MODES.includes(value)) {
-        throw new ErrorType(
+        throw new Error(
           `--reviewer-sandbox must be one of ${REVIEWER_SANDBOX_FLAG_MODES.join(", ")}, got: ${value}`,
         );
       }
-      setReviewerSandbox(args, value, false, ErrorType);
+      setReviewerSandbox(args, value, false);
       break;
     }
     case "--reviewer-workspace-write":
-      setReviewerSandbox(args, "workspace-write", true, ErrorType);
+      setReviewerSandbox(args, "workspace-write", true);
+      break;
+    case "--compare-head":
+      args.compareHead = readPositiveInt(arg, readInline(arg));
       break;
     case "--mode":
       args.mode = readInline(arg);
       if (!MODES.has(args.mode)) {
-        throw new ErrorType(modeError(args.mode));
+        throw new Error(modeError(args.mode));
       }
       break;
     default:

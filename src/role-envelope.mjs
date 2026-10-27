@@ -2,6 +2,9 @@
 import { writeSync } from "node:fs";
 import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "./lib/error-message.mjs";
 
+// The refusal that `agent-loop role` reports as a one-line error envelope.
+export class RoleError extends Error {}
+
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
 export function errorResult(err) {
   // A cancel outside the turn `try` block, such as the process-table read of a resume or an init (#725).

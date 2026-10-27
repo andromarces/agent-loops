@@ -6,11 +6,11 @@ import {
   ROLE_FLAG_BY_OPTION,
   REVIEWER_SANDBOX_MODES,
   initRefusal,
-  legacyReviewerSandbox,
+  recordedReviewerSandbox,
 } from "./lib/args.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { normalizeLocalPath } from "./lib/local-files.mjs";
-import { RoleError } from "./role-error.mjs";
+import { RoleError } from "./role-envelope.mjs";
 
 const INIT_FIELDS = [
   "task",
@@ -31,14 +31,13 @@ const INIT_FIELDS = [
  * @throws {RoleError} when the field is present and is not one of the three modes
  */
 export function storedReviewerSandbox(state) {
-  const recorded = state.reviewerSandbox;
-  if (recorded !== undefined && !REVIEWER_SANDBOX_MODES.includes(recorded)) {
+  const mode = recordedReviewerSandbox(state.reviewerSandbox, state.reviewerWorkspaceWrite);
+  if (mode === null) {
     throw new RoleError(
-      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(recorded)}.`,
+      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(state.reviewerSandbox)}.`,
     );
   }
-  if (state.roles?.reviewer?.kind !== "codex") return null;
-  return recorded ?? legacyReviewerSandbox(state.reviewerWorkspaceWrite);
+  return state.roles?.reviewer?.kind === "codex" ? mode : null;
 }
 
 /**

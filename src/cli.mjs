@@ -2,7 +2,7 @@
 
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { defaultAgents, normalizeAgent, supportedAgents } from "./agents/index.mjs";
+import { defaultAgents, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
@@ -11,8 +11,8 @@ import {
   ROLE_KINDS as ROLES,
   initRefusal,
   parseFlags,
-  readPositiveInt,
   readStdinText,
+  roleState,
   readTaskFile,
   roleFlags,
   TASK_SOURCE_CONFLICT,
@@ -86,10 +86,6 @@ export function parseArgs(argv) {
       switch (arg) {
         case "--no-copy-local-files":
           options.copyLocalFiles = false;
-          return true;
-
-        case "--compare-head":
-          options.compareHead = readPositiveInt(arg, readInline(arg));
           return true;
 
         case "--continue-from":
@@ -330,12 +326,7 @@ export async function main(
   const events = [];
   const roles = {};
   for (const role of ROLES) {
-    roles[role] = {
-      kind: normalizeAgent(options[role]),
-      model: options[`${role}Model`],
-      effort: options[`${role}Effort`],
-      sessionId: null,
-    };
+    roles[role] = roleState(options, role);
   }
   // The mode of a Codex reviewer: `none` for a new run without the flag, and the earlier run's mode
   // for a continued run. A reviewer that is not Codex has none (ADR 0038).
