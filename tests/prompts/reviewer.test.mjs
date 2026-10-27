@@ -677,3 +677,13 @@ test("reviewer prompt tells a probe copy to link the work tree dependencies and 
   // The prompt fits any repository (ADR 0038), so the rule names no tool or directory.
   expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules|vp/);
 });
+
+// Usefulness: verifies acceptance #1145 — the instructions say how a probe copy avoids the install
+// that a package manager can start from its own dependency check, without naming a tool (ADR 0038).
+test("reviewer prompt tells a probe copy to avoid the package manager dependency check install", () => {
+  const prompt = reviewerPrompt("check the fix").replace(/\s+/g, " ");
+  const rule =
+    "The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, call the installed binary directly instead of a package manager run or exec command, or report the probe as unresolved in Checks.";
+  expect(prompt).toContain(rule);
+  expect(rule).not.toMatch(/pnpm|vitest|npm|yarn|node_modules|vp/);
+});

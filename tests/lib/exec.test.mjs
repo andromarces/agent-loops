@@ -424,3 +424,41 @@ test("exec leaves one spelling of a user-set npm log setting for a worker spawn"
     await npmLogOf({ role: "worker", cwd: tmpdir(), env: { npm_config_logs_max: "" } }),
   ).toEqual([["npm_config_logs_max", "5"]]);
 });
+
+const PNPM_DEPS_CHECK = /^pnpm_config_verify_deps_before_run$/i;
+const PRINT_PNPM_DEPS_CHECK = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => ${PNPM_DEPS_CHECK}.test(name)).map(([name, value]) => [name.toLowerCase(), value])))`;
+// The pnpm dependency check settings that the child sees, one entry per spelling, names lower-cased.
+const pnpmDepsCheckOf = async (options) =>
+  JSON.parse((await exec(process.execPath, ["-e", PRINT_PNPM_DEPS_CHECK], options)).stdout);
+const clearPnpmDepsCheck = () => {
+  for (const name of Object.keys(process.env).filter((key) => PNPM_DEPS_CHECK.test(key))) {
+    vi.stubEnv(name, undefined);
+  }
+};
+
+// Usefulness: verifies a reviewer child cannot make pnpm install from its dependency check before `pnpm run` or `pnpm exec` (issue #1145); other spawns stay unchanged.
+test("exec sets the pnpm dependency check to warn for a reviewer spawn only", async () => {
+  clearPnpmDepsCheck();
+  expect(await pnpmDepsCheckOf({ role: "reviewer", cwd: tmpdir() })).toEqual([
+    ["pnpm_config_verify_deps_before_run", "warn"],
+  ]);
+  expect(await pnpmDepsCheckOf({ role: "worker", cwd: tmpdir() })).toEqual([]);
+  expect(await pnpmDepsCheckOf({ role: "orchestrator", cwd: tmpdir() })).toEqual([]);
+  expect(await pnpmDepsCheckOf({ cwd: tmpdir() })).toEqual([]);
+});
+
+// Usefulness: verifies an inherited or caller `install` value, in any spelling, never reaches a reviewer child, and that exactly one spelling is left because Windows treats names that differ in case as one name.
+test("exec replaces an inherited pnpm dependency check install for a reviewer spawn", async () => {
+  clearPnpmDepsCheck();
+  const warn = [["pnpm_config_verify_deps_before_run", "warn"]];
+  vi.stubEnv("PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN", "install");
+  expect(await pnpmDepsCheckOf({ role: "reviewer", cwd: tmpdir() })).toEqual(warn);
+  clearPnpmDepsCheck();
+  expect(
+    await pnpmDepsCheckOf({
+      role: "reviewer",
+      cwd: tmpdir(),
+      env: { pnpm_config_verify_deps_before_run: "install" },
+    }),
+  ).toEqual(warn);
+});
