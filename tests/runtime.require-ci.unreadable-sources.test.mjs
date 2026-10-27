@@ -119,3 +119,42 @@ test("a headless --pr run does not refuse when the read fails for another reason
   expect(error).toBeUndefined();
   expect(orch.recorded.length).toBeGreaterThan(0);
 });
+
+// Usefulness: verifies acceptance of #1124 on the headless path — a cancel during the start read of
+// a `--pr` run ends the hung read and rejects as a cancel, before any child turn and before the
+// 60 s read deadline, instead of waiting it out and starting the run.
+test("a cancel during the start read of a headless --pr run rejects as a cancel before any turn", async () => {
+  const controller = new AbortController();
+  const hungGh = (args, cwd, { signal } = {}) =>
+    new Promise((resolve) => {
+      const settle = () => resolve({ status: 1, stdout: "", stderr: "gh was canceled" });
+      if (signal?.aborted) return settle();
+      signal?.addEventListener("abort", settle, { once: true });
+      controller.abort();
+    });
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+  const begun = Date.now();
+  try {
+    await expect(
+      runLoop({
+        task: "PR work: address issue 1124 through PR 42.",
+        cwd: repo,
+        maxSteps: 5,
+        pr: 42,
+        requireCi: 42,
+        copyLocalFiles: false,
+        gh: hungGh,
+        signal: controller.signal,
+        roles: gateRoles(),
+        agents: { orch, work: scripted([]), rev: scripted([]) },
+      }),
+    ).rejects.toMatchObject({ isCanceled: true });
+    expect(orch.recorded).toHaveLength(0);
+    expect(Date.now() - begun).toBeLessThan(5_000);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});

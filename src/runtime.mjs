@@ -189,6 +189,7 @@ export async function runLoop(options) {
       cwd,
       gh,
       timeoutMs: readTimeoutMs,
+      signal,
     });
     if (unreadable) {
       throw new Error(unreadableGateRefusal(`--pr ${pr}`, unreadable));
@@ -560,6 +561,7 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
         gh,
         timeoutMs: readTimeoutMs,
         when: "before declaring it",
+        signal,
       });
       return unreadable
         ? `PR ${pr} is not declared, because ${unreadable}, so the --require-ci gate would refuse every finish. The runtime compares the PR head with the reviewed commit at finish instead (head compare), reads no required-check source, and claims no check result.`

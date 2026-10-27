@@ -479,8 +479,9 @@ async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
  * the Free-plan 403. A read that fails for another reason, such as the network, logs a warning and
  * returns null, because the gate may read the sources when the run finishes.
  * `when` completes the warning of a failed read: "at start" for a `--pr` start, or the point where a
- * declaration of a worker-opened PR reads.
- * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number, when?: string }} options
+ * declaration of a worker-opened PR reads. `signal` is the caller cancel: it ends a running read, and
+ * the call then rejects with `isCanceled` set instead of logging a warning and returning null.
+ * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number, when?: string, signal?: AbortSignal | null }} options
  * @returns {Promise<string | null>}
  */
 export async function unreadableGateReason({
@@ -489,6 +490,7 @@ export async function unreadableGateReason({
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   when = "at start",
+  signal = null,
 }) {
   // The signal ends a call that a runner does not bound itself, so a hung `gh` cannot hold the start open.
   const deadline = AbortSignal.timeout(timeoutMs);
@@ -496,9 +498,16 @@ export async function unreadableGateReason({
     gh(args, callCwd, {
       timeoutMs,
       ...options,
-      signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
+      signal: AbortSignal.any([deadline, signal, options.signal].filter(Boolean)),
     });
+  // The deadline stays apart from the caller cancel, so `expired` reads the deadline alone.
   call.deadline = deadline;
+  // A canceled read fails like any other read, so the cancel is told from the failure by the signal.
+  const throwIfCanceled = () => {
+    if (signal?.aborted) {
+      throw Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
+    }
+  };
   const slugRead = startRepoSlug(call, cwd);
   try {
     const preamble = await readCiPreamble({
@@ -509,8 +518,10 @@ export async function unreadableGateReason({
       refuseInfo: () => null,
       refuseUnknownRuleset: () => RULESETS_UNREADABLE,
     });
+    throwIfCanceled();
     return preamble.stop ?? null;
   } catch (err) {
+    throwIfCanceled();
     logWarn(
       `the required-check sources of PR ${pr} could not be read ${when}: ${oneLine(readableErrorText(failureOf(err)))}`,
     );
