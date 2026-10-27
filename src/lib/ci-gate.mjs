@@ -15,15 +15,14 @@ import {
   UNKNOWN,
   EMPTY,
   RULESETS,
-  earlyMergeRefusal,
   failureOf,
-  MERGE_BLOCKED_REFUSAL,
   runGh,
   inOrder,
   startRepoSlug,
   prInfo,
   requiredContexts,
   ReadFailure,
+  withSignal,
 } from "./ci-required-sources.mjs";
 
 // A check run passes with one of these conclusions; every other conclusion and
@@ -32,6 +31,59 @@ const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 
 function fail(reason) {
   return { ok: false, reason };
+}
+
+/** The refusal for a reviewed state that cannot finish, or null when it is a clean reviewed commit. */
+function reviewedRefusal(reviewed) {
+  if (!reviewed) {
+    return fail("the latest reviewer turn has no reviewed state");
+  }
+  return reviewed.clean ? null : fail("the reviewed work tree is not clean");
+}
+
+/** The refusal for a pull request whose merge state is `BLOCKED` after the check pass. */
+const MERGE_BLOCKED_REFUSAL =
+  "the PR merge state is blocked (a required check, review, or other required rule is unmet)";
+
+// Every merge state GitHub's GraphQL `mergeStateStatus` reports that the gate can
+// act on. A value outside this set, and a missing or null one, is a state the
+// gate cannot read, so it refuses on both the per-check path and the absence path
+// (issue #336 review). `UNSTABLE` means a check is failing, which the per-check
+// path judges by name, and `HAS_HOOKS` and `DRAFT` report no unmet rule the gate
+// enforces; `BLOCKED` refuses at the end of both paths. `UNKNOWN` is deliberately
+// absent: GitHub computes it lazily, so it states no outcome either.
+const MERGE_STATES = new Set([
+  "BEHIND",
+  "BLOCKED",
+  "CLEAN",
+  "DIRTY",
+  "DRAFT",
+  "HAS_HOOKS",
+  "UNSTABLE",
+]);
+
+// The merge-state refusals the gate makes before it reads any check: behind its
+// base, merge conflicts, and a state the gate cannot read. `UNKNOWN`, which GitHub
+// computes lazily, a missing state, and a value outside `MERGE_STATES` are all the
+// last kind. Shared with the status read so it cannot report a pass for a state the
+// gate refuses (issue #349).
+function earlyMergeRefusal(mergeState) {
+  if (mergeState === "BEHIND") {
+    return "the PR is behind its base branch";
+  }
+  if (mergeState === "DIRTY") {
+    return "the PR has merge conflicts (merge state DIRTY)";
+  }
+  // The merge state is validated before either path, so the relaxed absence path
+  // applies exactly the same merge-state condition as the per-check path. A state
+  // that is missing, null, empty, or not one GitHub documents settles nothing, and
+  // a state the gate cannot read is not a clean one, so it refuses on both paths
+  // rather than passing the absence path on a reply it never understood
+  // (issue #336 review).
+  if (!MERGE_STATES.has(mergeState)) {
+    return "GitHub reports the PR merge state as unknown (computed lazily; retry shortly)";
+  }
+  return null;
 }
 
 const RULESETS_UNREADABLE =
@@ -68,10 +120,8 @@ function pagesOf(data, field, what) {
 
 const isOrderable = (entry, fields) =>
   Number.isFinite(entry.id) &&
-  fields.some(
-    (field) => typeof entry[field] === "string" && !Number.isNaN(Date.parse(entry[field])),
-  ) &&
-  fields.every((field) => entry[field] == null || !Number.isNaN(Date.parse(entry[field])));
+  fields.some((field) => parseTime(entry[field]) !== null) &&
+  fields.every((field) => entry[field] == null || parseTime(entry[field]) !== null);
 
 /** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
 export async function checkRuns(gh, slug, sha, cwd, strict = false) {
@@ -81,7 +131,7 @@ export async function checkRuns(gh, slug, sha, cwd, strict = false) {
     cwd,
   );
   if (!strict) {
-    return Array.isArray(pages) ? pages.flatMap((page) => page?.check_runs ?? []) : [];
+    return pages.flatMap((page) => page?.check_runs ?? []);
   }
   const runs = pagesOf(pages, "check_runs", "check-runs");
   for (const run of runs) {
@@ -110,10 +160,7 @@ export async function commitStatuses(gh, slug, sha, cwd, strict = false) {
     cwd,
   );
   if (!strict) {
-    if (Array.isArray(pages)) {
-      return pages.flatMap((page) => page?.statuses ?? []);
-    }
-    return pages?.statuses ?? [];
+    return pages.flatMap((page) => page?.statuses ?? []);
   }
   const statuses = pagesOf(pages, "statuses", "commit status");
   for (const status of statuses) {
@@ -313,11 +360,9 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
  * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
 export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
-  if (!reviewed) {
-    return fail("the latest reviewer turn has no reviewed state");
-  }
-  if (!reviewed.clean) {
-    return fail("the reviewed work tree is not clean");
+  const refused = reviewedRefusal(reviewed);
+  if (refused) {
+    return refused;
   }
 
   const slugRead = startRepoSlug(gh, cwd);
@@ -340,11 +385,9 @@ export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
 export async function checkPrHead({ pr, reviewed, cwd, gh = runGh }) {
-  if (!reviewed) {
-    return fail("the latest reviewer turn has no reviewed state");
-  }
-  if (!reviewed.clean) {
-    return fail("the reviewed work tree is not clean");
+  const refused = reviewedRefusal(reviewed);
+  if (refused) {
+    return refused;
   }
   let info;
   try {
@@ -499,12 +542,10 @@ export async function unreadableGateReason({
 }) {
   // The signal ends a call that a runner does not bound itself, so a hung `gh` cannot hold the start open.
   const deadline = AbortSignal.timeout(timeoutMs);
-  const call = (args, callCwd, options = {}) =>
-    gh(args, callCwd, {
-      timeoutMs,
-      ...options,
-      signal: AbortSignal.any([deadline, signal, options.signal].filter(Boolean)),
-    });
+  const call = withSignal(
+    (args, callCwd, options) => gh(args, callCwd, { timeoutMs, ...options }),
+    AbortSignal.any([deadline, signal].filter(Boolean)),
+  );
   // The deadline stays apart from the caller cancel, so `expired` reads the deadline alone.
   call.deadline = deadline;
   // A canceled read fails like any other read, so the cancel is told from the failure by the signal.
@@ -708,12 +749,10 @@ export async function readRequiredChecks({
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   // A group of reads adds its own signal, so a failed read cancels its siblings
   // without reading as a timeout of the whole bound.
-  const call = (args, callCwd, { signal = null, dropEnv } = {}) =>
-    gh(args, callCwd, {
-      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
-      timeoutMs,
-      ...(dropEnv && { dropEnv }),
-    });
+  const call = withSignal(
+    (args, callCwd, options) => gh(args, callCwd, { ...options, timeoutMs }),
+    controller.signal,
+  );
   call.deadline = controller.signal;
   let prHead = null;
   let slugStart = null;

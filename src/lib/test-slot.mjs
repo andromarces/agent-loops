@@ -25,7 +25,7 @@ const HELD_ENV = "AGENT_LOOP_TEST_SLOT_HELD";
 const POLL_MS = 500;
 const SLOT_FILE = /^slot-(\d+)\.lock$/;
 
-export const TEST_SLOT_HELP = `
+const TEST_SLOT_HELP = `
 Usage:
 
   agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] [--] "<command>"
