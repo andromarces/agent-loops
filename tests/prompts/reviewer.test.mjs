@@ -641,6 +641,42 @@ test("reviewer prompt bars a literal path to the system temporary directory", ()
   );
 });
 
+// Usefulness: verifies acceptance #1171 — the reviewer is told that a cache that a tool writes to its
+// default location is not turn output, so the removal rule never sends it to delete a cache that a
+// refused cleanup would only turn into a Notes line, in every turn mode and with or without a scratch folder.
+test.each([
+  ["no scratch folder", () => reviewerPrompt("check the fix")],
+  [
+    "a scratch folder",
+    () => reviewerPrompt("check the fix", null, null, null, null, "/work/.agent-loop/rev/ab12cd34"),
+  ],
+])(
+  "reviewer prompt separates a tool cache in its default location from turn output with %s",
+  (_name, build) => {
+    expect(build()).toContain(
+      "A cache that a tool writes to its own default location is not output of this turn, even when it sits under an ignored path inside the repository or in a temporary directory: leave it in place and do not report it in Notes.",
+    );
+  },
+);
+
+// Usefulness: verifies acceptance #1171 — the reviewer never deletes an entry that it cannot show
+// its turn created, because a shared cache can hold entries from before the turn.
+test("reviewer prompt bars the deletion of an entry that the turn cannot show it created", () => {
+  expect(reviewerPrompt("check the fix")).toContain(
+    "Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.",
+  );
+});
+
+// Usefulness: verifies acceptance #1171 — the cache rule names no tool, as the issue requires, so
+// it fits any repository; the removal rule it limits stays in the prompt.
+test("reviewer prompt cache rule names no tool or repository", () => {
+  const prompt = reviewerPrompt("check the fix");
+  const start = prompt.indexOf("A cache that a tool writes");
+  const rule = prompt.slice(start, prompt.indexOf("Never delete an entry"));
+  expect(start).toBeGreaterThan(-1);
+  expect(rule).not.toMatch(/vitest|jest|node_modules|node-compile-cache|pnpm|npm/i);
+});
+
 // Usefulness: verifies acceptance #1026 — every reviewer turn bars a dependency install, repair, or
 // update, including one a test runner starts, and names the reason, because that write reaches the
 // shared package store and every work tree that links it, and the mutation check does not see it.
