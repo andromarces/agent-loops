@@ -66,5 +66,5 @@ Andro Marces
 - [ADR 0029: Refuse --continue-from while a live process holds a Claude session](0029-refuse-continue-from-while-a-live-process-holds-a-claude-session.md)
 - [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md)
 - [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md)
-- Implementation: `refuseHeldSessions` in `src/lib/continuation.mjs`, `readProcessCommands` in `src/lib/process-ancestry.mjs`, the call in `src/cli.mjs`, and `dispatchLocked` in `src/role.mjs`. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run) and [Recovery after compaction or restart](../docs/orchestrator-instructions.md#recovery-after-compaction-or-restart).
+- Implementation: `refuseHeldSessions` in `src/lib/continuation.mjs`, `readProcessCommands` in `src/lib/process-ancestry.mjs`, the call in `src/cli.mjs`, and `dispatchLocked` in `src/role-dispatch.mjs`. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run) and [Recovery after compaction or restart](../docs/orchestrator-instructions.md#recovery-after-compaction-or-restart).
 - [ADR Index](README.md)

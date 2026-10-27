@@ -499,7 +499,7 @@ Andro Marces
 - [Pull request #913](https://github.com/andromarces/agent-loops/pull/913)
 - Implementation: `keepFailedSessionId` and `flagMissingSession` in `src/agents/shared.mjs`,
   the adapters in `src/agents/` (the Claude pre-assigned id in `src/agents/claude.mjs`), `runFn` in `runChild` in `src/child-turn.mjs`, the dispatch write in
-  `src/role.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/lib/transcript.mjs`; documented in [Session resume after a failed turn](../docs/reference/session-resume.md#session-resume-after-a-failed-turn) and [Continue a run](../docs/reference/usage.md#continue-a-run)
+  `src/role-dispatch.mjs`, and the headless transcript write through `onSessionAssigned` in `src/runtime.mjs` and `src/lib/transcript.mjs`; documented in [Session resume after a failed turn](../docs/reference/session-resume.md#session-resume-after-a-failed-turn) and [Continue a run](../docs/reference/usage.md#continue-a-run)
 - Superseded by [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0030: Keep the pre-assigned id of a failed first Copilot turn that saved a turn](0030-keep-the-pre-assigned-id-of-a-failed-first-copilot-turn-that-saved-a-turn.md)
 - [ADR Index](README.md)

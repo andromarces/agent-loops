@@ -59,7 +59,7 @@ const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 // `*Note*:x`, and `*emph*.2`. A non-ASCII digit (`*emph*.٢`, `*file*.٢`) carries
 // no `\d`, so it does not flag. The cost is not only a reporting loss: a null
 // block has no Checks line, so the `--require-accept` gate also refuses.
-// `acceptGateReason` in src/role.mjs returns "the accepted review has no Checks
+// `acceptGateReason` in src/role-finish.mjs returns "the accepted review has no Checks
 // line", and `isAcceptedReview` in this file returns false. Both
 // directions fail closed, but the report loses its text to `raw`, and the
 // `acceptGateReason` refusal names the wrong cause.

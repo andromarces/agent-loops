@@ -1,13 +1,18 @@
-// Validation of the init flags of `agent-loop role`: the checks that run at init, and the refusal of
-// a flag that a later call changes.
+// Arguments of `agent-loop role`: parsing, the refusal of a flag that belongs to another operation,
+// the checks that run at init, and the refusal of an init flag that a later call changes.
+import { resolve } from "node:path";
 import { normalizeAgent, supportedAgents } from "./agents/index.mjs";
 import {
   CHILD_ROLE_KINDS,
   ROLE_FLAG_BY_OPTION,
   REVIEWER_SANDBOX_MODES,
+  TASK_SOURCE_CONFLICT,
   initRefusal,
+  parseFlags,
   recordedReviewerSandbox,
+  roleFlags,
 } from "./lib/args.mjs";
+import { isFullSha } from "./lib/check-wait.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { normalizeLocalPath } from "./lib/local-files.mjs";
 import { RoleError } from "./role-envelope.mjs";
@@ -174,4 +179,194 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
 
 function kebab(name) {
   return name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+}
+
+const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "declare-pr", "wait-checks"]);
+const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
+const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
+
+export const ROLE_USAGE = [
+  "Usage: agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]",
+  "",
+  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
+  "state file. One JSON object on stdout, except this help; logs on stderr.",
+  "",
+  "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
+  "Init task: --task <text> or --task-file <path|-> (- reads stdin; then pass --prompt-file).",
+  "",
+  "-h, --help  Show this help. Run agent-loop --help for every role flag.",
+].join("\n");
+
+/**
+ * Parses `agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]`. Reuses the flag
+ * reading rules of the headless CLI. The OpenCode validation runs later through
+ * `validateInitFlags`. Semantics that depend on the state file (init detection, change rejection)
+ * are checked at execution time, not parse time.
+ */
+export function parseRoleArgs(argv) {
+  const args = {
+    operation: "dispatch",
+    cwd: process.cwd(),
+    role: null,
+    task: null,
+    taskFile: null,
+    mode: null,
+    parentSession: null,
+    worker: null,
+    workerModel: null,
+    workerEffort: null,
+    reviewer: null,
+    reviewerModel: null,
+    reviewerEffort: null,
+    maxSteps: null,
+    timeout: null,
+    promptFile: null,
+    transcript: null,
+    resumeInterrupted: false,
+    noCopyLocalFiles: false,
+    copyLocalPaths: [],
+    reason: null,
+    requireAccept: false,
+    requireCi: null,
+    compareHead: null,
+    pr: null,
+    all: false,
+    expect: [],
+    head: null,
+    testCmd: null,
+    testCmdTimeout: null,
+    reviewerSandbox: null,
+    verbose: false,
+    timeoutProvided: false,
+    help: false,
+  };
+
+  let index = 0;
+  if (argv.length > 0 && OPERATIONS.has(argv[0])) {
+    args.operation = argv[0];
+    index = 1;
+  }
+
+  parseFlags(argv, args, {
+    start: index,
+    roleFlagMap: ROLE_FLAGS,
+    onFlag: (arg, readInline) => {
+      switch (arg) {
+        case "--role":
+          args.role = readInline(arg);
+          if (!ROLE_NAMES.has(args.role)) {
+            throw new RoleError(`--role must be worker or reviewer, got: ${args.role}`);
+          }
+          return true;
+
+        case "--parent-session":
+          args.parentSession = readInline(arg);
+          return true;
+
+        case "--prompt-file":
+          args.promptFile = resolve(readInline(arg));
+          return true;
+
+        case "--resume-interrupted":
+          args.resumeInterrupted = true;
+          return true;
+
+        case "--all":
+          args.all = true;
+          return true;
+
+        case "--expect": {
+          const name = readInline(arg).trim();
+          if (name === "") {
+            throw new RoleError("--expect needs a non-empty check name.");
+          }
+          args.expect.push(name);
+          return true;
+        }
+
+        case "--head":
+          args.head = readInline(arg);
+          if (!isFullSha(args.head)) {
+            throw new RoleError(
+              `--head must be a full lowercase commit SHA of 40 or 64 hex digits, got: ${args.head}`,
+            );
+          }
+          return true;
+
+        case "--no-copy-local-files":
+          args.noCopyLocalFiles = true;
+          return true;
+
+        case "--copy-local-path":
+          args.copyLocalPaths.push(readInline(arg));
+          return true;
+
+        case "--reason":
+          args.reason = readInline(arg);
+          return true;
+
+        case "--help":
+        case "-h":
+          args.help = true;
+          return true;
+
+        default:
+          return false;
+      }
+    },
+  });
+
+  if (args.task !== null && args.taskFile !== null) {
+    throw new RoleError(TASK_SOURCE_CONFLICT);
+  }
+
+  return args;
+}
+
+/**
+ * Rejects each flag that belongs to another operation: `--role` is for dispatch,
+ * `--reason` for abort, and `--require-accept` and `--require-ci` for finish.
+ * The checks run in a fixed order, and abort's missing `--reason` is reported
+ * before a finish gate, so each refusal keeps its error text.
+ */
+export function rejectMisplacedFlags(args, operation) {
+  if (operation !== "dispatch" && args.role !== null) {
+    throw new RoleError("--role is only valid for dispatch.");
+  }
+  if (operation !== "abort" && args.reason !== null) {
+    throw new RoleError("--reason is only valid for abort.");
+  }
+  if (operation === "abort" && args.reason === null) {
+    throw new RoleError("abort requires --reason.");
+  }
+  if (operation !== "wait-checks" && args.all) {
+    throw new RoleError("--all is only valid for wait-checks.");
+  }
+  if (operation !== "wait-checks" && args.expect.length > 0) {
+    throw new RoleError("--expect is only valid for wait-checks.");
+  }
+  if (operation === "wait-checks" && args.expect.length > 0 && !args.all) {
+    throw new RoleError(
+      "--expect needs --all: the required wait already waits on each required check.",
+    );
+  }
+  if (operation !== "wait-checks" && args.head !== null) {
+    throw new RoleError("--head is only valid for wait-checks.");
+  }
+  if (operation !== "finish" && args.compareHead !== null) {
+    throw new RoleError(`--compare-head is only valid for finish, not ${operation}.`);
+  }
+  if (operation !== "finish" && (args.requireAccept || args.requireCi !== null)) {
+    throw new RoleError(
+      `--require-accept and --require-ci are only valid for finish, not ${operation}.`,
+    );
+  }
+}
+
+export function requireParentSessionFlag(args, operation) {
+  if (args.parentSession === null) {
+    throw new RoleError(
+      `${operation} requires --parent-session (the harness session id the run was started with).`,
+    );
+  }
 }

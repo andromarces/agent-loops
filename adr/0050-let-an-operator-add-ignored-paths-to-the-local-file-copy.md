@@ -51,6 +51,6 @@ Andro Marces
 
 - [Issue #980](https://github.com/andromarces/agent-loops/issues/980)
 - [Pull request #983](https://github.com/andromarces/agent-loops/pull/983)
-- Implementation: `normalizeLocalPath`, `refuseUnsafeLocalPaths`, and `copyLocalFiles` in `src/lib/local-files.mjs`, the flag in `src/role.mjs` and `src/role-init-flags.mjs`; documented in [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree), `docs/reference/install.md`, and `docs/orchestrator-instructions.md`
+- Implementation: `normalizeLocalPath`, `refuseUnsafeLocalPaths`, and `copyLocalFiles` in `src/lib/local-files.mjs`, the flag in `src/role-args.mjs`; documented in [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree), `docs/reference/install.md`, and `docs/orchestrator-instructions.md`
 - Supersedes part of [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [ADR Index](README.md)
