@@ -1,6 +1,6 @@
 import { stateRoot } from "./runstate.mjs";
 import { sessionRecordsRoot } from "./session-record.mjs";
-import { slotsRoot } from "./test-slot.mjs";
+import { slotsRoot } from "./slots-root.mjs";
 
 // Each machine-wide root defaults to a path under `os.tmpdir()`, so the child needs the value that
 // the parent resolves. A value that the user set is kept. An empty value counts as unset, because
