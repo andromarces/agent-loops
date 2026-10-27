@@ -3,7 +3,6 @@ import { readProp } from "../lib/error-message.mjs";
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
-import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
 import {
   asSessionId,
   assertResumedSession,
@@ -14,11 +13,7 @@ import {
   setUsageOrDelete,
   throwIfCanceled,
 } from "./shared.mjs";
-
-// A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
-// so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
-// than becoming a verdict the model never wrote on its own line (issue #316).
-const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
+import { isMessageId, joinTextParts } from "./opencode-text.mjs";
 
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
@@ -240,147 +235,6 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
     return redactEnvSecrets(value) === value ? value : undefined;
   });
 }
-
-/**
- * Concatenates the text parts of a turn. The stream splits one response across parts at token
- * boundaries, so a part glues to the one before it. A part that opens a report label starts its
- * own line instead, because parseReportBlock (src/lib/report.mjs) matches each label plain at
- * column 0 and otherwise reads the whole block as `raw` (issue #316). Within a message, every other
- * part, including one that opens the reviewer's `Verdict:` line, keeps the text before it, so a
- * mid-line `Verdict:` never becomes a verdict the model did not write on its own line.
- * A different assistant message also starts its own line, so a late message cannot join the last
- * line of the closing block (issue #458). Parts are first grouped into messages by `part.messageID`
- * across the whole stream: a valid, non-empty string id names one message, so its parts rejoin it
- * even when another message came between (A/B/A). Every part without a valid id joins one
- * unidentified message for the whole stream, even when identified parts come between them, so it
- * never joins an identified message. A stream with no valid id is one message. Messages keep the order of their first part, and the parts of one message join
- * in stream order at that position. No break precedes a message that holds no text.
- * The last closing block governs, and it governs alone (issue #467). Each message holds its parts at
- * stream positions, and a message holds a closing block attempt (hasClosingBlockAttempt) when its
- * whole text does. When the position spans of two attempt-holding messages overlap, the stream order
- * of the blocks is ambiguous, so the join throws and the turn fails closed. Otherwise the spans are
- * disjoint, the last attempt-holding message governs, and the join drops every earlier one. A late
- * message that opens with a report label or `Verdict:` therefore never combines with the fields of
- * the earlier block. Messages without an attempt stay: narration before the block and plain prose
- * after it. This is the Codex and Copilot selection (lastClosingMessage, src/agents/shared.mjs) plus
- * those kept messages.
- * @throws {Error} when two messages that hold a closing block attempt interleave in the stream, or
- * when the governing message is the unidentified one, joins to an accept verdict, and the label
- * lines of its closing block (`Conclusion:` through `Verdict:`) come from more than one part,
- * however the lines or the labels are split. Parts without an id cannot be told apart from one
- * another, so a `Verdict:` part cannot be trusted to belong to the `Checks` line before it. A block
- * whole in one part never throws, whatever earlier parts mention (issue #509). The turn
- * then ends as an error, never as a report, so no accept can come from it. The first line of
- * the message names the cause. The lines after it hold every message joined as above, so the
- * envelope carries what the model wrote (issue #493). Both stream errors, the interleaved one and
- * the unidentified part one, bound that text (issues #510 and #529): the text is redacted (ADR 0017) first, then keeps its last 4000 code units,
- * cut on a code point boundary. A longer text is cut at the start, and a second line states the
- * cut and the original length.
- * The bound holds only for the text that the adapter produces. A later redaction pass with a
- * different environment can grow the text past the bound. A pass with the same environment
- * leaves the text unchanged. For example, the value `API_TOKEN` in `OTHER_SECRET` rewrites
- * `[redacted:API_TOKEN]` (20 characters) to `[redacted:[redacted:OTHER_SECRET]]` (34
- * characters). This example is not the full condition.
- * @param {{ part?: { text?: string, messageID?: string } }[]} events
- * @returns {string}
- */
-function joinTextParts(events) {
-  const groups = new Map();
-  events.forEach(({ part }, position) => {
-    const key = isMessageId(part.messageID) ? part.messageID : null;
-    const group = groups.get(key) ?? { first: position, parts: [] };
-    group.last = position;
-    group.parts.push(part.text);
-    group.unidentified = key === null;
-    groups.set(key, group);
-  });
-  const messages = [...groups.values()];
-
-  const attempts = messages.filter((group) => hasClosingBlockAttempt(group.parts.join("")));
-  if (attempts.some((a) => attempts.some((b) => a !== b && a.first < b.last && b.first < a.last))) {
-    throw boundedError(INTERLEAVED_MESSAGE, messages);
-  }
-  const governing = attempts.at(-1);
-  if (
-    governing?.unidentified &&
-    parseVerdict(joinMessages([governing])) === "accept" &&
-    labelLinePartCount(governing.parts) > 1
-  ) {
-    throw boundedError(UNIDENTIFIED_MESSAGE, messages);
-  }
-
-  return joinMessages(messages.filter((group) => group === governing || !attempts.includes(group)));
-}
-
-const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
-const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";
-
-// Upper bound, in UTF-16 code units, on the joined text of a stream error (issues #510 and #529).
-const ERROR_TEXT_LIMIT = 4000;
-
-/**
- * Builds a stream error: the cause, then the joined text. The text is redacted
- * first (ADR 0017), because a cut inside a secret value leaves a suffix that exact-value
- * redaction no longer matches. A longer text keeps its last ERROR_TEXT_LIMIT code units, cut on a
- * code point boundary, after a line that states the cut.
- */
-function boundedError(cause, messages) {
-  const text = redactEnvSecrets(joinMessages(messages));
-  if (text.length <= ERROR_TEXT_LIMIT) return new Error(`${cause}\n${text}`);
-  let tail = text.slice(-ERROR_TEXT_LIMIT);
-  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
-  const note = `[text cut: the last ${tail.length} of ${text.length} characters follow]`;
-  return new Error(`${cause}\n${note}\n${tail}`);
-}
-
-function joinMessages(messages) {
-  return messages.reduce((text, { parts }) => {
-    const opening = parts.join("");
-    const breaks = text && opening && !text.endsWith("\n");
-    return parts.reduce(joinPart, breaks ? `${text}\n` : text);
-  }, "");
-}
-
-const BLOCK_START = /^Conclusion:\s*/i;
-const BLOCK_LABEL_LINE = new RegExp(`^(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")}):`, "i");
-
-/**
- * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
- * block starts at the last `Conclusion:` line, as parseReportBlock reads it. A label line touches
- * every part that holds one of its characters, so a label cut across parts counts both. A line
- * terminator or trailing space is no character of the line. Text before
- * the block and plain prose after it touch no label line.
- */
-function labelLinePartCount(parts) {
-  const spans = [];
-  const text = parts.reduce((joined, part) => {
-    const next = joinPart(joined, part);
-    spans.push([next.length - part.length, next.length]);
-    return next;
-  }, "");
-
-  let offset = 0;
-  const lines = text.split("\n").map((line) => {
-    const span = [offset, offset + line.trimEnd().length];
-    offset += line.length + 1;
-    return { line, span };
-  });
-  const start = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
-  const touched = new Set();
-  for (const { line, span } of lines.slice(Math.max(start, 0))) {
-    if (start === -1 || !BLOCK_LABEL_LINE.test(line)) continue;
-    spans.forEach(([from, to], index) => {
-      if (from < span[1] && span[0] < to) touched.add(index);
-    });
-  }
-  return touched.size;
-}
-
-function joinPart(text, part) {
-  return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
-}
-
-const isMessageId = (value) => typeof value === "string" && value !== "";
 
 /**
  * Sets `state.usage` from the `step_finish` parts of the stream, or removes it when the stream
