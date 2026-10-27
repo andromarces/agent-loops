@@ -17,6 +17,7 @@ import {
   failureOf,
   ghApi,
   ghFailureText,
+  isServerErrorText,
   NO_REQUIRED_CHECKS,
   pagedRead,
   readOne,
@@ -110,6 +111,18 @@ function isFailing(check) {
 }
 
 /**
+ * The error of a failed `gh pr` read. It carries `transient` when `gh` named a server error, so the
+ * wait retries the read on its next poll (#1121). Every other failure ends the wait.
+ */
+function readFailure(label, { status, stderr }) {
+  const err = new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
+  if (isServerErrorText(stderr)) {
+    err.transient = true;
+  }
+  return err;
+}
+
+/**
  * One required-check read, mapped to the wait outcome the `gh` exit code and the
  * check list carry. Throws when the read is unresolved, so an unresolved read
  * never reads as a pass.
@@ -179,7 +192,9 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     return { settled: false, checks, noChecksYet: true };
   }
   if (status !== 0) {
-    throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
+    throw text === ""
+      ? readFailure(label, { status, stderr })
+      : new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
   }
   return { settled: false, checks };
 }
@@ -257,7 +272,7 @@ export function isFullSha(value) {
 function readHead(pr, { status, stdout, stderr }) {
   const label = `gh pr view ${pr}`;
   if (status !== 0) {
-    throw new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
+    throw readFailure(label, { status, stderr });
   }
   let parsed = null;
   try {
@@ -640,6 +655,15 @@ export async function waitChecks({
     }
     return true;
   };
+  // The error of a refusal to judge the required contexts. A names read that failed with a server
+  // error, and no reply that could not be parsed, makes it retryable on the next poll (#1121).
+  const unresolved = (required, refusal) => {
+    const err = new Error(`${refusal}; the read is unresolved.`);
+    if (required.namesTransient && required.unparsed.length === 0) {
+      err.transient = true;
+    }
+    return err;
+  };
   // The contexts the required wait judges: every source of the gate, so an app-qualified
   // context keeps its app, plus the names `gh pr checks --required` listed.
   const contextsOf = async (base, listed) => {
@@ -648,7 +672,7 @@ export async function waitChecks({
     // required check or an app qualifier that this read never saw, so no pass can follow.
     const refusal = requiredResolutionRefusal(required, pr);
     if (refusal) {
-      throw new Error(`${refusal}; the read is unresolved.`);
+      throw unresolved(required, refusal);
     }
     if (required.unknown.length > 0) {
       throw new Error(
@@ -682,7 +706,7 @@ export async function waitChecks({
     });
     const namesRefusal = noChecksYet ? null : requiredNamesRefusal(required, pr);
     if (namesRefusal) {
-      throw new Error(`${namesRefusal}; the read is unresolved.`);
+      throw unresolved(required, namesRefusal);
     }
     const absence = requiredAbsence(required);
     if (absence?.absent) {
@@ -852,17 +876,38 @@ export async function waitChecks({
   // A wait that ends on the bound with it set reports it as an error, so a server error never
   // reads as a timeout or a pass (#1025).
   let transient = null;
+  // The `gh pr` reads of one poll: the head, and the check list when the head is the one waited
+  // for. `listed` is null for another head.
+  const readPr = async () => {
+    const { head: sha, base } = readHead(pr, await bounded(headArgv));
+    if (head !== null && sha !== head) {
+      return { sha, base, listed: null };
+    }
+    const listed = readOutcome(pr, await bounded(checksArgv), all);
+    if (listed.noRequiredChecks && !(await absenceOf(base))) {
+      listed.noRequiredChecks = false;
+      listed.settled = false;
+    }
+    return { sha, base, listed };
+  };
   const poll = async () => {
     for (;;) {
       prFailures = [];
       let failed = null;
-      const { head: sha, base } = readHead(pr, await bounded(headArgv));
-      if (head === null || sha === head) {
-        const listed = readOutcome(pr, await bounded(checksArgv), all);
-        if (listed.noRequiredChecks && !(await absenceOf(base))) {
-          listed.noRequiredChecks = false;
-          listed.settled = false;
+      let state = null;
+      try {
+        state = await readPr();
+      } catch (raw) {
+        // A server error of a `gh pr` read is retried on the next poll. The bound and every other
+        // failure still end the wait.
+        const err = failureOf(raw);
+        if (!err?.transient || err instanceof BoundReached) {
+          throw err;
         }
+        failed = err;
+      }
+      if (state?.listed) {
+        const { sha, base, listed } = state;
         if (listed.noChecksYet && !all) {
           try {
             await absenceOf(base, "no checks");

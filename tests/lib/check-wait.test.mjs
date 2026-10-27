@@ -378,6 +378,90 @@ test.each(["rules", "protection"])(
   },
 );
 
+const PR_READS = {
+  head: (args) => args[0] === "pr" && args[1] === "view",
+  checks: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name,state,bucket",
+  names: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name",
+};
+
+/**
+ * One required wait whose passing `gh pr` read named by `which` ("head", "checks", or "names")
+ * answers with `failure` on its first call, or on every call when `always` is set.
+ */
+function prReadFailsWait(which, failure, { always = false, timeoutSeconds = 60 } = {}) {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }]);
+  const clock = fakeClock();
+  let failures = 0;
+  const gh = async (args, cwd, options) => {
+    if (PR_READS[which](args) && (always || failures === 0)) {
+      failures += 1;
+      return { status: 1, stdout: "", stderr: failure, timedOut: false };
+    }
+    return inner(args, cwd, options);
+  };
+  return waitChecks({ pr: 42, cwd: ".", timeoutSeconds, gh, now: clock.now, sleep: clock.sleep });
+}
+
+const GRAPHQL_504 = "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n";
+const GRAPHQL_502 = "HTTP 502: 502 Bad Gateway (https://api.github.com/graphql)\n";
+
+// Usefulness: verifies a server error of any `gh pr` read of a poll is retried on the next poll, so
+// the wait ends in the check result instead of an error that gives the parent no check evidence
+// (issue #1121).
+test.each([
+  ["the head read (HTTP 504)", "head", GRAPHQL_504],
+  ["the check list read (HTTP 502)", "checks", GRAPHQL_502],
+  ["the check list read (HTTP 504)", "checks", GRAPHQL_504],
+  ["the required names read (HTTP 504)", "names", GRAPHQL_504],
+  ["the required names read (HTTP 502)", "names", GRAPHQL_502],
+])("waitChecks retries %s that fails with a server error", async (_name, which, failure) => {
+  expect(await prReadFailsWait(which, failure)).toEqual({
+    timedOut: false,
+    head: HEAD_A,
+    checks: [PASSED_ITEM],
+  });
+});
+
+// Usefulness: verifies a server error that lasts to the bound is an error that names it, never a
+// timeout envelope and never a pass (issues #1025, #1121).
+test.each([
+  ["head", /gh pr view 42 could not be read: HTTP 504/],
+  ["checks", /gh pr checks 42 --required could not be read: HTTP 504/],
+  ["names", /the required check names for PR 42 could not be read/],
+])(
+  "waitChecks reports an error when the %s read fails with a server error until the bound",
+  async (which, message) => {
+    await expect(prReadFailsWait(which, GRAPHQL_504, { always: true })).rejects.toThrow(message);
+  },
+);
+
+// Usefulness: verifies a 4xx reply, an unparseable reply, and a failure that names no HTTP status
+// still end the wait at once, with the one `gh` read made (issue #1121).
+test.each(
+  ["head", "checks", "names"].flatMap((which) => [
+    [which, "a 404", "HTTP 404: Not Found (https://api.github.com/graphql)\n"],
+    [which, "a 403", "HTTP 403: Resource not accessible (https://api.github.com/graphql)\n"],
+    [which, "no status", "error connecting to api.github.com\n"],
+    [which, "a quoted status", "gh: upstream said HTTP 504 (HTTP 404)\n"],
+  ]),
+)("waitChecks ends at once when the %s read fails with %s", async (which, _kind, failure) => {
+  await expect(prReadFailsWait(which, failure)).rejects.toThrow();
+});
+
+// Usefulness: verifies a reply that is not parseable ends the wait at once even when `gh` exits
+// with a server error text, so only a failed read is retried (issue #1121).
+test("waitChecks ends at once on an unparseable head reply", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }]);
+  const clock = fakeClock();
+  const gh = async (args, cwd, options) =>
+    PR_READS.head(args)
+      ? { status: 0, stdout: "not json", stderr: GRAPHQL_504, timedOut: false }
+      : inner(args, cwd, options);
+  await expect(
+    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 60, gh, now: clock.now, sleep: clock.sleep }),
+  ).rejects.toThrow(/gh pr view 42/);
+});
+
 // Usefulness: verifies only the exact `gh` answer is the new outcome: the same
 // words inside a longer error text, or on another exit code, stay unresolved
 // (issue #894).

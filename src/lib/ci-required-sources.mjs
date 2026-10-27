@@ -160,6 +160,16 @@ export async function ghApi(gh, args, cwd) {
 // request, never a number in the error text of `gh`, which carries server-supplied text.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
+/**
+ * Whether the stderr of a failed `gh pr` read names a retryable server error. `gh` words it
+ * `HTTP <status>: <message> (<url>)` and the status opens the text, so only that opening counts: a
+ * status in later text or inside a 4xx message never makes a retry (#1121).
+ */
+export function isServerErrorText(stderr) {
+  const status = /^HTTP (\d{3})\b/.exec(stderr.trimStart());
+  return status !== null && RETRYABLE_STATUSES.has(Number(status[1]));
+}
+
 // The status line, header lines, and blank line that open the stdout of one `gh api --include`
 // request. Body bytes can only follow them, so they never form a status block of their own.
 const STATUS_BLOCK = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n(?:[^\r\n:]+:[^\r\n]*\r?\n)*\r?\n/;
@@ -904,7 +914,7 @@ async function ghRequiredNames(gh, pr, cwd) {
     };
   }
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
-  return { names: [], ok: none };
+  return { names: [], ok: none, transient: stdout.trim() === "" && isServerErrorText(stderr) };
 }
 
 // A required status context: its name, plus the id of the app whose check run
@@ -1006,6 +1016,8 @@ export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = fa
     unknown,
     unparsed,
     namesRead: listed.ok,
+    // A failed names read that named a server error. Only the wait retries it, the gate ignores it.
+    namesTransient: Boolean(listed.transient),
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal. It contributes no contexts. It leaves
     // the per-check path to the other sources, as it did before the ruleset read
