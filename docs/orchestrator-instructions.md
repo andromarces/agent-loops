@@ -606,8 +606,8 @@ printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","def
 ```
 
 The value must be a boolean, and the key is not one of the five summary keys:
-`summary` keeps exactly those five. A refused finish leaves the lifecycle
-`active`. The command exits 0 for every accepted finish, `unresolvedCompare`
+`summary` keeps exactly those five. A refused finish keeps the lifecycle,
+`active` or `interrupted`. The command exits 0 for every accepted finish, `unresolvedCompare`
 included, where the headless loop exits 4. The stdin object allows only the five
 summary keys and `unresolvedCompare`. The headless finish action object allows
 only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
