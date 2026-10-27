@@ -62,6 +62,24 @@ test("codex sends correct argv for initial turn with readOnly", async () => {
   );
 });
 
+// Usefulness: verifies a non-object JSON line (issue #1123) is skipped, so the turn yields the same result as without it.
+test("codex skips a non-object JSON line between valid events", async () => {
+  const stdout = [
+    '{"type":"thread.started","thread_id":"th-1"}',
+    "null",
+    "42",
+    '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}',
+    '{"type":"turn.completed","usage":{"input_tokens":1}}',
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const response = await runCodex(state, "prompt text", { cwd: "/dir" });
+
+  expect(response).toBe("done");
+  expect(state.sessionId).toBe("th-1");
+});
+
 // Usefulness: verifies codex adapter resumes session and adds -c sandbox_mode="read-only" when readOnly is true on resume.
 test("codex resumes session with readOnly", async () => {
   const events = [

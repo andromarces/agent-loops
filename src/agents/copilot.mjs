@@ -131,7 +131,7 @@ export async function runCopilot(state, prompt, options = {}) {
     throw error;
   }
 
-  const events = parseJsonLines(stdout);
+  const events = parseJsonLines(stdout).filter(isJsonObject);
   const resultEvent = findResultEvent(events);
   setMainLoopUsage(state, objectUsage(resultEvent));
 
