@@ -3,10 +3,10 @@
 // `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
 // deleted. The module never prints, logs, or returns file content: every report
 // is a path name.
-import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { sha256 } from "./hash.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 import { gitRead } from "./snapshot.mjs";
 
@@ -316,6 +316,23 @@ async function blockedTrees(entries, mainReal, rootReal) {
   return { sourceBlocked, targetBlocked };
 }
 
+/** The names Git tracks in the work tree `dir`, as root-relative paths with `/` separators. */
+async function listTrackedNames(dir, read) {
+  return (await read(dir, ["ls-files", "-z"])).stdout.split("\0").filter(Boolean);
+}
+
+/** The names among `names` that `git check-ignore` reports ignored in the work tree `root`. */
+async function ignoredNames(read, root, names) {
+  if (names.length === 0) {
+    return new Set();
+  }
+  const result = await read(root, ["check-ignore", "-z", "--stdin"], {
+    input: `${names.join("\0")}\0`,
+    allowExit: [1],
+  });
+  return new Set(result.stdout.split("\0").filter(Boolean));
+}
+
 /**
  * The work tree of `cwd` as both the source and the target of an operator path check, for a `cwd`
  * that has no main work tree to copy from (the main work tree itself, a bare layout, or a path with a
@@ -348,15 +365,13 @@ async function ownWorkTree(cwd, read) {
  * 3. Every file under it that would be copied is ignored in `rootReal`, the work tree that
  *    receives it. A listed directory past the entry bound is skipped whole by the copy and is not
  *    checked.
- * A path that does not exist passes: nothing is copied for it.
+ * A path that does not exist passes: nothing is copied for it. `known` holds the `sourceBlocked`
+ * and `targetBlocked` sets and the `trackedNames` of the source work tree, which the copy reads once.
  * @throws {Error} that names the path and starts with `--copy-local-path`
  */
-async function refuseUnsafeLocalPaths(tree, extra, read, maxEntries) {
-  const { entries, mainReal, rootReal } = tree;
-  const { sourceBlocked, targetBlocked } = await blockedTrees(entries, mainReal, rootReal);
-  const trackedNames = (await read(mainReal, ["ls-files", "-z"])).stdout
-    .split("\0")
-    .filter(Boolean);
+async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries) {
+  const { mainReal, rootReal } = tree;
+  const { sourceBlocked, targetBlocked, trackedNames } = known;
   for (const rel of extra) {
     const refuse = (why) =>
       new Error(`--copy-local-path ${JSON.stringify(rel)} is refused: ${why}`);
@@ -393,12 +408,7 @@ async function refuseUnsafeLocalPaths(tree, extra, read, maxEntries) {
     ) {
       throw refuse("it does not resolve to a plain path inside the main work tree");
     }
-    const ctx = {
-      others: sourceBlocked,
-      files: [],
-      skipped: new Set(),
-      budget: { left: maxEntries, exceeded: false },
-    };
+    const ctx = newWalk(sourceBlocked, maxEntries);
     await collect(ctx, rel, abs);
     if (ctx.budget.exceeded) {
       continue;
@@ -415,20 +425,21 @@ async function refuseUnsafeLocalPaths(tree, extra, read, maxEntries) {
         names.push(name);
       }
     }
-    if (names.length === 0) {
-      continue;
-    }
-    const result = await read(rootReal, ["check-ignore", "-z", "--stdin"], {
-      input: `${names.join("\0")}\0`,
-      allowExit: [1],
-    });
-    const ignored = new Set(result.stdout.split("\0").filter(Boolean));
+    const ignored = await ignoredNames(read, rootReal, names);
     const open = names.find((name) => !ignored.has(name));
     if (open !== undefined) {
       throw refuse(`${JSON.stringify(open)} is not ignored in the work tree`);
     }
   }
 }
+
+/** The state of one walk: a bound and a result list that belong to one listed path. */
+const newWalk = (others, maxEntries) => ({
+  others,
+  files: [],
+  skipped: new Set(),
+  budget: { left: maxEntries, exceeded: false },
+});
 
 /**
  * Collects the candidate files of one listed path into `ctx.files` as
@@ -525,10 +536,18 @@ export async function copyLocalFiles(
   const located = await locateWorkTrees(cwd, read);
   // The operator paths are checked before anything is copied, and also when nothing is, so a
   // refused path fails the init for a `--cwd` that is the main work tree too.
+  const tree = located ?? (extra.length > 0 ? await ownWorkTree(cwd, read) : null);
+  if (tree === null) {
+    return null;
+  }
+  const { entries, mainReal, rootReal } = tree;
+  const { sourceBlocked, targetBlocked } = await blockedTrees(entries, mainReal, rootReal);
+  const trackedNames = await listTrackedNames(mainReal, read);
   if (extra.length > 0) {
     await refuseUnsafeLocalPaths(
-      located ?? (await ownWorkTree(cwd, read)),
+      tree,
       extra,
+      { sourceBlocked, targetBlocked, trackedNames },
       read,
       maxEntries,
     );
@@ -536,52 +555,10 @@ export async function copyLocalFiles(
   if (located === null) {
     return null;
   }
-  const { entries, mainReal, rootReal } = located;
   const listed = [...new Set([...LOCAL_FILE_PATHS, ...extra])];
-  const { sourceBlocked, targetBlocked } = await blockedTrees(entries, mainReal, rootReal);
-
-  const skipped = new Set();
-  const files = [];
-  for (const rel of listed) {
-    // One bound and one result list per listed path, so a path past its bound is
-    // dropped whole and never starves the next listed path.
-    const ctx = {
-      others: sourceBlocked,
-      files: [],
-      skipped: new Set(),
-      budget: { left: maxEntries, exceeded: false },
-    };
-    const abs = join(mainReal, rel);
-    if (
-      (await lstatOrNull(abs)) !== null &&
-      (await hasBlockedAncestor(mainReal, rel, sourceBlocked))
-    ) {
-      skipped.add(rel);
-      continue;
-    }
-    await collect(ctx, rel, abs);
-    if (ctx.budget.exceeded) {
-      skipped.add(rel);
-    } else {
-      files.push(...ctx.files);
-      ctx.skipped.forEach((name) => skipped.add(name));
-    }
-  }
-
-  const trackedNames = (await read(mainReal, ["ls-files", "-z"])).stdout
-    .split("\0")
-    .filter(Boolean);
-  // A tracked file is tracked under any spelling that reaches it, so the tracked
-  // names under the listed paths are also compared by canonical path: on a
-  // case-insensitive file system `.claude/config` is the tracked `.Claude/config`.
-  const listedRoots = new Set(listed.map((path) => foldName(path.split("/")[0])));
+  const { files, skipped } = await walkListed(mainReal, listed, sourceBlocked, maxEntries);
+  const trackedCanon = await canonOfTracked(mainReal, listed, trackedNames);
   const tracked = new Set(trackedNames);
-  const trackedCanon = new Set();
-  for (const name of trackedNames) {
-    if (listedRoots.has(foldName(name.split("/")[0]))) {
-      trackedCanon.add(await realpath(join(mainReal, name)).catch(() => null));
-    }
-  }
   const pending = [];
   for (const file of files) {
     if (tracked.has(file.rel) || trackedCanon.has(file.canon)) {
@@ -601,17 +578,11 @@ export async function copyLocalFiles(
     }
   }
 
-  const ignored = new Set();
-  if (pending.length > 0) {
-    const result = await read(rootReal, ["check-ignore", "-z", "--stdin"], {
-      input: `${pending.map((file) => file.rel).join("\0")}\0`,
-      allowExit: [1],
-    });
-    for (const rel of result.stdout.split("\0").filter(Boolean)) {
-      ignored.add(rel);
-    }
-  }
-
+  const ignored = await ignoredNames(
+    read,
+    rootReal,
+    pending.map((file) => file.rel),
+  );
   const copied = [];
   for (const file of pending) {
     const { rel } = file;
@@ -624,6 +595,52 @@ export async function copyLocalFiles(
 
   logInfo(`local files: ${copied.length} copied, ${skipped.size} skipped`);
   return { copied: copied.sort(), skipped: [...skipped].sort() };
+}
+
+/**
+ * Walks each listed path of the main work tree `mainReal` and returns `{ files, skipped }`: the
+ * candidate files (see `collect`) and a set of skipped root-relative names. A path past its entry
+ * bound, or under a blocked ancestor, is skipped whole and never starves the next listed path.
+ */
+async function walkListed(mainReal, listed, sourceBlocked, maxEntries) {
+  const skipped = new Set();
+  const files = [];
+  for (const rel of listed) {
+    // One bound and one result list per listed path.
+    const ctx = newWalk(sourceBlocked, maxEntries);
+    const abs = join(mainReal, rel);
+    if (
+      (await lstatOrNull(abs)) !== null &&
+      (await hasBlockedAncestor(mainReal, rel, sourceBlocked))
+    ) {
+      skipped.add(rel);
+      continue;
+    }
+    await collect(ctx, rel, abs);
+    if (ctx.budget.exceeded) {
+      skipped.add(rel);
+    } else {
+      files.push(...ctx.files);
+      ctx.skipped.forEach((name) => skipped.add(name));
+    }
+  }
+  return { files, skipped };
+}
+
+/**
+ * The canonical paths of the tracked names under the listed paths. A tracked file is tracked under
+ * any spelling that reaches it, so such a name is also compared by canonical path: on a
+ * case-insensitive file system `.claude/config` is the tracked `.Claude/config`.
+ */
+async function canonOfTracked(mainReal, listed, trackedNames) {
+  const listedRoots = new Set(listed.map((path) => foldName(path.split("/")[0])));
+  const canon = new Set();
+  for (const name of trackedNames) {
+    if (listedRoots.has(foldName(name.split("/")[0]))) {
+      canon.add(await realpath(join(mainReal, name)).catch(() => null));
+    }
+  }
+  return canon;
 }
 
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
@@ -747,9 +764,7 @@ async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
     ) {
       return NOT_COMPARABLE;
     }
-    const hash = createHash("sha256")
-      .update(await handle.readFile())
-      .digest("hex");
+    const hash = sha256(await handle.readFile());
     if (
       (await hasBlockedAncestor(base, rel, new Set())) ||
       !(await namesFile(path, canon, opened))
