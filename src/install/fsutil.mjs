@@ -49,7 +49,7 @@ export async function fileMode(path) {
  */
 export async function writeTextAtomic(path, text, { mode } = {}) {
   await writeFileAtomic(path, text, {
-    mode: mode ?? (await fileMode(path)) ?? undefined,
+    mode: mode ?? (async (destination) => (await fileMode(destination)) ?? undefined),
     exclusive: true,
   });
 }
