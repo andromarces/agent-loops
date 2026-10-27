@@ -178,6 +178,46 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
   expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
 });
 
+// Usefulness: verifies requirement "a cancel after the post-turn reads scans each advisory list once"
+// (issue #1127): the scan warns once per list, so a second scan in the cancel path shows as a
+// repeated warning, which no other test would catch because the carried lists stay equal.
+test("a cancel after the post-turn reads scans each advisory list once", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "package-store-inherited-"));
+  for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+  const controller = new AbortController();
+  // The cancel lands after the post-turn reads start: the first advisory warning aborts the signal.
+  const warn = vi.spyOn(console, "error").mockImplementation((line) => {
+    if (String(line).includes("warn: reviewer:")) controller.abort();
+  });
+  try {
+    const error = await runChild({
+      agents: {
+        fake: scripted([
+          async () => {
+            await install();
+            await mkdir(join(temp, "m54-3db54ca8"));
+            return "done";
+          },
+        ]),
+      },
+      role: { kind: "fake", sessionId: null },
+      roleName: "reviewer",
+      prompt: "go",
+      cwd: repo,
+      signal: controller.signal,
+    }).catch((err) => err);
+    expect(error).toMatchObject({ isCanceled: true });
+    expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+    expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+    const lines = warn.mock.calls.map((call) => String(call[0]));
+    expect(lines.filter((line) => line.includes("inherited temporary directory"))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes("package store entries changed"))).toHaveLength(1);
+  } finally {
+    warn.mockRestore();
+    await removePath(temp);
+  }
+});
+
 // Usefulness: verifies the sibling evidence on the same path (issue #1024): the entries that the
 // turn left in the inherited temporary directory ride on the cancel error as well.
 test("a reviewer turn that fails after a cancel carries the temporary directory entries", async () => {

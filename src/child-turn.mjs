@@ -6,11 +6,13 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import {
   appearedInInheritedTmpdir,
   carryInheritedTmpdirEntries,
+  failedInheritedTmpdirEntries,
   snapshotInheritedTmpdir,
 } from "./lib/inherited-tmpdir-entries.mjs";
 import {
   carryPackageStoreEntries,
   changedInPackageStore,
+  failedPackageStoreEntries,
   snapshotPackageStore,
 } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
@@ -64,6 +66,26 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 }
 
 /**
+ * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result and the two
+ * advisory lists. An absent or empty field is skipped, and so is an error that cannot take it.
+ */
+export function carryTurnEvidence(err, { testRun, inheritedTmpdirEntries, packageStoreEntries }) {
+  if (!err || typeof err !== "object") return;
+  if (testRun) carryTestRun(err, testRun);
+  if (inheritedTmpdirEntries?.length > 0) carryInheritedTmpdirEntries(err, inheritedTmpdirEntries);
+  if (packageStoreEntries?.length > 0) carryPackageStoreEntries(err, packageStoreEntries);
+}
+
+/** Reads back what `carryTurnEvidence` carried. A field the error does not carry is `undefined`. */
+export function failedTurnEvidence(err) {
+  return {
+    testRun: failedTestRun(err),
+    inheritedTmpdirEntries: failedInheritedTmpdirEntries(err),
+    packageStoreEntries: failedPackageStoreEntries(err),
+  };
+}
+
+/**
  * Run one worker or reviewer turn with the same guards as the headless loop:
  * role prompt wrapping, read-only mutation check for the reviewer, timeout,
  * and cancel propagation. Returns `{ role, status, response }` on success and
@@ -91,6 +113,7 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * vanished in the pnpm package store during the turn, and a fatal error carries it as
  * `err.packageStoreEntries`, read through `failedPackageStoreEntries`. The list is advisory for the
  * same reason, and the read is bounded in time and size and never reads file content (issue #1045).
+ * Each list is scanned once per turn, both lists together, and a cancel after that scan reuses them.
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
  * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
@@ -99,7 +122,7 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, transient?: string, testRun?: object }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, transient?: string, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }>}
  */
 export async function runChild(options) {
   const {
@@ -339,6 +362,8 @@ export async function runChild(options) {
   let sharedBefore = null;
   let tmpdirBefore = null;
   let storeBefore = null;
+  // The post-turn advisory lists, kept once read so a cancel after the reads reuses them.
+  let advisory = null;
 
   /** Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. */
   const readSharedGitChanged = async () => {
@@ -365,6 +390,17 @@ export async function runChild(options) {
     }
     return entries;
   };
+  /** Reads both advisory lists together, once per turn: a later call returns the same pair. */
+  const readAdvisory = async () => {
+    if (advisory === null) {
+      const [inheritedTmpdirEntries, packageStoreEntries] = await Promise.all([
+        readInheritedTmpdirEntries(),
+        readPackageStoreEntries(),
+      ]);
+      advisory = { inheritedTmpdirEntries, packageStoreEntries };
+    }
+    return advisory;
+  };
   try {
     let reviewed = null;
     let prChecks = null;
@@ -384,8 +420,12 @@ export async function runChild(options) {
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     sharedBefore = roleName === "worker" ? await readShared() : null;
-    tmpdirBefore = roleName === "reviewer" ? await snapshotInheritedTmpdir() : null;
-    storeBefore = roleName === "reviewer" ? await snapshotPackageStore({ cwd }) : null;
+    if (roleName === "reviewer") {
+      [tmpdirBefore, storeBefore] = await Promise.all([
+        snapshotInheritedTmpdir(),
+        snapshotPackageStore({ cwd }),
+      ]);
+    }
     let response;
     try {
       response = readOnly
@@ -416,8 +456,7 @@ export async function runChild(options) {
       await sendTaskToReplacement();
     }
     // Read after the last child call of the dispatch, the task-only turn included.
-    const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
-    const packageStoreEntries = await readPackageStoreEntries();
+    const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory();
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);
@@ -453,13 +492,7 @@ export async function runChild(options) {
       // A fatal error carries the entries too, because the dispatcher builds its envelope, its
       // state record, and its event from the error (issue #1024).
       if (err && typeof err === "object") {
-        const entries = await readInheritedTmpdirEntries();
-        if (entries.length > 0) carryInheritedTmpdirEntries(err, entries);
-        const storeEntries = await readPackageStoreEntries();
-        if (storeEntries.length > 0) carryPackageStoreEntries(err, storeEntries);
-      }
-      if (testRun && err && typeof err === "object") {
-        carryTestRun(err, testRun);
+        carryTurnEvidence(err, { testRun, ...(await readAdvisory()) });
       }
       throw err;
     }
@@ -472,18 +505,13 @@ export async function runChild(options) {
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
     // The failed turn may have changed the shared state before it failed.
     const sharedGitChanged = await readSharedGitChanged();
-    const inheritedTmpdirEntries = await readInheritedTmpdirEntries();
-    const packageStoreEntries = await readPackageStoreEntries();
+    const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory();
     // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn. This
     // throw leaves the catch block, so it carries the evidence just read, as the fatal path does.
     try {
       throwIfCanceled(signal, roleName);
     } catch (canceled) {
-      if (inheritedTmpdirEntries.length > 0) {
-        carryInheritedTmpdirEntries(canceled, inheritedTmpdirEntries);
-      }
-      if (packageStoreEntries.length > 0) carryPackageStoreEntries(canceled, packageStoreEntries);
-      if (testRun) carryTestRun(canceled, testRun);
+      carryTurnEvidence(canceled, { testRun, inheritedTmpdirEntries, packageStoreEntries });
       throw canceled;
     }
     // An adapter marks a failure the provider is expected to clear (issue #1012).
