@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
 import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
+import { ANTIGRAVITY_GUARDED_TOOLS } from "../../src/hook/antigravity-guarded-tools.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
@@ -552,6 +553,15 @@ async function renderAntigravityTargets() {
 async function readAntigravityGuardGroup() {
   return (await renderAntigravityTargets()).settings[0].entry;
 }
+
+// Usefulness: verifies the installed Antigravity matcher names exactly the tools the
+// guard acts on, because a tool missing from the matcher is never guarded and a
+// tool missing from the guard set is registered but never denied.
+test("Antigravity installed matcher names exactly the guarded tool set", async () => {
+  const group = await readAntigravityGuardGroup();
+  const matched = group.PreToolUse[0].matcher.split("|").toSorted();
+  expect(matched).toEqual([...ANTIGRAVITY_GUARDED_TOOLS].toSorted());
+});
 
 // Usefulness: verifies the Antigravity hook contract — every tool the template
 // registers is denied for the registered parent with the flat `{decision,reason}`
