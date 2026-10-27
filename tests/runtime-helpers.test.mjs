@@ -23,6 +23,7 @@ import {
   untrackedFilesGit,
   within,
 } from "./runtime-helpers.mjs";
+import { scriptedGh } from "./lib/check-wait-helpers.mjs";
 
 const options = { cwd: tmpdir() };
 const expected = ["rev-parse", "--verify", "-q", "HEAD"];
@@ -564,4 +565,17 @@ test("restoreRunsRoot leaves the runs root unset even when the helpers loaded un
     if (before === undefined) delete process.env.AGENT_LOOP_RUNS_ROOT;
     else process.env.AGENT_LOOP_RUNS_ROOT = before;
   }
+});
+
+// Usefulness: verifies the scripted `gh` routes on the argument elements, so a
+// call that merges the arguments into one element gets no reply and its error
+// prints the array, which differs from the text of the expected call (issue #530).
+test("the scripted gh gives no reply to a merged-argument call", async () => {
+  const merged = ["pr checks 42 --required --json name,state,bucket"];
+  const reply = await scriptedGh([{ checks: [] }])(merged, ".");
+  expect(reply.status).toBe(1);
+  expect(reply.stdout).toBe("");
+  expect(reply.stderr).toContain(JSON.stringify(merged));
+  const unfiltered = ["pr", "checks", "42", "--json", "name,state,bucket"];
+  expect((await scriptedGh([{ checks: [] }])(unfiltered, ".")).status).toBe(1);
 });

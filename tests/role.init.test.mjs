@@ -750,3 +750,18 @@ test("init without --parent-session reports it before a blank --test-cmd", async
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toContain("--parent-session");
 });
+
+// Usefulness: verifies that an empty parentSession on a parsed init command
+// stays an unguarded run, as before the statePaths call-site cleanup (#189),
+// while statePaths itself still rejects a null session id.
+test("dispatch init with an empty parentSession succeeds without a session entry", async () => {
+  const repo = await newRunRepo();
+
+  const args = { ...withRepo(dispatchArgv(INIT_OVERRIDES), repo), parentSession: "" };
+  const result = await executeRoleCommand(args, {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toMatchObject({ role: "worker", status: "ok" });
+});

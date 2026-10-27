@@ -225,6 +225,6 @@ Andro Marces
 - [Issue #377](https://github.com/andromarces/agent-loops/issues/377), [PR #445](https://github.com/andromarces/agent-loops/pull/445), [Issue #363](https://github.com/andromarces/agent-loops/issues/363), [PR #370](https://github.com/andromarces/agent-loops/pull/370)
 - Implementation: `hasLiveWriter`, `stillStale`, and `pruneOrphanClaims` in `src/lib/state-lock.mjs`; `ownerAlive` and
   `processStartTime` in `src/lib/process-identity.mjs`; tests in `tests/lib/runstate.test.mjs`,
-  `tests/lib/runstate.stale-takeover.test.mjs`, and
-  `tests/lib/runstate.link-fallback.test.mjs`
+  `tests/lib/state-lock.stale-takeover.test.mjs`, and
+  `tests/lib/state-lock.link-fallback.test.mjs`
 - [ADR Index](README.md)

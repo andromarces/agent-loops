@@ -5,6 +5,20 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
+// Answers `git` from memory for the tests that switch it on (see
+// `gitAbortingPostTurn` in runtime-helpers.mjs); every other test reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 // Replaces only `writeSync`, so a test can see the bytes that a forced exit writes to fd 1.
 const fsDouble = vi.hoisted(() => ({ writeSync: null }));
 vi.mock("node:fs", async (importOriginal) => {
@@ -15,15 +29,28 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-import { main } from "../src/role.mjs";
+import { executeRoleCommand, main } from "../src/role.mjs";
 import {
   createTempRepo,
+  gitAbortingPostTurn,
   processExists,
   removePath,
   restoreRunsRoot,
   within,
 } from "./runtime-helpers.mjs";
-import { INIT_OVERRIDES, recordingAdapter, spyStdoutWrite } from "./role-helpers.mjs";
+import {
+  basicDeps,
+  cleanup,
+  dispatchArgv,
+  INIT_OVERRIDES,
+  newRunRepo,
+  readRepoState,
+  recordingAdapter,
+  REPORT,
+  spyStdoutWrite,
+  stdinPrompt,
+  withRepo,
+} from "./role-helpers.mjs";
 
 const ROLE = fileURLToPath(new URL("../src/role.mjs", import.meta.url));
 const EXEC = fileURLToPath(new URL("../src/lib/exec.mjs", import.meta.url));
@@ -114,9 +141,11 @@ test.skipIf(process.platform === "win32")(
   60_000,
 );
 
-afterEach(() => {
+afterEach(async () => {
   fsDouble.writeSync = null;
+  gitDouble.answer = null;
   restoreRunsRoot();
+  await cleanup();
 });
 
 async function dispatchInProcess(agents) {
@@ -260,4 +289,114 @@ test("a permanent error after a partial envelope write leaves it truncated, logs
     exit.mockRestore();
     await dispatch.cleanup();
   }
+});
+
+// Usefulness: verifies a cancel that ends the turn after the CLI reported its session still
+// persists the id for the resume that follows.
+test("a canceled turn keeps the session id the CLI reported", async () => {
+  const repo = await newRunRepo();
+  const worker = {
+    async run(state) {
+      state.sessionId = "sess-canceled";
+      throw Object.assign(new Error("canceled"), { isCanceled: true });
+    },
+  };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(130);
+  expect((await readRepoState(repo)).roles.worker.sessionId).toBe("sess-canceled");
+});
+
+// Usefulness: verifies a cancel that lands after the CLI exits and before the adapter returns ends
+// the turn interrupted with exit 130, not recorded ok with the run left active (#587).
+test("a cancel after the child exits records the turn as canceled", async () => {
+  const repo = await newRunRepo();
+  const controller = new AbortController();
+  const worker = recordingAdapter([
+    () => {
+      controller.abort();
+      return REPORT;
+    },
+  ]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.status).toBe("error");
+  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+});
+
+// Usefulness: verifies a cancel that lands during the post-turn snapshot of a reviewer turn, after the
+// adapter returned, ends the turn interrupted with exit 130 and records no ok result (#587).
+test("a cancel during the post-turn snapshot records the reviewer turn as canceled", async () => {
+  const repo = await newRunRepo();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const controller = new AbortController();
+  const post = gitAbortingPostTurn(controller);
+  gitDouble.answer = post.git;
+  const reviewer = recordingAdapter([
+    () => {
+      post.arm();
+      return REPORT;
+    },
+  ]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+
+  expect(post.fired).toBe(true);
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.status).toBe("error");
+  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+});
+
+// Usefulness: verifies ADR 0027 decision 5 for a replaced conversation: a canceled dispatch persists the
+// id the CLI reported with the replaced mark, and the next worker dispatch sends the preamble (#587).
+test("a canceled dispatch persists the reported id and the next worker turn sends the preamble", async () => {
+  const repo = await newRunRepo();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  const controller = new AbortController();
+  const replaced = recordingAdapter([
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      controller.abort();
+      return REPORT;
+    },
+  ]);
+
+  const canceled = await executeRoleCommand(withRepo(dispatchArgv([]), repo), {
+    agents: { fake1: replaced, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+    signal: controller.signal,
+  });
+  expect(canceled.exitCode).toBe(130);
+  expect((await readRepoState(repo)).roles.worker).toMatchObject({
+    sessionId: "replacement",
+    conversationReplaced: true,
+  });
+
+  const next = recordingAdapter([]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(["--resume-interrupted"]), repo), {
+    agents: { fake1: next, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(next.recorded[0].incomingSessionId).toBe("replacement");
+  expect(next.recorded[0].prompt).toContain("You are the implementation agent");
+  expect((await readRepoState(repo)).roles.worker.conversationReplaced).toBeUndefined();
 });

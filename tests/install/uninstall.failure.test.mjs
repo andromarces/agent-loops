@@ -1,7 +1,7 @@
 // Uninstall must surface a directory-removal failure instead of hiding it and
 // dropping the manifest record (#192). The `rmdir` mock below applies to the
 // whole module graph, so this file stays separate from the install.*.test.mjs files, whose
-// cases need the real filesystem (same reason as runstate.link-fallback.test.mjs).
+// cases need the real filesystem (same reason as state-lock.link-fallback.test.mjs).
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
