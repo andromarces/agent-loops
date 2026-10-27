@@ -46,5 +46,5 @@ Andro Marces
 - [Pull request #1114](https://github.com/andromarces/agent-loops/pull/1114)
 - Supersedes (partially): [ADR 0052](0052-verify-the-pr-head-in-a-headless-run-without-the-required-check-gate.md)
 - Related: #1097, #1104, [ADR 0043](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md), [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md), [ADR 0051](0051-record-a-verified-pr-head-compare-without-the-required-check-gate.md)
-- Implementation: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` and `evaluateFinish` in `src/runtime.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/orchestrator/pr-declaration.md`
+- Implementation: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` in `src/runtime.mjs`, `evaluateFinish` in `src/finish-gate.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/orchestrator/pr-declaration.md`
 - [ADR Index](README.md)

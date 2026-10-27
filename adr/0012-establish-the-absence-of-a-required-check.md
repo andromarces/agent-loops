@@ -376,7 +376,7 @@ Andro Marces
 - Implementation:
   - Source: `readRequiredSource`, `classifyRulesets`, `classifyProtection`, `ghRequiredNames`, and `requiredContexts` in `src/lib/ci-required-sources.mjs`
   - Source: The empty-union branch of `checkCi` in `src/lib/ci-gate.mjs`
-  - Source: `ciGate` and the accepted-finish branch in `src/runtime.mjs`
+  - Source: `ciGate` and the accepted-finish branch in `src/finish-gate.mjs`
   - Source: The `noRequiredChecks` record in `src/role.mjs`
   - Source: The gate line in `src/prompts/orchestrator.mjs`
   - Test: `tests/lib/ci-gate.*.test.mjs`

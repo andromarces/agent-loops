@@ -48,5 +48,5 @@ Andro Marces
 - Supersedes (partially): [ADR 0051](0051-record-a-verified-pr-head-compare-without-the-required-check-gate.md)
 - Superseded by (partially): [ADR 0053](0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)
 - Related: #301, #1092, #1097, [ADR 0043](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md), [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md)
-- Implementation: `--compare-head` in `src/cli.mjs`, `headCompareGate` in `src/runtime.mjs`, `checkPrHead` in `src/lib/ci-gate.mjs`; documented in `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`, and `docs/reference/usage.md`
+- Implementation: `--compare-head` in `src/cli.mjs`, `headCompareGate` in `src/finish-gate.mjs`, `checkPrHead` in `src/lib/ci-gate.mjs`; documented in `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`, and `docs/reference/usage.md`
 - [ADR Index](README.md)
