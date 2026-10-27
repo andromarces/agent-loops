@@ -6,7 +6,7 @@ import { continueAgents, createTempRepo, removePath } from "./runtime-helpers.mj
 
 // A partial mock keeps the real filesystem and fails `rename` on demand. It lives
 // in its own file because the mock applies to the whole module (see
-// runstate.link-fallback.test.mjs).
+// state-lock.link-fallback.test.mjs).
 const control = vi.hoisted(() => ({ failRename: false }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal();

@@ -70,7 +70,7 @@ async function startOutsideRunner(script) {
 // live leaves no process of that run. Windows `taskkill /T` cannot find the descendants of a
 // process that already exited, and execa cleanup starts it without waiting, so only a kill that
 // finishes inside the exit handler covers this row. Not redundant: the timeout row is covered by
-// tmpdir-isolation.test.mjs, and no other test exits the parent early.
+// setup-tmpdir.test.mjs, and no other test exits the parent early.
 test.skipIf(!IS_WINDOWS)(
   "a parent that exits with a nested run live leaves no process of that run",
   async () => {

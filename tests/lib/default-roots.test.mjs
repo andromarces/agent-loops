@@ -6,7 +6,7 @@ import { statePaths, writeState } from "../../src/lib/runstate.mjs";
 import { writeSessionRecord } from "../../src/lib/session-record.mjs";
 import { holdTestSlot } from "../../src/lib/test-slot.mjs";
 
-// Usefulness: acceptance (#1022) — with no root variable set, a run state, a session record, and a test slot all land under `os.tmpdir()`, which is the per-file directory. The nested run in `tmpdir-isolation.test.mjs` starts this file with the three roots pinned, so a broken unset sends each write to a pinned path and fails here.
+// Usefulness: acceptance (#1022) — with no root variable set, a run state, a session record, and a test slot all land under `os.tmpdir()`, which is the per-file directory. The nested run in `setup-tmpdir.test.mjs` starts this file with the three roots pinned, so a broken unset sends each write to a pinned path and fails here.
 test("a default run state, session record, and test slot are written under the temp directory", async () => {
   // A wrapper that runs this file passes down a held-slot marker, which would skip the acquire.
   vi.stubEnv("AGENT_LOOP_TEST_SLOT_HELD", "");

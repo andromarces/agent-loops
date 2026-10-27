@@ -20,7 +20,7 @@ import {
   commitTargets,
   gatedPrompt,
   unqualifiedDenials,
-} from "./orchestrator-helpers.mjs";
+} from "../prompts/orchestrator-helpers.mjs";
 
 const instructionsPath = join(
   dirname(fileURLToPath(import.meta.url)),
