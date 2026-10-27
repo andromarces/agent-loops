@@ -460,6 +460,12 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved compare under notDone and open in the finish summary.
 - When you record an unresolved PR-head compare in a finish instead of aborting, add "unresolvedCompare": true to the finish action. The runtime records an unresolved-compare event and the headless run exits 4 instead of 0, so the recorded finish stays machine-distinct from a verified one. That marker is the only machine-readable record of the compare, and nothing else in the run distinguishes an omitted marker from a verified finish, so always set it, except when a worker result carries "undeclaredPr": the runtime then compares that PR head itself and refuses the marker.
 
+A task whose change is outside the work tree, such as a service configuration that a worker applies on a remote host, leaves reviewed.head at the unchanged base commit, and the runtime identity fields and finish gates cover the work tree only. For such a task:
+- An accept is the reviewer report on the out-of-tree state at the time of that turn, not an identity that the runtime checks.
+- Name the out-of-tree system and its read-only limits in the reviewer prompt, for example no service restart and no file write on the host. The runtime mutation check does not see a write to that system.
+- State in verified that reviewed identifies no change, and name what the reviewer checked on the out-of-tree system.
+- The operator chose the reviewer mode in the command, and a reviewer turn can keep the credentials of the user for that system.
+
 The work tree arrives with its dependencies installed: the operator that created it ran the repository's lockfile install in it before the first dispatch, and no worker or reviewer installs them. Never tell a worker to link or junction the \`node_modules\` of another checkout into the work tree, or to run an install in another checkout.
 
 Map the report fields into the finish summary:
