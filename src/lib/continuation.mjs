@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { agentHas, normalizeAgent } from "./agent-kinds.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { REVIEWER_SANDBOX_MODES, ROLE_KINDS, legacyReviewerSandbox } from "./args.mjs";
+import { ROLE_KINDS, recordedReviewerSandbox } from "./args.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isJsonObject } from "./json.mjs";
 import { isAcceptedReview } from "./report.mjs";
@@ -65,14 +65,14 @@ export async function readContinuation(path) {
  * @returns {"none" | "read-only" | "workspace-write"}
  */
 export function earlierReviewerSandbox(transcript, path) {
-  const recorded = transcript.options?.reviewerSandbox;
-  if (recorded === undefined) {
-    return legacyReviewerSandbox(transcript.options?.reviewerWorkspaceWrite);
-  }
-  if (!REVIEWER_SANDBOX_MODES.includes(recorded)) {
+  const mode = recordedReviewerSandbox(
+    transcript.options?.reviewerSandbox,
+    transcript.options?.reviewerWorkspaceWrite,
+  );
+  if (mode === null) {
     throw new Error(`--continue-from ${path} has an invalid reviewerSandbox option.`);
   }
-  return recorded;
+  return mode;
 }
 
 /**
