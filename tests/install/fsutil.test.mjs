@@ -57,3 +57,20 @@ test("writeTextAtomic writes through a file symlink and keeps the link", async (
   expect(await readFile(real, "utf8")).toBe("new");
   expect((await readdir(dir)).sort()).toEqual(["link.json", "real.json"]);
 });
+
+// Usefulness: verifies an install write succeeds beside a leftover temp file with a predictable
+// `<pid>.<n>.tmp` name and leaves it in place, so PID reuse cannot abort an install.
+test("writeTextAtomic ignores a leftover temp file with a predictable name", async () => {
+  const dir = await makeDir();
+  const target = join(dir, "settings.json");
+  const leftovers = Array.from({ length: 20 }, (_, n) => `${target}.${process.pid}.${n}.tmp`);
+  for (const leftover of leftovers) {
+    await writeFile(leftover, "leftover");
+  }
+
+  await writeTextAtomic(target, "data");
+
+  expect(await readFile(target, "utf8")).toBe("data");
+  expect((await readdir(dir)).filter((name) => !name.endsWith(".tmp"))).toEqual(["settings.json"]);
+  expect((await readdir(dir)).filter((name) => name.endsWith(".tmp"))).toHaveLength(20);
+});

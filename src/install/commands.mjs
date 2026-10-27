@@ -11,7 +11,7 @@ import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, harnessForCommand, isHarness } from "../lib/harnesses.mjs";
 import { detectHarnesses } from "./detect-harnesses.mjs";
 import { install, uninstall } from "./installer.mjs";
-import { stablePackageRoot } from "./package-root.mjs";
+import { stablePackageRoot } from "./stable-root.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));

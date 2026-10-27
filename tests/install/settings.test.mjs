@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vite-plus/test";
-import { parseSettings, validateLocator } from "../../src/install/settings.mjs";
+import { parseSettings, removeEntry, validateLocator } from "../../src/install/settings.mjs";
 
 // Usefulness: verifies a settings root that is not a JSON object is refused with its path; no other test reaches this error path.
 test("parseSettings rejects a root that is not a JSON object", () => {
@@ -50,4 +50,13 @@ test("parseSettings names the file when the parse error has an unreadable messag
   expect(() => parseSettings("{nope", "/home/settings.json")).toThrow(
     /Settings file does not parse: \/home\/settings\.json \(.+\)/,
   );
+});
+
+// Usefulness: verifies uninstall still finds a recorded entry whose JSON number is 0 when the file holds -0, which the installer's structural equality has always treated as equal.
+test("removeEntry matches a recorded entry across -0 and 0", () => {
+  const locator = { kind: "array", path: ["hooks", "PreToolUse"] };
+  const settings = { hooks: { PreToolUse: [{ hooks: [{ timeout: -0 }] }] } };
+
+  expect(removeEntry(settings, locator, { hooks: [{ timeout: 0 }] })).toBe(true);
+  expect(settings.hooks.PreToolUse).toEqual([]);
 });
