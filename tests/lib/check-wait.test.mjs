@@ -442,15 +442,6 @@ test.each([
   });
 });
 
-// Usefulness: verifies a server error of the required names read is retried on a poll that read
-// `no checks reported`, where the names read decides nothing else, so the wait reaches the later
-// check list (issue #1121).
-test("waitChecks retries a failed required names read on a no-checks-reported poll", async () => {
-  const wait = prReadFailsWait("names", GRAPHQL_504, { reads: NO_CHECKS_THEN_PASS });
-  expect(await wait.result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
-  expect(wait.attempts()).toBe(1);
-});
-
 // Usefulness: verifies a server error that lasts to the bound is an error that names the server
 // error, after the wait read again on each poll, never a timeout envelope and never a pass
 // (issues #1025, #1121). The names read is also covered on a no-checks-reported poll.
@@ -472,28 +463,41 @@ test.each([
   },
 );
 
-// Usefulness: verifies a 4xx reply and a failure that names no HTTP status end the wait at once,
-// with the one `gh` read made (issue #1121).
-test.each(
-  ["head", "checks", "names"].flatMap((which) => [
-    [which, "a 404", "HTTP 404: Not Found (https://api.github.com/graphql)\n"],
-    [which, "a 403", "HTTP 403: Resource not accessible (https://api.github.com/graphql)\n"],
-    [which, "no status", "error connecting to api.github.com\n"],
-    [which, "a quoted status", "gh: upstream said HTTP 504 (HTTP 404)\n"],
-  ]),
-)("waitChecks ends at once when the %s read fails with %s", async (which, _kind, failure) => {
-  const wait = prReadFailsWait(which, failure);
-  await expect(wait.result).rejects.toThrow();
-  expect(wait.attempts()).toBe(1);
-});
+// Usefulness: verifies the acceptance item that a 4xx reply of each `gh pr` read still ends the wait
+// at once, after the one read (issue #1121).
+test.each(["head", "checks", "names"])(
+  "waitChecks ends at once on a 404 of the %s read",
+  async (which) => {
+    const wait = prReadFailsWait(which, "HTTP 404: Not Found (https://api.github.com/graphql)\n");
+    await expect(wait.result).rejects.toThrow(/could not be read/);
+    expect(wait.attempts()).toBe(1);
+  },
+);
 
-// Usefulness: verifies a reply that is not parseable ends the wait at once even when the read
-// failed with a server error text, so only a clean server-error failure is retried (issue #1121).
+// Usefulness: verifies the acceptance item that an unparseable reply still ends the wait at once
+// even when the failed read also names HTTP 504, so only a clean server error is retried
+// (issue #1121).
 test.each(["head", "checks", "names"])(
   "waitChecks ends at once when the %s read fails with HTTP 504 and an unparseable reply",
   async (which) => {
     const wait = prReadFailsWait(which, GRAPHQL_504, { stdout: "<html>Gateway Timeout</html>" });
     await expect(wait.result).rejects.toThrow();
+    expect(wait.attempts()).toBe(1);
+  },
+);
+
+// Usefulness: verifies a failed required names read that is no clean server error ends a
+// no-checks-reported poll at once, as it ends any other poll, instead of being ignored until a
+// later poll passes (issue #1121 acceptance: a 4xx and an unparseable reply end the wait at once).
+test.each([
+  ["HTTP 501", "HTTP 501: Not Implemented (https://api.github.com/graphql)\n", ""],
+  ["HTTP 403", "HTTP 403: Forbidden (https://api.github.com/graphql)\n", ""],
+  ["HTTP 504 and an unparseable reply", GRAPHQL_504, "<html>Gateway Timeout</html>"],
+])(
+  "waitChecks ends at once when the names read of a no-checks-reported poll fails with %s",
+  async (_name, failure, stdout) => {
+    const wait = prReadFailsWait("names", failure, { stdout, reads: NO_CHECKS_THEN_PASS });
+    await expect(wait.result).rejects.toThrow(/required check names for PR 42 could not be read/);
     expect(wait.attempts()).toBe(1);
   },
 );

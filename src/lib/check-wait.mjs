@@ -18,6 +18,7 @@ import {
   ghApi,
   ghFailureText,
   isServerErrorText,
+  NO_CHECKS_YET,
   NO_REQUIRED_CHECKS,
   pagedRead,
   readOne,
@@ -39,11 +40,6 @@ export const DEFAULT_WAIT_SECONDS = 300;
 export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
-
-// The exact `gh pr checks` reply on a PR head that no check has reported on yet,
-// as right after a push. It is an empty list, not a read error, in the required
-// and the all-checks read alike (#941, #950).
-const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 
 // The `gh pr checks` exit codes, as `docs/orchestrator/reviewer-evidence.md` states
 // them for the reviewer read: 8 is a pending check, and 1 covers a failing check,
@@ -695,19 +691,21 @@ export async function waitChecks({
   // wait is stricter than the gate, which ignores that read. A source that names a required
   // check is no absence, so the wait goes on to judge it. The `no checks reported` reply (#1091)
   // refuses only when no source can state the required checks: both configuration sources are
-  // unreadable and no check is named. Its names read never succeeds and a malformed reply of one
-  // source says nothing about the other, so neither is judged, and a source that names a check or
-  // states the absence keeps the wait running whatever the other returned (#941). Its source reads
-  // are retryable reads, so a server error carries `transient` and the poll retries it.
+  // unreadable and no check is named. Its names read answers the same `no checks reported`, which is
+  // no failure, so only a names read that failed otherwise is refused, and a malformed reply of
+  // one source says nothing about the other, so it is not judged. A source that names a check or
+  // states the absence keeps the wait running whatever the other returned (#941). A server error
+  // of a source read or of the names read carries `transient` and the poll retries it.
   const absenceOf = async (base, reply = "no required check") => {
     await ensureSlug();
     const noChecksYet = reply === "no checks";
     const required = await requiredContexts(bounded, slug, base, pr, cwd, {
       retryable: noChecksYet,
     });
-    // A no-checks-reported poll judges no names read, except one that failed with a server error.
+    // A no-checks-reported poll accepts the names read that answered the same `no checks reported`.
+    // Any other failed names read refuses, and only a clean server error is retried (#1121).
     const namesRefusal =
-      noChecksYet && !namesRetryable(required)
+      noChecksYet && (required.namesRead || required.namesNoChecksYet)
         ? null
         : requiredNamesRefusal(required, pr, namesCause(required));
     if (namesRefusal) {

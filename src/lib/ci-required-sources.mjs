@@ -894,6 +894,11 @@ async function repoSlug(gh, cwd) {
 // required check no configuration source did (issue #349).
 export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
 
+// The exact `gh pr checks` reply on a PR head that no check has reported on yet, as right after a
+// push. It is an empty list, not a read error, in the required and the all-checks read alike (#941,
+// #950).
+export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
+
 async function ghRequiredNames(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     ["pr", "checks", String(pr), "--required", "--json", "name"],
@@ -916,7 +921,8 @@ async function ghRequiredNames(gh, pr, cwd) {
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
   // A clean server-error failure only: an unparseable reply is never retried (#1121).
   const transient = stdout.trim() === "" && isServerErrorText(stderr);
-  return { names: [], ok: none, transient, failure: transient ? stderr.trim() : "" };
+  const noChecksYet = stdout.trim() === "" && status === 1 && NO_CHECKS_YET.test(stderr.trim());
+  return { names: [], ok: none, transient, noChecksYet, failure: transient ? stderr.trim() : "" };
 }
 
 // A required status context: its name, plus the id of the app whose check run
@@ -1022,6 +1028,8 @@ export async function requiredContexts(gh, slug, base, pr, cwd, { retryable = fa
     // the gate ignores both.
     namesTransient: Boolean(listed.transient),
     namesFailure: listed.failure ?? "",
+    // The names read answered `no checks reported`, so it failed for no fault of its own.
+    namesNoChecksYet: Boolean(listed.noChecksYet),
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal. It contributes no contexts. It leaves
     // the per-check path to the other sources, as it did before the ruleset read
