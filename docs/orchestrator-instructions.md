@@ -606,7 +606,9 @@ printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","def
 ```
 
 The value must be a boolean, and the key is not one of the five summary keys:
-`summary` keeps exactly those five. The stdin object allows only the five
+`summary` keeps exactly those five. A refused finish leaves the lifecycle
+`active`. The command exits 0 for every accepted finish, `unresolvedCompare`
+included, where the headless loop exits 4. The stdin object allows only the five
 summary keys and `unresolvedCompare`. The headless finish action object allows
 only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
 object allows only the five summary keys. A finish with any other key in
@@ -738,8 +740,7 @@ The conditions that the `--require-accept` and `--require-ci` gates check at `fi
   the run state. A path spelled another way, such as a symlink alias, finds no
   state. A child that names the work tree as the run does is refused even when the
   work tree is gone, and a parent `abort` over a missing work tree still works
-  (issues #392 and #548, ADR 0014 point 8). The runtime sets no marker for the
-  orchestrator or the parent session. A
+  (issues #392 and #548, ADR 0014 point 8). A
   process keeps a marker it inherited. A parent session that another run's child
   started holds a different key for its own work tree and is not refused. A worker
   that a nested run starts holds the keys of the outer run and the nested run, so
