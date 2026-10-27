@@ -24,6 +24,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
   repos,
@@ -32,7 +33,7 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { cleanRepoGit, createTempRepo, deadPid } from "./runtime-helpers.mjs";
+import { cleanRepoGit, deadPid } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -41,9 +42,7 @@ afterEach(cleanup);
 // the stale lock, sets `interrupted`, exits non-zero, and spawns no CLI; a
 // following plain dispatch is rejected; abort is accepted.
 test("crash aftermath: interrupted lifecycle, stale lock removal, abort path", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {

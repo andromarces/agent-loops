@@ -9,6 +9,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
   REPORT,
@@ -104,9 +105,7 @@ test("role finish gate flags parse", async () => {
 // above `Number.MAX_SAFE_INTEGER` is refused, so every accepted budget is a safe
 // integer and `stepsUsed + 1` always advances (issue #312).
 test("init with a max-steps above the safe integer range is rejected", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   expect(() => parseRoleArgs([...INIT_OVERRIDES, "--max-steps", "1000000000000000000000"])).toThrow(
@@ -127,9 +126,7 @@ test("init with a max-steps above the safe integer range is rejected", async () 
 // Usefulness: verifies the run PR declaration parses on init and takes a positive
 // PR number, so an interactive PR run records the PR the gate must read (issue #302).
 test("role --pr parses on init and records the declared PR", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   expect(() => parseRoleArgs(["dispatch", "--pr", "0"])).toThrow(
@@ -148,9 +145,7 @@ test("role --pr parses on init and records the declared PR", async () => {
 // sources all answer the Free-plan 403 is refused before a state file is written or a child spawns,
 // and the refusal names the fix, so a parent does not learn of the dead end at finish.
 test("init with --pr is refused when the required-check sources are unreadable", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
 
@@ -171,9 +166,7 @@ test("init with --pr is refused when the required-check sources are unreadable",
 // Usefulness: verifies an init with --pr on a repository with a readable source is unchanged, so the
 // refusal does not reach a run whose gate can read the required checks.
 test("init with --pr on a readable repository records the PR", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const result = await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
     basicDeps(),
@@ -185,9 +178,7 @@ test("init with --pr on a readable repository records the PR", async () => {
 // Usefulness: verifies a read that fails for another reason, such as the network, warns and lets
 // the init proceed, because the gate may still judge the checks when GitHub answers again.
 test("init with --pr proceeds when the source read fails for another reason", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const result = await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
     { ...basicDeps(), gh: unreachableGh() },
@@ -200,9 +191,7 @@ test("init with --pr proceeds when the source read fails for another reason", as
 // review-only rejects the gate a declared run requires, so the run would refuse
 // every finish and never end (issue #302).
 test("review-only refuses an init that declares a PR", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   const result = await executeRoleCommand(
@@ -234,9 +223,7 @@ test("review-only refuses an init that declares a PR", async () => {
 // Usefulness: verifies the declared PR is an init field, so a later call cannot
 // change it and swap the PR the gate must read (issue #302).
 test("a later call cannot change the declared PR", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", "42"]), repo),
     basicDeps(),
@@ -257,9 +244,7 @@ test("a later call cannot change the declared PR", async () => {
 // refused before any state file is written, so no interactive run starts
 // unguarded by default.
 test("init without --parent-session is rejected before any state is written", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   const result = await executeRoleCommand(
@@ -275,9 +260,7 @@ test("init without --parent-session is rejected before any state is written", as
 // before any state file is written, so it never registers a parent index that
 // can never match.
 test("init with a literal placeholder parent session is rejected", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   const result = await executeRoleCommand(
@@ -316,9 +299,7 @@ test("object prototype names are rejected as unknown arguments", async () => {
 // following dispatch is rejected; an init call archives the halted file and
 // starts a new run.
 test("reviewer mutation halts the run; init archives the halted file", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -367,9 +348,7 @@ test("reviewer mutation halts the run; init archives the halted file", async () 
 // rejected; after abort, the same init call succeeds and the old file is
 // archived.
 test("init over active rejected; abort then init archives and starts a new run", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -396,9 +375,7 @@ test("init over active rejected; abort then init archives and starts a new run",
 // Usefulness: verifies a review-only init that rejects --role worker writes no
 // state file, so the corrected reviewer init succeeds without an abort (#123).
 test("a rejected worker init leaves no run for the corrected init", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   const rejected = await executeRoleCommand(
@@ -456,9 +433,7 @@ test("a rejected worker init leaves no run for the corrected init", async () => 
 // Usefulness: verifies an init whose prompt read fails writes no state file, so
 // the corrected init succeeds without an abort (#123).
 test("an init with an empty prompt leaves no run for the corrected init", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   const rejected = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -479,9 +454,7 @@ test("an init with an empty prompt leaves no run for the corrected init", async 
 // Usefulness: verifies a rejected init over a terminal state archives nothing
 // and leaves the terminal state in place (#123).
 test("a rejected init over a terminal state archives nothing", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), { ...basicDeps() });
@@ -503,9 +476,7 @@ test("a rejected init over a terminal state archives nothing", async () => {
 // Usefulness: verifies acceptance — a review-only init succeeds without
 // --worker and stores a null worker role, because the mode never dispatches it.
 test("review-only init succeeds without --worker and stores a null worker", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const init = withRepo(
     dispatchArgv(
@@ -538,9 +509,7 @@ test("review-only init succeeds without --worker and stores a null worker", asyn
 // is rejected at init instead of being silently dropped, because review-only
 // never dispatches the worker and the value would have no home.
 test("review-only init rejects a worker model or effort without --worker", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const init = withRepo(
     dispatchArgv(
@@ -571,9 +540,7 @@ test("review-only init rejects a worker model or effort without --worker", async
 // Usefulness: verifies acceptance — an OpenCode effort without a model is rejected at init through
 // executeRoleCommand; parsing performs no OpenCode validation, so the check runs during init.
 test("review-only init rejects an OpenCode effort without a model", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const init = withRepo(
     dispatchArgv(
@@ -606,9 +573,7 @@ test("review-only init rejects an OpenCode effort without a model", async () => 
 // dropped, so turns ran unbounded). `--timeout 0` stores null, the documented
 // way to remove the bound.
 test("init --timeout persists in state and reaches the adapter", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const seen = [];
   const timeoutWorker = {
@@ -681,9 +646,7 @@ function initWithTable(repo, table) {
 
 // Usefulness: verifies a fresh init refuses while a live process holds a claude session of the earlier run in the same work tree (#673), which the --continue-from check cannot cover.
 test("init refuses while a live process holds a session of the ended run in the work tree", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await endedRunWithClaudeWorker(repo, HELD_ID);
 
   const init = initWithTable(repo, [
@@ -701,9 +664,7 @@ test("init refuses while a live process holds a session of the ended run in the 
 
 // Usefulness: verifies the check reads the archived state of earlier runs, not only the current file, so an orphan of a run that an earlier init archived is still found (#673).
 test("init refuses for a session held from an archived earlier run", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await endedRunWithClaudeWorker(repo, HELD_ID);
   const clean = initWithTable(repo, []);
   expect((await clean.run()).exitCode).toBe(0);
@@ -728,9 +689,7 @@ test("init refuses for a session held from an archived earlier run", async () =>
 
 // Usefulness: verifies a cancel of the init process-table read exits 130 with the SIGINT envelope and writes no new state (#725, ADR 0032 decision 1), which the refusal tests do not cover.
 test("init exits 130 when the process-table read is canceled", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await endedRunWithClaudeWorker(repo, HELD_ID);
 
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -747,9 +706,7 @@ test("init exits 130 when the process-table read is canceled", async () => {
 
 // Usefulness: verifies an earlier session that no live process names does not block a fresh init, and that a work tree with no earlier claude session reads no process table.
 test("init proceeds when no live process holds an earlier session", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await endedRunWithClaudeWorker(repo, HELD_ID);
   const none = initWithTable(repo, [{ pid: 5, command: "node other.js" }]);
   expect((await none.run()).exitCode).toBe(0);
@@ -763,9 +720,7 @@ test("init proceeds when no live process holds an earlier session", async () => 
 
 // Usefulness: verifies the init guard does not refuse for a process that only mentions an earlier session id in a log path (#673).
 test("init proceeds when a process only names an earlier session id inside a path", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await endedRunWithClaudeWorker(repo, HELD_ID);
   const init = initWithTable(repo, [{ pid: 9, command: `tail -f /logs/${HELD_ID}.log` }]);
   expect((await init.run()).exitCode).toBe(0);
@@ -774,9 +729,7 @@ test("init proceeds when a process only names an earlier session id inside a pat
 // Usefulness: acceptance (#816) — a missing --parent-session is reported before the shared flag
 // checks, the order of role init, so the shared composition does not reorder the path-only check.
 test("init without --parent-session reports it before a blank --test-cmd", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     withRepo(

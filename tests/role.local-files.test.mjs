@@ -7,17 +7,13 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   repos,
   setup,
   withRepo,
 } from "./role-helpers.mjs";
-import {
-  createLinkedWithEnv,
-  createLinkedWorkTree,
-  createTempRepo,
-  exists,
-} from "./runtime-helpers.mjs";
+import { createLinkedWithEnv, createLinkedWorkTree, exists } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -106,9 +102,7 @@ test("a later call may repeat the opt-out of an opted-out run", async () => {
 // envelope key, and changes no file.
 // Not redundant: it runs the init in the main work tree through the role path. The lib test calls the copy directly.
 test("init in the main work tree copies nothing and reports nothing", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   await writeFile(join(repo, ".git", "info", "exclude"), ".env\n");
   await writeFile(join(repo, ".env"), "A=1\n");
 

@@ -8,24 +8,21 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   recordingAdapter,
-  repos,
   REPORT,
   reviewerTurn,
-  setup,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
 const TASK_BLOCK = "Init task:\nFix the flaky test.";
 
 async function startRun() {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   return repo;
 }
 

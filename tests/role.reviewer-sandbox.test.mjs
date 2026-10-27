@@ -4,15 +4,13 @@ import { executeRoleCommand } from "../src/role.mjs";
 import {
   cleanup,
   dispatchArgv,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
-  repos,
   reviewerTurn,
-  setup,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -33,9 +31,7 @@ const FLAG = "--reviewer-sandbox";
 const ALIAS = "--reviewer-workspace-write";
 
 async function start(extra = []) {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const worker = recordingAdapter([]);
   const reviewer = recordingAdapter([]);
   const agents = { fake1: worker, codex: reviewer };
@@ -107,9 +103,7 @@ test.each([
 // Usefulness: verifies the flag is refused at init for a reviewer that is not Codex, before any
 // state is written, and that such a run stores and passes no mode (ADR 0038).
 test("init refuses the flag for a reviewer that is not Codex, and stores no mode without it", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const other = INIT.map((v) => (v === "codex" ? "fake2" : v));
   const refused = await executeRoleCommand(
     withRepo(dispatchArgv([...other, FLAG, "read-only"], "worker"), repo),
@@ -217,9 +211,7 @@ describe.each(PATHS)("%s with an invalid recorded mode", (_name, call) => {
 // Usefulness: verifies the refusal does not depend on the reviewer kind: a state of a reviewer that
 // is not Codex never holds the field, so a present invalid value is a damaged file, not a mode.
 test("an invalid recorded mode is refused for a reviewer that is not Codex too", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const other = INIT.map((v) => (v === "codex" ? "fake2" : v));
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   await executeRoleCommand(withRepo(dispatchArgv(other, "worker"), repo), {
@@ -263,9 +255,7 @@ describe("abort over an invalid recorded mode", () => {
   );
 
   test("ends the run of a reviewer that is not Codex", async () => {
-    await setup();
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await newRunRepo();
     const other = INIT.map((v) => (v === "codex" ? "fake2" : v));
     await executeRoleCommand(withRepo(dispatchArgv(other, "worker"), repo), {
       agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },

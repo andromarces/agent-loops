@@ -97,19 +97,16 @@ async function hangingTree({ orphan = false, trapTerm = false }) {
 }
 
 // Waits until every file holds a pid, so a cancel never precedes the processes it must kill.
-async function waitForPidFiles(files) {
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const pids = await Promise.all(
-      files.map((file) => readFile(file, "utf8").then(Number.parseInt, () => Number.NaN)),
-    );
-    if (pids.every(Number.isInteger)) {
-      return;
-    }
-    expect(Date.now() < deadline, "the process tree never started").toBe(true);
-    await delay(50);
-  }
-}
+const waitForPidFiles = (files) =>
+  vi.waitFor(
+    async () => {
+      const pids = await Promise.all(
+        files.map((file) => readFile(file, "utf8").then(Number.parseInt, () => Number.NaN)),
+      );
+      expect(pids.every(Number.isInteger), "the process tree never started").toBe(true);
+    },
+    { timeout: 10_000, interval: 50 },
+  );
 
 // Both processes record their pids before the bound, or the test fails: a child
 // that never ran proves nothing about the kill. The survival check runs before any

@@ -4,16 +4,10 @@ import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
-import { cleanup, repos, setup } from "./role-helpers.mjs";
+import { cleanup, newRunRepo, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import {
-  createTempRepo,
-  fakeClock,
-  HEAD_A,
-  HEAD_B,
-  pageStdout,
-  scriptedGh,
-} from "./runtime-helpers.mjs";
+import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./lib/check-wait-helpers.mjs";
+import { createTempRepo, pageStdout } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -29,9 +23,7 @@ const NO_REQUIRED_CHECKS_READ = {
 // check states and creates no run state, so a parent can wait for the required
 // checks before the first dispatch (issue #329).
 test("wait-checks returns the check envelope and writes no run state", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
@@ -52,9 +44,7 @@ test("wait-checks returns the check envelope and writes no run state", async () 
 // prints `noRequiredChecks: true` with exit 0 and no `error`, so the parent reads
 // a distinct outcome instead of a generic read error (issue #894).
 test("wait-checks reports a branch with no required check as its own outcome", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "213", "--timeout", "60"]),
@@ -82,9 +72,7 @@ test("wait-checks reports a branch with no required check as its own outcome", a
 // branch has no required check but the rulesets cannot be read, as on the Free plan, so the wait
 // never reports an absence that the `--require-ci` gate refuses (issue #1013).
 test("wait-checks errors on the no-required-checks answer over an unreadable ruleset source", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "213", "--timeout", "60"]),
@@ -110,9 +98,7 @@ test("wait-checks errors on the no-required-checks answer over an unreadable rul
 // runs to its bound: only exit 8 means pending, and exit 1 settles only on a listed failing
 // check or the exact no-required-check answer (issue #894).
 test("wait-checks keeps exit 1 with only pending checks unresolved", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
@@ -132,9 +118,7 @@ test("wait-checks keeps exit 1 with only pending checks unresolved", async () =>
 // `timedOut`, so the parent reads the flag instead of losing the result to a
 // harness command timeout (issue #329).
 test("wait-checks reports the bound as reached when a required check is still pending", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
@@ -154,9 +138,7 @@ test("wait-checks reports the bound as reached when a required check is still pe
 // exists to stay bounded and an unbounded wait is the outcome it prevents
 // (issue #329).
 test("wait-checks refuses an unbounded --timeout 0", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "0"]),
@@ -170,9 +152,7 @@ test("wait-checks refuses an unbounded --timeout 0", async () => {
 // Usefulness: verifies `wait-checks` names the pull request it waits for, since
 // the operation reads checks and nothing else (issue #329).
 test("wait-checks refuses a call with no --pr", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(parseRoleArgs(["wait-checks", "--cwd", repo]), {
     gh: scriptedGh([SETTLED]),
@@ -187,9 +167,7 @@ test("wait-checks refuses a call with no --pr", async () => {
 // bounded by what is left of the command bound rather than by a fresh full
 // bound (issue #329).
 test("wait-checks spends work-tree validation inside the bound", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const clock = { now: 0 };
   const bounds = [];
   const reads = scriptedGh([SETTLED]);
@@ -224,9 +202,7 @@ test("wait-checks spends work-tree validation inside the bound", async () => {
 // Usefulness: verifies the cancel signal of the command reaches the work-tree validation, so a
 // canceled `wait-checks` does not wait for a stuck `git` (#729).
 test("wait-checks hands its cancel signal to the work-tree validation", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const controller = new AbortController();
   let received;
 
@@ -246,9 +222,7 @@ test("wait-checks hands its cancel signal to the work-tree validation", async ()
 // Usefulness: verifies a bound spent before the first read reports the bound
 // without reading, so a parent sees the bound it ran out of (issue #329).
 test("wait-checks reports the bound when validation left none for the wait", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const clock = { now: 0 };
   let read = false;
 
@@ -275,9 +249,7 @@ test("wait-checks reports the bound when validation left none for the wait", asy
 // bound, and it must refuse rather than read from a work tree it never
 // verified (issue #329).
 test("wait-checks refuses when work-tree validation outlasts the bound", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   let read = false;
   const started = Date.now();
 
@@ -350,9 +322,7 @@ test("wait-checks does not refuse a Git work tree whose path contains spaces", a
 // check waits for the listed checks of the head and prints them, so the parent can
 // dispatch the reviewer after CI completes (issue #896).
 test("wait-checks --all waits for the listed checks of the head", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--all", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
@@ -384,9 +354,7 @@ test("--all is refused on an operation other than wait-checks", async () => {
 // parent that passes the worker `workTree.head` never reads the checks of the previous
 // head (issue #961).
 test("wait-checks --head waits for the PR head and names it in the envelope", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs([
@@ -415,9 +383,7 @@ test("wait-checks --head waits for the PR head and names it in the envelope", as
 // Usefulness: verifies a `--head` wait that reaches its bound before the PR head moves
 // reports `timedOut: true` with no head and no checks, never a pass (issue #961).
 test("wait-checks --head reports the bound when the PR head never reaches it", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const result = await executeRoleCommand(
     parseRoleArgs([
@@ -463,9 +429,7 @@ test("--head is refused on an operation other than wait-checks", async () => {
 // when a sibling read of the failed poll stays unconfirmed, so the parent settles the `gh`
 // process before another wait (issue #961).
 test("wait-checks marks an error envelope with an unconfirmed child", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });
 
   const result = await executeRoleCommand(
@@ -492,9 +456,7 @@ test("wait-checks takes a repeatable --expect only with --all", async () => {
   expect(
     parseRoleArgs(["wait-checks", "--pr", "1", "--all", "--expect", "a", "--expect", "b"]).expect,
   ).toEqual(["a", "b"]);
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const noAll = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "1", "--expect", "a"]),
     { gh: scriptedGh([SETTLED]), ...fakeClock() },

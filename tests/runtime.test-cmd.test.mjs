@@ -7,7 +7,7 @@ import { MutationError } from "../src/lib/snapshot.mjs";
 import { testSlotRule } from "../src/prompts/report.mjs";
 import { reviewerPrompt } from "../src/prompts/reviewer.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { createTempRepo, processExists, removePath, scripted } from "./runtime-helpers.mjs";
 
 // Headless behavior of `--test-cmd` (issue #420, ADR 0017). Each test runs a real
 // command through the platform shell inside a real Git work tree.
@@ -219,18 +219,10 @@ child.unref();`,
       const known = Number.isInteger(pid) && pid > 0;
       let alive = false;
       if (known) {
-        const exists = () => {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch (error) {
-            return error.code === "EPERM";
-          }
-        };
         try {
           process.kill(pid);
         } catch {}
-        for (let i = 0; i < 200 && (alive = exists()); i++) {
+        for (let i = 0; i < 200 && (alive = processExists(pid)); i++) {
           await new Promise((r) => setTimeout(r, 25));
         }
       }

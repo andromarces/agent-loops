@@ -1,14 +1,42 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
-import { findOverrideProblems, readOverrides } from "./pnpm-workspace-overrides-helpers.mjs";
+import { parse } from "yaml";
 
 const root = (path) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+
+const KEYS = ["vite", "vitest"];
+
+/**
+ * Compares the `vite` and `vitest` overrides to the `vite-plus` dependencies.
+ * Returns one message per key that is missing from either input or that differs;
+ * an empty array means both keys match.
+ */
+function findOverrideProblems(overrides, dependencies, vitePlusVersion) {
+  const problems = [];
+  for (const key of KEYS) {
+    const pinned = overrides[key];
+    const wanted = dependencies[key];
+    if (pinned === undefined) {
+      problems.push(`  ${key}: missing from the overrides in pnpm-workspace.yaml`);
+    }
+    if (wanted === undefined) {
+      problems.push(`  ${key}: missing from the dependencies of vite-plus@${vitePlusVersion}`);
+    }
+    if (pinned === undefined || wanted === undefined) continue;
+    if (pinned !== wanted) {
+      problems.push(
+        `  ${key}: pnpm-workspace.yaml has "${pinned}", vite-plus@${vitePlusVersion} depends on "${wanted}"`,
+      );
+    }
+  }
+  return problems;
+}
 
 // Requirement: a vite-plus bump with stale overrides must fail CI (issue #1027).
 // Not redundant: no other check compares the pinned overrides to the installed vite-plus.
 test("pnpm-workspace overrides match the vite and vitest that vite-plus depends on", async () => {
-  const overrides = readOverrides(await readFile(root("pnpm-workspace.yaml"), "utf8"));
+  const { overrides = {} } = parse(await readFile(root("pnpm-workspace.yaml"), "utf8"));
   const { version, dependencies } = JSON.parse(
     await readFile(root("node_modules/vite-plus/package.json"), "utf8"),
   );
@@ -20,11 +48,11 @@ test("pnpm-workspace overrides match the vite and vitest that vite-plus depends 
   ).toEqual([]);
 });
 
-// Requirement: the override reader returns the pinned values from the workspace file.
-// Not redundant: guards the parser, so a format change cannot turn the drift check into a no-op.
-test("readOverrides reads both pins from the workspace file format", () => {
-  const yaml = "virtualStoreType: global\n\noverrides:\n  vite: npm:x@1.0.0\n  vitest: 5.0.5\n";
-  expect(readOverrides(yaml)).toEqual({ vite: "npm:x@1.0.0", vitest: "5.0.5" });
+// Requirement: the workspace file format yields both pins as strings.
+// Not redundant: guards the parse, so a format change cannot turn the drift check into a no-op.
+test("the workspace file format yields both pins as strings", () => {
+  const text = "virtualStoreType: global\n\noverrides:\n  vite: npm:x@1.0.0\n  vitest: 5.0.5\n";
+  expect(parse(text).overrides).toEqual({ vite: "npm:x@1.0.0", vitest: "5.0.5" });
 });
 
 // Requirement: matching values pass and a differing value is reported with both values.

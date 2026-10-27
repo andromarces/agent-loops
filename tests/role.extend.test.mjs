@@ -8,7 +8,8 @@ import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import {
   cleanup,
   dispatchArgv,
-  INIT_OVERRIDES,
+  initRun,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
   repos,
@@ -34,19 +35,20 @@ const PARENT = ["--parent-session", "parent-sess-1"];
 const extendArgv = (...flags) => ["extend", "--cwd", "<repo>", ...flags];
 const parentExtendArgv = (...flags) => extendArgv(...PARENT, ...flags);
 
-async function startRun(maxSteps, agents) {
-  await setup();
-  return startRunInNewRepo(maxSteps, agents);
-}
+const startRunWith = (repo, maxSteps, agents) =>
+  initRun(repo, { initFlags: ["--max-steps", String(maxSteps)], agents });
 
-/** Starts a run in a new work tree under the runs root that `setup` made. */
+/** Starts a run in a second work tree under the runs root that `newRunRepo` made. */
 async function startRunInNewRepo(maxSteps, agents) {
   const repo = await createTempRepo();
   repos.push(repo);
-  await executeRoleCommand(
-    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", String(maxSteps)]), repo),
-    { agents, stdin: stdinPrompt },
-  );
+  await startRunWith(repo, maxSteps, agents);
+  return repo;
+}
+
+async function startRun(maxSteps, agents) {
+  const repo = await newRunRepo();
+  await startRunWith(repo, maxSteps, agents);
   return repo;
 }
 

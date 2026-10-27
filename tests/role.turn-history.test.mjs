@@ -8,15 +8,13 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newRunRepo,
   readRepoState,
   recordingAdapter,
   REPORT,
-  repos,
-  setup,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
 
 afterEach(cleanup);
 
@@ -25,9 +23,7 @@ afterEach(cleanup);
 // verdict, reviewed head, and time, so a finished run shows every turn without
 // the parent conversation log (issue #312).
 test("state keeps one turn per dispatch across later dispatches", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -64,9 +60,7 @@ test("state keeps one turn per dispatch across later dispatches", async () => {
 // charged step, so the run's own `maxSteps` budget caps the history and a
 // refused over-budget dispatch adds nothing (issue #312).
 test("turn history holds no more entries than the step budget allows", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "2"]), repo), {
@@ -89,9 +83,7 @@ test("turn history holds no more entries than the step budget allows", async () 
 // response or report body, so the state file cannot grow with the text a child
 // returns (issue #312).
 test("turn entries exclude the report and response text", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const worker = recordingAdapter([]);
   worker.run = async (state) => {
@@ -112,9 +104,7 @@ test("turn entries exclude the report and response text", async () => {
 // records role, status, and time, with no verdict and no reviewed head, so a
 // failed turn stays countable in the history (issue #312).
 test("a turn whose child fails records an error turn", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   const worker = recordingAdapter([]);
   worker.run = async () => {
@@ -143,9 +133,7 @@ test("a turn whose child fails records an error turn", async () => {
 // value straight to `stepsUsed >= maxSteps`, where an unsafe integer makes the
 // step counter stop advancing and the bound hold for no value (issue #312).
 test("dispatch and finish refuse a state file with a maxSteps outside the safe integer range", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const stateFile = statePaths({ cwd: repo }).stateFile;
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -182,9 +170,7 @@ test("dispatch and finish refuse a state file with a maxSteps outside the safe i
 // only the stored lifecycle and archives the old file without re-checking the
 // old `maxSteps`, so no field has to be hand-corrected.
 test("abort ends a run with an unsafe stored maxSteps and a new init then starts normally", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   const stateFile = paths.stateFile;
 
@@ -244,9 +230,7 @@ async function crashDuringDispatch(repo) {
 // the previous call left in `dispatched`, marked interrupted, with no verdict
 // and no head it never observed (issue #312).
 test("the charged uncertain turn is recorded when the run recovers into interrupted", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   await crashDuringDispatch(repo);
@@ -275,9 +259,7 @@ test("the charged uncertain turn is recorded when the run recovers into interrup
 // uncertain turn and the resumed turn as two distinct entries, one per charged
 // step (issue #312).
 test("a resumed turn records one entry after the interrupted entry", async () => {
-  await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRunRepo();
 
   await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "2"]), repo), {
     ...basicDeps(),
