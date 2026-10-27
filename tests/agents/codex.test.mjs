@@ -7,7 +7,7 @@ import { runCodex } from "../../src/agents/codex.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { stateRoot } from "../../src/lib/runstate.mjs";
 import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
-import { slotsRoot } from "../../src/lib/test-slot.mjs";
+import { slotsRoot } from "../../src/lib/slots-root.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { exists, removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
 
@@ -672,7 +672,7 @@ const LIB = (name) => new URL(`../../src/lib/${name}`, import.meta.url).href;
 const RESOLVE_ROOTS = `
 const [{ stateRoot }, { slotsRoot }, { sessionRecordsRoot }] = await Promise.all([
   import(${JSON.stringify(LIB("runstate.mjs"))}),
-  import(${JSON.stringify(LIB("test-slot.mjs"))}),
+  import(${JSON.stringify(LIB("slots-root.mjs"))}),
   import(${JSON.stringify(LIB("session-record.mjs"))}),
 ]);
 console.log(JSON.stringify({ runs: stateRoot(), slots: slotsRoot(), records: sessionRecordsRoot() }));`;
