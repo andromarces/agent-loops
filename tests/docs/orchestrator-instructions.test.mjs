@@ -646,7 +646,7 @@ const REFUSED_CWD_BLOCKS = {
       "Map the report fields into the finish summary:",
       "- Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.",
       "- A reviewer accept can leave a criterion unverified, because the reviewer turn cannot run its check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.",
-      "- Reviewer Notes that no later turn addressed go into open.",
+      "- Reviewer Notes that no later turn addressed go into open. A refused cleanup of a tool cache in its default location, or of a cache entry that existed before the turn, is not a finding: do not carry it into open. Output under a path that the reviewer chose, such as a temporary directory that it set or the scratch folder, stays turn output, so a refused cleanup of it still goes into open.",
       "- Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.",
       "- In review-only mode, Blockers and Notes go into open, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode; open holds unresolved in-scope findings.",
       REFUSED_CWD_RULE[0],
@@ -1161,6 +1161,22 @@ test("docs/orchestrator-instructions.md relays operator decisions to the reviewe
 test("the core instructions stay within one read of the read tool", async () => {
   const { size } = await stat(instructionsPath);
   expect(size).toBeLessThanOrEqual(50_000);
+});
+
+// Usefulness: verifies #1171 — the reference doc and the headless prompt state the same `open` rule
+// for a refused tool-cache cleanup and for output under a reviewer-chosen path, so a headless run does
+// not keep a default-cache cleanup in `open` and the cache exception does not cover reviewer output.
+test("the instructions and the headless prompt share the tool-cache open rule", async () => {
+  const { instructions, prompt } = await readParentTexts();
+  for (const [name, text] of Object.entries({ instructions, prompt })) {
+    const flat = text.replaceAll("`", "");
+    expect(flat, name).toContain(
+      "A refused cleanup of a tool cache in its default location, or of a cache entry that existed before the turn, is not a finding: do not carry it into open.",
+    );
+    expect(flat, name).toContain(
+      "Output under a path that the reviewer chose, such as a temporary directory that it set or the scratch folder, stays turn output, so a refused cleanup of it still goes into open.",
+    );
+  }
 });
 
 // Usefulness: verifies the core names each reference section with the condition that makes the
