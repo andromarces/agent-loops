@@ -306,18 +306,12 @@ because the CLI has no such session, the runtime clears the id and reruns the tu
 once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the
 `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.
 
-When `--cwd` is a linked work tree, the init call copies the untracked local files
-of the main work tree that `--cwd` ignores (agent instructions, harness
-configuration, `.env`, and the other paths in
-[Local files in a linked work tree](reference/harness-entry-points.md#local-files-in-a-linked-work-tree))
-into `--cwd`, before the
-first child turn. A file already in `--cwd` is never replaced, and no symlink is
-followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`,
-by name only, and a path in `skipped` is untracked in the main work tree but not
-copied: the child does not have it. Do not read, print, or quote any copied file.
-The copy duplicates secrets such as `.env` into the run work tree, so remove that
-work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
-the copy off. It is an init field, so a later call cannot change it.
+When `--cwd` is a linked work tree, the init call copies the untracked local files of the
+main work tree that `--cwd` ignores, such as agent instructions and `.env`, into `--cwd`.
+Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env`
+into the run work tree, so remove that work tree when the run ends. The copy rules,
+`--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
+[Local files copied into the work tree](orchestrator/local-files-copy.md).
 
 Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
 with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused
@@ -328,48 +322,8 @@ or snapshot error) also prints no `lifecycle`, as does a child error that leaves
 remove the work tree after it reads `halted`. Run the removal as a separate command
 after you read the result. Never chain it after `finish` or `abort` in one command.
 
-Remove the work tree with `git worktree remove --force "<work tree>"`,
-then check whether the folder still exists. On Windows, the remove can leave the
-folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into
-the shared pnpm store and no file. When the folder remains, check that it holds
-only links and directories. On Windows, run
-`Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"`
-in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each
-command includes hidden files and never descends into a link or a junction. Any
-path that it prints is a file: stop and leave the folder to a maintainer. When it
-prints nothing, delete the folder without following links:
-`cmd.exe /c rmdir /s /q "$($wt.Replace('/', '\'))"` in PowerShell, with the work tree path in `$wt`,
-`cmd.exe /c rmdir /s /q "<work tree>"` in cmd.exe,
-`MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git
-Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. The
-cmd.exe forms need a path with backslashes, because `cmd.exe` reads a forward slash
-as a switch and fails with `Invalid switch`. Git prints work tree paths with forward
-slashes on Windows, so the PowerShell form converts the path. A harness PowerShell
-tool has refused the PowerShell form with `Remove-Item on system path '/s' is blocked`.
-The cause is not confirmed. Claude Code 2.1.310 in the bypass-permissions mode ran the
-form with no refusal on 2026-10-25, so the refusal can depend on the version or the
-permission mode. When it refuses, run the Git Bash form instead. Run
-the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir`
-to GNU rmdir, which rejects those switches. In Git Bash, keep `MSYS_NO_PATHCONV=1`,
-because MSYS path conversion rewrites the `/s` and `/q` switches, and `cmd.exe`
-then exits 0 and leaves the folder. Never use a recursive delete that follows
-junctions: it can damage the shared pnpm store.
-
-When the task needs other ignored reference data of the main work tree, such as a downloaded
-specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The
-path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The
-init refuses an absolute path, a path that leaves the main work tree or passes through a symlink or a junction,
-a path that holds a tracked file, a path that holds a file that is not ignored, and use with
-`--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and
-`localFilesDiffer` covers the files.
-
-The copy runs once. A later dispatch never replaces or refreshes a copied file, but it
-compares each copied file with its source in the main work tree by hash and reports the
-names that differ as `localFilesDiffer: [...]` in the envelope. The key is absent when no
-copy differs. A copy differs when the main work tree changed the file after init, or when a
-turn changed the copy: the report does not tell which. When the key appears, check whether
-the main work tree holds a newer rule file, such as `AGENTS.md`, and tell the child to refresh
-that file by hand when it holds no turn edit. Never read, print, or quote the file to decide.
+Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states.
+Never delete it with a recursive delete that follows junctions: it can damage the shared pnpm store.
 
 A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
@@ -434,6 +388,18 @@ of this file.
   end a run with `--require-accept` or `--require-ci`.
 - [Turn history and the step budget](orchestrator/run-history.md): read it when you rebuild a run
   after compaction or restart, or when a stored `maxSteps` or sandbox mode is out of range.
+- [Local files copied into the work tree](orchestrator/local-files-copy.md): read it before init
+  when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work
+  tree, and when an envelope carries `localFilesDiffer`.
+- [Removing a work tree](orchestrator/work-tree-removal.md): read it when you remove the work tree
+  of a terminal run, before the removal command.
+- [Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md): read it when a
+  headless run passes `--compare-head`, when a run has no usable required-check source, and when
+  a headless run finishes with a worker-opened PR.
+- [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
+  dispatch several runs in one repository, so no two runs create the same tracking issue.
+- [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
+  `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
 ## Several runs at once
 
@@ -450,19 +416,8 @@ while any of the session's runs is non-terminal.
 Every command for a run passes that run's `--cwd`. Each run ends with its own
 `finish` or `abort`, and the guard releases only after every run is terminal.
 
-Shared tracking artifacts: workers of runs in one repository can each create the
-same tracking issue, for example a repository's singleton verification-checklist
-issue, because the repository rules say to add to the open issue or open it if
-none exists. Two workers that reach that step close together both find none and
-both open one. The parent cannot write to GitHub, so a duplicate costs a later
-worker turn to merge.
-
-- Before dispatch, name every shared tracking artifact that a run can create, such
-  as the issues that the repository rules treat as one per target.
-- Assign the creation of each artifact to one run. Tell the other runs to add to
-  it only after it exists, and never to create it.
-- An artifact that already exists needs no assignment. Name it in each worker
-  prompt, so no run creates another.
+Workers of runs in one repository can each create the same shared tracking issue. Rules:
+[Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md).
 
 ## Loop policy
 
@@ -498,27 +453,11 @@ recorded finish stays distinct from a verified one without a transcript (#266,
 #279). An interactive `role finish` records the same marker in its envelope and
 the state file instead of a transcript event (#281).
 
-A headless run on a repository whose required-check sources are unreadable, for
-example a private repository on the GitHub Free plan (#301), passes
-`--compare-head <pr>` for a PR that exists at start (#1104). It is the headless form of
-the interactive `--compare-head` below and keeps its contract. At finish, the
-runtime reads the PR head and state and refuses unless the PR is open, it equals the
-reviewed head, and the reviewed tree is clean. It reads no required-check source and claims no check
-result, and it does not evaluate the merge state. A pass emits a `head-compare`
-transcript event and the run exits `0`, distinct from `unresolvedCompare` and its
-exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
-`--mode review-only`, and a finish that also sets `unresolvedCompare` is refused
-before any GitHub read. A continuation of a declared PR refuses the flag before any
-transcript write. The transcript records the flag, but a continuation does not
-restore it: each invocation selects `--compare-head` again, as it selects
-`--require-ci`, and omitting it on a continuation disables the runtime compare and
-leaves the marker path.
-A worker-opened PR is never declared in such a run, because the flag names the PR at
-start. A run without the flag needs none for a PR that the worker opens (#1111, ADR
-0053): the runtime refuses to declare it, records a `pr-undeclared` event, and
-applies the same compare at finish. A finish with `unresolvedCompare` is refused for
-it, and a closed or merged PR refuses the finish even when its head is unchanged. A continuation does not restore the undeclared PR and resolves it again after its
-own worker turn, and a continuation with no worker turn keeps the marker path.
+A headless run on a repository whose required-check sources are unreadable passes
+`--compare-head <pr>` for a PR that exists at start (#1104), and a run without the flag
+resolves a worker-opened PR itself (#1111, ADR 0053). The rules, the refusals, and the
+exit codes are in
+[Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md).
 
 A headless orchestrator action allows only these keys. The `run_worker` and
 `run_reviewer` actions allow only `action` and `prompt`. The `abort` action
@@ -733,23 +672,8 @@ The conditions that the `--require-accept` and `--require-ci` gates check at `fi
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `declare-pr`, `finish`, or `abort`. Each subcommand refuses a
-  caller whose `AGENT_LOOP_SPAWNED_RUN` list holds the key of the run it acts on. The
-  runtime sets the variable, as a comma-separated list of the keys of every
-  enclosing run and then the key of the dispatching run, in the environment of every worker and reviewer process, and in no other spawn. The key
-  is the name of the run's state directory, the hash each subcommand uses to find
-  the run state. A path spelled another way, such as a symlink alias, finds no
-  state. A child that names the work tree as the run does is refused even when the
-  work tree is gone. A
-  process keeps a marker it inherited. A parent session that another run's child
-  started holds a different key for its own work tree and is not refused. A worker
-  that a nested run starts holds the keys of the outer run and the nested run, so
-  it is refused against both. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
-  session id. The id check alone does not identify the caller, so a child that
-  clears its environment passes, and so does a harness that filters the variable
-  from shell commands. An orchestrator or parent that a child of the same
-  run started, in that run's work tree, inherits the key and is refused. The prompt
-  rule backs the marker.
+  role never runs `extend`, `declare-pr`, `finish`, or `abort`. The spawn marker and its
+  limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not
   abort and start a new run to gain steps: that starts every role on a new
