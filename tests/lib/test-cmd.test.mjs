@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
-import { TAIL_CHARS, redactCommandText, runTestCmd } from "../../src/lib/test-cmd.mjs";
+import { TAIL_CHARS, redactAndClean, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   createTempRepo,
@@ -433,7 +433,7 @@ test.skipIf(process.platform !== "win32")(
       const names = Object.keys(process.env).filter((k) => k.toLowerCase() === "probe497_token");
       expect(names).toEqual(["Probe497_Token"]);
       const logged = (logInfo(text), logSpy.mock.calls.flat().join(""));
-      for (const shown of [redactCommandText(text), readableErrorText(new Error(text)), logged]) {
+      for (const shown of [redactAndClean(text), readableErrorText(new Error(text)), logged]) {
         expect(shown).not.toContain(value);
         expect(shown.match(/\[redacted:[^\]]*\]/g)).toEqual([
           "[redacted:Probe497_Token]",
@@ -452,7 +452,7 @@ test.skipIf(process.platform !== "win32")(
 test("the command text does not rebuild a value after control characters are removed", () => {
   process.env.TEST_CMD_PROBE_TOKEN = "abcdefgh";
   try {
-    expect(redactCommandText("run abcd\u0001efgh now")).not.toContain("abcdefgh");
+    expect(redactAndClean("run abcd\u0001efgh now")).not.toContain("abcdefgh");
   } finally {
     delete process.env.TEST_CMD_PROBE_TOKEN;
   }

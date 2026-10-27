@@ -10,7 +10,7 @@ import { isAbsolute, resolve } from "node:path";
 export const INHERITED_TMPDIR_ENV = "AGENT_LOOP_INHERITED_TMPDIR";
 
 /** Forwarded in place of a value that the parent cannot resolve. No reader accepts it. */
-export const UNUSABLE_INHERITED_TMPDIRS = "unusable";
+const UNUSABLE_INHERITED_TMPDIRS = "unusable";
 
 function parseList(raw) {
   try {

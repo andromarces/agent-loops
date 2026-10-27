@@ -24,9 +24,9 @@ vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    redactCommandText: (command) => {
+    redactAndClean: (command) => {
       if (redaction.throwOnRedact) throw new Error("redaction failed");
-      return real.redactCommandText(command);
+      return real.redactAndClean(command);
     },
   };
 });

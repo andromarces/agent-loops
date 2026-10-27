@@ -4,7 +4,7 @@ import { runAgy } from "./agy.mjs";
 import { runOpenCode } from "./opencode.mjs";
 import { runCopilot } from "./copilot.mjs";
 import { throwIfCanceled } from "./shared.mjs";
-import { normalizeAgent } from "../lib/agent-kinds.mjs";
+import { AGENT_ALIASES, normalizeAgent } from "../lib/agent-kinds.mjs";
 
 export { normalizeAgent };
 
@@ -35,7 +35,7 @@ export const defaultAgents = {
   copilot: { run: runCopilot },
 };
 
-export const supportedAgents = new Set([...Object.keys(defaultAgents), "antigravity"]);
+export const supportedAgents = new Set([...Object.keys(defaultAgents), ...AGENT_ALIASES.keys()]);
 
 /** Runs one turn on the adapter of `state.kind`. Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
 export async function runAgent(state, prompt, options = {}, agents = defaultAgents) {

@@ -1,10 +1,9 @@
 import { open, opendir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { logDebug, logWarn } from "./log.mjs";
-import { redactAndClean } from "./test-cmd.mjs";
 
-const MAX_ENTRIES = 20;
 // A directory with more entries than this is not read, so the read stays bounded in size. The
 // limit covers every directory read, the store root included.
 const SCAN_LIMIT = 10_000;
@@ -17,8 +16,6 @@ const MAX_CONFIG_BYTES = 1 << 20;
 // it holds the package content, one directory per hash prefix, and an install shows in the others.
 const WATCHED_DIRS = ["links", "projects"];
 const VERSION_DIR = /^v\d+$/;
-// Lists carried by a fatal error that cannot take the property.
-const carriedEntries = new WeakMap();
 
 /**
  * Reads a file as text up to `MAX_CONFIG_BYTES`, or returns null when it is longer. A growing file
@@ -194,21 +191,16 @@ export async function changedInPackageStore(before, options) {
     if (before.entries.get(name) !== signature) names.add(name);
   }
   for (const name of before.entries.keys()) if (!after.entries.has(name)) names.add(name);
-  return [...new Set([...names].sort().slice(0, MAX_ENTRIES).map(redactAndClean))];
+  return reportedEntryNames(names);
 }
+
+const carrier = entryCarrier("packageStoreEntries");
 
 /**
  * Carries the list on a fatal error as `err.packageStoreEntries`. A frozen error or a throwing
  * setter keeps the original error, and the list stays readable through `failedPackageStoreEntries`.
  */
-export function carryPackageStoreEntries(err, entries) {
-  carriedEntries.set(err, entries);
-  try {
-    err.packageStoreEntries = entries;
-  } catch {}
-}
+export const carryPackageStoreEntries = carrier.carry;
 
 /** Returns the list a fatal error carries, or `undefined` when it carries none. */
-export function failedPackageStoreEntries(err) {
-  return carriedEntries.get(err);
-}
+export const failedPackageStoreEntries = carrier.failed;

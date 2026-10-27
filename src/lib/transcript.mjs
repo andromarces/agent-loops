@@ -10,7 +10,7 @@ import {
   writeSessionRecord,
 } from "./session-record.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
-import { redactCommandText } from "./test-cmd.mjs";
+import { redactAndClean } from "./test-cmd.mjs";
 
 /**
  * Owns the transcript data and every write of it: the file, the force-exit write, and the
@@ -33,7 +33,7 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
       ...(options.testCmd === null
         ? {}
         : {
-            testCmd: redactCommandText(options.testCmd),
+            testCmd: redactAndClean(options.testCmd),
             testCmdTimeout: options.testCmdTimeout,
           }),
       ...(reviewerSandbox === null ? {} : { reviewerSandbox }),

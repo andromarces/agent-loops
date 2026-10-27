@@ -2,13 +2,11 @@ import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
-import { redactAndClean } from "./test-cmd.mjs";
+import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { isTurnTmpdirName } from "./turn-tmpdir.mjs";
 
-const MAX_ENTRIES = 20;
-
-// Lists carried by a fatal error that cannot take the property.
-const carriedEntries = new WeakMap();
+// Reads `os.tmpdir()` of this process, which is the inherited temporary directory of a turn. The
+// `AGENT_LOOP_INHERITED_TMPDIR` list is read in `inherited-tmpdir.mjs`.
 
 /**
  * Reads the entry names directly in the inherited temporary directory, or null, after a warning,
@@ -39,23 +37,19 @@ export async function appearedInInheritedTmpdir(before) {
   if (before === null) return [];
   const after = await snapshotInheritedTmpdir();
   if (after === null) return [];
-  const names = [...after].filter((name) => !before.has(name) && !isTurnTmpdirName(name)).sort();
-  return [...new Set(names.slice(0, MAX_ENTRIES).map(redactAndClean))];
+  return reportedEntryNames(
+    [...after].filter((name) => !before.has(name) && !isTurnTmpdirName(name)),
+  );
 }
+
+const carrier = entryCarrier("inheritedTmpdirEntries");
 
 /**
  * Carries the list on a fatal error as `err.inheritedTmpdirEntries`. A frozen error or a throwing
  * setter keeps the original error, and the list stays readable through
  * `failedInheritedTmpdirEntries`.
  */
-export function carryInheritedTmpdirEntries(err, entries) {
-  carriedEntries.set(err, entries);
-  try {
-    err.inheritedTmpdirEntries = entries;
-  } catch {}
-}
+export const carryInheritedTmpdirEntries = carrier.carry;
 
 /** Returns the list a fatal error carries, or `undefined` when it carries none. */
-export function failedInheritedTmpdirEntries(err) {
-  return carriedEntries.get(err);
-}
+export const failedInheritedTmpdirEntries = carrier.failed;

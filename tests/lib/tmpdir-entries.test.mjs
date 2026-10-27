@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
   snapshotInheritedTmpdir,
-} from "../../src/lib/inherited-tmpdir-entries.mjs";
+} from "../../src/lib/tmpdir-entries.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 

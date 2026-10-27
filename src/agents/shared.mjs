@@ -80,7 +80,7 @@ export function setMainLoopUsage(state, usage) {
  * @param {string} expected session id the caller asked the CLI to resume
  * @param {string} received session id the CLI returned
  */
-export function resumeMismatchError(agent, idLabel, expected, received) {
+function resumeMismatchError(agent, idLabel, expected, received) {
   return new Error(
     [
       `${agent} did not resume the expected ${idLabel}.`,
@@ -181,11 +181,10 @@ export function closingText(messages) {
  * - the field absent, not reported: the adapter never calls this, as for a CLI that reports no model.
  * The record describes the session the role keeps. An adapter sets it for every turn whose child
  * process ran, failed or not, because a turn that ran may have run the session on another model.
- * An adapter reaches this in two ways. `recordResolvedModel` calls it with the model values of the
- * output, or with `[]` when the output cannot be tied to the kept session. The OpenCode adapter
- * also calls it directly with `[]`, which marks the turn unresolved, on a failed turn, at the start
- * of its output validation before any check passes, and on a cancel after the child exited. On a
- * failed turn an adapter skips the call when `childRan` is false.
+ * An adapter reaches this directly or through `recordResolvedModel`, which calls it with the model
+ * values of the output, or with `[]` when the output cannot be tied to the kept session. A direct
+ * call with `[]` marks the turn unresolved, for example on a failed turn or on a cancel after the
+ * child exited. On a failed turn an adapter skips the call when `childRan` is false.
  * @param {object} state role state; mutated
  * @param {unknown[]} reported the model values the turn output named, malformed ones included
  */
