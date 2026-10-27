@@ -81,14 +81,9 @@ const NOT_PROTECTED_404 = "gh: Branch not protected (HTTP 404)";
 const FREE_PLAN_403 =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
 
-/** Whether `stderr` is the exact `Branch not protected` 404, one trailing break aside. */
-function isNotProtected404(stderr) {
-  return stderr.replace(/\r?\n$/, "") === NOT_PROTECTED_404;
-}
-
-/** Whether `stderr` is the exact Free-plan 403, ignoring one trailing LF or CRLF. */
-function isFreePlan403(stderr) {
-  return stderr.replace(/\r?\n$/, "") === FREE_PLAN_403;
+/** Whether `stderr` is exactly `text`, one trailing LF or CRLF aside. */
+function isExactReply(stderr, text) {
+  return stderr.replace(/\r?\n$/, "") === text;
 }
 
 // `gh` reads these two names and then writes a debug log to stderr, which breaks the exact stderr
@@ -138,18 +133,19 @@ export function ghFailureText({ status, stderr }) {
   return stderr.trim() || `exit ${status}`;
 }
 
-/** The refusal for a pull request whose merge state is `BLOCKED` after the check pass. */
-export const MERGE_BLOCKED_REFUSAL =
-  "the PR merge state is blocked (a required check, review, or other required rule is unmet)";
+/** The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did. */
+function ghApiFailure(endpoint, { status, stderr, transient }) {
+  const err = new Error(`gh api ${endpoint} failed: ${ghFailureText({ status, stderr })}`);
+  if (transient) {
+    err.transient = true;
+  }
+  return err;
+}
 
 export async function ghApi(gh, args, cwd) {
   const { status, stdout, stderr, transient } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    const err = new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
-    if (transient) {
-      err.transient = true;
-    }
-    throw err;
+    throw ghApiFailure(args[0], { status, stderr, transient });
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
@@ -362,8 +358,8 @@ async function readReply(read, args, cwd, state) {
 /**
  * Reads every page of the list endpoint `endpoint` with one `gh api --include` request per page,
  * by documented page number and never by the `Link` header, so no request goes to a target that a
- * reply named. It returns a `gh`-shaped result whose stdout is the pages as one JSON array, as a
- * slurped read printed them. `field` names the list in an object reply (`check_runs`, `statuses`);
+ * reply named. It returns a `gh`-shaped result whose stdout is the pages as one JSON array.
+ * `field` names the list in an object reply (`check_runs`, `statuses`);
  * with `null`, each page is the list itself. Every page that the read received is in the result, an
  * empty page included, so a classifier sees the whole sequence. For a reply with `total_count`, the
  * read ends only when the collected count equals it, and a count that changes between pages, a
@@ -504,7 +500,7 @@ export async function readOne(read, endpoint, cwd) {
  * @param {object} options
  * @param {(stderr: string) => boolean} options.absentOnError the one non-zero
  *   reply that proves this source holds no required check, compared whole.
- *   `isNotProtected404` for classic protection, and a predicate that never matches
+ *   the exact `Branch not protected` 404 for classic protection, and a predicate that never matches
  *   for repository rulesets, whose endpoint does not write it.
  * @param {(data: unknown) => boolean} [options.malformed] whether a parsed body has a
  *   shape the classification cannot interpret; read by the status read only.
@@ -526,14 +522,10 @@ async function readRequiredSource(
     if (absentOnError(stderr)) {
       return { state: ABSENT, contexts: [] };
     }
-    if (UNREADABLE.test(stderr) || isFreePlan403(stderr)) {
+    if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    const err = new Error(`gh api ${args[0]} failed: ${ghFailureText({ status, stderr })}`);
-    if (transient) {
-      err.transient = true;
-    }
-    throw err;
+    throw ghApiFailure(args[0], { status, stderr, transient });
   }
   const text = stdout.trim();
   if (text === "") {
@@ -609,23 +601,6 @@ const RULE_TYPES = new Set([
 export const RULESETS = "repository rulesets";
 const PROTECTION = "classic branch protection";
 
-// Every merge state GitHub's GraphQL `mergeStateStatus` reports that the gate can
-// act on. A value outside this set, and a missing or null one, is a state the
-// gate cannot read, so it refuses on both the per-check path and the absence path
-// (issue #336 review). `UNSTABLE` means a check is failing, which the per-check
-// path judges by name, and `HAS_HOOKS` and `DRAFT` report no unmet rule the gate
-// enforces; `BLOCKED` refuses at the end of both paths. `UNKNOWN` is deliberately
-// absent: GitHub computes it lazily, so it states no outcome either.
-const MERGE_STATES = new Set([
-  "BEHIND",
-  "BLOCKED",
-  "CLEAN",
-  "DIRTY",
-  "DRAFT",
-  "HAS_HOOKS",
-  "UNSTABLE",
-]);
-
 /**
  * Classifies a successful repository rulesets read. `ABSENT` needs a JSON array
  * whose entries are all well-formed rules and none of them a
@@ -638,7 +613,7 @@ const MERGE_STATES = new Set([
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
 export function classifyRulesets(data) {
-  // `--slurp` wraps every page in an outer array, so a complete read is an array
+  // The paged read wraps every page in an outer array, so a complete read is an array
   // of arrays. A body that is not that shape, or that holds a page which is not an
   // array, is a read the gate cannot account for every page of, so it settles
   // nothing rather than being classified from the pages that arrived (issue #336
@@ -759,33 +734,8 @@ function isProtectionMalformed(data) {
   );
 }
 
-// The merge-state refusals the gate makes before it reads any check: behind its
-// base, merge conflicts, and a state the gate cannot read. `UNKNOWN`, which GitHub
-// computes lazily, a missing state, and a value outside `MERGE_STATES` are all the
-// last kind. Shared with the status read so it cannot report a pass for a state the
-// gate refuses (issue #349).
-export function earlyMergeRefusal(mergeState) {
-  if (mergeState === "BEHIND") {
-    return "the PR is behind its base branch";
-  }
-  if (mergeState === "DIRTY") {
-    return "the PR has merge conflicts (merge state DIRTY)";
-  }
-  // The merge state is validated before either path, so the relaxed absence path
-  // applies exactly the same merge-state condition as the per-check path. A state
-  // that is missing, null, empty, or not one GitHub documents settles nothing, and
-  // a state the gate cannot read is not a clean one, so it refuses on both paths
-  // rather than passing the absence path on a reply it never understood
-  // (issue #336 review).
-  if (!MERGE_STATES.has(mergeState)) {
-    return "GitHub reports the PR merge state as unknown (computed lazily; retry shortly)";
-  }
-  return null;
-}
-
-// A runner whose calls also end when `signal` aborts, beside any signal the
-// caller's runner already carries.
-const withSignal =
+/** A runner whose calls also end when `signal` aborts, beside any signal the caller's runner already carries. */
+export const withSignal =
   (gh, signal) =>
   (args, cwd, options = {}) =>
     gh(args, cwd, {
@@ -867,31 +817,20 @@ export async function prInfo(gh, pr, cwd) {
   return JSON.parse(stdout);
 }
 
-async function repoSlug(gh, cwd) {
+/** The repository slug. `failure` is the verb phrase of the error text that follows `gh repo view`. */
+export async function repoSlug(gh, cwd, failure = "failed") {
   const { status, stdout, stderr } = await gh(
     ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
     cwd,
   );
   if (status !== 0 || stdout.trim() === "") {
-    throw new Error(`gh repo view failed: ${ghFailureText({ status, stderr })}`);
+    throw new Error(`gh repo view ${failure}: ${ghFailureText({ status, stderr })}`);
   }
   return stdout.trim();
 }
 
-// `gh pr checks --required` resolves required check names without admin rights.
-// It lists only checks that already reported on the commit, exits non-zero for
-// pending or failing checks, and prints no JSON when no required check has
-// reported, so the output is parsed leniently and an unparseable result
-// contributes no names. This source carries no app qualifier, so every name it
-// yields is unqualified.
-//
-// `ok` is true only for a read that succeeded, whatever its stdout holds: exit 0
-// with a list of named checks, exit 1 or 8 (a failing or pending check) with a
-// non-empty list of named checks, or the exact `no required checks reported`
-// answer on exit 1 with no stdout. Any other exit, an empty list on a non-zero
-// exit, and an error text that merely contains those words are a failed read. The
-// gate ignores `ok`. The status read refuses on it, because the list may name a
-// required check no configuration source did (issue #349).
+// The exact `gh pr checks --required` reply on a branch with no required check, compared against
+// the trimmed stderr of an exit 1 with no stdout.
 export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet, as right after a
@@ -902,6 +841,22 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 /**
  * The required names of one `gh pr checks --required --json` reply. Any field list that includes
  * `name` serves, so the wait passes the reply of its own check-list read instead of a second one.
+ *
+ * `gh pr checks --required` resolves required check names without admin rights. It lists only
+ * checks that already reported on the commit, exits non-zero for pending or failing checks, and
+ * prints no JSON when no required check has reported, so the output is parsed leniently and an
+ * unparseable reply contributes no names. This source carries no app qualifier, so every name it
+ * yields is unqualified.
+ *
+ * `ok` is true only for a read that succeeded, whatever its stdout holds: exit 0 with a list of
+ * named checks, exit 1 or 8 (a failing or pending check) with a non-empty list of named checks, or
+ * the exact `no required checks reported` answer on exit 1 with no stdout. Any other exit, an empty
+ * list on a non-zero exit, an error text that merely contains those words, and the `no checks
+ * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read
+ * refuses on it, because the list may name a required check no configuration source did (issue
+ * #349). A reply that is no list carries `transient` and the `failure` text only for a clean
+ * server-error failure, which the wait retries (#1121).
+ * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */
 export function requiredNamesOf({ status, stdout, stderr }) {
   let parsed = null;
@@ -997,30 +952,26 @@ export async function requiredContexts(
         [`repos/${slug}/branches/${base}/protection`],
         cwd,
         {
-          absentOnError: isNotProtected404,
+          absentOnError: (stderr) => isExactReply(stderr, NOT_PROTECTED_404),
           classify: classifyProtection,
           malformed: isProtectionMalformed,
         },
       ),
     (read) => (names ? Promise.resolve(names) : ghRequiredNames(read, pr, cwd)),
   ]);
-  if (rules.state === UNKNOWN) {
-    unknown.push(RULESETS);
-  }
-  if (rules.unparsed) {
-    unparsed.push(RULESETS);
-  }
-  for (const context of rules.contexts) {
-    addContext(contexts, context.name, context.appId);
-  }
-  if (protection.state === UNKNOWN) {
-    unknown.push(PROTECTION);
-  }
-  if (protection.unparsed) {
-    unparsed.push(PROTECTION);
-  }
-  for (const context of protection.contexts) {
-    addContext(contexts, context.name, context.appId);
+  for (const [source, label] of [
+    [rules, RULESETS],
+    [protection, PROTECTION],
+  ]) {
+    if (source.state === UNKNOWN) {
+      unknown.push(label);
+    }
+    if (source.unparsed) {
+      unparsed.push(label);
+    }
+    for (const context of source.contexts) {
+      addContext(contexts, context.name, context.appId);
+    }
   }
 
   for (const name of listed.names) {

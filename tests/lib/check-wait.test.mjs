@@ -1090,6 +1090,31 @@ test("waitChecks refuses a commit read that fails", async () => {
   ).rejects.toThrow(/gh api repos\/owner\/repo\/commits\/.+ failed: boom/);
 });
 
+// Usefulness: verifies a failed slug read keeps the text `gh repo view could not be read`, so the shared
+// slug read does not change the wait error (issue #1126).
+test("waitChecks names a failed repository read as one that could not be read", async () => {
+  const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }]);
+  const gh = async (args, cwd, options) =>
+    args[0] === "repo" ? { status: 1, stdout: "", stderr: "boom" } : inner(args, cwd, options);
+  const clock = fakeClock();
+  await expect(
+    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 60, gh, now: clock.now, sleep: clock.sleep }),
+  ).rejects.toThrow("gh repo view could not be read: boom");
+});
+
+// Usefulness: verifies a lone check run whose timestamp has no `T` still passes, because no order
+// is read from a single entry, so the strict timestamp parse stays out of the read validation (issue #1126).
+test("waitChecks accepts a lone check run with a timestamp that is only a parseable date", async () => {
+  const at = "2026-01-01 00:00:00Z";
+  const { gh } = pagedCheckRunsGh([
+    {
+      total_count: 1,
+      check_runs: [{ ...runEntry(1, "ci", "success", 0), started_at: at, completed_at: at }],
+    },
+  ]);
+  expect(await waitOn(gh, false)).toMatchObject({ timedOut: false, head: HEAD_A });
+});
+
 // A poll reads the check runs and the commit statuses together, so a wait that does not retry a failed
 // read makes exactly these two commit reads.
 const COMMIT_READS_PER_POLL = 2;
