@@ -8,12 +8,30 @@
 // The visible entry is the only ownership key: find and remove compare the
 // recorded entry by deep equality, so a package move or an upgrade that changes
 // a path still finds the old record.
-import { isDeepStrictEqual } from "node:util";
 import { readableErrorText } from "../lib/error-message.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 
 /** Structural equality for JSON-shaped values. Object key order is irrelevant. */
-export const deepEqual = isDeepStrictEqual;
+export function deepEqual(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    return a.every((value, index) => deepEqual(value, b[index]));
+  }
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+    return false;
+  }
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) {
+    return false;
+  }
+  return keysA.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
+}
 
 export function parseSettings(text, path) {
   let value;

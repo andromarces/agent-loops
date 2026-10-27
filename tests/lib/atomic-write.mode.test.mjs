@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -42,4 +42,18 @@ test("writeFileAtomic replaces an existing file with the requested mode and leav
   expect((await stat(target)).mode & 0o777).toBe(0o444);
   expect((await readdir(dir)).sort()).toEqual(["settings.json"]);
   await chmod(target, 0o644);
+});
+
+// Usefulness: verifies a state write still succeeds after PID reuse leaves a temp file with a
+// predictable `<pid>.<n>.tmp` name, as it did before the `exclusive` option existed.
+test("writeFileAtomic overwrites a leftover temp file with a predictable name", async () => {
+  const dir = await makeDir();
+  const target = join(dir, "state.json");
+  for (let n = 0; n < 20; n += 1) {
+    await writeFile(`${target}.${process.pid}.${n}.tmp`, "leftover");
+  }
+
+  await writeFileAtomic(target, "data");
+
+  expect(await readFile(target, "utf8")).toBe("data");
 });

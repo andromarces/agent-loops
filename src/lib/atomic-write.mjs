@@ -1,4 +1,5 @@
 // Atomic file writes: a private temp file in the target directory is renamed over the destination.
+import { randomUUID } from "node:crypto";
 import { readlinkSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { chmod, readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -93,22 +94,28 @@ export async function resolveWriteTarget(file) {
 // goes to the final target, with the temp beside it (#658). A failed write or
 // rename removes the temp on a best-effort basis and rethrows the original error
 // (#353). `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and
-// suppresses a cleanup failure that persists, so the temp can remain. The temp is created
-// exclusively, so a stale file of the same name fails the write instead of being overwritten. With
-// `mode`, the temp is created with those permission bits and chmod-ed to them before the rename, so
-// the destination is never briefly more open. Without it, the file gets the default mode of a new
-// file.
-export async function writeFileAtomic(file, text, { mode } = {}) {
+// suppresses a cleanup failure that persists, so the temp can remain. With `mode`, the temp is
+// created with those permission bits and chmod-ed to them before the rename, so the destination is
+// never briefly more open. Without it, the file gets the default mode of a new file. The default
+// temp name is `<pid>.<counter>` and an existing file of that name is overwritten. With
+// `exclusive`, the temp name carries a random token and is created with `wx`: a name that is
+// somehow taken fails the write with `EEXIST`, and the cleanup leaves that file alone, because this
+// call did not create it.
+export async function writeFileAtomic(file, text, { mode, exclusive = false } = {}) {
   const destination = await resolveWriteTarget(file);
-  const temp = `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
+  const temp = exclusive
+    ? `${destination}.${process.pid}.${randomUUID()}.tmp`
+    : `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
-    await writeFile(temp, text, { encoding: "utf8", mode, flag: "wx" });
+    await writeFile(temp, text, { encoding: "utf8", mode, flag: exclusive ? "wx" : "w" });
     if (mode !== undefined && process.platform !== "win32") {
       await chmod(temp, mode);
     }
     await renameWithRetry(temp, destination);
   } catch (err) {
-    await removeTemp(temp);
+    if (!(exclusive && err.code === "EEXIST" && err.syscall === "open")) {
+      await removeTemp(temp);
+    }
     throw err;
   }
 }

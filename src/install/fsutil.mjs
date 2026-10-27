@@ -44,11 +44,14 @@ export async function fileMode(path) {
 }
 
 /**
- * `writeFileAtomic` that preserves the destination's permission bits unless `mode` is given, so a
+ * Exclusive `writeFileAtomic` that preserves the destination's permission bits unless `mode` is given, so a
  * private settings file stays private after install, backup, and restore (#790).
  */
 export async function writeTextAtomic(path, text, { mode } = {}) {
-  await writeFileAtomic(path, text, { mode: mode ?? (await fileMode(path)) ?? undefined });
+  await writeFileAtomic(path, text, {
+    mode: mode ?? (await fileMode(path)) ?? undefined,
+    exclusive: true,
+  });
 }
 
 export async function removeFileQuiet(path) {
