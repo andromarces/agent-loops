@@ -119,6 +119,19 @@ test("first worker turn keeps the closing block as the last message", () => {
   );
 });
 
+// Usefulness: verifies requirement "a later worker turn states the closing block format" (issue
+// #1118): a Claude worker drifted from the block on turns 4 to 10 of one run and returned a null
+// report, and the first-turn preamble is far back in that conversation. The reviewer prompt repeats
+// the block on every turn.
+test("later worker turns state the closing block format", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false);
+  const block = closingBlockTemplate(prompt);
+  expect(block).toContain("A bold heading line that groups a dash list");
+  const report = parseReportBlock(workerResponse(block, { Deferred: "none" }));
+  expect(report).not.toBeNull();
+  expect(report.deferred).toBe("none");
+});
+
 // Usefulness: verifies requirement "a worker states each result the parent needs inside the closing
 // block" (issue #976): the parent reads only the block, so a pointer to text above it loses the
 // result. The reviewer has the same rule for blockers (issue #434).
