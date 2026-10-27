@@ -6,20 +6,8 @@
 // call from the registered parent while its run is non-terminal. Fail-open by
 // design: an unparseable payload, an absent record, a terminal lifecycle, and a
 // lookup error all deny nothing.
+import { ANTIGRAVITY_GUARDED_TOOLS } from "./antigravity-guarded-tools.mjs";
 import { runParentGuard } from "./decision.mjs";
-
-// The guarded tools: every registered file-edit tool, plus the subagent start
-// and message tools. `manage_subagents` stays allowed, so the parent can still
-// list and terminate a child. The `hooks.json` matcher names the same set.
-const ANTIGRAVITY_GUARDED_TOOLS = new Set([
-  "write_to_file",
-  "replace_file_content",
-  "multi_replace_file_content",
-  "sed_file",
-  "notebook_edit",
-  "invoke_subagent",
-  "send_message",
-]);
 
 await runParentGuard((reason) => ({ decision: "deny", reason }), {
   readSessionId: (input) =>
