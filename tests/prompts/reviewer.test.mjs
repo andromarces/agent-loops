@@ -659,6 +659,27 @@ test.each([
   },
 );
 
+// Usefulness: verifies review feedback on #1171 — output under a path that the reviewer chose, such as a
+// temporary directory that it set or the scratch folder, stays turn output even when a tool wrote it there,
+// because the default-location exception would otherwise let that output escape cleanup and Notes.
+test.each([
+  [
+    "no scratch folder",
+    () => reviewerPrompt("check the fix"),
+    "Output under a path that you chose for this turn, such as a directory that you set the temporary directory variables to, stays turn output even when a tool writes it there: the removal rules above cover it.",
+  ],
+  [
+    "a scratch folder",
+    () => reviewerPrompt("check the fix", null, null, null, null, "/work/.agent-loop/rev/ab12cd34"),
+    "Output under a path that you chose for this turn, such as a directory that you set the temporary directory variables to, or the scratch folder, stays turn output even when a tool writes it there: the removal rules above cover it, and the runtime still removes the scratch folder.",
+  ],
+])(
+  "reviewer prompt keeps output under a path that the reviewer chose as turn output with %s",
+  (_name, build, sentence) => {
+    expect(build()).toContain(sentence);
+  },
+);
+
 // Usefulness: verifies acceptance #1171 — the reviewer never deletes an entry that it cannot show
 // its turn created, because a shared cache can hold entries from before the turn.
 test("reviewer prompt bars the deletion of an entry that the turn cannot show it created", () => {
