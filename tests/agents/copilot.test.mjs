@@ -72,6 +72,24 @@ test("copilot sends --output-format json and returns assistant text", async () =
   );
 });
 
+// Usefulness: verifies a non-object JSON line (issue #1123) is skipped, so the turn yields the same result as without it.
+test("copilot skips a non-object JSON line between valid events", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: [
+      '{"type":"assistant.message","data":{"content":"copilot response"}}',
+      "null",
+      "42",
+      '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
+    ].join("\n"),
+    stderr: "",
+  });
+
+  const state = { kind: "copilot", sessionId: "copilot-sess-1", model: null, effort: null };
+  const response = await runCopilot(state, "copilot prompt", { cwd: "/dir" });
+
+  expect(response).toBe("copilot response");
+});
+
 // Usefulness: verifies Copilot reads the assistant message from the JSONL stream instead of raw stdout.
 test("copilot reads response text from JSONL events", async () => {
   vi.mocked(exec).mockResolvedValueOnce({

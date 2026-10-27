@@ -1,4 +1,4 @@
-import { parseJsonLines } from "../lib/json.mjs";
+import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { withTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
@@ -92,7 +92,7 @@ export async function runCodex(state, prompt, options = {}) {
     flagMissingSession(err, requestedSessionId, missingSession);
     throw err;
   }
-  const events = parseJsonLines(stdout);
+  const events = parseJsonLines(stdout).filter(isJsonObject);
 
   const started = events.find((event) => event.type === "thread.started");
   const returnedId = asSessionId(started?.thread_id);
