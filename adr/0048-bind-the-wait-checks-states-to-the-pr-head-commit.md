@@ -6,6 +6,8 @@ accepted
 
 Partially supersedes [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md). This ADR replaces decision 2 (the envelope), decision 8 (the `gh pr checks` outcome decides alone), and decision 12 (the empty required list) of ADR 0010. Every other decision of ADR 0010 holds: the operation, the bound and its default, the child-exit ceiling and `childExitUnconfirmed`, work-tree validation inside the bound, the item validation, the status-only rule, the `--cwd` rule, and the instruction wording.
 
+Follow-up note (#1125, [PR #1150](https://github.com/andromarces/agent-loops/pull/1150)): the decision text below is unchanged. How the required wait reads its names changed. The names that decision 5 and the reads-per-poll consequence attribute to an independent `gh pr checks --required --json name` read now come from the reply of the single `gh pr checks --required` read of each poll, so a poll makes one such call. A failed names read is therefore a failed check list read, and the no-required-checks and no-checks-reported replies carry no separate names failure. The stricter-than-the-gate statement about a failed names read applies only to that check list read. The check runs and commit statuses of a commit are also read together. The `--require-ci` gate still reads its own names.
+
 ## Date
 
 2026-10-19
@@ -64,5 +66,7 @@ Andro Marces
 - [PR #968](https://github.com/andromarces/agent-loops/pull/968)
 - Implementation: `waitChecks` in `src/lib/check-wait.mjs`, `requiredResolutionRefusal`, `matchingEntries`, and `evaluateContext` in `src/lib/ci-gate.mjs`, the `wait-checks` operation in `src/role.mjs`, the error envelope in `src/role-envelope.mjs`; tests in `tests/lib/check-wait.test.mjs` and `tests/role.wait-checks.test.mjs`; documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
 - [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md)
+- [Issue #1125: Read the required check names once per check-wait poll](https://github.com/andromarces/agent-loops/issues/1125)
+- [PR #1150](https://github.com/andromarces/agent-loops/pull/1150)
 - [ADR 0024: Supply the required-check status to the reviewer for every run that names a PR](0024-supply-the-required-check-status-for-a-named-pr.md)
 - [ADR Index](README.md)
