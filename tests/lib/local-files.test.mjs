@@ -1334,6 +1334,24 @@ test("copies an operator-named ignored directory and names its files", async () 
   expect(await readFile(join(linked, "specs", "api", "openapi.json"), "utf8")).toBe("{}\n");
 });
 
+// Usefulness: verifies acceptance of issue #1131 — a copy with an operator path lists the
+// tracked names of the main work tree once, not once for the operator path check and again for the copy.
+// Not redundant: the other operator path tests assert the copy result, never how often Git runs.
+test("a copy with an operator path lists the tracked names once", async () => {
+  const { main, linked } = await createLinked({ ignore: ["specs/"] });
+  await mkdir(join(main, "specs"), { recursive: true });
+  await writeFile(join(main, "specs", "a.json"), "{}\n");
+  const trace = join(main, "..", "git-trace.txt");
+  vi.stubEnv("GIT_TRACE", trace);
+
+  const report = await copyLocalFiles(linked, {}, { extraPaths: ["specs"] });
+  vi.unstubAllEnvs();
+
+  expect(report.copied).toEqual(["specs/a.json"]);
+  const lines = (await readFile(trace, "utf8")).split("\n");
+  expect(lines.filter((line) => /\bgit ls-files\b/.test(line))).toHaveLength(1);
+});
+
 // Usefulness: verifies the existing rules still bind an operator path: no replacement, and
 // the entry bound skips the directory whole.
 // Not redundant: it proves the operator path shares the listed-path limits, not a bypass.
