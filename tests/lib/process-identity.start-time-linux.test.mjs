@@ -314,6 +314,25 @@ test("repeated owner checks read each /proc constant once", async () => {
   expect(reads(vi.mocked(readlink), "/proc/self/ns/pid")).toBe(1);
 });
 
+// Usefulness: verifies concurrent first checks share one read of each process constant, so the
+// once-per-process bound holds when several lock polls start together.
+test("concurrent first owner checks read each /proc constant once", async () => {
+  setProc(987_654);
+  const owner = {
+    pid: process.pid,
+    startTime: `linux-proc:${NAMESPACE}:${BOOT_ID}:987654`,
+  };
+
+  await expect(
+    Promise.all([ownerAlive(owner), ownerAlive(owner), ownerAlive(owner)]),
+  ).resolves.toEqual([true, true, true]);
+
+  const reads = (mocked, path) => mocked.mock.calls.filter(([file]) => file === path).length;
+  expect(reads(vi.mocked(readFile), "/proc/self/status")).toBe(1);
+  expect(reads(vi.mocked(readFile), "/proc/sys/kernel/random/boot_id")).toBe(1);
+  expect(reads(vi.mocked(readlink), "/proc/self/ns/pid")).toBe(1);
+});
+
 // Usefulness: verifies only a valid constant is kept: a failed, empty, or malformed read of the NSpid
 // view, the boot id, or the PID namespace is read again on the next check, so a stale lock is taken
 // over once the source recovers, as it was before the constants were kept.

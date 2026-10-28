@@ -55,21 +55,30 @@ async function queryOutput(command, args) {
     : "";
 }
 
-// Reads a process constant (the NSpid view, the PID namespace, the boot id) and keeps the first
-// value that `isValid` accepts, so a waiting wrapper does not repeat the read on every lock poll.
-// A failed, empty, or malformed read is not kept: the next call reads again, so a source that
-// recovers is used and a bad read never turns the stamp off for the rest of the process.
+// Reads a process constant (the NSpid view, the PID namespace, the boot id) once per process, so a
+// waiting wrapper does not repeat the read on every lock poll. Concurrent callers share the read in
+// flight. The value is kept only when `isValid` accepts it: a failed, empty, or malformed read is
+// dropped, so the next call reads again, a source that recovers is used, and a bad read never turns
+// the stamp off for the rest of the process.
 function memoizeRead(read, isValid) {
-  let kept;
-  return async () => {
-    if (kept !== undefined) {
-      return kept;
+  let pending;
+  return () => {
+    if (pending === undefined) {
+      const attempt = read().then(
+        (value) => {
+          if (!isValid(value)) {
+            pending = undefined;
+          }
+          return value;
+        },
+        (err) => {
+          pending = undefined;
+          throw err;
+        },
+      );
+      pending = attempt;
     }
-    const value = await read();
-    if (isValid(value)) {
-      kept = value;
-    }
-    return value;
+    return pending;
   };
 }
 
