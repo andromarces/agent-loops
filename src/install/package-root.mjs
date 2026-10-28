@@ -312,9 +312,9 @@ function isTempRunnerRoot(packageRoot, platform, tempRoots) {
 
 /**
  * True when the package root resolves inside an npx, pnpm dlx, yarn dlx, or bunx
- * temporary layout. On Windows every match compares case-insensitively.
+ * temporary layout. On Windows every match compares case-insensitively. A path that cannot be
+ * canonicalized (a realpath error other than a missing path) is refused.
  * @param {string} packageRoot
- * A path that cannot be canonicalized (a realpath error other than a missing path) is refused.
  * @param {NodeJS.Platform} [platform]
  * @param {{ bunx: string[], yarn: string[], invalid?: boolean }} [tempRoots] Temporary roots to compare against, for tests. `invalid` refuses every root.
  */

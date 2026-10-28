@@ -20,11 +20,11 @@ export function resolveHome() {
   return override ? resolve(override) : homedir();
 }
 
-export function installRoot(home = resolveHome()) {
+export function installRoot(home) {
   return join(home, ".agent-loops");
 }
 
-export function manifestPath(home = resolveHome()) {
+export function manifestPath(home) {
   return join(installRoot(home), "install.json");
 }
 
@@ -37,7 +37,7 @@ export function manifestPath(home = resolveHome()) {
  * uninstall leaves the home empty; a crash leaves a stale lock that the dead-pid
  * check recovers.
  */
-export function manifestLockFile(home = resolveHome()) {
+export function manifestLockFile(home) {
   return join(resolve(home), ".agent-loops.lock");
 }
 
@@ -171,7 +171,7 @@ async function assertInstallRootUsable(home) {
   }
 }
 
-export async function readManifest(home = resolveHome()) {
+export async function readManifest(home) {
   const path = manifestPath(home);
   const text = await readTextOrNull(path);
   if (text === null) {
