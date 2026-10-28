@@ -1217,13 +1217,17 @@ test("the instructions and the headless prompt share the repeated-reject rule", 
 // state the same classification bar and keep the adversarial-scope exception, so a parent never
 // restates a bar that sends a defect of an adversarial task to Notes (issue #1194).
 test("every copy of the constructed-input bar states the same classification and exception", async () => {
-  const { instructions, prompt } = await readParentTexts();
-  const evidence = await readFile(join(referenceSectionsDir, "reviewer-evidence.md"), "utf8");
+  // The core file is read alone: readInstructions appends the reference files, so one copy could
+  // supply the sentence for another.
+  const { prompt } = await readParentTexts();
   const texts = {
     reviewer: reviewerPrompt("check the fix"),
-    instructions,
+    "docs/orchestrator-instructions.md": await readFile(instructionsPath, "utf8"),
+    "docs/orchestrator/reviewer-evidence.md": await readFile(
+      join(referenceSectionsDir, "reviewer-evidence.md"),
+      "utf8",
+    ),
     prompt,
-    evidence,
   };
   for (const [name, text] of Object.entries(texts)) {
     const flat = text.replaceAll("`", "").replace(/\s+/g, " ");
