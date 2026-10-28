@@ -21,7 +21,7 @@ The fixed review scope also sets what a blocker is. A weakened existing guard or
 documented contract stays a blocker. A finding that is not a defect against the
 task, not a weakened existing guard or documented contract, and not a regression
 from the base branch is hardening: it goes in `Notes`, not in `Blockers`
-(issue #1073). A blocker needs a concrete failure scenario.
+(issue #1073). A blocker needs a concrete failure scenario. The scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in `Notes`, not in `Blockers`, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers (issue #1194).
 
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and

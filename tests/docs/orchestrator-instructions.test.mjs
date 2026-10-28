@@ -1196,6 +1196,23 @@ test("the instructions and the headless prompt share the tool-cache open rule", 
   }
 });
 
+// Usefulness: verifies the interactive instructions and the headless prompt state the same
+// repeated-reject rule, so a parent in either path restates the blocker bar or asks the maintainer
+// after two rejects of one finding class, and never narrows the bar for a guard or a normal-use
+// regression (issue #1194).
+test("the instructions and the headless prompt share the repeated-reject rule", async () => {
+  const { instructions, prompt } = await readParentTexts();
+  for (const [name, text] of Object.entries({ instructions, prompt })) {
+    const flat = text.replaceAll("`", "");
+    expect(flat, name).toContain(
+      "After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer.",
+    );
+    expect(flat, name).toContain(
+      "Never narrow the bar for a weakened existing guard or a regression on an input in normal use.",
+    );
+  }
+});
+
 // Usefulness: verifies the core names each reference section with the condition that makes the
 // parent read it (#1061). A section that the core never names is never read, so its rules would
 // silently drop out of a run. The check also rejects a link whose target does not exist.
