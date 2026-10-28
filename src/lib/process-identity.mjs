@@ -55,6 +55,33 @@ async function queryOutput(command, args) {
     : "";
 }
 
+// Reads a process constant (the NSpid view, the PID namespace, the boot id) once per process, so a
+// waiting wrapper does not repeat the read on every lock poll. Concurrent callers share the read in
+// flight. The value is kept only when `isValid` accepts it: a failed, empty, or malformed read is
+// dropped, so the next call reads again, a source that recovers is used, and a bad read never turns
+// the stamp off for the rest of the process.
+function memoizeRead(read, isValid) {
+  let pending;
+  return () => {
+    if (pending === undefined) {
+      const attempt = read().then(
+        (value) => {
+          if (!isValid(value)) {
+            pending = undefined;
+          }
+          return value;
+        },
+        (err) => {
+          pending = undefined;
+          throw err;
+        },
+      );
+      pending = attempt;
+    }
+    return pending;
+  };
+}
+
 // Field 22 (starttime, clock ticks since boot) of /proc/<pid>/stat, joined with the
 // PID namespace of this process and the boot id. Ticks and boot id are independent of
 // the wall clock, so a clock step (NTP, a manual set, a suspend) never changes the
@@ -78,17 +105,30 @@ async function queryOutput(command, args) {
 // (that is the stamp comparison), and it does not cover a kernel that lacks NSpid.
 // A missing NSpid line, an unreadable status, and any other form give no stamp, and the
 // owner reads as alive (the pid-only check).
-async function ownProcView() {
-  const status = await readFile("/proc/self/status", "utf8");
-  const entries = /^NSpid:[ \t]*(.*)$/m.exec(status)?.[1].trim().split(/\s+/);
-  return entries?.length === 1 && entries[0] === String(process.pid);
-}
+const ownProcView = memoizeRead(
+  async () => {
+    const status = await readFile("/proc/self/status", "utf8");
+    const entries = /^NSpid:[ \t]*(.*)$/m.exec(status)?.[1].trim().split(/\s+/);
+    return entries?.length === 1 && entries[0] === String(process.pid);
+  },
+  (inOwnView) => inOwnView === true,
+);
+
+const readPidNamespace = memoizeRead(
+  async () => /^pid:\[(\d+)\]$/.exec(await readlink("/proc/self/ns/pid"))?.[1],
+  (namespace) => namespace !== undefined,
+);
+
+const readBootId = memoizeRead(
+  async () => (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim(),
+  (bootId) => BOOT_ID.test(bootId),
+);
 
 // The PID namespace inode of this process (the target of /proc/self/ns/pid), or
 // undefined when it cannot be read or does not parse.
 async function readerPidNamespace() {
   try {
-    return /^pid:\[(\d+)\]$/.exec(await readlink("/proc/self/ns/pid"))?.[1];
+    return await readPidNamespace();
   } catch {
     return undefined;
   }
@@ -100,7 +140,7 @@ async function linuxProcStamp(pid) {
   }
   const stat = await readFile(`/proc/${pid}/stat`, "utf8");
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-  const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+  const bootId = await readBootId();
   const namespace = await readerPidNamespace();
   const stamp = `linux-proc:${namespace}:${bootId}:${fields[19]}`;
   return parseStamp(stamp) === null ? null : stamp;
@@ -167,6 +207,7 @@ const EPOCH_STAMP = {
   "darwin-lstart": /^darwin-lstart:(\d{1,15})$/,
   "win32-creation": /^win32-creation:(\d{1,15})$/,
 };
+const BOOT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LINUX_STAMP =
   /^linux-proc:(\d{1,20}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(\d{1,20})$/i;
 

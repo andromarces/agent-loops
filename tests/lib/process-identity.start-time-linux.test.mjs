@@ -1,9 +1,8 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
-import { processStartTime } from "../../src/lib/process-identity.mjs";
-import { withStateLock } from "../../src/lib/state-lock.mjs";
+import { readFile, readlink } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The Linux source reads /proc, which does not exist on the other test platforms, so
@@ -69,6 +68,18 @@ function setProc(ticks, bootId = BOOT_ID) {
 
 beforeAll(() => {
   Object.defineProperty(process, "platform", { value: "linux" });
+});
+
+// The /proc constants are read once per module instance, so each test loads a fresh pair.
+let processStartTime;
+let ownerAlive;
+let withStateLock;
+beforeEach(async () => {
+  vi.resetModules();
+  vi.mocked(readFile).mockClear();
+  vi.mocked(readlink).mockClear();
+  ({ processStartTime, ownerAlive } = await import("../../src/lib/process-identity.mjs"));
+  ({ withStateLock } = await import("../../src/lib/state-lock.mjs"));
 });
 
 afterAll(() => {
@@ -280,6 +291,69 @@ test("a lock of the same PID namespace with a dead pid is taken over", async () 
 test("a lock without a stamp and with a dead pid is taken over", async () => {
   setProc(987_654);
   const lockFile = await lockWith(undefined, await deadPid());
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+});
+
+// Usefulness: verifies the process constants (the NSpid view, the boot id, the PID namespace) are
+// each read once however many liveness checks run, so a waiting wrapper does not re-read them on
+// every poll.
+test("repeated owner checks read each /proc constant once", async () => {
+  setProc(987_654);
+  const owner = {
+    pid: process.pid,
+    startTime: `linux-proc:${NAMESPACE}:${BOOT_ID}:987654`,
+  };
+
+  await expect(ownerAlive(owner)).resolves.toBe(true);
+  await expect(ownerAlive(owner)).resolves.toBe(true);
+
+  const reads = (mocked, path) => mocked.mock.calls.filter(([file]) => file === path).length;
+  expect(reads(vi.mocked(readFile), "/proc/self/status")).toBe(1);
+  expect(reads(vi.mocked(readFile), "/proc/sys/kernel/random/boot_id")).toBe(1);
+  expect(reads(vi.mocked(readlink), "/proc/self/ns/pid")).toBe(1);
+});
+
+// Usefulness: verifies concurrent first checks share one read of each process constant, so the
+// once-per-process bound holds when several lock polls start together.
+test("concurrent first owner checks read each /proc constant once", async () => {
+  setProc(987_654);
+  const owner = {
+    pid: process.pid,
+    startTime: `linux-proc:${NAMESPACE}:${BOOT_ID}:987654`,
+  };
+
+  await expect(
+    Promise.all([ownerAlive(owner), ownerAlive(owner), ownerAlive(owner)]),
+  ).resolves.toEqual([true, true, true]);
+
+  const reads = (mocked, path) => mocked.mock.calls.filter(([file]) => file === path).length;
+  expect(reads(vi.mocked(readFile), "/proc/self/status")).toBe(1);
+  expect(reads(vi.mocked(readFile), "/proc/sys/kernel/random/boot_id")).toBe(1);
+  expect(reads(vi.mocked(readlink), "/proc/self/ns/pid")).toBe(1);
+});
+
+// Usefulness: verifies only a valid constant is kept: a failed, empty, or malformed read of the NSpid
+// view, the boot id, or the PID namespace is read again on the next check, so a stale lock is taken
+// over once the source recovers, as it was before the constants were kept.
+test.each([
+  ["a missing status", () => delete proc["/proc/self/status"]],
+  ["a malformed NSpid line", () => (proc["/proc/self/status"] = statusFile("abc"))],
+  ["an empty boot id", () => (proc["/proc/sys/kernel/random/boot_id"] = "")],
+  ["a malformed boot id", () => (proc["/proc/sys/kernel/random/boot_id"] = "garbage")],
+  ["an unreadable namespace", () => (namespaceLink = null)],
+  ["a malformed namespace", () => (namespaceLink = "garbage")],
+])("a stale lock is taken over after %s is read again", async (_name, breakSource) => {
+  setProc(987_654);
+  const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`);
+  const good = { ...proc };
+  breakSource();
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
+  );
+
+  setProc(987_654);
+  proc = good;
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 });

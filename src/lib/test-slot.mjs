@@ -228,7 +228,7 @@ async function claimSlot(root, slots) {
       noun: "test slot",
     });
     if (release) {
-      return { index, lockFile, release, nonce: (await readLockOwner(lockFile))?.nonce };
+      return { index, lockFile, release, nonce: release.nonce };
     }
     held.add(index);
   }
