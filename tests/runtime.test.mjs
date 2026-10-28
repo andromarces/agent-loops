@@ -21,7 +21,7 @@ import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError, reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { runChild } from "../src/child-turn.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import { reportBlock } from "../src/prompts/report.mjs";
+import { workerPrompt } from "../src/prompts/worker.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import {
   cleanRepoGit,
@@ -333,12 +333,8 @@ test("two consecutive worker turns", async () => {
 
     expect(result.exitCode).toBe(0);
     expect(workerAdapter.recorded.length).toBe(2);
-    // On second turn, the prompt is the task text, the PR body rule, and the closing block, with no preamble
-    expect(workerAdapter.recorded[1].prompt).toBe(
-      `work 2\n\nAfter each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.
-
-${reportBlock}`,
-    );
+    // On second turn, the prompt is the task text and the repeated rules, with no preamble
+    expect(workerAdapter.recorded[1].prompt).toBe(workerPrompt("work 2", false));
   } finally {
     gitDouble.answer = null;
   }

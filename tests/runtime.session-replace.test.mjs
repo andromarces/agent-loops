@@ -1,13 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
-import { reportBlock } from "../src/prompts/report.mjs";
+import { workerPrompt } from "../src/prompts/worker.mjs";
 
-// The exact prompt of a later worker turn: the task text, the PR body rule, and the closing block,
-// with no preamble.
-const LATER_TURN_PROMPT = `do the work\n\nAfter each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.
-
-${reportBlock}`;
+// The prompt of a later worker turn: the task text and the repeated rules, with no preamble.
+const LATER_TURN_PROMPT = workerPrompt("do the work", false);
 
 // Answers `git` from memory for the tests that switch it on (see
 // `cleanRepoGit` in runtime-helpers.mjs); every other test reaches the real `execa`.
