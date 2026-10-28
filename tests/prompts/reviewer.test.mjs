@@ -75,6 +75,22 @@ test("reviewer prompt puts hardening beyond the task and existing guards in Note
   );
 });
 
+// Usefulness: verifies a constructed input that only defeats a heuristic goes in Notes, while a
+// weakened guard and a regression on a normal-use input stay blockers, so a reviewer does not spend a
+// worker turn per adversarial string that the task never meets in normal use (issue #1194).
+test("reviewer prompt puts a constructed heuristic-defeating input in Notes", () => {
+  const prompt = reviewerPrompt("check the fix");
+  expect(prompt).toContain(
+    "A blocker's failure scenario must be an input that the task or its constraints can meet in normal use.",
+  );
+  expect(prompt).toContain(
+    "A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope.",
+  );
+  expect(prompt).toContain(
+    "A weakened existing guard and a regression on an input in normal use stay blockers.",
+  );
+});
+
 // Usefulness: verifies a criterion that needs a check outside the turn is reported as unverified
 // and deferred, and blocks only when the task requires that check to pass in this run, so the
 // reviewer does not reject for a live, device, or manual check it cannot run (issue #838).

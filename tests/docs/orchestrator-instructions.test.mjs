@@ -1196,6 +1196,50 @@ test("the instructions and the headless prompt share the tool-cache open rule", 
   }
 });
 
+// Usefulness: verifies the interactive instructions and the headless prompt state the same
+// repeated-reject rule, so a parent in either path restates the blocker bar or asks the maintainer
+// after two rejects of one finding class, and never narrows the bar for a guard or a normal-use
+// regression (issue #1194).
+test("the instructions and the headless prompt share the repeated-reject rule", async () => {
+  const { instructions, prompt } = await readParentTexts();
+  for (const [name, text] of Object.entries({ instructions, prompt })) {
+    const flat = text.replaceAll("`", "");
+    expect(flat, name).toContain(
+      "After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer.",
+    );
+    expect(flat, name).toContain(
+      "Never narrow the bar for a weakened existing guard or a regression on an input in normal use.",
+    );
+  }
+});
+
+// Usefulness: verifies the reviewer rule, both parent copies, and the reviewer-evidence reference
+// state the same classification bar and keep the adversarial-scope exception, so a parent never
+// restates a bar that sends a defect of an adversarial task to Notes (issue #1194).
+test("every copy of the constructed-input bar states the same classification and exception", async () => {
+  // The core file is read alone: readInstructions appends the reference files, so one copy could
+  // supply the sentence for another.
+  const { prompt } = await readParentTexts();
+  const texts = {
+    reviewer: reviewerPrompt("check the fix"),
+    "docs/orchestrator-instructions.md": await readFile(instructionsPath, "utf8"),
+    "docs/orchestrator/reviewer-evidence.md": await readFile(
+      join(referenceSectionsDir, "reviewer-evidence.md"),
+      "utf8",
+    ),
+    prompt,
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    const flat = text.replaceAll("`", "").replace(/\s+/g, " ");
+    expect(flat, name).toContain(
+      "failure scenario must be an input that the task or its constraints can meet in normal use.",
+    );
+    expect(flat, name).toContain(
+      "A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope.",
+    );
+  }
+});
+
 // Usefulness: verifies the core names each reference section with the condition that makes the
 // parent read it (#1061). A section that the core never names is never read, so its rules would
 // silently drop out of a run. The check also rejects a link whose target does not exist.
