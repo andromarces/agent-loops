@@ -323,6 +323,7 @@ export async function runLoop(options) {
         maxSteps,
         cwd,
         gh,
+        signal,
         onEvent,
         stopLoop,
       });

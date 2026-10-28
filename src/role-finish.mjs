@@ -168,6 +168,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
       reviewed: state.lastResult?.reviewed ?? null,
       cwd: args.cwd,
       gh,
+      signal,
     });
     if (!gate.ok) {
       throw new RoleError(`Finish refused: ${gate.reason}.`);

@@ -1,4 +1,4 @@
-import { firstErrorLine, readableErrorText } from "./lib/error-message.mjs";
+import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import {
   checkCi,
   checkPrHead,
@@ -34,6 +34,8 @@ async function readGate({ read, failedLog, failedReason, failedRecovery, refused
   try {
     result = await read();
   } catch (err) {
+    // A caller cancel ends the run; it is not a gate refusal that a later turn could pass.
+    if (readProp(err, "isCanceled")) throw err;
     const detail = firstErrorLine(readableErrorText(err));
     logError(`${failedLog}: ${detail}`);
     return {
@@ -76,6 +78,7 @@ export async function evaluateFinish({
   maxSteps,
   cwd,
   gh,
+  signal,
   onEvent,
   stopLoop,
 }) {
@@ -153,7 +156,7 @@ export async function evaluateFinish({
     // can no longer misreport. Its own failure is a refusal rather than a
     // thrown error, so a `gh` failure does not discard a run that a later
     // turn could pass (#293).
-    const ci = await ciGate({ pr: requireCi, reviewed: gate.lastReviewed, cwd, gh });
+    const ci = await ciGate({ pr: requireCi, reviewed: gate.lastReviewed, cwd, gh, signal });
     if (ci.refusal) {
       // The gate reads the reviewed state, which only a reviewer turn
       // establishes, so a gate refusal always needs a child turn (#293).
@@ -278,9 +281,9 @@ async function headCompareGate({ pr, reviewed, cwd, gh }) {
  * @param {object} options
  * @returns {Promise<{ refusal: { reason: string, recovery: string } | null, noRequiredChecks: boolean }>}
  */
-async function ciGate({ pr, reviewed, cwd, gh }) {
+async function ciGate({ pr, reviewed, cwd, gh, signal }) {
   const { refusal, result } = await readGate({
-    read: () => checkCi({ pr, reviewed, cwd, gh }),
+    read: () => checkCi({ pr, reviewed, cwd, gh, signal }),
     failedLog: "ci gate could not run",
     failedReason: "the PR gate could not be evaluated",
     // The run is not out of attempts here: any child turn clears the flag that

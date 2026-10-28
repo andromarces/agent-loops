@@ -743,6 +743,37 @@ export const withSignal =
       signal: options.signal ? AbortSignal.any([options.signal, signal]) : signal,
     });
 
+/** The error of a read that reached its deadline. `timedOut` tells it from a cancel and from another read error. */
+export const readTimeout = (timeoutMs) =>
+  Object.assign(new Error(`the read timed out after ${timeoutMs}ms`), { timedOut: true });
+
+/**
+ * A runner for one gate call: every `gh` call ends when `timeoutMs` expires or `signal` aborts, and
+ * `timeoutMs` also bounds each child. `deadline` is the deadline signal alone, so a caller tells a
+ * timeout from a caller cancel. A reply that the runner marks `timedOut`, or that arrives after the
+ * deadline expired, throws `readTimeout` and never reaches the caller as data, so a gate cannot pass
+ * on a read that its bound cut short.
+ * @param {Function} gh
+ * @param {number} timeoutMs
+ * @param {AbortSignal | null} [signal]
+ */
+export function boundedCall(gh, timeoutMs, signal = null) {
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const bounded = withSignal(
+    (args, cwd, options) => gh(args, cwd, { timeoutMs, ...options }),
+    signal ? AbortSignal.any([deadline, signal]) : deadline,
+  );
+  const call = async (args, cwd, options) => {
+    const reply = await bounded(args, cwd, options);
+    if (reply?.timedOut || deadline.aborted) {
+      throw readTimeout(timeoutMs);
+    }
+    return reply;
+  };
+  call.deadline = deadline;
+  return call;
+}
+
 // The first failure of a group, in sequential order, carried past the wait for
 // the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
 // had already fired when the failure was captured. A failure captured before the
@@ -782,22 +813,6 @@ export async function inOrder(gh, makers) {
     await Promise.allSettled(reads);
     throw new ReadFailure(err, expired);
   }
-}
-
-// Starts the repository read beside the PR read. A failure surfaces only when the
-// caller awaits `read`, after the PR checks that came first in sequence. `cancel`
-// ends and settles the read, so an early return leaves no `gh` child running.
-export function startRepoSlug(gh, cwd) {
-  const controller = new AbortController();
-  const read = repoSlug(withSignal(gh, controller.signal), cwd);
-  read.catch(() => {});
-  return {
-    read,
-    cancel: async () => {
-      controller.abort();
-      await Promise.allSettled([read]);
-    },
-  };
 }
 
 export async function prInfo(gh, pr, cwd) {
