@@ -362,8 +362,9 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
  * caller can tell it apart from a gated pass on a branch that required a check
  * (issue #336).
  *
- * The reads end after `timeoutMs` and when `signal` aborts. An aborted `signal` starts no read, and
- * the call rejects with `isCanceled` set, not with the error of a killed read (#1181).
+ * The reads end after `timeoutMs` and when `signal` aborts. A cancel wins over every other outcome,
+ * a local refusal and a gate result included: an aborted `signal` starts no read, and the call
+ * rejects with `isCanceled` set. A deadline rejects with `timedOut` set and a timeout message (#1181).
  * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
@@ -375,17 +376,25 @@ export async function checkCi({
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
+  throwIfCanceled(signal);
   const refused = reviewedRefusal(reviewed);
   if (refused) {
     return refused;
   }
-  throwIfCanceled(signal);
+  const call = boundedCall(gh, timeoutMs, signal);
+  let result;
   try {
-    return await judgeCi({ pr, reviewed, cwd, gh: boundedCall(gh, timeoutMs, signal) });
+    result = await judgeCi({ pr, reviewed, cwd, gh: call });
   } catch (err) {
     throwIfCanceled(signal);
+    if (readExpired(call, err)) {
+      throw Object.assign(new Error(`the read timed out after ${timeoutMs}ms`), { timedOut: true });
+    }
     throw failureOf(err);
   }
+  // A cancel that arrived while the reads were cleaned up still wins over the result.
+  throwIfCanceled(signal);
+  return result;
 }
 
 /**
@@ -426,6 +435,15 @@ function throwIfCanceled(signal) {
   if (signal?.aborted) {
     throw Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
   }
+}
+
+/**
+ * Whether `err` is the deadline of `call` and not an earlier failure. A failure that a group captured
+ * before the deadline fired stays the outcome, so a deadline that expires while the canceled siblings
+ * settle cannot replace it.
+ */
+function readExpired(call, err) {
+  return call.deadline.aborted && !(err instanceof ReadFailure && !err.expired);
 }
 
 // The reads that `judgeCi` and `readRequiredChecks` both start with: the PR, the
@@ -740,7 +758,14 @@ function oneLine(text) {
  * @param {{ pr: number, cwd: string, head?: string | null, clean?: boolean, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
  */
-export async function readRequiredChecks({
+export async function readRequiredChecks(options) {
+  const status = await readStatus(options);
+  // A cancel that arrived while the reads were cleaned up wins over the status.
+  throwIfCanceled(options.signal);
+  return status;
+}
+
+async function readStatus({
   pr,
   cwd,
   head = null,
@@ -854,10 +879,9 @@ export async function readRequiredChecks({
     // A failure decided before the deadline stays the outcome, whatever the
     // deadline does while the cancelled siblings settle.
     throwIfCanceled(signal);
-    const detail =
-      call.deadline.aborted && !(err instanceof ReadFailure && !err.expired)
-        ? `the read timed out after ${timeoutMs}ms`
-        : oneLine(readableErrorText(failureOf(err)));
+    const detail = readExpired(call, err)
+      ? `the read timed out after ${timeoutMs}ms`
+      : oneLine(readableErrorText(failureOf(err)));
     return unresolved(`unread: ${detail}`, prHead);
   }
 }
