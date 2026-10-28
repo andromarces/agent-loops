@@ -147,3 +147,50 @@ it("readRequiredChecks reports a cancel, not an unresolved status, when the call
     }),
   ).rejects.toMatchObject({ isCanceled: true });
 });
+
+/**
+ * A \`gh\` whose PR read fails at once and whose repository read ends 75 ms after its signal aborts,
+ * so the slug cleanup outlasts a short deadline.
+ */
+function prReadDownGh() {
+  return (args, cwd, { signal } = {}) => {
+    if (args[0] === "pr") {
+      return Promise.resolve({ status: 1, stdout: "", stderr: "PR read down" });
+    }
+    return new Promise((resolve) => {
+      const settle = () =>
+        setTimeout(() => resolve({ status: 1, stdout: "", stderr: "gh was killed" }), 75);
+      if (signal?.aborted) return settle();
+      signal?.addEventListener("abort", settle, { once: true });
+    });
+  };
+}
+
+// Usefulness: verifies an earlier read failure keeps its text and is no timeout when the slug cleanup
+// that follows it reaches the deadline; the base kept the original error here.
+it("checkCi keeps the first read failure when the slug cleanup outlasts the deadline", async () => {
+  const error = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: prReadDownGh(),
+    timeoutMs: 25,
+  }).catch((err) => err);
+  expect(error.message).toMatch(/PR read down/);
+  expect(error.timedOut).toBeUndefined();
+});
+
+// Usefulness: verifies the same for the status read, which reported a timeout instead of the failure.
+it("readRequiredChecks keeps the first read failure when the slug cleanup outlasts the deadline", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    clean: true,
+    gh: prReadDownGh(),
+    timeoutMs: 25,
+  });
+  expect(read.status).toBe("unresolved");
+  expect(read.summary).toMatch(/PR read down/);
+  expect(read.summary).not.toMatch(/timed out/);
+});

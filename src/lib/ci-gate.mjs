@@ -449,7 +449,9 @@ function readExpired(call, err) {
 // The reads that `judgeCi` and `readRequiredChecks` both start with: the PR, the
 // repository slug, and the required contexts. The slug read starts beside the PR
 // read and is awaited only after the PR refusals; a failure of it surfaces then. It
-// ends and settles before the preamble returns, so no `gh` child outlives it.
+// ends and settles before the preamble returns, so no `gh` child outlives it. A failure leaves as a
+// `ReadFailure` that records whether the deadline had fired when the failure was captured, so a
+// cleanup that outlasts the deadline cannot turn that failure into a timeout.
 // `refuseInfo(info)` runs right after the PR read and `refuseUnknownRuleset(info)`
 // after the contexts read. A truthy return from either comes back as `{ stop }`, so
 // each caller keeps its own refusal order and wording. Otherwise the result is
@@ -470,6 +472,8 @@ async function readCiPreamble({ gh, cwd, pr, refuseInfo, refuseUnknownRuleset })
       return { stop: refuseUnknownRuleset(info) };
     }
     return { info, slug, required };
+  } catch (err) {
+    throw err instanceof ReadFailure ? err : new ReadFailure(err, gh.deadline?.aborted ?? false);
   } finally {
     canceler.abort();
     await Promise.allSettled([slugRead]);
