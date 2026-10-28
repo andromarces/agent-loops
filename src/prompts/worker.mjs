@@ -15,14 +15,22 @@ const probeCopyRule =
 const ownNodeModulesRule =
   "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.";
 
+// A Claude worker opened later turns with a prose sentence and put requested values on lines of
+// their own, so the response had no `Conclusion:` line and the report parsed to null (issue #1179).
+const conclusionFirstRule =
+  "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
+
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the PR
     // body rule. It repeats the closing block too, because a worker drifts from the block as the
-    // conversation grows (issue #1118).
+    // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
+    // (issue #1179).
     return escapeLineSeparators(`${prompt}
 
 ${prBodyRule}
+
+${conclusionFirstRule}
 
 ${reportBlock}`);
   }

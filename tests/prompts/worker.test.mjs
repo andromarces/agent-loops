@@ -132,6 +132,20 @@ test("later worker turns state the closing block format", () => {
   expect(report.deferred).toBe("none");
 });
 
+// Usefulness: verifies requirement "a later worker turn names `Conclusion:` as the required first
+// line of the block and keeps requested values inside it" (issue #1179): a Claude worker opened
+// three later turns with a prose sentence, wrote no `Conclusion:` line, and put `PR number:` and
+// `Pushed head SHA:` lines after `Deferred:`, so each report parsed to null. The block template alone
+// did not prevent that.
+test("later worker turns name Conclusion as the required first line of the block", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
+  expect(prompt).toContain("The block must open with the `Conclusion:` line.");
+  expect(prompt).toContain(
+    "State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.",
+  );
+  expect(prompt).toContain("A response with no `Conclusion:` line has no block.");
+});
+
 // Usefulness: verifies requirement "a worker states each result the parent needs inside the closing
 // block" (issue #976): the parent reads only the block, so a pointer to text above it loses the
 // result. The reviewer has the same rule for blockers (issue #434).
