@@ -316,7 +316,15 @@ export async function runChild(options) {
     if (roleName !== "reviewer" || pr === null) {
       return null;
     }
-    const status = await readRequiredChecks({ pr, cwd, head, clean, gh, timeoutMs: readTimeoutMs });
+    const status = await readRequiredChecks({
+      pr,
+      cwd,
+      head,
+      clean,
+      gh,
+      timeoutMs: readTimeoutMs,
+      signal,
+    });
     logInfo(`runtime read the required checks for PR ${pr}: ${status.summary}`);
     return status;
   };

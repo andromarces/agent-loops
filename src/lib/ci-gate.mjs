@@ -18,8 +18,9 @@ import {
   failureOf,
   runGh,
   inOrder,
-  startRepoSlug,
+  boundedCall,
   prInfo,
+  repoSlug,
   requiredContexts,
   ReadFailure,
   withSignal,
@@ -360,22 +361,30 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
  * is an established absence, which passes and reports `noRequiredChecks: true` so a
  * caller can tell it apart from a gated pass on a branch that required a check
  * (issue #336).
- * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
+ *
+ * The reads end after `timeoutMs` and when `signal` aborts. An aborted `signal` starts no read, and
+ * the call rejects with `isCanceled` set, not with the error of a killed read (#1181).
+ * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
-export async function checkCi({ pr, reviewed, cwd, gh = runGh }) {
+export async function checkCi({
+  pr,
+  reviewed,
+  cwd,
+  gh = runGh,
+  timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+  signal = null,
+}) {
   const refused = reviewedRefusal(reviewed);
   if (refused) {
     return refused;
   }
-
-  const slugRead = startRepoSlug(gh, cwd);
+  throwIfCanceled(signal);
   try {
-    return await judgeCi({ pr, reviewed, cwd, gh, slug: slugRead.read });
+    return await judgeCi({ pr, reviewed, cwd, gh: boundedCall(gh, timeoutMs, signal) });
   } catch (err) {
+    throwIfCanceled(signal);
     throw failureOf(err);
-  } finally {
-    await slugRead.cancel();
   }
 }
 
@@ -412,23 +421,41 @@ export async function checkPrHead({ pr, reviewed, cwd, gh = runGh }) {
   return { ok: true, commit: info.headRefOid };
 }
 
+/** Throws the cancel error (`isCanceled`) when `signal` is aborted. */
+function throwIfCanceled(signal) {
+  if (signal?.aborted) {
+    throw Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
+  }
+}
+
 // The reads that `judgeCi` and `readRequiredChecks` both start with: the PR, the
-// repository slug, and the required contexts. `refuseInfo(info)` runs right after
-// the PR read and `refuseUnknownRuleset(info)` after the contexts read. A truthy
-// return from either comes back as `{ stop }`, so each caller keeps its own
-// refusal order and wording. Otherwise the result is `{ info, slug, required }`.
-async function readCiPreamble({ gh, cwd, pr, slugRead, refuseInfo, refuseUnknownRuleset }) {
-  const info = await prInfo(gh, pr, cwd);
-  const infoStop = refuseInfo(info);
-  if (infoStop) {
-    return { stop: infoStop };
+// repository slug, and the required contexts. The slug read starts beside the PR
+// read and is awaited only after the PR refusals; a failure of it surfaces then. It
+// ends and settles before the preamble returns, so no `gh` child outlives it.
+// `refuseInfo(info)` runs right after the PR read and `refuseUnknownRuleset(info)`
+// after the contexts read. A truthy return from either comes back as `{ stop }`, so
+// each caller keeps its own refusal order and wording. Otherwise the result is
+// `{ info, slug, required }`.
+async function readCiPreamble({ gh, cwd, pr, refuseInfo, refuseUnknownRuleset }) {
+  const canceler = new AbortController();
+  const slugRead = repoSlug(withSignal(gh, canceler.signal), cwd);
+  slugRead.catch(() => {});
+  try {
+    const info = await prInfo(gh, pr, cwd);
+    const infoStop = refuseInfo(info);
+    if (infoStop) {
+      return { stop: infoStop };
+    }
+    const slug = await slugRead;
+    const required = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
+    if (required.rulesetState === UNKNOWN) {
+      return { stop: refuseUnknownRuleset(info) };
+    }
+    return { info, slug, required };
+  } finally {
+    canceler.abort();
+    await Promise.allSettled([slugRead]);
   }
-  const slug = await slugRead;
-  const required = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
-  if (required.rulesetState === UNKNOWN) {
-    return { stop: refuseUnknownRuleset(info) };
-  }
-  return { info, slug, required };
 }
 
 // Judges each required context on the commit GitHub evaluates. `strict` is
@@ -442,14 +469,12 @@ async function evaluateRequired(gh, slug, info, cwd, contexts, strict) {
   return { commit, findings };
 }
 
-// The judgment of `checkCi` after its early guards. `slug` is the repository read
-// that started beside the PR read; it is awaited only after the PR refusals.
-async function judgeCi({ pr, reviewed, cwd, gh, slug: slugRead }) {
+// The judgment of `checkCi` after its early guards.
+async function judgeCi({ pr, reviewed, cwd, gh }) {
   const preamble = await readCiPreamble({
     gh,
     cwd,
     pr,
-    slugRead,
     refuseInfo: (info) => {
       const early = earlyMergeRefusal(info.mergeStateStatus);
       if (early) {
@@ -545,39 +570,24 @@ export async function unreadableGateReason({
   signal = null,
 }) {
   // The signal ends a call that a runner does not bound itself, so a hung `gh` cannot hold the start open.
-  const deadline = AbortSignal.timeout(timeoutMs);
-  const call = withSignal(
-    (args, callCwd, options) => gh(args, callCwd, { timeoutMs, ...options }),
-    AbortSignal.any([deadline, signal].filter(Boolean)),
-  );
-  // The deadline stays apart from the caller cancel, so `expired` reads the deadline alone.
-  call.deadline = deadline;
+  const call = boundedCall(gh, timeoutMs, signal);
   // A canceled read fails like any other read, so the cancel is told from the failure by the signal.
-  const throwIfCanceled = () => {
-    if (signal?.aborted) {
-      throw Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
-    }
-  };
-  const slugRead = startRepoSlug(call, cwd);
   try {
     const preamble = await readCiPreamble({
       gh: call,
       cwd,
       pr,
-      slugRead: slugRead.read,
       refuseInfo: () => null,
       refuseUnknownRuleset: () => RULESETS_UNREADABLE,
     });
-    throwIfCanceled();
+    throwIfCanceled(signal);
     return preamble.stop ?? null;
   } catch (err) {
-    throwIfCanceled();
+    throwIfCanceled(signal);
     logWarn(
       `the required-check sources of PR ${pr} could not be read ${when}: ${oneLine(readableErrorText(failureOf(err)))}`,
     );
     return null;
-  } finally {
-    await slugRead.cancel();
   }
 }
 
@@ -713,8 +723,10 @@ function oneLine(text) {
  * pending one for the same name, and a required check with no run or status reads
  * as pending.
  *
- * It never throws. A failed read is `unresolved`, because the reviewer keeps its
- * own read as the fallback and a turn must not fail over supplied evidence.
+ * It never throws, except for a caller cancel: an aborted `signal` starts no read
+ * and rejects with `isCanceled` set (#1181). A failed read is `unresolved`, because
+ * the reviewer keeps its own read as the fallback and a turn must not fail over
+ * supplied evidence.
  *
  * Every status carries `advisory: true`, for one reason: the status is a report,
  * and `--require-ci` re-reads GitHub and enforces the condition. The status is a
@@ -725,7 +737,7 @@ function oneLine(text) {
  * safe one. Every other refusal the gate makes before it reads a check is a
  * withheld pass here too: no reviewed head, a PR head other than the reviewed one,
  * and a merge state it refuses.
- * @param {{ pr: number, cwd: string, head?: string | null, clean?: boolean, gh?: Function, timeoutMs?: number }} options
+ * @param {{ pr: number, cwd: string, head?: string | null, clean?: boolean, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ pr: number, head: string | null, status: "pass" | "failing" | "pending" | "unresolved", checks: string[], summary: string, advisory: true }>}
  */
 export async function readRequiredChecks({
@@ -735,6 +747,7 @@ export async function readRequiredChecks({
   clean = false,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+  signal = null,
 }) {
   const report = (status, checks, summary, prHead = null) => ({
     pr,
@@ -746,27 +759,18 @@ export async function readRequiredChecks({
   });
   const unresolved = (summary, prHead = null) => report("unresolved", [], summary, prHead);
 
+  throwIfCanceled(signal);
   // The read is bounded, and the signal terminates the child, so a hung `gh`
-  // cannot stall the dispatch or outlive it. An external abort is reported as a
-  // timeout here, because from the read's side the call simply stopped.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // A group of reads adds its own signal, so a failed read cancels its siblings
-  // without reading as a timeout of the whole bound.
-  const call = withSignal(
-    (args, callCwd, options) => gh(args, callCwd, { ...options, timeoutMs }),
-    controller.signal,
-  );
-  call.deadline = controller.signal;
+  // cannot stall the dispatch or outlive it. A group of reads adds its own
+  // signal, so a failed read cancels its siblings without reading as a timeout
+  // of the whole bound.
+  const call = boundedCall(gh, timeoutMs, signal);
   let prHead = null;
-  let slugStart = null;
   try {
-    slugStart = startRepoSlug(call, cwd);
     const preamble = await readCiPreamble({
       gh: call,
       cwd,
       pr,
-      slugRead: slugStart.read,
       refuseInfo: (info) => {
         prHead =
           typeof info.headRefOid === "string" && info.headRefOid !== "" ? info.headRefOid : null;
@@ -849,14 +853,12 @@ export async function readRequiredChecks({
   } catch (err) {
     // A failure decided before the deadline stays the outcome, whatever the
     // deadline does while the cancelled siblings settle.
+    throwIfCanceled(signal);
     const detail =
-      controller.signal.aborted && !(err instanceof ReadFailure && !err.expired)
+      call.deadline.aborted && !(err instanceof ReadFailure && !err.expired)
         ? `the read timed out after ${timeoutMs}ms`
         : oneLine(readableErrorText(failureOf(err)));
     return unresolved(`unread: ${detail}`, prHead);
-  } finally {
-    clearTimeout(timer);
-    await slugStart?.cancel();
   }
 }
 
