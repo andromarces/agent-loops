@@ -19,6 +19,7 @@ import {
   runGh,
   inOrder,
   boundedCall,
+  readTimeout,
   prInfo,
   repoSlug,
   requiredContexts,
@@ -388,7 +389,7 @@ export async function checkCi({
   } catch (err) {
     throwIfCanceled(signal);
     if (readExpired(call, err)) {
-      throw Object.assign(new Error(`the read timed out after ${timeoutMs}ms`), { timedOut: true });
+      throw readTimeout(timeoutMs);
     }
     throw failureOf(err);
   }

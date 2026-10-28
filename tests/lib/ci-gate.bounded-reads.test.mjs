@@ -2,7 +2,7 @@
 // caller signal, so an aborted caller starts no read and a hung `gh` cannot stall the gate.
 import { expect, it, vi } from "vite-plus/test";
 import { checkCi, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
-import { HEAD, MERGE, prInfo, REVIEWED } from "./ci-gate-helpers.mjs";
+import { fakeGh, HEAD, MERGE, prInfo, REVIEWED, routes, run } from "./ci-gate-helpers.mjs";
 
 /** A `gh` that never answers until its signal aborts, then fails the way a killed child does. */
 function hungGh(started) {
@@ -193,4 +193,74 @@ it("readRequiredChecks keeps the first read failure when the slug cleanup outlas
   expect(read.status).toBe("unresolved");
   expect(read.summary).toMatch(/PR read down/);
   expect(read.summary).not.toMatch(/timed out/);
+});
+
+const PASSING = () =>
+  fakeGh(
+    routes({
+      headRuns: [run("ci (ubuntu-latest)", "success"), run("ci (windows-latest)", "success")],
+    }),
+  );
+
+/** A passing `gh` whose replies carry the timed-out mark that a runner sets when its bound fired. */
+const markedTimedOut = (inner) => async (args, cwd, options) => ({
+  ...(await inner(args, cwd, options)),
+  timedOut: true,
+});
+
+/** A passing `gh` that ignores its signal and answers only after `ms`, past a short deadline. */
+const lateGh = (inner, ms) => async (args, cwd, options) => {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  return inner(args, cwd, options);
+};
+
+// Usefulness: verifies the gate is fail-closed on a deadline: valid replies that a runner marks as
+// timed out never pass, and the rejection is a timeout, not a cancel.
+it("checkCi never passes on a reply marked as timed out", async () => {
+  const error = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: markedTimedOut(PASSING()),
+  }).catch((err) => err);
+  expect(error).toMatchObject({ timedOut: true, message: "the read timed out after 60000ms" });
+});
+
+// Usefulness: verifies the same for a reply that arrives after the deadline expired.
+it("checkCi never passes on a reply that arrives after the deadline", async () => {
+  const error = await checkCi({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: lateGh(PASSING(), 60),
+    timeoutMs: 25,
+  }).catch((err) => err);
+  expect(error).toMatchObject({ timedOut: true, message: "the read timed out after 25ms" });
+});
+
+// Usefulness: verifies the status read never reports a pass on a reply marked as timed out.
+it("readRequiredChecks never passes on a reply marked as timed out", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    clean: true,
+    gh: markedTimedOut(PASSING()),
+  });
+  expect(read.status).toBe("unresolved");
+  expect(read.summary).toMatch(/timed out/);
+});
+
+// Usefulness: verifies the same for a reply that arrives after the deadline expired.
+it("readRequiredChecks never passes on a reply that arrives after the deadline", async () => {
+  const read = await readRequiredChecks({
+    pr: 42,
+    cwd: ".",
+    head: HEAD,
+    clean: true,
+    gh: lateGh(PASSING(), 60),
+    timeoutMs: 25,
+  });
+  expect(read.status).toBe("unresolved");
+  expect(read.summary).toMatch(/timed out/);
 });
