@@ -63,10 +63,10 @@ function existingArray(settings, locator) {
   return Array.isArray(node) ? node : null;
 }
 
-/** Returns the array a target writes into, creating missing objects if asked. */
-function arrayAt(settings, locator, { create = false } = {}) {
+/** Returns the array a target writes into, creating missing objects. */
+function arrayAt(settings, locator) {
   const existing = existingArray(settings, locator);
-  if (existing || !create) {
+  if (existing) {
     return existing;
   }
   let node = settings;
@@ -142,7 +142,7 @@ export function insertEntry(settings, locator, entry) {
     settings[locator.key] = entry;
     return { status: "inserted" };
   }
-  const array = arrayAt(settings, locator, { create: true });
+  const array = arrayAt(settings, locator);
   if (findEntryIndex(settings, locator, entry) !== -1) {
     return { status: "duplicate" };
   }

@@ -229,7 +229,7 @@ async function applyWrite(plan, { dryRun, dirs, write }) {
     await write(plan.backup.path, plan.backup.content, { mode });
   }
   try {
-    await write(plan.path, plan.content, { mode });
+    await write(plan.path, plan.content);
   } catch (err) {
     // The target kept its original bytes, so the backup just written is
     // unneeded. Remove it before the error propagates. A cleanup failure
@@ -284,16 +284,26 @@ function withManifestLock(home, fn) {
 /**
  * Installs one or more harnesses at user scope under the manifest lock. A dry
  * run takes no lock and writes nothing.
+ * @param {object} options
+ * @param {string[]} options.harnesses Harnesses to install.
+ * @param {string} options.packageRoot Package root that the targets render against. Required.
+ * @param {string} [options.home] Install home. Defaults to `resolveHome()`.
+ * @param {string} [options.copilotHome] Copilot home. Defaults to `COPILOT_HOME`.
+ * @param {boolean} [options.dryRun] Plan and report with no lock and no write.
+ * @param {(path: string, content: string, options?: {mode?: number}) => Promise<void>} [options.write]
+ * Replaces the target and backup writes only. The uninstall restore writes and the manifest
+ * write always use the real filesystem.
  * @returns {Promise<Array<{harness: string, kind: string, action: string, path: string, detail?: string, snippet?: string}>>}
  */
 export async function install(options = {}) {
   const home = options.home ?? resolveHome();
-  const refusal = typeof options.packageRoot === "string" && installRefusal(options.packageRoot);
+  const refusal = installRefusal(options.packageRoot);
   if (refusal) throw new Error(refusal);
+  const resolved = { ...options, home };
   if (options.dryRun) {
-    return runInstall(options);
+    return runInstall(resolved);
   }
-  return withManifestLock(home, () => runInstall(options));
+  return withManifestLock(home, () => runInstall(resolved));
 }
 
 /** Plans every file and settings write of one harness, with no write. */
@@ -366,7 +376,7 @@ function noteReports(plans, dryRun) {
 /** Runs the install once the caller owns the manifest lock, or for a dry run. */
 async function runInstall({
   harnesses,
-  home = resolveHome(),
+  home,
   packageRoot,
   copilotHome = process.env.COPILOT_HOME,
   dryRun = false,
@@ -447,7 +457,7 @@ async function runInstall({
       }
       await writeManifest(home, manifest).catch((saveError) => {
         logWarn(
-          `install failed and the manifest could not be saved (${saveError.message}); ` +
+          `install failed and the manifest could not be saved (${readableErrorText(saveError)}); ` +
             "uninstall cannot undo the completed writes",
         );
       });
@@ -564,10 +574,11 @@ export async function uninstall(options = {}) {
   if (homeIsMissing(home)) {
     return [];
   }
+  const resolved = { ...options, home };
   if (options.dryRun) {
-    return runUninstall(options);
+    return runUninstall(resolved);
   }
-  return withManifestLock(home, () => runUninstall(options));
+  return withManifestLock(home, () => runUninstall(resolved));
 }
 
 function homeIsMissing(home) {
@@ -580,7 +591,7 @@ function homeIsMissing(home) {
 }
 
 /** Runs the uninstall once the caller owns the manifest lock, or for a dry run. */
-async function runUninstall({ harnesses, home = resolveHome(), dryRun = false } = {}) {
+async function runUninstall({ harnesses, home, dryRun = false } = {}) {
   const manifest = await readManifest(home);
   const selected = (harnesses ?? HARNESS_ORDER).filter((harness) => manifest.harnesses[harness]);
   const reports = [];
