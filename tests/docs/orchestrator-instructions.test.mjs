@@ -1213,6 +1213,29 @@ test("the instructions and the headless prompt share the repeated-reject rule", 
   }
 });
 
+// Usefulness: verifies the reviewer rule, both parent copies, and the reviewer-evidence reference
+// state the same classification bar and keep the adversarial-scope exception, so a parent never
+// restates a bar that sends a defect of an adversarial task to Notes (issue #1194).
+test("every copy of the constructed-input bar states the same classification and exception", async () => {
+  const { instructions, prompt } = await readParentTexts();
+  const evidence = await readFile(join(referenceSectionsDir, "reviewer-evidence.md"), "utf8");
+  const texts = {
+    reviewer: reviewerPrompt("check the fix"),
+    instructions,
+    prompt,
+    evidence,
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    const flat = text.replaceAll("`", "").replace(/\s+/g, " ");
+    expect(flat, name).toContain(
+      "failure scenario must be an input that the task or its constraints can meet in normal use.",
+    );
+    expect(flat, name).toContain(
+      "A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope.",
+    );
+  }
+});
+
 // Usefulness: verifies the core names each reference section with the condition that makes the
 // parent read it (#1061). A section that the core never names is never read, so its rules would
 // silently drop out of a run. The check also rejects a link whose target does not exist.

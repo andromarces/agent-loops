@@ -697,7 +697,7 @@ The conditions that the `--require-accept` and `--require-ci` gates check at `fi
 
 ## Repeated rejects of one finding class
 
-After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer. The bar: a failure scenario must be an input that the task or its constraints can meet in normal use, and a deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers. Never narrow the bar for a weakened existing guard or a regression on an input in normal use. The fixed review scope carries the same bar, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states (issue #1194).
+After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer. The bar: a failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope. Never narrow the bar for a weakened existing guard or a regression on an input in normal use. The fixed review scope carries the same bar, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states (issue #1194).
 
 ## Recovery after compaction or restart
 
