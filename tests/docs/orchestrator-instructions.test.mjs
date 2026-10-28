@@ -1249,3 +1249,27 @@ test("the core tells the parent to read the shellDenied rule after any worker or
     /before the next dispatch/i,
   );
 });
+
+// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent
+// runs can both take, such as an ADR number, so the parent reserves a number per run before dispatch
+// and names the index-row conflict under `open` (#1176). The existing tracking-issue test does not
+// reach this rule.
+test("the shared-artifact rule covers a sequential identifier that concurrent runs can both take", async () => {
+  const section = (
+    await readFile(join(referenceSectionsDir, "shared-tracking-artifacts.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  expectRule(section, /sequentially numbered artifact/i, /ADR/, /migration/i, /more than one run/i);
+  expectRule(section, /reserve a distinct number for each run/i, /worker prompt/i);
+  expectRule(section, /not foreseen/i, /parent assigns the number/i, /before the worker creates/i);
+  expectRule(
+    section,
+    /worker reports the number/i,
+    /other active runs/i,
+    /before the reviewer turn/i,
+  );
+  expectRule(section, /index row/i, /conflict at merge/i);
+  expectRule(section, /finish summary/i, /`open`/);
+  const core = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expectRule(core, /sequential identifier/i, /ADR number/);
+  expect(core).toContain("](orchestrator/shared-tracking-artifacts.md)");
+});

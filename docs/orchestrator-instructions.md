@@ -397,7 +397,8 @@ of this file.
   headless run passes `--compare-head`, when a run has no usable required-check source, and when
   a headless run finishes with a worker-opened PR.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
-  dispatch several runs in one repository, so no two runs create the same tracking issue.
+  dispatch several runs in one repository, so no two runs create the same tracking issue or take
+  the same sequential identifier, such as an ADR number.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
@@ -416,7 +417,8 @@ while any of the session's runs is non-terminal.
 Every command for a run passes that run's `--cwd`. Each run ends with its own
 `finish` or `abort`, and the guard releases only after every run is terminal.
 
-Workers of runs in one repository can each create the same shared tracking issue. Rules:
+Workers of runs in one repository can each create the same shared tracking issue, or take the same
+sequential identifier, such as the next ADR number. Rules:
 [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md).
 
 ## Loop policy
