@@ -1,9 +1,8 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
-import { processStartTime } from "../../src/lib/process-identity.mjs";
-import { withStateLock } from "../../src/lib/state-lock.mjs";
+import { readFile, readlink } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 // The Linux source reads /proc, which does not exist on the other test platforms, so
@@ -69,6 +68,18 @@ function setProc(ticks, bootId = BOOT_ID) {
 
 beforeAll(() => {
   Object.defineProperty(process, "platform", { value: "linux" });
+});
+
+// The /proc constants are read once per module instance, so each test loads a fresh pair.
+let processStartTime;
+let ownerAlive;
+let withStateLock;
+beforeEach(async () => {
+  vi.resetModules();
+  vi.mocked(readFile).mockClear();
+  vi.mocked(readlink).mockClear();
+  ({ processStartTime, ownerAlive } = await import("../../src/lib/process-identity.mjs"));
+  ({ withStateLock } = await import("../../src/lib/state-lock.mjs"));
 });
 
 afterAll(() => {
@@ -282,4 +293,38 @@ test("a lock without a stamp and with a dead pid is taken over", async () => {
   const lockFile = await lockWith(undefined, await deadPid());
 
   await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
+});
+
+// Usefulness: verifies the process constants (the NSpid view, the boot id, the PID namespace) are
+// each read once however many liveness checks run, so a waiting wrapper does not re-read them on
+// every poll.
+test("repeated owner checks read each /proc constant once", async () => {
+  setProc(987_654);
+  const owner = {
+    pid: process.pid,
+    startTime: `linux-proc:${NAMESPACE}:${BOOT_ID}:987654`,
+  };
+
+  await expect(ownerAlive(owner)).resolves.toBe(true);
+  await expect(ownerAlive(owner)).resolves.toBe(true);
+
+  const reads = (mocked, path) => mocked.mock.calls.filter(([file]) => file === path).length;
+  expect(reads(vi.mocked(readFile), "/proc/self/status")).toBe(1);
+  expect(reads(vi.mocked(readFile), "/proc/sys/kernel/random/boot_id")).toBe(1);
+  expect(reads(vi.mocked(readlink), "/proc/self/ns/pid")).toBe(1);
+});
+
+// Usefulness: verifies a failed read of a process constant is not cached, so a transient failure
+// does not turn off the start-time check for the rest of the process.
+test("a failed constant read is retried on the next check", async () => {
+  setProc(987_654);
+  const status = proc["/proc/self/status"];
+  delete proc["/proc/self/status"];
+  await expect(processStartTime(process.pid)).resolves.toBeNull();
+
+  proc["/proc/self/status"] = status;
+
+  await expect(processStartTime(process.pid)).resolves.toBe(
+    `linux-proc:${NAMESPACE}:${BOOT_ID}:987654`,
+  );
 });

@@ -49,19 +49,21 @@ export async function withStateLock(lockFile, fn, { label = "State", noun = "sta
 /**
  * Takes the lock at `lockFile` like `withStateLock`, but returns null instead of
  * throwing when a live or unidentified owner holds it. Returns the function that
- * removes the lock. Any other failure, for example an unwritable directory, throws.
+ * removes the lock, with the nonce that this acquisition wrote in the lock as its `nonce`
+ * property. Any other failure, for example an unwritable directory, throws.
  */
 export async function tryStateLock(lockFile, { label = "State", noun = "state" } = {}) {
   await mkdir(dirname(lockFile), { recursive: true });
+  let nonce;
   try {
-    await acquireLock(lockFile, { label, noun });
+    nonce = await acquireLock(lockFile, { label, noun });
   } catch (err) {
     if (err?.lockBusy) {
       return null;
     }
     throw err;
   }
-  return () => rm(lockFile, { force: true });
+  return Object.assign(() => rm(lockFile, { force: true }), { nonce });
 }
 
 /**
@@ -125,19 +127,15 @@ const MAX_CLAIM_DEPTH = 3;
 // an older version writes; that name counts as a marker for liveness only.
 const LOCK_TEMP_SUFFIX = /^(?:reap\.[0-9a-f]{64}\.)?(\d+)\.(?:([0-9a-f]{32})\.)?\d+\.tmp$/;
 
+// Resolves the nonce written in the lock that this call took.
 async function acquireLock(
   lockFile,
   { retry = true, label = "State", noun = "state", depth = 0, rootLockFile = lockFile } = {},
 ) {
-  if (await createLock(lockFile)) {
-    // Best-effort removal of temp files left by a crash between the temp write
-    // and the link (#178). Runs while the lock is held and never touches a live
-    // contender's temp, so it cannot break a racing acquisition.
-    await pruneStaleLockTemps(lockFile);
-    if (depth === 0) {
-      await pruneOrphanClaims(lockFile, label);
-    }
-    return;
+  const nonce = await createLock(lockFile);
+  if (nonce !== null) {
+    await pruneLockDirectory(lockFile, label, depth);
+    return nonce;
   }
 
   const lockText = await readLockText(lockFile);
@@ -320,6 +318,24 @@ async function hasLiveWriter(file) {
   });
 }
 
+// Cleans up beside a lock that was just taken, from one listing of its directory. A failed
+// listing skips both scans: the lock is held, and only stale files stay for the next acquisition.
+// Removes temp files left by a crash between the temp write and the link (#178), and at depth 0
+// the orphaned claims. Runs while the lock is held and never touches a live contender's temp, so
+// it cannot break a racing acquisition.
+async function pruneLockDirectory(lockFile, label, depth) {
+  let entries;
+  try {
+    entries = await readdir(dirname(lockFile));
+  } catch {
+    return;
+  }
+  await pruneStaleLockTemps(lockFile, entries);
+  if (depth === 0) {
+    await pruneOrphanClaims(lockFile, label, entries);
+  }
+}
+
 // Matches the name of a claim file beside the lock.
 const CLAIM_SUFFIX = /^\.reap\.[0-9a-f]{64}$/;
 
@@ -328,11 +344,11 @@ const CLAIM_SUFFIX = /^\.reap\.[0-9a-f]{64}$/;
 // held, through the same claimed removal as a takeover, so one process acts on
 // each claim. A claim that is live, busy, or unreadable is kept. Best-effort: a
 // failure leaves the claim for the next acquisition and never fails the holder.
-async function pruneOrphanClaims(lockFile, label) {
+async function pruneOrphanClaims(lockFile, label, entries) {
   try {
     const dir = dirname(lockFile);
     const prefix = basename(lockFile);
-    for (const entry of await readdir(dir)) {
+    for (const entry of entries) {
       if (!entry.startsWith(prefix) || !CLAIM_SUFFIX.test(entry.slice(prefix.length))) {
         continue;
       }
@@ -360,17 +376,18 @@ async function pruneOrphanClaims(lockFile, label) {
 // file that is hard linked to the lock path; the link is atomic, so EEXIST
 // means a contender won and the owner is readable the instant the lock exists
 // (fixes #176 path 1). On a filesystem with no hard links, an exclusive create
-// and write keeps the lock usable at the cost of that window. Returns false
-// only when another owner already holds the lock.
+// and write keeps the lock usable at the cost of that window. Returns the nonce of
+// the content written, or null only when another owner already holds the lock.
 async function createLock(lockFile) {
   // The nonce makes every acquisition's content unique, so a re-read that matches
   // the stale content can only be the same file, never a later owner (#363). A
   // lock written without one by an older version parses the same way.
+  const nonce = randomUUID();
   const owner = JSON.stringify({
     pid: process.pid,
     startedAt: new Date().toISOString(),
     startTime: await ownStartTime(),
-    nonce: randomUUID(),
+    nonce,
   });
   const tempFile = `${lockFile}.${process.pid}.${LOCK_TEMP_TOKEN}.${lockTempCounter++}.tmp`;
   // The write is inside the guard because it creates the temp file: a write cut
@@ -380,7 +397,7 @@ async function createLock(lockFile) {
     await writeFile(tempFile, owner, "utf8");
     const created = await linkLock(tempFile, lockFile, owner);
     await removeTemp(tempFile);
-    return created;
+    return created ? nonce : null;
   } catch (err) {
     // The body already failed, so a temp that will not delete is the lesser
     // problem: swallow the cleanup error and surface the one the caller must
@@ -420,11 +437,11 @@ async function linkLock(tempFile, lockFile, owner) {
 // query cannot prove it orphaned and it is never removed here. A live contender's
 // temp is never touched; failures are ignored because cleanup is best-effort and
 // must not fail the lock holder.
-async function pruneStaleLockTemps(lockFile) {
+async function pruneStaleLockTemps(lockFile, entries) {
   try {
     const dir = dirname(lockFile);
     const prefix = `${basename(lockFile)}.`;
-    for (const entry of await readdir(dir)) {
+    for (const entry of entries) {
       if (!entry.startsWith(prefix)) {
         continue;
       }
