@@ -314,17 +314,27 @@ test("repeated owner checks read each /proc constant once", async () => {
   expect(reads(vi.mocked(readlink), "/proc/self/ns/pid")).toBe(1);
 });
 
-// Usefulness: verifies a failed read of a process constant is not cached, so a transient failure
-// does not turn off the start-time check for the rest of the process.
-test("a failed constant read is retried on the next check", async () => {
+// Usefulness: verifies only a valid constant is kept: a failed, empty, or malformed read of the NSpid
+// view, the boot id, or the PID namespace is read again on the next check, so a stale lock is taken
+// over once the source recovers, as it was before the constants were kept.
+test.each([
+  ["a missing status", () => delete proc["/proc/self/status"]],
+  ["a malformed NSpid line", () => (proc["/proc/self/status"] = statusFile("abc"))],
+  ["an empty boot id", () => (proc["/proc/sys/kernel/random/boot_id"] = "")],
+  ["a malformed boot id", () => (proc["/proc/sys/kernel/random/boot_id"] = "garbage")],
+  ["an unreadable namespace", () => (namespaceLink = null)],
+  ["a malformed namespace", () => (namespaceLink = "garbage")],
+])("a stale lock is taken over after %s is read again", async (_name, breakSource) => {
   setProc(987_654);
-  const status = proc["/proc/self/status"];
-  delete proc["/proc/self/status"];
-  await expect(processStartTime(process.pid)).resolves.toBeNull();
-
-  proc["/proc/self/status"] = status;
-
-  await expect(processStartTime(process.pid)).resolves.toBe(
-    `linux-proc:${NAMESPACE}:${BOOT_ID}:987654`,
+  const lockFile = await lockWith(`linux-proc:${NAMESPACE}:${BOOT_ID}:111`);
+  const good = { ...proc };
+  breakSource();
+  await expect(withStateLock(lockFile, async () => "ran")).rejects.toThrow(
+    /locked by a live process/,
   );
+
+  setProc(987_654);
+  proc = good;
+
+  await expect(withStateLock(lockFile, async () => "ran")).resolves.toBe("ran");
 });
