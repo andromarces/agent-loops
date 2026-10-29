@@ -286,6 +286,37 @@ line on the latest changed state. Add `--require-accept` where it applies. Compa
 `unresolvedCompare`: each one concerns a PR head, and this run has none, so the
 #286 gap does not apply to it.
 
+A run on an existing pull request, such as a review or a correction of PR #N, must
+run on the PR head branch, so the worker pushes to that branch and `reviewed.head`
+can equal the PR head. Create the work tree on that branch from the remote branch:
+
+```bash
+git fetch origin <pr branch>
+git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>
+```
+
+`-B` creates the branch, or moves an existing local branch of that name to
+`origin/<pr branch>`. If the local branch exists, run
+`git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. When
+the left count is above 0, the local branch is ahead of or diverged from the PR
+head, and `-B` would drop its local-only commits from the branch. Do not run the
+command: report to the user. When the left count is 0, the local branch equals or
+is behind the PR head, and the command is safe. The command fails when another
+work tree has the branch checked out: report to the user, and never remove that
+work tree.
+
+The upstream `origin/<pr branch>` is acceptable. The PR branch is the branch that
+the worker must push, and it is never the default branch. The `--no-track` rule
+guards a new branch that would track `origin/<default>`. The worker pushes with
+`git push -u origin <pr branch>`.
+
+The work tree head must equal the PR head before the first dispatch: compare
+`git -C "<work tree>" rev-parse HEAD` with
+`gh pr view <pr> --json headRefOid --jq .headRefOid`. When they differ, the PR head
+moved after the fetch. Run `git fetch origin <pr branch>` and
+`git -C "<work tree>" merge --ff-only origin/<pr branch>`, then compare again. When
+the heads still differ, dispatch nothing and report to the user.
+
 The parent installs the dependencies of the work tree, and no worker or reviewer
 does. After you create the work tree and before the first dispatch, run the
 repository's lockfile install inside the work tree, for example

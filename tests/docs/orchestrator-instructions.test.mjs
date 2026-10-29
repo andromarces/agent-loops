@@ -33,6 +33,9 @@ const WORK_TREE_CREATE_COMMAND =
 /** The creation step for a repository with no remote, where the base is the local default branch (#1099). */
 const WORK_TREE_CREATE_NO_REMOTE_COMMAND =
   "git worktree add --no-track -b <branch> <work tree> <default>";
+/** The creation step for a run on an existing PR branch, which resets the local branch to the PR head (#1218). */
+const WORK_TREE_CREATE_PR_BRANCH_COMMAND =
+  "git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>";
 const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
 
 const referenceSectionsDir = join(dirname(instructionsPath), "orchestrator");
@@ -572,15 +575,17 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   }
   // Neither text keeps the repair procedure or the unrecoverable claim. The only `git worktree`
   // commands the instructions may hold are the single creation command (#985), its no-remote form
-  // (#1099), and the single removal command (#998) of "Work tree ownership": with both removed, no `git worktree` call is
-  // left to add, repair, or recreate.
+  // (#1099), its existing PR branch form (#1218), and the single removal command (#998) of "Work tree
+  // ownership": with all removed, no `git worktree` call is left to add, repair, or recreate.
   expect(instructions.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
   expect(instructions.split(WORK_TREE_CREATE_NO_REMOTE_COMMAND)).toHaveLength(2);
+  expect(instructions.split(WORK_TREE_CREATE_PR_BRANCH_COMMAND)).toHaveLength(2);
   expect(instructions.split(WORK_TREE_REMOVE_COMMAND)).toHaveLength(2);
   expect(
     instructions
       .replace(WORK_TREE_CREATE_COMMAND, "")
       .replace(WORK_TREE_CREATE_NO_REMOTE_COMMAND, "")
+      .replace(WORK_TREE_CREATE_PR_BRANCH_COMMAND, "")
       .replace(WORK_TREE_REMOVE_COMMAND, ""),
   ).not.toContain("git worktree");
   expect(prompt).not.toContain("git worktree");
@@ -631,6 +636,11 @@ const REFUSED_CWD_BLOCKS = {
       "```bash git worktree add --no-track -b <branch> <work tree> <default> ```",
       "In that repository, a worker commits in the work tree and never pushes, because there is no remote for `git push -u origin <branch>`. After `finish`, the parent merges the branch or hands it to the user.",
       "That run is not PR work, because no pull request can exist. Finish it with a plain `role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks` line on the latest changed state. Add `--require-accept` where it applies. Compare `reviewed.head` with the `workTree.head` of the last worker envelope. Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`: each one concerns a PR head, and this run has none, so the #286 gap does not apply to it.",
+      "A run on an existing pull request, such as a review or a correction of PR #N, must run on the PR head branch, so the worker pushes to that branch and `reviewed.head` can equal the PR head. Create the work tree on that branch from the remote branch:",
+      "```bash git fetch origin <pr branch> git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch> ```",
+      "`-B` creates the branch, or moves an existing local branch of that name to `origin/<pr branch>`. If the local branch exists, run `git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. When the left count is above 0, the local branch is ahead of or diverged from the PR head, and `-B` would drop its local-only commits from the branch. Do not run the command: report to the user. When the left count is 0, the local branch equals or is behind the PR head, and the command is safe. The command fails when another work tree has the branch checked out: report to the user, and never remove that work tree.",
+      "The upstream `origin/<pr branch>` is acceptable. The PR branch is the branch that the worker must push, and it is never the default branch. The `--no-track` rule guards a new branch that would track `origin/<default>`. The worker pushes with `git push -u origin <pr branch>`.",
+      'The work tree head must equal the PR head before the first dispatch: compare `git -C "<work tree>" rev-parse HEAD` with `gh pr view <pr> --json headRefOid --jq .headRefOid`. When they differ, the PR head moved after the fetch. Run `git fetch origin <pr branch>` and `git -C "<work tree>" merge --ff-only origin/<pr branch>`, then compare again. When the heads still differ, dispatch nothing and report to the user.',
       "The parent installs the dependencies of the work tree, and no worker or reviewer does. After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`. The work tree then has its own `node_modules` for every turn. Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
@@ -782,6 +792,20 @@ test("instructions state the no-remote work tree base and worker commit-only rul
   expect(instructions).toContain(
     "Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`",
   );
+});
+
+// Usefulness: verifies the instructions give the work tree command for a run on an existing PR branch
+// and require the work tree head to equal the PR head before the first dispatch (#1218). Without it,
+// a parent improvises the command and a stale local branch puts a different head under review.
+test("instructions give the existing PR branch work tree command and the head check before dispatch", async () => {
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
+  expect(instructions).toContain(WORK_TREE_CREATE_PR_BRANCH_COMMAND);
+  expect(instructions).toContain(
+    'compare `git -C "<work tree>" rev-parse HEAD` with `gh pr view <pr> --json headRefOid --jq .headRefOid`',
+  );
+  expect(instructions).toContain("work tree head must equal the PR head before the first dispatch");
+  expect(instructions).toContain("the local branch is ahead of or diverged from the PR head");
+  expect(instructions).toContain("The upstream `origin/<pr branch>` is acceptable");
 });
 
 // Usefulness: verifies requirement "the parent owns the dependency install of a run work tree and
