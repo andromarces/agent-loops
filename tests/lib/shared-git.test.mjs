@@ -7,7 +7,7 @@ import { execa } from "execa";
 // Makes the named `node:fs/promises` function throw an error whose message and path carry
 // `FS_MARKER`, as a Node file system error carries the path, while `fsFailure.operation` is set.
 const FS_MARKER = "secret-hook-marker-7731";
-const fsFailure = vi.hoisted(() => ({ operation: null }));
+const fsFailure = vi.hoisted(() => ({ operation: null, stallReaddir: false }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal();
   const failing =
@@ -25,7 +25,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     };
   return {
     ...real,
-    readdir: failing("readdir"),
+    readdir: (...args) =>
+      fsFailure.stallReaddir ? new Promise(() => {}) : failing("readdir")(...args),
     // A symlink needs a privilege on Windows, so a `readlink` failure reports every entry as one.
     lstat: (...args) =>
       fsFailure.operation === "readlink"
@@ -58,6 +59,7 @@ const dirs = [];
 afterEach(async () => {
   configExit.code = null;
   fsFailure.operation = null;
+  fsFailure.stallReaddir = false;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -178,6 +180,17 @@ for (const place of ["main", "linked"]) {
     expect(worktreeChanged).toEqual(["core.hooksPath"]);
   });
 }
+
+// Usefulness: verifies requirement "a stalled hooks directory read ends at the deadline" (issue
+// #1224): the deadline covers the whole read, not the `git` processes alone, so a canceled worker
+// turn that reads the shared Git state after the cancel reports within the bound.
+test("a stalled hooks directory read rejects at the deadline", async () => {
+  const { linked } = await createLinkedWorkTree();
+  fsFailure.stallReaddir = true;
+  const started = Date.now();
+  await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
+  expect(Date.now() - started).toBeLessThan(5_000);
+});
 
 // Usefulness: verifies "an unexpected `git config` exit is a read failure, not an empty state"
 // (issue #984 review): an empty state read before or after a turn would report a false change.

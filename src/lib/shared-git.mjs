@@ -15,10 +15,33 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
  * other one overrides. The result holds digests only, so a config value or a URL never leaves this
  * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
  * a change. The read starts two `git` processes at once, because every worker turn reads twice and
- * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`.
+ * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`,
+ * and `deadlineMs`, which ends the whole read: the `git` processes, the directory read, and the
+ * hashing. A read that passes the deadline rejects with a `SnapshotError`, and the `git` processes
+ * stop. A read that needs no turn signal, such as the one after a cancel, sets the deadline.
+ * known-limit: the deadline ends the wait, not the file system request, which can outlive it and
+ * stay pending in the background when the file system stalls.
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
  */
-export async function readSharedGit(cwd, bound) {
+export async function readSharedGit(cwd, { deadlineMs, ...bound } = {}) {
+  if (deadlineMs === undefined) return readWithin(cwd, bound);
+  const stop = new AbortController();
+  const timer = setTimeout(
+    () => stop.abort(new SnapshotError(`the shared Git read took over ${deadlineMs} ms`)),
+    deadlineMs,
+  );
+  timer.unref();
+  const stopped = new Promise((_, reject) => {
+    stop.signal.addEventListener("abort", () => reject(stop.signal.reason), { once: true });
+  });
+  try {
+    return await Promise.race([readWithin(cwd, { ...bound, signal: stop.signal }), stopped]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readWithin(cwd, bound) {
   const read = (args) => gitRead(cwd, args, { ...bound, allowExit: [0], createError: readFailure });
   const [commonResult, listResult] = await Promise.all([
     read(["rev-parse", "--git-common-dir"]),

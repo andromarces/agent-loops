@@ -38,8 +38,8 @@ import {
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
-// Time bound of the post-turn shared Git read, which takes no turn signal.
-const POST_TURN_READ_BOUND_MS = 10_000;
+// Default time bound of the whole post-turn shared Git read, which takes no turn signal.
+const SHARED_GIT_READ_BOUND_MS = 10_000;
 
 // Task of the preamble-only worker turn that follows a replaced conversation.
 const PREAMBLE_ONLY_TASK =
@@ -208,6 +208,7 @@ export async function runChild(options) {
     onTurnChild,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
+    sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
     onEvent = () => {},
   } = options;
 
@@ -455,7 +456,7 @@ export async function runChild(options) {
    */
   const readSharedGitChanged = async () => {
     if (sharedGitItems === null) {
-      const after = sharedBefore ? await readShared({ timeoutMs: POST_TURN_READ_BOUND_MS }) : null;
+      const after = sharedBefore ? await readShared({ deadlineMs: sharedGitReadBoundMs }) : null;
       sharedGitItems = after ? diffSharedGit(sharedBefore, after) : [];
       if (sharedGitItems.length > 0) {
         logWarn(`worker: shared Git state changed: ${sharedGitItems.join(", ")}`);

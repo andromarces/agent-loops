@@ -1,5 +1,16 @@
-import { afterEach, beforeEach, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+
+// Makes every directory read hang while `fs.stallReaddir` is set, as a stalled file system does.
+const fs = vi.hoisted(() => ({ stallReaddir: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    readdir: (...args) => (fs.stallReaddir ? new Promise(() => {}) : real.readdir(...args)),
+  };
+});
+
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { failedSharedGitChanged } from "../src/lib/shared-git.mjs";
@@ -10,6 +21,7 @@ beforeEach(async () => {
   repo = await createTempRepo();
 });
 afterEach(async () => {
+  fs.stallReaddir = false;
   await removePath(repo);
 });
 
@@ -18,8 +30,9 @@ const addRemote = () =>
     cwd: repo,
   });
 
-const turn = (act, signal) =>
+const turn = (act, signal, extra = {}) =>
   runChild({
+    ...extra,
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
     roleName: "worker",
@@ -70,5 +83,24 @@ test("a canceled worker turn that changed no shared Git state carries no field",
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
+  expect(failedSharedGitChanged(error)).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a canceled worker turn ends within the bound when the shared Git
+// read stalls" (issue #1224): the hooks directory read has no time bound of its own, so the turn
+// would hold the cancel for as long as the file system stalls.
+test("a canceled worker turn ends at the bound when the shared Git read stalls", async () => {
+  const started = Date.now();
+  const error = await turn(
+    async () => {
+      await addRemote();
+      fs.stallReaddir = true;
+      throw new ExecError("canceled", { isCanceled: true });
+    },
+    undefined,
+    { sharedGitReadBoundMs: 500 },
+  ).catch((err) => err);
+  expect(error).toMatchObject({ isCanceled: true });
+  expect(Date.now() - started).toBeLessThan(5_000);
   expect(failedSharedGitChanged(error)).toBeUndefined();
 });
