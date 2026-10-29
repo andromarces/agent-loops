@@ -1385,6 +1385,26 @@ test("refuses an operator path that holds a tracked file", async () => {
   await expect(copyLocalFiles(linked, {}, { extraPaths: ["init.txt"] })).rejects.toThrow(/tracked/);
 });
 
+// Usefulness: verifies the tracked-name check of an operator path matches whole path segments and
+// folds case (issue #1187): a sibling that only shares a name prefix with a tracked path passes, and
+// a case alias of a tracked directory is refused.
+test("refuses an operator path only when it is a whole-segment prefix of a tracked name", async () => {
+  const { main, linked } = await createLinked({ ignore: [] });
+  await mkdir(join(main, "docs", "deep"), { recursive: true });
+  await writeFile(join(main, "docs", "deep", "a.md"), "x\n");
+  await git(main, "add", "docs/deep/a.md");
+  await git(main, "commit", "-m", "docs");
+
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["doc"] })).resolves.toBeDefined();
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["docs/de"] })).resolves.toBeDefined();
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["docs/deep"] })).rejects.toThrow(
+    /tracked/,
+  );
+  await expect(copyLocalFiles(linked, {}, { extraPaths: ["DOCS/Deep"] })).rejects.toThrow(
+    /tracked/,
+  );
+});
+
 // Usefulness: verifies acceptance 2 of issue #980 — an absolute path or a path that leaves the
 // main work tree is refused before any copy.
 // Not redundant: it covers the path-shape refusals that no copy test reaches.

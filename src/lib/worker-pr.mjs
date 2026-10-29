@@ -52,17 +52,26 @@ function repoIdentity(text, { pull = null } = {}) {
  * The resolver reads it before and after the `gh` read and compares the two.
  */
 async function readRunState(cwd, signal) {
-  const branchRead = await gitRead(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
-  const branch = branchRead.exitCode === 0 ? branchRead.stdout.trim() : "";
-  if (branch === "") return { branch: null, remote: null, repo: null, head: null };
-  const remoteRead = await gitRead(cwd, ["config", "--get", `branch.${branch}.remote`], { signal });
-  const configured = remoteRead.exitCode === 0 ? remoteRead.stdout.trim() : "";
-  const remote = configured === "" || configured === "." ? "origin" : configured;
-  const urlRead = await gitRead(cwd, ["remote", "get-url", remote], { signal });
-  const repo = urlRead.exitCode === 0 ? repoIdentity(urlRead.stdout.trim()) : null;
-  const headRead = await gitRead(cwd, ["rev-parse", "--verify", "-q", "HEAD"], { signal });
-  const head = headRead.exitCode === 0 ? headRead.stdout.trim() : null;
-  return { branch, remote, repo, head };
+  // The head read does not depend on the branch chain, so it runs beside it. A failure of the chain
+  // throws first, as in sequential reads, and the head read settles before the throw.
+  const headRead = gitRead(cwd, ["rev-parse", "--verify", "-q", "HEAD"], { signal });
+  headRead.catch(() => {});
+  try {
+    const branchRead = await gitRead(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
+    const branch = branchRead.exitCode === 0 ? branchRead.stdout.trim() : "";
+    if (branch === "") return { branch: null, remote: null, repo: null, head: null };
+    const remoteRead = await gitRead(cwd, ["config", "--get", `branch.${branch}.remote`], {
+      signal,
+    });
+    const configured = remoteRead.exitCode === 0 ? remoteRead.stdout.trim() : "";
+    const remote = configured === "" || configured === "." ? "origin" : configured;
+    const urlRead = await gitRead(cwd, ["remote", "get-url", remote], { signal });
+    const repo = urlRead.exitCode === 0 ? repoIdentity(urlRead.stdout.trim()) : null;
+    const head = (await headRead).exitCode === 0 ? (await headRead).stdout.trim() : null;
+    return { branch, remote, repo, head };
+  } finally {
+    await headRead.catch(() => {});
+  }
 }
 
 // One entry of the `gh pr list` reply as the resolver reads it. Any other shape is malformed.

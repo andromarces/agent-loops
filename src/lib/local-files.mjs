@@ -6,6 +6,7 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mapInBatches } from "./batches.mjs";
 import { sha256 } from "./hash.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 import { gitRead } from "./snapshot.mjs";
@@ -27,6 +28,9 @@ const LOCAL_FILE_PATHS = [
   ".github/copilot-instructions.md",
   ".vscode",
 ];
+
+// Names that one batch of file reads handles at once, so a long list never opens every file at once.
+const READ_BATCH_SIZE = 32;
 
 // Where Claude Code creates work trees. Other work tree paths come from
 // `git worktree list` and from a nested `.git` entry.
@@ -372,16 +376,21 @@ async function ownWorkTree(cwd, read) {
 async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries) {
   const { mainReal, rootReal } = tree;
   const { sourceBlocked, targetBlocked, trackedNames } = known;
+  // Every folded leading path of a tracked name, so each operator path is one lookup.
+  const trackedPrefixes = new Set();
+  for (const name of trackedNames) {
+    let prefix = null;
+    for (const part of name.split("/")) {
+      prefix = prefix === null ? foldName(part) : `${prefix}/${foldName(part)}`;
+      trackedPrefixes.add(prefix);
+    }
+  }
   for (const rel of extra) {
     const refuse = (why) =>
       new Error(`--copy-local-path ${JSON.stringify(rel)} is refused: ${why}`);
     const parts = rel.split("/");
     const folded = parts.map(foldName).join("/");
-    if (
-      trackedNames.some(
-        (name) => name.split("/").slice(0, parts.length).map(foldName).join("/") === folded,
-      )
-    ) {
+    if (trackedPrefixes.has(folded)) {
       throw refuse("it holds a tracked file");
     }
     let current = mainReal;
@@ -634,13 +643,11 @@ async function walkListed(mainReal, listed, sourceBlocked, maxEntries) {
  */
 async function canonOfTracked(mainReal, listed, trackedNames) {
   const listedRoots = new Set(listed.map((path) => foldName(path.split("/")[0])));
-  const canon = new Set();
-  for (const name of trackedNames) {
-    if (listedRoots.has(foldName(name.split("/")[0]))) {
-      canon.add(await realpath(join(mainReal, name)).catch(() => null));
-    }
-  }
-  return canon;
+  const names = trackedNames.filter((name) => listedRoots.has(foldName(name.split("/")[0])));
+  const canons = await mapInBatches(names, READ_BATCH_SIZE, (name) =>
+    realpath(join(mainReal, name)).catch(() => null),
+  );
+  return new Set(canons);
 }
 
 const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
@@ -807,24 +814,23 @@ export async function findDifferingLocalFiles(cwd, names, { signal, ...hooks } =
   if (located === null) {
     return [];
   }
-  const differing = [];
-  for (const rel of names) {
+  const differs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
     if (
       typeof rel !== "string" ||
       rel === "" ||
       isAbsolute(rel) ||
       rel.split("/").some((part) => part === ".." || part === "")
     ) {
-      differing.push(String(rel));
-      continue;
+      return true;
     }
     const [source, copy] = await Promise.all([
       sha256Of(located.mainReal, rel, hooks),
       sha256Of(located.rootReal, rel, hooks),
     ]);
-    if (source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy) {
-      differing.push(rel);
-    }
-  }
-  return differing.sort();
+    return source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy;
+  });
+  return names
+    .filter((_, index) => differs[index])
+    .map(String)
+    .sort();
 }

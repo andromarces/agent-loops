@@ -1,5 +1,6 @@
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
+import { mapInBatches } from "./batches.mjs";
 import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
@@ -177,23 +178,16 @@ function statusEntries(stdout) {
  * Hashes the files of `entries` in batches of `HASH_BATCH_SIZE`. Entries keep their order, and the
  * first failure in that order throws, as the sequential hashes did.
  */
-async function hashEntries(root, entries) {
-  const hashed = [];
-  for (let i = 0; i < entries.length; i += HASH_BATCH_SIZE) {
-    const batch = entries.slice(i, i + HASH_BATCH_SIZE);
-    const settled = await Promise.allSettled(batch.map(({ path }) => sha256File(join(root, path))));
-    settled.forEach((outcome, index) => {
-      if (outcome.status === "rejected") {
-        throw new SnapshotError(
-          `failed to hash ${batch[index].path}: ${readableErrorText(outcome.reason)}`,
-          { cause: outcome.reason },
-        );
-      }
-      hashed.push({ ...batch[index], hash: outcome.value });
-    });
-  }
-  return hashed;
-}
+const hashEntries = (root, entries) =>
+  mapInBatches(entries, HASH_BATCH_SIZE, async (entry) => {
+    try {
+      return { ...entry, hash: await sha256File(join(root, entry.path)) };
+    } catch (err) {
+      throw new SnapshotError(`failed to hash ${entry.path}: ${readableErrorText(err)}`, {
+        cause: err,
+      });
+    }
+  });
 
 /**
  * Reads the Git-visible state of the work tree. Every `git` read has a time bound, `timeoutMs`
