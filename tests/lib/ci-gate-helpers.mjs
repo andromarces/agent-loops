@@ -132,7 +132,7 @@ export const PR_CHECKS = prChecksArgs(42).join(" ");
 
 export const REPO_VIEW = REPO_VIEW_ARGS.join(" ");
 
-const RULES_PAGE = pageRoute(`repos/${SLUG}/rules/branches/main`);
+export const RULES_PAGE = pageRoute(`repos/${SLUG}/rules/branches/main`);
 
 export const MERGE_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${MERGE}/check-runs`);
 
