@@ -122,6 +122,8 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),
   (text) => expectRule(text, /lockfiles by path only/i),
   (text) => expectRule(text, /lockfile install/i, /before the next reviewer dispatch/i),
+  // Issue #1225: an unread work tree root names every lockfile, so the parent still reinstalls.
+  (text) => expectRule(text, /could not read the work tree root/i, /every lockfile/i),
   // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
   // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
   (text) =>
