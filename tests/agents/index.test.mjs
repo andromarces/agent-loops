@@ -100,6 +100,12 @@ test.each(["claude", "agy", "copilot", "opencode"])(
   },
 );
 
+// The output of a clean turn for each of the four adapters, opencode included.
+const OK_OUTPUT = {
+  ...CLEAN_OUTPUT,
+  opencode: JSON.stringify({ type: "text", sessionID: SESSION, part: { text: "done" } }),
+};
+
 // Requirement (#1178, ADR 0068): a Claude, agy, Copilot, or opencode turn runs with a private
 // temporary directory, so a file that the CLI writes through `TMPDIR` never lands in the inherited
 // directory, and the runtime removes the private one on a clean turn and on a failed one. Not
@@ -119,7 +125,7 @@ describe.each(["claude", "agy", "copilot", "opencode"])(
         await writeFile(seen.file, "scratch");
         seen.during = await readdir(env.TMPDIR ?? inherited());
         if (!ok) throw Object.assign(new Error("boom"), { stdout: "", stderr: "" });
-        return { stdout: CLEAN_OUTPUT[kind] ?? "", stderr: "" };
+        return { stdout: OK_OUTPUT[kind], stderr: "" };
       });
       const state = { kind, sessionId: null };
       const outcome = await runAgent(state, "task", { cwd: "/path", role: "worker" }).then(
@@ -134,7 +140,7 @@ describe.each(["claude", "agy", "copilot", "opencode"])(
       async (ok) => {
         const { seen, outcome } = await turnWriting(ok);
         try {
-          if (!ok) expect(outcome).toBe("error");
+          expect(outcome).toBe(ok ? "ok" : "error");
           expect(seen.TMPDIR).toBeTypeOf("string");
           expect([seen.TEMP, seen.TMP]).toEqual([seen.TMPDIR, seen.TMPDIR]);
           expect(dirname(seen.TMPDIR)).toBe(inherited());

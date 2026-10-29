@@ -27,6 +27,7 @@ ADR 0047 already gives a Codex turn a private directory that the runtime removes
 
 - A Claude Code worker leaves no scratch file in the inherited directory, and a concurrent reviewer report no longer lists it.
 - A CLI that stores state in its temporary directory loses it after the turn. A resumed session reads the session store of the CLI, not the temporary directory.
+- A user value of `CLAUDE_CODE_TMPDIR` stays, because the runtime sets only `TMPDIR`, `TEMP`, and `TMP`. Claude Code uses that variable for its internal temporary files, so with it set those files land outside the private directory and the runtime does not remove them. The scratch files of the worker commands still use the private directory. The runtime does not change the variable.
 - A failed creation warns, and the turn uses the inherited directory, as for Codex.
 - A reviewer report lists the `al-*` directory of a concurrent agent-loop process until that process removes it.
 - The `opencode session export` call after a turn runs without the private directory. The runtime does not wrap that short read.
@@ -45,6 +46,7 @@ Andro Marces
 ## Links
 
 - [Issue #1178](https://github.com/andromarces/agent-loops/issues/1178)
+- [PR #1237](https://github.com/andromarces/agent-loops/pull/1237)
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
 - [ADR 0049: Pin the machine-wide roots for every child turn](0049-pin-the-machine-wide-roots-for-every-child-turn.md)
 - [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
