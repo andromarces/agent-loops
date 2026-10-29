@@ -16,6 +16,12 @@ import {
   snapshotPackageStore,
 } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
+import {
+  carryLockfileChanged,
+  diffLockfiles,
+  failedLockfileChanged,
+  readLockfiles,
+} from "./lib/lockfile-change.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import {
@@ -74,6 +80,8 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 //   The fatal-path events in `runtime.mjs` also name it. `sharedGitChanged` does neither.
 // - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
 //   (issue #984).
+// - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
+//   before the next reviewer turn (issue #1180).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
 //   reviewer turn. Advisory: the runtime cannot attribute them to the turn (issue #1024).
 // - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
@@ -83,6 +91,7 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 //   and the turn history keeps its fixed shape.
 const TURN_EVIDENCE_FIELDS = [
   "sharedGitChanged",
+  "lockfileChanged",
   "inheritedTmpdirEntries",
   "packageStoreEntries",
   "testRun",
@@ -98,12 +107,17 @@ export function pickTurnEvidence(source) {
 }
 
 /**
- * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result and the two
- * advisory lists. An absent or empty field is skipped, and so is an error that cannot take it.
+ * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result, the lockfile
+ * paths, and the two advisory lists. An absent or empty field is skipped, and so is an error that
+ * cannot take it.
  */
-function carryTurnEvidence(err, { testRun, inheritedTmpdirEntries, packageStoreEntries }) {
+function carryTurnEvidence(
+  err,
+  { testRun, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries },
+) {
   if (!err || typeof err !== "object") return;
   if (testRun) carryTestRun(err, testRun);
+  if (lockfileChanged?.length > 0) carryLockfileChanged(err, lockfileChanged);
   if (inheritedTmpdirEntries?.length > 0) carryInheritedTmpdirEntries(err, inheritedTmpdirEntries);
   if (packageStoreEntries?.length > 0) carryPackageStoreEntries(err, packageStoreEntries);
 }
@@ -112,12 +126,13 @@ function carryTurnEvidence(err, { testRun, inheritedTmpdirEntries, packageStoreE
 export function failedTurnEvidence(err) {
   return {
     testRun: failedTestRun(err),
+    lockfileChanged: failedLockfileChanged(err),
     inheritedTmpdirEntries: failedInheritedTmpdirEntries(err),
     packageStoreEntries: failedPackageStoreEntries(err),
   };
 }
 
-/** @typedef {{ sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
+/** @typedef {{ sharedGitChanged?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
 
 /**
  * Run one worker or reviewer turn with the same guards as the headless loop:
@@ -412,6 +427,9 @@ export async function runChild(options) {
   let testRun = null;
   let keepReplacedMark = false;
   let sharedBefore = null;
+  let lockfilesBefore = null;
+  // The post-turn lockfile paths, kept once read so a cancel after the read reuses them.
+  let lockfilePaths = null;
   let tmpdirBefore = null;
   let storeBefore = null;
   // The post-turn advisory lists, kept once read so a cancel after the reads reuses them.
@@ -425,6 +443,17 @@ export async function runChild(options) {
       logWarn(`worker: shared Git state changed: ${changed.join(", ")}`);
     }
     return changed;
+  };
+  /** Paths of the lockfiles that differ from the pre-turn read, or [] when none or unread. */
+  const readLockfileChanged = async () => {
+    if (lockfilePaths === null) {
+      const after = lockfilesBefore ? await readLockfiles(cwd) : null;
+      lockfilePaths = diffLockfiles(lockfilesBefore, after);
+      if (lockfilePaths.length > 0) {
+        logWarn(`worker: lockfile changed: ${lockfilePaths.join(", ")}`);
+      }
+    }
+    return lockfilePaths;
   };
   /** Names that a reviewer turn left in the inherited temporary directory, or [] when none or unread. */
   const readInheritedTmpdirEntries = async () => {
@@ -472,6 +501,9 @@ export async function runChild(options) {
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     sharedBefore = roleName === "worker" ? await readShared() : null;
+    // The parent installs once before the first dispatch, so a worker turn that changes a lockfile
+    // leaves the next reviewer on stale dependencies (issue #1180).
+    lockfilesBefore = roleName === "worker" ? await readLockfiles(cwd) : null;
     if (roleName === "reviewer") {
       [tmpdirBefore, storeBefore] = await Promise.all([
         snapshotInheritedTmpdir(),
@@ -504,6 +536,7 @@ export async function runChild(options) {
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     const workTree = roleName === "worker" ? await readWorkTree() : null;
     const sharedGitChanged = await readSharedGitChanged();
+    const lockfileChanged = await readLockfileChanged();
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -524,6 +557,7 @@ export async function runChild(options) {
       ...(prChecks ? { prChecks } : {}),
       ...pickTurnEvidence({
         sharedGitChanged,
+        lockfileChanged,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,
@@ -546,7 +580,11 @@ export async function runChild(options) {
       // A fatal error carries the entries too, because the dispatcher builds its envelope, its
       // state record, and its event from the error (issue #1024).
       if (err && typeof err === "object") {
-        carryTurnEvidence(err, { testRun, ...(await readAdvisory()) });
+        carryTurnEvidence(err, {
+          testRun,
+          lockfileChanged: await readLockfileChanged(),
+          ...(await readAdvisory()),
+        });
       }
       throw err;
     }
@@ -557,15 +595,30 @@ export async function runChild(options) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
-    // The failed turn may have changed the shared state before it failed.
-    const sharedGitChanged = await readSharedGitChanged();
+    // The failed turn may have changed the shared state before it failed. The lockfile read comes
+    // first and takes no turn signal, so a cancel that the shared Git read throws still carries it.
+    const lockfileChanged = await readLockfileChanged();
+    let sharedGitChanged;
+    try {
+      sharedGitChanged = await readSharedGitChanged();
+    } catch (canceled) {
+      if (canceled && typeof canceled === "object") {
+        carryTurnEvidence(canceled, { testRun, lockfileChanged, ...(await readAdvisory()) });
+      }
+      throw canceled;
+    }
     const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory();
     // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn. This
     // throw leaves the catch block, so it carries the evidence just read, as the fatal path does.
     try {
       throwIfCanceled(signal, roleName);
     } catch (canceled) {
-      carryTurnEvidence(canceled, { testRun, inheritedTmpdirEntries, packageStoreEntries });
+      carryTurnEvidence(canceled, {
+        testRun,
+        lockfileChanged,
+        inheritedTmpdirEntries,
+        packageStoreEntries,
+      });
       throw canceled;
     }
     // An adapter marks a failure the provider is expected to clear (issue #1012).
@@ -577,6 +630,7 @@ export async function runChild(options) {
       ...(typeof transient === "string" ? { transient } : {}),
       ...pickTurnEvidence({
         sharedGitChanged,
+        lockfileChanged,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,

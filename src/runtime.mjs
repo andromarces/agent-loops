@@ -386,11 +386,19 @@ export async function runLoop(options) {
       // A fatal error ends the run with no result event, so the command result and the
       // work tree compare the runtime already read are emitted here, and the transcript
       // keeps them (ADR 0017).
-      const { testRun, inheritedTmpdirEntries, packageStoreEntries } = pickTurnEvidence(
-        failedTurnEvidence(err),
-      );
+      const { testRun, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries } =
+        pickTurnEvidence(failedTurnEvidence(err));
       if (testRun) {
         onEvent({ type: "test-run", role: roleName, testRun, fatal: true, stepsUsed });
+      }
+      if (lockfileChanged) {
+        onEvent({
+          type: "lockfile",
+          role: roleName,
+          paths: lockfileChanged,
+          fatal: true,
+          stepsUsed,
+        });
       }
       if (inheritedTmpdirEntries) {
         onEvent({
