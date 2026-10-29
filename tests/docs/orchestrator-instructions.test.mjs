@@ -33,9 +33,6 @@ const WORK_TREE_CREATE_COMMAND =
 /** The creation step for a repository with no remote, where the base is the local default branch (#1099). */
 const WORK_TREE_CREATE_NO_REMOTE_COMMAND =
   "git worktree add --no-track -b <branch> <work tree> <default>";
-/** The creation step for a run on an existing PR branch, which resets the local branch to the PR head (#1218). */
-const WORK_TREE_CREATE_PR_BRANCH_COMMAND =
-  "git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>";
 const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
 
 const referenceSectionsDir = join(dirname(instructionsPath), "orchestrator");
@@ -612,20 +609,26 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
     expect(instructions).toContain(rule);
     expect(prompt).toContain(rule);
   }
-  // Neither text keeps the repair procedure or the unrecoverable claim. The only `git worktree`
-  // commands the instructions may hold are the single creation command (#985), its no-remote form
-  // (#1099), its existing PR branch form (#1218), and the single removal command (#998) of "Work tree
-  // ownership": with all removed, no `git worktree` call is left to add, repair, or recreate.
-  expect(instructions.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
-  expect(instructions.split(WORK_TREE_CREATE_NO_REMOTE_COMMAND)).toHaveLength(2);
-  expect(instructions.split(WORK_TREE_REMOVE_COMMAND)).toHaveLength(2);
+  // Neither text keeps the repair procedure or the unrecoverable claim. Outside "Work tree ownership"
+  // the only `git worktree` command is the single removal command (#998). Inside it, the creation
+  // commands are the one for new work (#985) and the no-remote form (#1099), and any other
+  // `git worktree` call is an `add`: the commands of an existing PR branch (#1218) belong to the
+  // whole-section pin, so this test names none of their strings.
+  const { start, end } = REFUSED_CWD_BLOCKS.instructions;
+  const from = instructions.indexOf(start);
+  const stop = instructions.indexOf(end);
+  const section = instructions.slice(from, stop);
+  const outside = instructions.slice(0, from) + instructions.slice(stop);
+  expect(outside.split(WORK_TREE_REMOVE_COMMAND)).toHaveLength(2);
+  expect(outside.replace(WORK_TREE_REMOVE_COMMAND, "")).not.toContain("git worktree");
+  expect(section.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
+  expect(section.split(WORK_TREE_CREATE_NO_REMOTE_COMMAND)).toHaveLength(2);
   expect(
-    instructions
+    section
       .replace(WORK_TREE_CREATE_COMMAND, "")
       .replace(WORK_TREE_CREATE_NO_REMOTE_COMMAND, "")
-      .replace(WORK_TREE_CREATE_PR_BRANCH_COMMAND, "")
-      .replace(WORK_TREE_REMOVE_COMMAND, ""),
-  ).not.toContain("git worktree");
+      .match(/git worktree(?! add )/g) ?? [],
+  ).toEqual([]);
   expect(prompt).not.toContain("git worktree");
   for (const gone of ["not recoverable", "unrecoverable"]) {
     expect(instructions).not.toContain(gone);
@@ -640,9 +643,9 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // "User Task:". The pin is deliberately brittle: any added, removed, or reworded sentence in it,
 // including a prose instruction that tells the parent to repair or recreate the work tree in any
 // wording or position, fails until this test is edited on purpose (#991). Prose outside the
-// sections is not scanned, so unrelated text is free to change. The pin also holds the existing PR
-// branch work tree command, its head check before the first dispatch, and its upstream rule (#1218):
-// no other test repeats those strings.
+// sections is not scanned, so unrelated text is free to change. The pin also owns the existing PR
+// branch work tree rule (#1218), its command, divergence check, upstream rule, and head check
+// before the first dispatch: no other test reads those strings.
 // Extracts the removal-wait paragraph of the raw text for its dedicated condition test. The
 // whole-section pin covers the same paragraph word for word, so this pattern exempts nothing.
 const REMOVAL_WAIT_PARAGRAPH_PATTERN =
@@ -796,8 +799,15 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
     "an instruction right after the section heading": (text, key) =>
       text.replace(SECTION_START[key], `${SECTION_START[key]} ${RECOVERY_INSTRUCTION}`),
   };
+  // The pin of each text as it reads now, so this test checks the pin mechanism and never the
+  // words of the block: the pinned words belong to the test above.
+  const current = (key, pin) => ({
+    ...pin,
+    text: texts[key].slice(texts[key].indexOf(pin.start), texts[key].indexOf(pin.end)).trim(),
+  });
   for (const [name, mutate] of Object.entries(unsafe)) {
-    for (const [key, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+    for (const [key, blockPin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+      const pin = current(key, blockPin);
       const mutated = mutate(texts[key], key);
       // A mutation that does not apply to a text is not a case for it.
       if (mutated === texts[key]) continue;
@@ -808,9 +818,9 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
     "After compaction, restore the session from the state file.",
     "The module imports the helper from the path `src/lib/helper.mjs`.",
   ].join(" ");
-  for (const [key, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
+  for (const [key, blockPin] of Object.entries(REFUSED_CWD_BLOCKS)) {
     expect(() =>
-      expectRefusedCwdBlock(`${unrelated} ${texts[key]} ${unrelated}`, pin),
+      expectRefusedCwdBlock(`${unrelated} ${texts[key]} ${unrelated}`, current(key, blockPin)),
     ).not.toThrow();
   }
 });
