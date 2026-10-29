@@ -124,7 +124,9 @@ export function failedTurnEvidence(err) {
  * `onTurnTmpdir(record)` is awaited by the Codex adapter after it creates the private temporary
  * directory of the turn and before its CLI starts. Other adapters never call it. A dispatcher uses
  * it to persist the record, so a later call can remove the directory of a dispatch that died
- * mid-turn (issue #1207).
+ * mid-turn (issue #1207). A failed `onTurnTmpdir` fails the turn before the CLI starts.
+ * `onTurnChild(pid)` is called by the Codex adapter once the CLI has started, so the dispatcher can
+ * record which process the directory belongs to. A rejection warns and never changes the turn.
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, transient?: string, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }>}
  */
@@ -144,6 +146,7 @@ export async function runChild(options) {
     reviewerSandbox = null,
     onSessionAssigned,
     onTurnTmpdir,
+    onTurnChild,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -187,6 +190,7 @@ export async function runChild(options) {
         ...(sandbox ? { sandbox } : {}),
         ...(onSessionAssigned ? { onSessionAssigned } : {}),
         ...(onTurnTmpdir ? { onTurnTmpdir } : {}),
+        ...(onTurnChild ? { onTurnChild } : {}),
         timeout,
         signal,
       },

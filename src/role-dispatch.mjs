@@ -16,6 +16,7 @@ import { readableErrorMessage, redactedText, readProp } from "./lib/error-messag
 import { sha256 } from "./lib/hash.mjs";
 import { copyLocalFiles, findDifferingLocalFiles } from "./lib/local-files.mjs";
 import { logInfo, logWarn } from "./lib/log.mjs";
+import { processStartTime } from "./lib/process-identity.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
@@ -327,8 +328,19 @@ async function dispatchLocked(
       },
       // The record of the private turn directory is written before the CLI starts, so a dispatch
       // that dies mid-turn leaves it for the call that marks the run `interrupted` (issue #1207).
+      // The write is a precondition of the spawn: a failure fails the turn, which the catch below
+      // ends as `halted`, and the turn directory is removed.
       onTurnTmpdir: async (record) => {
         state.lastDispatch.turnTmpdir = record;
+        await writeState(paths.stateFile, state);
+      },
+      // The child pid and start time go in after the spawn, so the recovery can tell a dead turn
+      // from a dispatcher killed while its child still runs. A failed write leaves the record
+      // without a child, and the recovery then keeps the directory.
+      onTurnChild: async (pid) => {
+        const turnTmpdir = state.lastDispatch.turnTmpdir;
+        if (!turnTmpdir) return;
+        turnTmpdir.child = { pid, startTime: (await processStartTime(pid)) ?? undefined };
         await writeState(paths.stateFile, state);
       },
       // The command is the flag value, which init stored a digest of or the digest

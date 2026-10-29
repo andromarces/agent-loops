@@ -26,7 +26,8 @@ export { normalizeAgent };
  * An adapter throws an error with `sessionMissing` set when a resumed session no longer
  * exists, so the runtime reruns the turn as a first turn. Only the Claude adapter awaits
  * `options.onSessionAssigned(id)` before its CLI starts. Other adapters ignore that option. Only the
- * Codex adapter awaits `options.onTurnTmpdir(record)` once its private temporary directory exists.
+ * Codex adapter awaits `options.onTurnTmpdir(record)` once its private temporary directory exists,
+ * and calls `options.onTurnChild(pid)` once its CLI has started.
  */
 export const defaultAgents = {
   claude: { run: runClaude },

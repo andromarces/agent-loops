@@ -6,6 +6,8 @@ import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
 import { INHERITED_TMPDIR_ENV, inheritedTmpdirsForChild } from "./inherited-tmpdir.mjs";
 import { logDebug, logWarn } from "./log.mjs";
+import { readProcessTable } from "./process-ancestry.mjs";
+import { ownerAlive } from "./process-identity.mjs";
 import { rootPins } from "./root-pins.mjs";
 
 const REMOVER = fileURLToPath(new URL("./turn-tmpdir-remove.mjs", import.meta.url));
@@ -39,8 +41,8 @@ export const isTurnTmpdirName = (name) => createdNames.has(name);
  * child first, so no child of the turn is left to write into the directory. The removal helper
  * ends at `removalBoundMs`, so the turn never waits longer for it. `onCreated(record)` is awaited
  * after the creation and before `run`, with the record that `removeAbandonedTurnTmpdir` needs, so
- * a caller can persist it ahead of a process death. A failed `onCreated` warns and never fails
- * the turn.
+ * a caller can persist it ahead of a process death. A failed `onCreated` is a precondition failure:
+ * `run` never starts, the directory is removed, and the error is thrown to the caller.
  */
 export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS, onCreated } = {}) {
   let created = null;
@@ -54,16 +56,8 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS, o
       `turn temporary directory not created, the turn uses the inherited one: ${firstErrorLine(readableErrorText(err))}`,
     );
   }
-  if (created !== null && onCreated) {
-    try {
-      await onCreated({ ...created });
-    } catch (err) {
-      logWarn(
-        `turn temporary directory not recorded, a dead process leaves it: ${created.dir}: ${firstErrorLine(readableErrorText(err))}`,
-      );
-    }
-  }
   try {
+    if (created !== null && onCreated) await onCreated({ ...created });
     const dir = created?.dir;
     return await run(
       created === null
@@ -146,14 +140,24 @@ const TURN_DIR_NAME = /^al-[A-Za-z0-9]{6}$/;
 
 /**
  * Removes the turn directory of a process that died before it could, from the record that
- * `onCreated` of `withTurnTmpdir` received. The removal is the one of a normal turn: it acts only
- * on a directory with the recorded device and inode, so a directory that is gone or that something
- * replaced is not followed. A record that is not the shape of a created turn directory is refused
- * without a removal. Every outcome other than a removal warns and never throws.
+ * `onCreated` of `withTurnTmpdir` received, plus `child`, the `{ pid, startTime }` of the child of
+ * the turn that the dispatcher added after the spawn. The directory stays, with a warning, while a
+ * process of the dead turn may still use it: a record with no child, a child that `ownerAlive`
+ * reads as running or cannot read, and, on Windows, a live process below the recorded pid. A
+ * Windows `.cmd` shim ends with its dispatcher while the CLI that it started keeps running, and the
+ * table keeps the parent pid of that CLI. A process table that cannot be read keeps the directory
+ * too. Otherwise the removal is the one of a normal turn:
+ * it acts only on a directory with the recorded device and inode, so a directory that is gone or
+ * that something replaced is not followed. A record that is not the shape of a created turn
+ * directory is refused without a removal. Every outcome other than a removal warns and never
+ * throws.
+ * known-limit: on POSIX only the recorded child is checked, because an orphan is reparented and
+ * the table no longer names the child as its parent. A descendant that outlives a dead child
+ * there, and a Windows descendant below a chain with no live link, are not found.
  */
 export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_MS) {
   if (record === undefined || record === null) return;
-  const { dir, parentReal, device, inode } = record;
+  const { dir, parentReal, device, inode, child } = record;
   const wellFormed =
     [dir, parentReal, device, inode].every((value) => typeof value === "string") &&
     isAbsolute(dir) &&
@@ -163,5 +167,50 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
     logWarn("turn temporary directory not removed, the recorded directory is not a turn directory");
     return;
   }
+  if (!Number.isInteger(child?.pid) || child.pid <= 0) {
+    logWarn(
+      `turn temporary directory kept, no child of the dead turn is recorded and one may still run: ${dir}`,
+    );
+    return;
+  }
+  if (await ownerAlive(child)) {
+    logWarn(
+      `turn temporary directory kept, a child of the dead turn may still run (pid ${child.pid}): ${dir}`,
+    );
+    return;
+  }
+  if (process.platform === "win32") {
+    let below;
+    try {
+      below = liveBelow(child.pid, await readProcessTable());
+    } catch (err) {
+      logWarn(
+        `turn temporary directory kept, the process table cannot be read: ${dir}: ${firstErrorLine(readableErrorText(err))}`,
+      );
+      return;
+    }
+    if (below !== null) {
+      logWarn(
+        `turn temporary directory kept, a process of the dead turn may still run (pid ${below}): ${dir}`,
+      );
+      return;
+    }
+  }
   await removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs);
+}
+
+// The pid of a live process that descends from `rootPid` through the parent pids of `table`, or null.
+function liveBelow(rootPid, table) {
+  const reached = new Set([rootPid]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const { pid, ppid } of table) {
+      if (reached.has(ppid) && !reached.has(pid)) {
+        reached.add(pid);
+        grew = true;
+      }
+    }
+  }
+  reached.delete(rootPid);
+  return reached.values().next().value ?? null;
 }

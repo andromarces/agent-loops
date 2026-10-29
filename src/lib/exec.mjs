@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
-import { logDebug, logInfo } from "./log.mjs";
+import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { logDebug, logInfo, logWarn } from "./log.mjs";
 import { rootPins } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
 
@@ -111,8 +112,13 @@ export class ExecError extends Error {
   }
 }
 
+/**
+ * `options.onSpawn(pid)` is called once, right after the child starts and only when it has a pid.
+ * It runs beside the child and is awaited before `exec` returns or throws. A rejection warns and
+ * never changes the outcome of the child.
+ */
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal, role, env, maxBuffer } = options;
+  const { cwd, input, timeout, signal, role, env, maxBuffer, onSpawn } = options;
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -157,7 +163,19 @@ export async function exec(command, args = [], options = {}) {
     execaOptions.cancelSignal = signal;
   }
 
-  const result = await killTreeOnExit(execa(command, args, execaOptions));
+  const subprocess = killTreeOnExit(execa(command, args, execaOptions));
+  const { pid } = subprocess;
+  // Settled at once, so a rejection before the child ends is never unhandled.
+  const hook =
+    Number.isInteger(pid) && onSpawn
+      ? Promise.resolve()
+          .then(() => onSpawn(pid))
+          .catch((err) =>
+            logWarn(`${label}: the spawn hook failed: ${firstErrorLine(readableErrorText(err))}`),
+          )
+      : undefined;
+  const result = await subprocess;
+  await hook;
 
   const timedOut = Boolean(result.timedOut);
   const isCanceled = Boolean(result.isCanceled);

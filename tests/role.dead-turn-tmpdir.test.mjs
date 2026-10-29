@@ -19,8 +19,29 @@ import { processExists, removePath } from "./runtime-helpers.mjs";
 
 const ROLE = fileURLToPath(new URL("../src/role.mjs", import.meta.url));
 const scratches = [];
+// Every spawned dispatch, so teardown ends it on every path, a startup timeout included.
+const dispatches = [];
+
+// The pid that a fake `codex` of `scratch` reported, or null when it never got that far.
+async function reportedPid(scratch) {
+  const report = JSON.parse(
+    await readFile(join(scratch, "report.json"), "utf8").catch(() => "null"),
+  );
+  return report?.pid ?? null;
+}
 
 afterEach(async () => {
+  for (const child of dispatches.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      child.kill("SIGKILL");
+      await exited;
+    }
+  }
+  for (const dir of scratches) {
+    const pid = await reportedPid(dir);
+    if (pid !== null && processExists(pid)) process.kill(pid, "SIGKILL");
+  }
   await cleanup();
   for (const dir of scratches.splice(0)) await removePath(dir);
 });
@@ -30,18 +51,20 @@ afterEach(async () => {
 const FAKE_CODEX = `
 const fs = require("fs");
 const dir = process.env.TMPDIR;
-fs.writeFileSync(dir + "/leftover.txt", "x");
 fs.writeFileSync(process.env.FAKE_CODEX_REPORT, JSON.stringify({ pid: process.pid, dir }));
+fs.writeFileSync(dir + "/leftover.txt", "x");
 setInterval(() => {}, 1000);
 setTimeout(() => process.exit(0), 60000);
 `;
 
 /**
- * Starts a real `role dispatch` whose Codex turn hangs, kills the dispatch with SIGKILL mid-turn,
- * and ends the orphaned fake `codex`. Returns the work tree, the temporary directory of the turn
- * (as the turn child saw it), and the temporary root that holds it.
+ * Starts a real `role dispatch` whose Codex turn hangs and kills the dispatch with SIGKILL mid-turn,
+ * once the state file holds the child of the turn. The orphaned fake `codex` is ended unless
+ * `keepChild` is set, and teardown ends it either way. Returns the work tree, the temporary
+ * directory of the turn (as the turn child saw it), the temporary root that holds it, and the pid
+ * of the fake `codex`.
  */
-async function killedDispatch() {
+async function killedDispatch({ keepChild = false } = {}) {
   const repo = await newRunRepo();
   const scratch = await mkdtemp(join(tmpdir(), "dead-turn-"));
   scratches.push(scratch);
@@ -98,20 +121,26 @@ async function killedDispatch() {
       },
     },
   );
+  dispatches.push(child);
   const exited = new Promise((resolve) => child.once("exit", resolve));
   let turn;
   await vi.waitFor(
     async () => {
       turn = JSON.parse(await readFile(report, "utf8").catch(() => "null"));
       expect(turn?.pid).toBeGreaterThan(0);
+      // The dispatch has recorded the child, so the kill leaves the record a recovery reads.
+      const state = await readRepoState(repo).catch(() => null);
+      expect(state?.lastDispatch?.turnTmpdir?.child?.pid).toBeGreaterThan(0);
     },
     { timeout: 30_000, interval: 100 },
   );
   child.kill("SIGKILL");
   await exited;
-  if (processExists(turn.pid)) process.kill(turn.pid, "SIGKILL");
-  await vi.waitFor(() => expect(processExists(turn.pid)).toBe(false), { timeout: 5000 });
-  return { repo, turnDir: turn.dir, tmpRoot };
+  if (!keepChild) {
+    if (processExists(turn.pid)) process.kill(turn.pid, "SIGKILL");
+    await vi.waitFor(() => expect(processExists(turn.pid)).toBe(false), { timeout: 5000 });
+  }
+  return { repo, turnDir: turn.dir, tmpRoot, childPid: turn.pid };
 }
 
 const nextCall = (repo) =>
@@ -158,4 +187,17 @@ test("a directory that replaced the recorded turn directory keeps its content", 
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
   expect(existsSync(sentinel)).toBe(true);
+}, 60_000);
+
+// Usefulness: verifies issue #1207 review blocker 2, that a child of the dead dispatch which still
+// runs keeps its turn directory, and the run is still marked `interrupted`.
+test("a live child of the killed dispatch keeps the turn directory", async () => {
+  const { repo, turnDir, childPid } = await killedDispatch({ keepChild: true });
+  expect(processExists(childPid)).toBe(true);
+
+  const next = await nextCall(repo);
+
+  expect(next.payload.error).toContain("interrupted");
+  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+  expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
 }, 60_000);
