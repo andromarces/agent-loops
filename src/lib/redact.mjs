@@ -150,3 +150,17 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   }
   return findRuns(out, patterns).length === 0 ? out : SHRINK_MARKER;
 }
+
+// Control characters other than newline and tab never help a reviewer and can
+// hide text in a terminal, so they are dropped.
+function stripControl(text) {
+  return [...text.replaceAll("\r\n", "\n")]
+    .filter((c) => c === "\n" || c === "\t" || c >= " ")
+    .join("");
+}
+
+// Redaction runs before and after the cleanup: a secret can hold a control character that the first
+// pass must match, and the cleanup can join the text around a removed character into a value.
+export function redactAndClean(text) {
+  return redactEnvSecrets(stripControl(redactEnvSecrets(text)));
+}

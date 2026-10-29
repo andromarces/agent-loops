@@ -21,7 +21,7 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
-import { gateFromTranscript } from "../src/lib/continuation.mjs";
+import { gateFromTranscript } from "../src/lib/gate.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import {
   cleanRepoGit,

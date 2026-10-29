@@ -18,10 +18,12 @@ import {
   TASK_SOURCE_CONFLICT,
 } from "./lib/args.mjs";
 import {
-  carryEarlierEvents,
   declaredPrFromTranscript,
   refuseDeclaredPrConflict,
   gateFromTranscript,
+} from "./lib/gate.mjs";
+import {
+  carryEarlierEvents,
   earlierReviewerSandbox,
   readContinuation,
   restoreSessions,

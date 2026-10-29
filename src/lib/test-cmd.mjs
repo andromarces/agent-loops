@@ -1,7 +1,8 @@
+import { entryCarrier } from "./entry-report.mjs";
 import { readProp } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
 import { logError, logInfo, logWarn } from "./log.mjs";
-import { redactEnvSecrets } from "./redact.mjs";
+import { redactAndClean } from "./redact.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
 import { holdTestSlot, testSlotOptions } from "./test-slot.mjs";
@@ -20,24 +21,19 @@ export const testCmdInput = (command, timeoutSeconds) =>
 const CAPTURE_WINDOW_BYTES = 16 * 1024;
 export const TAIL_CHARS = 8 * 1024;
 
-// Results carried by an error object that cannot take the `testRun` property.
-const carriedTestRuns = new WeakMap();
+const testRunCarrier = entryCarrier("testRun");
 
 /**
  * Carries the result on a fatal error as `err.testRun`. A frozen error or a throwing setter
  * keeps the original error, and the result stays readable through `failedTestRun`.
  */
-export function carryTestRun(err, testRun) {
-  carriedTestRuns.set(err, testRun);
-  try {
-    err.testRun = testRun;
-  } catch {}
-}
+export const carryTestRun = testRunCarrier.carry;
 
-/** Returns the result a fatal error carries, or `undefined` when it carries none. */
-export function failedTestRun(err) {
-  return carriedTestRuns.get(err) ?? readProp(err, "testRun");
-}
+/**
+ * Returns the result a fatal error carries, or `undefined` when it carries none. The property
+ * fallback reads a result that `canceledError` sets directly, which `carry` never recorded.
+ */
+export const failedTestRun = (err) => testRunCarrier.failed(err) ?? readProp(err, "testRun");
 const MAX_CHANGED_PATHS = 20;
 // The bound and the redaction that every reported path list gets, as the output text gets them.
 const boundedPaths = (paths) => paths.slice(0, MAX_CHANGED_PATHS).map(redactAndClean);
@@ -60,20 +56,6 @@ export function reportLateChangedPaths(testRun, baseline) {
   const final = finalSnapshots.get(testRun);
   testRun.lateChangedPaths = final ? boundedPaths(diffSnapshots(final, baseline)) : null;
 }
-// Control characters other than newline and tab never help a reviewer and can
-// hide text in a terminal, so they are dropped.
-function stripControl(text) {
-  return [...text.replaceAll("\r\n", "\n")]
-    .filter((c) => c === "\n" || c === "\t" || c >= " ")
-    .join("");
-}
-
-// Redaction runs before and after the cleanup: a secret can hold a control character that the first
-// pass must match, and the cleanup can join the text around a removed character into a value.
-export function redactAndClean(text) {
-  return redactEnvSecrets(stripControl(redactEnvSecrets(text)));
-}
-
 // The error that a canceled run throws, which carries the advisory `canceled` result.
 function canceledError(testRun) {
   const err = new Error("test command canceled");
