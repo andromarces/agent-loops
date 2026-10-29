@@ -7,12 +7,23 @@ import { execa } from "execa";
 // Makes the named `node:fs/promises` function throw an error whose message and path carry
 // `FS_MARKER`, as a Node file system error carries the path, while `fsFailure.operation` is set.
 const FS_MARKER = "secret-hook-marker-7731";
-const fsFailure = vi.hoisted(() => ({ operation: null, stallReaddir: false }));
+// `fsFailure.requests` records every request on a file named `hook-*`, and `fsFailure.lstatDelayMs`
+// delays each `lstat` of one, as a slow file system does.
+const fsFailure = vi.hoisted(() => ({
+  operation: null,
+  stallReaddir: false,
+  lstatDelayMs: 0,
+  requests: [],
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal();
   const failing =
     (operation) =>
     async (path, ...rest) => {
+      if (String(path).includes("hook-")) fsFailure.requests.push(operation);
+      if (operation === "lstat" && fsFailure.lstatDelayMs > 0 && String(path).includes("hook-")) {
+        await new Promise((resolve) => setTimeout(resolve, fsFailure.lstatDelayMs));
+      }
       if (fsFailure.operation === operation) {
         const failedPath = `/${"secret-hook-marker-7731"}/${operation}`;
         throw Object.assign(new Error(`EACCES: permission denied, ${operation} '${failedPath}'`), {
@@ -50,20 +61,6 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-// Records every hook hash that starts and delays each one by `hashing.delayMs`.
-const hashing = vi.hoisted(() => ({ started: [], delayMs: 0 }));
-vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    sha256File: async (path) => {
-      hashing.started.push(path);
-      if (hashing.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, hashing.delayMs));
-      return actual.sha256File(path);
-    },
-  };
-});
-
 import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.mjs";
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
@@ -74,8 +71,8 @@ afterEach(async () => {
   configExit.code = null;
   fsFailure.operation = null;
   fsFailure.stallReaddir = false;
-  hashing.started.length = 0;
-  hashing.delayMs = 0;
+  fsFailure.lstatDelayMs = 0;
+  fsFailure.requests.length = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -208,18 +205,18 @@ test("a stalled hooks directory read rejects at the deadline", async () => {
   expect(Date.now() - started).toBeLessThan(5_000);
 });
 
-// Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a slow hooks
-// directory must not start a new hook hash after the deadline, because the dispatch has reported its
-// result and a late file system request would run past the end of the turn.
-test("no hook hash starts after the deadline", async () => {
+// Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
+// that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
+// dispatch has reported its result and a late file system request would run past the end of the turn.
+test("no hook file system request starts after the deadline", async () => {
   const { repo, linked } = await createLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
-  hashing.delayMs = 800;
+  fsFailure.lstatDelayMs = 800;
   await expect(readSharedGit(linked, { deadlineMs: 2_000 })).rejects.toThrow(/2000 ms/);
-  const startedAtDeadline = hashing.started.length;
-  expect(startedAtDeadline).toBeGreaterThan(0);
+  const atDeadline = [...fsFailure.requests];
+  expect(atDeadline).toContain("lstat");
   await new Promise((resolve) => setTimeout(resolve, 1_500));
-  expect(hashing.started).toHaveLength(startedAtDeadline);
+  expect(fsFailure.requests).toEqual(atDeadline);
 }, 20_000);
 
 // Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):
