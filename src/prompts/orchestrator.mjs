@@ -1,6 +1,11 @@
 import { posix, win32 } from "node:path";
 import { escapeLineSeparators } from "./escape.mjs";
-import { SHELL_EXCEPTION, cliCommandForms } from "./report.mjs";
+import {
+  REMOTE_WRITE_ACTIONS,
+  SHELL_EXCEPTION,
+  SHELL_ONLY_LIMIT_SENTENCE,
+  cliCommandForms,
+} from "./report.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
 import { agentHas } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
@@ -111,8 +116,11 @@ function prGateBlock(options) {
 // channel, and only the --require-ci finish gate enforces anything.
 const SHELL_NETWORK = "from the shell commands that its sandbox runs";
 const SHELL_READ = "through a shell command that its sandbox runs";
-const SHELL_ONLY_LIMIT =
-  "That limit covers shell commands only: it does not stop a model-side tool or another channel outside the sandbox. This run counts on none of them for the check read, and none of them enforces anything.";
+const SHELL_ONLY_LIMIT = `${SHELL_ONLY_LIMIT_SENTENCE} This run counts on none of them for the check read, and none of them enforces anything.`;
+
+// The lead of every line that says a Codex-style orchestrator turn cannot reach the network.
+const orchestratorNetworkLead = (kind) =>
+  `You orchestrate through ${kind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}`;
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
 // it. Its limit is a permission refusal of `role wait-checks` without approval (#432 probe, #495),
@@ -120,6 +128,14 @@ const SHELL_ONLY_LIMIT =
 // only status read the role rule excepts is the bounded `role wait-checks` command (ADR 0013).
 const COPILOT_LIMIT =
   "whose read-only turn keeps shell network but refuses agent-loop role wait-checks without approval, so you cannot run the bounded wait, and the status-read exception does not apply to you";
+
+// The conditions that the --require-ci gate, and a declared PR, hold a finish to.
+const GATE_CONDITIONS =
+  "the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed";
+
+// What a gated run does with a required check that is still pending at finish.
+const PENDING_CHECK_RULE =
+  "A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.";
 
 function prGateLines({
   pr,
@@ -130,7 +146,7 @@ function prGateLines({
   timeout,
   waitCommand,
 }) {
-  const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed.${noRequiredCheckClause()} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
+  const gate = `- This run enforces the PR gate (--require-ci ${requireCi}): the runtime resolves the PR head from the run's PR number and refuses a finish until ${GATE_CONDITIONS}.${NO_REQUIRED_CHECK_CLAUSE} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the gate resolves that compare.`;
   const rule = requiredCheckWait({
     requireCi,
     orchestratorKind,
@@ -147,7 +163,7 @@ function prGateLines({
     return [
       gate,
       `- You cannot wait for the required checks in this run, because ${why}. Do not run gh pr checks, and do not run agent-loop role wait-checks.`,
-      "- The --require-ci finish gate is the only check read you can rely on, because the runtime applies it outside every read-only turn. A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.",
+      `- The --require-ci finish gate is the only check read you can rely on, because the runtime applies it outside every read-only turn. ${PENDING_CHECK_RULE}`,
     ];
   }
 
@@ -173,7 +189,7 @@ function prGateLines({
       ...(copilot
         ? [`- You orchestrate through copilot, ${COPILOT_LIMIT}. Do not run gh pr checks.`]
         : [
-            `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT}`,
+            `- ${orchestratorNetworkLead(orchestratorKind)}, so you cannot read the required checks ${SHELL_READ} and the status-read exception does not apply to you. ${SHELL_ONLY_LIMIT}`,
             `- ${SHELL_EXCEPTION}`,
             "- Do not run gh pr checks.",
           ]),
@@ -185,7 +201,7 @@ function prGateLines({
   // The runtime supplies the status for the declared PR, or for the gated PR when
   // none is declared, and the reviewer's own read is only a fallback (#320, #350).
   const statusPr = pr ?? requireCi;
-  const enforcesLine = `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${advisoryQualifier()} A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.`;
+  const enforcesLine = `- The --require-ci finish gate is the only check read in this run that enforces anything, because the runtime applies it outside every read-only turn.${ADVISORY_QUALIFIER} ${PENDING_CHECK_RULE}`;
 
   if (copilot) {
     return [
@@ -199,7 +215,7 @@ function prGateLines({
 
   return [
     gate,
-    `- You orchestrate through ${orchestratorKind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself ${SHELL_READ} and the headless loop cannot wait. ${SHELL_ONLY_LIMIT}`,
+    `- ${orchestratorNetworkLead(orchestratorKind)}, and your reviewer ${reviewerKind ?? "is an unnamed CLI whose read-only turn cannot either"}, so no turn in this run can reach the checks for itself ${SHELL_READ} and the headless loop cannot wait. ${SHELL_ONLY_LIMIT}`,
     `- ${SHELL_EXCEPTION}`,
     `- Do not run gh pr checks.${suppliedRead(statusPr)}`,
     enforcesLine,
@@ -211,11 +227,9 @@ function prGateLines({
  * line names the advisory read as the one read that does not enforce. The wording
  * is the same rule `docs/orchestrator-instructions.md` states, so the two paths do
  * not drift.
- * @returns {string}
  */
-function advisoryQualifier() {
-  return " The advisory status read above reports to the reviewer and never enforces.";
-}
+const ADVISORY_QUALIFIER =
+  " The advisory status read above reports to the reviewer and never enforces.";
 
 /**
  * The clause a gated run adds to the line that says no turn in the run can read
@@ -242,11 +256,9 @@ function suppliedRead(pr) {
  * cannot read the base branch's configuration itself, so it is stated on every
  * gated run. It predicts no outcome: it names what the gate checks, not when the
  * absence holds.
- * @returns {string}
  */
-function noRequiredCheckClause() {
-  return " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source. A ruleset read of exactly one empty page is the class empty: a successful read that found no rule, which contributes no contexts, so the per-check pass runs on the other sources, and a classic-only repository still finishes, while a ruleset read of no page, several empty pages, or an empty page beside a page that holds rules is the class unknown and refuses.";
-}
+const NO_REQUIRED_CHECK_CLAUSE =
+  " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source. A ruleset read of exactly one empty page is the class empty: a successful read that found no rule, which contributes no contexts, so the per-check pass runs on the other sources, and a classic-only repository still finishes, while a ruleset read of no page, several empty pages, or an empty page beside a page that holds rules is the class unknown and refuses.";
 
 /**
  * The `--pr` declaration rule. It is one line on purpose: the prompt must not
@@ -266,6 +278,10 @@ function prDeclarationBlock(pr, startRead) {
   return `\n- This run declares PR #${pr}. Finish it through --require-ci ${pr} for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.${start}`;
 }
 
+// What the runtime holds a finish to when it compares the PR head and reads no required-check source.
+const PR_HEAD_COMPARE =
+  "the PR is open, its head is the reviewed commit, and the reviewed tree is clean";
+
 /**
  * The `--compare-head` line: the runtime compares the PR head at finish and reads no required-check
  * source, for a repository whose sources are unreadable (#1104).
@@ -273,7 +289,7 @@ function prDeclarationBlock(pr, startRead) {
 function compareHeadBlock(compareHead) {
   if (compareHead === null) return "";
   return `
-- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until the PR is open, its head equals the reviewed commit, and the reviewed tree is clean. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
+- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
 }
 
 /**
@@ -295,6 +311,10 @@ function testCmdBlock(testCmd) {
 function reviewerSandboxBlock(reviewerSandbox) {
   const reviewerFileRule =
     "The reviewer still must not change a tracked file or an untracked file that Git does not ignore, including a cache file, and must not change Git state or write to a remote. A test run is allowed when every write goes to an ignored path or to a temporary file outside the repository.";
+  const sharedLines = [
+    `- ${SHELL_EXCEPTION}`,
+    `- Your own turns stay read-only. ${reviewerFileRule} The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.`,
+  ];
   if (reviewerSandbox === "none") {
     return [
       "",
@@ -305,19 +325,20 @@ function reviewerSandboxBlock(reviewerSandbox) {
   if (reviewerSandbox === "read-only") {
     return [
       "",
-      "- This run keeps the Codex reviewer in the read-only sandbox. A child process spawn or a test run can fail there, and the shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
-      `- ${SHELL_EXCEPTION}`,
-      `- Your own turns stay read-only. ${reviewerFileRule} The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.`,
+      `- This run keeps the Codex reviewer in the read-only sandbox. A child process spawn or a test run can fail there, and the shell commands that the sandbox runs have network access off. ${SHELL_ONLY_LIMIT_SENTENCE}`,
+      ...sharedLines,
     ].join("\n");
   }
   if (reviewerSandbox !== "workspace-write") return "";
   return [
     "",
-    "- This run lets the Codex reviewer run targeted tests and probes in the workspace-write sandbox. The shell commands that the sandbox runs have network access off. That limit covers shell commands only: it does not block model-side tools such as web_search, or any other channel outside the sandbox.",
-    `- ${SHELL_EXCEPTION}`,
-    `- Your own turns stay read-only. ${reviewerFileRule} The runtime compares the work tree around every reviewer turn. A change halts the run with no revert.`,
+    `- This run lets the Codex reviewer run targeted tests and probes in the workspace-write sandbox. The shell commands that the sandbox runs have network access off. ${SHELL_ONLY_LIMIT_SENTENCE}`,
+    ...sharedLines,
   ].join("\n");
 }
+
+const CONTINUED_LEAD =
+  "This run continues an earlier run in the same work tree, with the same role sessions. The step budget above is new, and the earlier steps do not count against it. The last action you chose in the earlier run may not have run, so re-check the state before you rely on it.";
 
 /**
  * The `--continue-from` line. A continued run resumes the earlier sessions, so
@@ -328,9 +349,9 @@ function reviewerSandboxBlock(reviewerSandbox) {
 function continuedBlock(continued, gateRestored) {
   if (!continued) return "";
   if (gateRestored) {
-    return "\n- This run continues an earlier run in the same work tree, with the same role sessions. The step budget above is new, and the earlier steps do not count against it. The last action you chose in the earlier run may not have run, so re-check the state before you rely on it. The work tree is the state that the earlier run last reviewed, so the runtime restored that run's completion gate state: a reviewer accept it recorded still counts, and a finish needs no new reviewer turn unless the state changes.";
+    return `\n- ${CONTINUED_LEAD} The work tree is the state that the earlier run last reviewed, so the runtime restored that run's completion gate state: a reviewer accept it recorded still counts, and a finish needs no new reviewer turn unless the state changes.`;
   }
-  return "\n- This run continues an earlier run in the same work tree, with the same role sessions. The step budget above is new, and the earlier steps do not count against it. The last action you chose in the earlier run may not have run, so re-check the state before you rely on it. The runtime carries over no reviewer accept: treat the current state as unreviewed, and dispatch the reviewer on it before you finish. Under --require-accept the runtime refuses a finish until you do.";
+  return `\n- ${CONTINUED_LEAD} The runtime carries over no reviewer accept: treat the current state as unreviewed, and dispatch the reviewer on it before you finish. Under --require-accept the runtime refuses a finish until you do.`;
 }
 
 /**
@@ -360,8 +381,7 @@ function modeBlock(mode) {
 // conversation in its place (the agy known-limit), so each follow-up carries the
 // rule itself. The runtime mutation check reads only the local work tree, so the
 // rule is advisory (issue #422).
-const REMOTE_WRITE_RULE =
-  "You must NOT write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.";
+const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote: ${REMOTE_WRITE_ACTIONS} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
 
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
 const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}
@@ -493,7 +513,7 @@ ${task}
  * The runtime gates the finish on that PR in that case, so the line states the finish rule.
  */
 function declaredPrNote(pr) {
-  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. Before it declared the PR, the runtime read the required-check sources of PR #${pr} once and declared it only because the read did not find the repository rulesets unreadable; a read that failed for another reason, such as a transport failure, warned and still declared, so the gate can still refuse at finish. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. The runtime also gates the finish on PR #${pr}, as --require-ci ${pr} does: it refuses a finish until the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed. A finish with "unresolvedCompare": true is refused, because the gate resolves that compare. Dispatch the reviewer on the current state before you finish, and wait for a pending required check through another reviewer turn.`;
+  return `The runtime declared PR #${pr} for this run, because the worker turn opened it from this branch at this head. Before it declared the PR, the runtime read the required-check sources of PR #${pr} once and declared it only because the read did not find the repository rulesets unreadable; a read that failed for another reason, such as a transport failure, warned and still declared, so the gate can still refuse at finish. You did not choose it, and no turn can change it. The runtime now supplies the required-check status for PR #${pr} to every reviewer prompt. The runtime also gates the finish on PR #${pr}, as --require-ci ${pr} does: it refuses a finish until ${GATE_CONDITIONS}. A finish with "unresolvedCompare": true is refused, because the gate resolves that compare. Dispatch the reviewer on the current state before you finish, and wait for a pending required check through another reviewer turn.`;
 }
 
 /**
@@ -502,7 +522,7 @@ function declaredPrNote(pr) {
  * the head of that PR at finish instead (ADR 0052, #1111).
  */
 function undeclaredPrNote(pr) {
-  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until the PR is open, its head is the reviewed commit, and the reviewed tree is clean; a closed or merged PR refuses it. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
+  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until ${PR_HEAD_COMPARE}; a closed or merged PR refuses it. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
 }
 
 export function resultPrompt({

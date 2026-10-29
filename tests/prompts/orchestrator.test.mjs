@@ -1204,3 +1204,54 @@ describe("compare-head run prompt", () => {
     expect(initialPrompt(base)).not.toContain("--compare-head");
   });
 });
+
+// Usefulness: verifies requirement "each child prompt rule has one wording" (issue #1185). A rule
+// that two prompt surfaces state in two wordings lets a child read them as two rules, and a later
+// edit to one copy leaves the other stale. The scan renders every surface that states the rule.
+describe("a shared prompt rule keeps one wording on every surface", () => {
+  const resultOk = { role: "worker", status: "ok", response: "done" };
+  const gated = (orchestratorKind, reviewerKind = "claude", reviewerSandbox = null) =>
+    initialPrompt({
+      task: "t",
+      maxSteps: 5,
+      requireCi: 42,
+      orchestratorKind,
+      reviewerKind,
+      reviewerSandbox,
+    });
+  const unique = (texts, pattern) => [
+    ...new Set(texts.flatMap((text) => [...text.matchAll(pattern)].map((match) => match[0]))),
+  ];
+
+  test("the shell-only sandbox limit", () => {
+    const surfaces = [
+      gated("codex", "codex"),
+      gated("copilot", "codex"),
+      initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "read-only" }),
+      initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "workspace-write" }),
+      reviewerPrompt("x", null, null, "read-only"),
+      reviewerPrompt("x", null, null, "workspace-write"),
+    ];
+    const wordings = unique(surfaces, /That limit covers shell commands only: [^.]*\./g);
+    expect(wordings).toHaveLength(1);
+    expect(wordings[0]).toMatch(/model-side tools, such as web search,/);
+  });
+
+  test("the PR head condition of a finish", () => {
+    const surfaces = [
+      initialPrompt({ task: "t", maxSteps: 5, compareHead: 7 }),
+      resultPrompt({ result: resultOk, stepsUsed: 1, maxSteps: 5, undeclaredPr: 7 }),
+    ];
+    const wordings = unique(surfaces, /until the PR is open, its head \w+ the reviewed commit/g);
+    expect(wordings).toHaveLength(1);
+  });
+
+  test("the pending required check rule of the gate", () => {
+    const surfaces = [gated("codex", "codex"), gated("copilot", "codex")];
+    const wordings = unique(
+      surfaces,
+      /A required check still pending is not a finish condition: [^.]*\.[^.]*\./g,
+    );
+    expect(wordings).toHaveLength(1);
+  });
+});
