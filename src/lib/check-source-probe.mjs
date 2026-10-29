@@ -236,7 +236,7 @@ async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
  * @returns {Promise<boolean>}
  */
 export async function noCheckSource(context, sha, base) {
-  const { bounded, slug, cwd, headOf } = context;
+  const { bounded, slug, cwd } = context;
   const baseSha = await baseShaOf(context, base);
   if (baseSha === null) {
     return false;
@@ -279,8 +279,12 @@ export async function noCheckSource(context, sha, base) {
       return false;
     }
   }
-  // Neither the base branch nor the PR head moved while the probe read.
-  const moved = await headOf();
+  return unmoved(context, sha, base, baseSha);
+}
+
+/** Whether neither the base branch nor the PR head moved while a probe read. */
+async function unmoved(context, sha, base, baseSha) {
+  const moved = await context.headOf();
   return moved.head === sha && moved.base === base && (await baseShaOf(context, base)) === baseSha;
 }
 
@@ -291,11 +295,15 @@ export async function noCheckSource(context, sha, base) {
  * that changes a workflow file may run it, whatever the base files say. False means every workflow
  * text proves that no run starts for the PR. Null means a read failed or has another shape, which is
  * unresolved: the caller holds the pass and reads again on its next poll. A throw is unresolved too.
- * @param {{ bounded: Function, slug: string, cwd: string, pr: number }} context the bounded `gh` runner of the wait
+ * An exclusion is bound to the judged head: when the PR head or the base branch moved while the files
+ * were read, they may belong to another head, so the answer is true and no workflow is skipped.
+ * @param {{ bounded: Function, slug: string, cwd: string, pr: number, headOf: () => Promise<{ head: string, base: string }> }} context
+ *   `headOf` reads the PR head again
+ * @param {string} sha the PR head the wait judges
  * @param {string} base the base branch of the PR
  * @returns {Promise<boolean | null>}
  */
-export async function pullRequestWorkflowMayRun(context, base) {
+export async function pullRequestWorkflowMayRun(context, sha, base) {
   const baseSha = await baseShaOf(context, base);
   const changed = baseSha === null ? null : await changedFilesOf(context);
   if (changed === null) {
@@ -309,5 +317,11 @@ export async function pullRequestWorkflowMayRun(context, base) {
   }
   const texts = await workflowTextsOf(context, baseSha);
   const paths = changedPathsOf(changed);
-  return texts === null ? null : texts.some((text) => prWorkflowMayRun(text, paths, base));
+  if (texts === null) {
+    return null;
+  }
+  return (
+    texts.some((text) => prWorkflowMayRun(text, paths, base)) ||
+    !(await unmoved(context, sha, base, baseSha))
+  );
 }

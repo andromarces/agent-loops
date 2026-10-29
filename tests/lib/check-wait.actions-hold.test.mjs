@@ -1,7 +1,7 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
 import { pageStdout } from "../runtime-helpers.mjs";
-import { fakeClock, HEAD_A, scriptedGh } from "./check-wait-helpers.mjs";
+import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./check-wait-helpers.mjs";
 
 // The `--all` wait holds a pass while a `pull_request` workflow of the base branch can run for the PR
 // and the head has no check run from GitHub Actions (issue #1228). The scripted `gh` answers the
@@ -43,9 +43,11 @@ function holdGh({
   prFiles = [{ filename: "src/a.js" }],
   runsByPoll,
   listingFailures = 0,
+  heads = [HEAD_A],
 }) {
   const inner = scriptedGh([{ status: 0, checks: [{ name: WORKERS.name, bucket: "pass" }] }], {
     all: true,
+    heads,
   });
   const repo = "repos/owner/repo";
   let polls = 0;
@@ -248,4 +250,21 @@ test("the --all wait passes at once when no workflow names pull_request", async 
   });
   expect(result.timedOut).toBe(false);
   expect(elapsed).toBe(0);
+});
+
+// Usefulness: verifies the exclusion proof is bound to the judged head: when the PR head moves from A
+// to B while the probe reads the PR files, the file list of B must not skip a workflow for A, so the
+// pass for A is held (a follow-up push during the wait, issue #1228). The scripted head read answers A
+// at the start of the poll and B after the file read.
+test("the --all wait does not skip a workflow for a head that moved during the file read", async () => {
+  const { result } = await holdWait(
+    {
+      workflow: "name: src\non:\n  pull_request:\n    paths:\n      - 'src/**'\n",
+      prFiles: [{ filename: "docs/b.md" }],
+      heads: [HEAD_A, HEAD_B],
+      runsByPoll: [[WORKERS]],
+    },
+    { head: HEAD_A },
+  );
+  expect(result.timedOut).toBe(true);
 });

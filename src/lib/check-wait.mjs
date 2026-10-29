@@ -638,7 +638,11 @@ export async function waitChecks({
       let value = null;
       try {
         await ensureSlug();
-        value = await pullRequestWorkflowMayRun({ bounded, slug, cwd, pr }, base);
+        value = await pullRequestWorkflowMayRun(
+          { bounded, slug, cwd, pr, headOf: async () => readHead(pr, await bounded(headArgv)) },
+          sha,
+          base,
+        );
       } catch (raw) {
         // A failed read holds the pass. The bound still ends the wait.
         if (failureOf(raw) instanceof BoundReached) {
