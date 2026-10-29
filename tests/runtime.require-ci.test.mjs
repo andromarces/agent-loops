@@ -1151,9 +1151,9 @@ test("a mismatched-gate refusal names the declaration and reads no gate", async 
     );
     // Asserted on the gate's own endpoints, so the claim "a refused finish reads
     // no GitHub state" is the assertion and not a side effect of which other
-    // calls the run happens to make (#320 review). The five reads are the source
-    // check of the declared PR 42 at start (#1092); the refused finish adds none.
-    expect(gateReads(calls)).toHaveLength(5);
+    // calls the run happens to make (#320 review). The three reads are the ruleset-only
+    // source check of the declared PR 42 at start (#1092, #1182); the refused finish adds none.
+    expect(gateReads(calls)).toHaveLength(3);
   } finally {
     gitDouble.answer = null;
     await removePath(repo);
