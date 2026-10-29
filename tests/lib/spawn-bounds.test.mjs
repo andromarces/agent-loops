@@ -90,16 +90,21 @@ test("assertGitWorkTree hands the spawn layer its exact bound and force-kill del
 });
 
 // Usefulness: verifies every `git` call in the snapshot path carries a time bound and the caller's
-// abort signal, so no snapshot read can hang or ignore a cancel (#729).
+// abort signal, so no snapshot read can hang or ignore a cancel (#729). The signal handed to the
+// spawn layer may combine the caller's signal with a group signal (#1187), so the check is that the
+// caller's abort ends it.
 test("snapshot hands every git call a bound and the abort signal", async () => {
   execa.mockReset().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
   const controller = new AbortController();
   await snapshot(".", { signal: controller.signal });
   expect(execa.mock.calls.length).toBeGreaterThanOrEqual(4);
+  const signals = execa.mock.calls.map(([, , options]) => options.cancelSignal);
   for (const [, , options] of execa.mock.calls) {
     expect(options.timeout).toBeGreaterThan(0);
-    expect(options.cancelSignal).toBe(controller.signal);
   }
+  expect(signals.some((signal) => signal.aborted)).toBe(false);
+  controller.abort();
+  expect(signals.every((signal) => signal.aborted)).toBe(true);
 });
 
 // Usefulness: verifies the local-files `git` reads carry a time bound while they keep the final
