@@ -7,6 +7,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -154,6 +155,19 @@ test("a failed record of the turn directory stops the turn and removes the direc
   });
 });
 
+// Usefulness: verifies issue #1216 record origin, that a record whose parent is not the inherited
+// temporary directory of the call removes nothing, so an edited state file cannot steer the removal
+// at an `al-` directory elsewhere with its real identity.
+test("an abandoned-directory record outside the inherited temporary directory removes nothing", async () => {
+  await withRoot(async (root, base) => {
+    const elsewhere = join(base, "elsewhere");
+    mkdirSync(elsewhere);
+    const record = abandonedRecord(elsewhere, { pid: await deadPid() });
+    await removeAbandonedTurnTmpdir(record);
+    expect(existsSync(join(record.dir, "sentinel.txt"))).toBe(true);
+  });
+});
+
 // Usefulness: verifies issue #1207 review blocker 2, that a recorded child that still runs keeps
 // the directory, because the recovery would delete a directory that the live child still uses.
 test("an abandoned directory whose recorded child still runs is kept", async () => {
@@ -186,3 +200,38 @@ test("an abandoned directory whose recorded child has ended is removed", async (
     expect(existsSync(record.dir)).toBe(false);
   });
 });
+
+// Usefulness: verifies issue #1216 POSIX descendants, that a descendant which outlives a dead child
+// keeps the directory. The child leads its own process group (execa `killDescendants`), and the
+// group stays while any member runs, which the table no longer shows after the reparent. Not
+// redundant with the dead-child test above, which has no descendant.
+test.skipIf(process.platform === "win32")(
+  "an abandoned directory whose dead child left a live descendant in its group is kept",
+  async () => {
+    const leader = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+console.log(c.pid);
+c.unref();`,
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let grandchild;
+    try {
+      let out = "";
+      leader.stdout.on("data", (chunk) => (out += chunk));
+      await new Promise((resolve) => leader.once("exit", resolve));
+      grandchild = Number(out.trim());
+      expect(grandchild).toBeGreaterThan(0);
+      await withRoot(async (root) => {
+        const record = abandonedRecord(root, { pid: leader.pid });
+        await removeAbandonedTurnTmpdir(record);
+        expect(existsSync(join(record.dir, "sentinel.txt"))).toBe(true);
+      });
+    } finally {
+      if (grandchild > 0) process.kill(grandchild, "SIGKILL");
+    }
+  },
+);

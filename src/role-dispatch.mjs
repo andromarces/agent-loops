@@ -333,7 +333,13 @@ async function dispatchLocked(
       // with the step charged and an error result.
       onTurnTmpdir: async (record) => {
         state.lastDispatch.turnTmpdir = record;
-        await writeState(paths.stateFile, state);
+        try {
+          await writeState(paths.stateFile, state);
+        } catch (err) {
+          // The turn directory is removed on this failure, so no later write may save its record.
+          delete state.lastDispatch.turnTmpdir;
+          throw err;
+        }
       },
       // The child pid and start time go in after the spawn, so the recovery can tell a dead turn
       // from a dispatcher killed while its child still runs. A failed write leaves the record
