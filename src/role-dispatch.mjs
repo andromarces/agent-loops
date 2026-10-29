@@ -328,8 +328,9 @@ async function dispatchLocked(
       },
       // The record of the private turn directory is written before the CLI starts, so a dispatch
       // that dies mid-turn leaves it for the call that marks the run `interrupted` (issue #1207).
-      // The write is a precondition of the spawn: a failure fails the turn, which the catch below
-      // ends as `halted`, and the turn directory is removed.
+      // The write is a precondition of the spawn: a failure starts no child and removes the turn
+      // directory. `runChild` then handles it as any failed turn, so the run returns to `active`
+      // with the step charged and an error result.
       onTurnTmpdir: async (record) => {
         state.lastDispatch.turnTmpdir = record;
         await writeState(paths.stateFile, state);

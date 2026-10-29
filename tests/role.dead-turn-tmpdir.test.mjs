@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,37 +22,59 @@ const scratches = [];
 // Every spawned dispatch, so teardown ends it on every path, a startup timeout included.
 const dispatches = [];
 
-// The pid that a fake `codex` of `scratch` reported, or null when it never got that far.
-async function reportedPid(scratch) {
-  const report = JSON.parse(
-    await readFile(join(scratch, "report.json"), "utf8").catch(() => "null"),
-  );
-  return report?.pid ?? null;
+// The pid that the fake `codex` of `scratch` wrote as its first action, or null when it never ran.
+async function fakePid(scratch) {
+  const pid = Number(await readFile(join(scratch, "pid.txt"), "utf8").catch(() => ""));
+  return pid > 0 ? pid : null;
 }
 
-afterEach(async () => {
+// Ends a dispatcher and everything below it. The fake `codex` is a descendant until the dispatcher
+// dies, so the tree is ended first, whether or not the fake has reported yet.
+function endTree(child) {
+  try {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
+    } else {
+      process.kill(-child.pid, "SIGKILL");
+    }
+  } catch {
+    // The tree is already gone.
+  }
+}
+
+// Ends every spawned dispatcher and every fake `codex`, on every path of a test, a startup timeout
+// included: the tree of a live dispatcher first, then the pid that each fake wrote on its own.
+async function endSpawned() {
   for (const child of dispatches.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((resolve) => child.once("exit", resolve));
-      child.kill("SIGKILL");
+      endTree(child);
       await exited;
     }
   }
   for (const dir of scratches) {
-    const pid = await reportedPid(dir);
+    const pid = await fakePid(dir);
     if (pid !== null && processExists(pid)) process.kill(pid, "SIGKILL");
   }
+}
+
+afterEach(async () => {
+  await endSpawned();
   await cleanup();
   for (const dir of scratches.splice(0)) await removePath(dir);
 });
 
-// A fake `codex` that reports its temporary directory and pid, leaves a file in that directory,
-// and then hangs, so a test can kill the dispatch that owns it mid-turn.
+// A fake `codex` that writes its pid first, in a path that the test owns, then reports its
+// temporary directory after `FAKE_CODEX_DELAY_MS`, leaves a file in that directory, and hangs, so a
+// test can kill the dispatch that owns it mid-turn.
 const FAKE_CODEX = `
 const fs = require("fs");
 const dir = process.env.TMPDIR;
-fs.writeFileSync(process.env.FAKE_CODEX_REPORT, JSON.stringify({ pid: process.pid, dir }));
-fs.writeFileSync(dir + "/leftover.txt", "x");
+fs.writeFileSync(process.env.FAKE_CODEX_PID, String(process.pid));
+setTimeout(() => {
+  fs.writeFileSync(process.env.FAKE_CODEX_REPORT, JSON.stringify({ pid: process.pid, dir }));
+  fs.writeFileSync(dir + "/leftover.txt", "x");
+}, Number(process.env.FAKE_CODEX_DELAY_MS));
 setInterval(() => {}, 1000);
 setTimeout(() => process.exit(0), 60000);
 `;
@@ -64,7 +86,7 @@ setTimeout(() => process.exit(0), 60000);
  * directory of the turn (as the turn child saw it), the temporary root that holds it, and the pid
  * of the fake `codex`.
  */
-async function killedDispatch({ keepChild = false } = {}) {
+async function killedDispatch({ keepChild = false, startupMs = 30_000, reportDelayMs = 0 } = {}) {
   const repo = await newRunRepo();
   const scratch = await mkdtemp(join(tmpdir(), "dead-turn-"));
   scratches.push(scratch);
@@ -111,6 +133,8 @@ async function killedDispatch({ keepChild = false } = {}) {
     ],
     {
       stdio: "ignore",
+      // Its own process group on POSIX, so `endTree` can end the whole group.
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         PATH: `${bin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}`,
@@ -118,6 +142,8 @@ async function killedDispatch({ keepChild = false } = {}) {
         TEMP: tmpRoot,
         TMP: tmpRoot,
         FAKE_CODEX_REPORT: report,
+        FAKE_CODEX_PID: join(scratch, "pid.txt"),
+        FAKE_CODEX_DELAY_MS: String(reportDelayMs),
       },
     },
   );
@@ -132,7 +158,7 @@ async function killedDispatch({ keepChild = false } = {}) {
       const state = await readRepoState(repo).catch(() => null);
       expect(state?.lastDispatch?.turnTmpdir?.child?.pid).toBeGreaterThan(0);
     },
-    { timeout: 30_000, interval: 100 },
+    { timeout: startupMs, interval: 100 },
   );
   child.kill("SIGKILL");
   await exited;
@@ -200,4 +226,18 @@ test("a live child of the killed dispatch keeps the turn directory", async () =>
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
   expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+}, 60_000);
+
+// Usefulness: verifies issue #1207 review item 1, that teardown ends the fake `codex` when startup
+// times out before the child has reported, so a delayed report leaves no orphan.
+test("teardown ends the fake codex when startup times out before its report", async () => {
+  await expect(killedDispatch({ startupMs: 3000, reportDelayMs: 20_000 })).rejects.toThrow();
+  const scratch = scratches.at(-1);
+  const pid = await fakePid(scratch);
+  expect(pid).toBeGreaterThan(0);
+  expect(processExists(pid)).toBe(true);
+
+  await endSpawned();
+
+  await vi.waitFor(() => expect(processExists(pid)).toBe(false), { timeout: 5000 });
 }, 60_000);
