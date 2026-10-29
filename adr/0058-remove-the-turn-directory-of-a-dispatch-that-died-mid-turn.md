@@ -40,6 +40,7 @@ Andro Marces
 ## Links
 
 - [Issue #1207](https://github.com/andromarces/agent-loops/issues/1207)
+- [PR #1212](https://github.com/andromarces/agent-loops/pull/1212)
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
 - Implementation:
   - Source: `withTurnTmpdir` and `removeAbandonedTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `runCodex` in `src/agents/codex.mjs`, `runChild` in `src/child-turn.mjs`, `recoverLifecycle` in `src/role-dispatch.mjs`
