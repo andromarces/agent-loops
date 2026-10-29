@@ -618,7 +618,6 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   // ownership": with all removed, no `git worktree` call is left to add, repair, or recreate.
   expect(instructions.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
   expect(instructions.split(WORK_TREE_CREATE_NO_REMOTE_COMMAND)).toHaveLength(2);
-  expect(instructions.split(WORK_TREE_CREATE_PR_BRANCH_COMMAND)).toHaveLength(2);
   expect(instructions.split(WORK_TREE_REMOVE_COMMAND)).toHaveLength(2);
   expect(
     instructions
@@ -641,7 +640,9 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // "User Task:". The pin is deliberately brittle: any added, removed, or reworded sentence in it,
 // including a prose instruction that tells the parent to repair or recreate the work tree in any
 // wording or position, fails until this test is edited on purpose (#991). Prose outside the
-// sections is not scanned, so unrelated text is free to change.
+// sections is not scanned, so unrelated text is free to change. The pin also holds the existing PR
+// branch work tree command, its head check before the first dispatch, and its upstream rule (#1218):
+// no other test repeats those strings.
 // Extracts the removal-wait paragraph of the raw text for its dedicated condition test. The
 // whole-section pin covers the same paragraph word for word, so this pattern exempts nothing.
 const REMOVAL_WAIT_PARAGRAPH_PATTERN =
@@ -835,27 +836,6 @@ test("instructions state the no-remote work tree base and worker commit-only rul
   expect(instructions).toContain(
     "Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`",
   );
-});
-
-// Usefulness: verifies the instructions give the work tree command for a run on an existing PR branch
-// and require the work tree head to equal the PR head before the first dispatch (#1218). Without it,
-// a parent improvises the command and a stale local branch puts a different head under review.
-test("instructions give the existing PR branch work tree command and the head check before dispatch", async () => {
-  const instructions = (await readInstructions()).replace(/\s+/g, " ");
-  expect(instructions).toContain(WORK_TREE_CREATE_PR_BRANCH_COMMAND);
-  expect(instructions).toContain(
-    'compare `git -C "<work tree>" rev-parse HEAD` with `gh pr view <pr> --json headRefOid --jq .headRefOid`',
-  );
-  expect(instructions).toContain("work tree head must equal the PR head before the first dispatch");
-  expect(instructions).toContain("the local branch is ahead of or diverged from the PR head");
-  expect(instructions).toContain(
-    "the upstream must be `origin/<pr branch>` or none, and never the default branch",
-  );
-  expect(instructions).toContain(
-    "for-each-ref --format='%(upstream:short)' \"refs/heads/<pr branch>\"",
-  );
-  expect(instructions).toContain("branch --unset-upstream");
-  expect(instructions).toContain("The upstream `origin/<pr branch>` is acceptable");
 });
 
 // Usefulness: verifies requirement "the parent owns the dependency install of a run work tree and
