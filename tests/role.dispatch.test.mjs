@@ -485,6 +485,48 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
   }
 });
 
+// Usefulness: verifies requirement "a worker turn that changes the lockfile reports its path, and a
+// turn that changes none carries no field" (issue #1180). The parent installs once before the first
+// dispatch, so a lockfile change is the only sign that the next reviewer sees stale dependencies.
+test("worker dispatch reports a lockfile change by path and omits the field otherwise", async () => {
+  const repo = await newRunRepo();
+  const lockfileWorker = recordingAdapter([
+    async (_state, _prompt, options) => {
+      await writeFile(join(options.cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+      return WORKER_REPLY;
+    },
+    async (_state, _prompt, options) => {
+      await writeFile(join(options.cwd, "notes.txt"), "not a lockfile\n");
+      return WORKER_REPLY;
+    },
+    async (_state, _prompt, options) => {
+      await writeFile(join(options.cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.1'\n");
+      return WORKER_REPLY;
+    },
+  ]);
+  const agents = { fake1: lockfileWorker, fake2: recordingAdapter([]) };
+
+  const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(changed.payload.lockfileChanged).toEqual(["pnpm-lock.yaml"]);
+  expect((await readRepoState(repo)).lastResult.lockfileChanged).toEqual(["pnpm-lock.yaml"]);
+
+  const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(unchanged.payload.status).toBe("ok");
+  expect(unchanged.payload).not.toHaveProperty("lockfileChanged");
+
+  const edited = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(edited.payload.lockfileChanged).toEqual(["pnpm-lock.yaml"]);
+});
+
 // Runs `body(linked, repo)` with a linked work tree of a fresh repository. The worker adapters of
 // the shared Git tests act on the linked work tree.
 async function withLinkedWorkTree(body) {

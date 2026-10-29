@@ -114,6 +114,11 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),
   (text) => expectRule(text, /failed worker turn/i, /field too/i),
+  // Issue #1180: a worker turn that changed a lockfile is reported by path, and the parent
+  // reinstalls before the next reviewer dispatch.
+  (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),
+  (text) => expectRule(text, /lockfiles by path only/i),
+  (text) => expectRule(text, /lockfile install/i, /before the next reviewer dispatch/i),
   // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
   // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
   (text) =>

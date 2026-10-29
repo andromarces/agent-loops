@@ -228,6 +228,12 @@ Apply these parent rules:
   value or a URL. A change there affects the main work tree and every other linked work tree, and
   `workTree` does not show it. Report it in the finish summary under `open`. A failed worker turn
   carries the field too. A turn that changed none carries no field.
+- A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
+  tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
+  lockfiles by path only. The worker never installs, so the installed dependencies no longer match
+  the lockfile. When the field appears, run the lockfile install in that work tree, for example
+  `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
+  turn carries the field too. A turn that changed none carries no field.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. Report it in the finish summary under `open`, and
