@@ -6,6 +6,8 @@ partially-superseded
 
 Superseded by [ADR 0049: Pin the machine-wide roots for every child turn](0049-pin-the-machine-wide-roots-for-every-child-turn.md). ADR 0049 pins the three roots for every worker and reviewer spawn, so decision 2 no longer applies to a Codex child only. Every other decision of this ADR remains in force.
 
+Superseded in part by [ADR 0068: Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md): decision 1 no longer applies to a Codex turn only. The Claude Code, agy, Copilot, and opencode turns get the private directory too.
+
 ## Date
 
 2026-10-19
