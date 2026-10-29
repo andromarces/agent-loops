@@ -149,64 +149,91 @@ export async function workTreeRoot(cwd, bound) {
   return rootResult.stdout.trim();
 }
 
+// Files that one snapshot hashes at a time, so a large work tree never opens every file at once.
+const HASH_BATCH_SIZE = 32;
+
+/**
+ * Parses the `status --porcelain=v1 -z` output into entries without a hash. A rename or copy also
+ * emits its old path, which is consumed and not listed.
+ */
+function statusEntries(stdout) {
+  const tokens = stdout.split("\0");
+  const entries = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token) continue;
+    const status = token.slice(0, 2);
+    // If rename/copy (status 'R' or 'C'), -z outputs <new-path>\0<old-path>\0.
+    // The path is already <new-path>; consume <old-path> so it is not processed as a file.
+    if (status.includes("R") || status.includes("C")) {
+      i++;
+    }
+    entries.push({ path: token.slice(3), status });
+  }
+  return entries;
+}
+
+/**
+ * Hashes the files of `entries` in batches of `HASH_BATCH_SIZE`. Entries keep their order, and the
+ * first failure in that order throws, as the sequential hashes did.
+ */
+async function hashEntries(root, entries) {
+  const hashed = [];
+  for (let i = 0; i < entries.length; i += HASH_BATCH_SIZE) {
+    const batch = entries.slice(i, i + HASH_BATCH_SIZE);
+    const settled = await Promise.allSettled(batch.map(({ path }) => sha256File(join(root, path))));
+    settled.forEach((outcome, index) => {
+      if (outcome.status === "rejected") {
+        throw new SnapshotError(
+          `failed to hash ${batch[index].path}: ${readableErrorText(outcome.reason)}`,
+          { cause: outcome.reason },
+        );
+      }
+      hashed.push({ ...batch[index], hash: outcome.value });
+    });
+  }
+  return hashed;
+}
+
 /**
  * Reads the Git-visible state of the work tree. Every `git` read has a time bound, `timeoutMs`
  * (default 120 s), and ends on `signal`. A timeout or a cancel throws a `SnapshotError`, and a cancel
- * sets its `isCanceled`.
+ * sets its `isCanceled`. The status, index, and HEAD reads run together with the file hashes. The
+ * first failure in the order status, hashes, index, HEAD throws, and the other reads end first.
  */
 export async function snapshot(cwd, bound) {
   // git status/ls-files emit repository-root-relative paths, so run them at the root.
   const root = await workTreeRoot(cwd, bound);
 
-  // 1. Work tree status
-  const statusResult = await gitIn(
-    root,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-    bound,
-  );
-
-  const statusTokens = statusResult.stdout.split("\0");
-  const entries = [];
-
-  for (let i = 0; i < statusTokens.length; i++) {
-    const token = statusTokens[i];
-    if (!token) continue;
-    const status = token.slice(0, 2);
-    const filePath = token.slice(3);
-
-    // If rename/copy (status 'R' or 'C'), -z outputs <new-path>\0<old-path>\0.
-    // filePath is already <new-path>; consume <old-path> in nextToken so it is not processed as a file.
-    if (status.includes("R") || status.includes("C")) {
-      i++;
-    }
-
-    const fullPath = join(root, filePath);
-    let hash;
-    try {
-      hash = await sha256File(fullPath);
-    } catch (err) {
-      throw new SnapshotError(`failed to hash ${filePath}: ${readableErrorText(err)}`, {
-        cause: err,
-      });
-    }
-    entries.push({ path: filePath, status, hash });
+  const group = new AbortController();
+  const signal = bound?.signal ? AbortSignal.any([bound.signal, group.signal]) : group.signal;
+  const scoped = { ...bound, signal };
+  const status = gitIn(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], scoped);
+  // Index hash (whole repository, not just cwd).
+  const index = gitIn(root, ["ls-files", "--stage", "-z"], scoped);
+  // HEAD; exit 1 here means a repository without commits, so "unborn" is correct.
+  const headRead = gitRead(root, ["rev-parse", "--verify", "-q", "HEAD"], scoped);
+  const hashes = status.then((result) => hashEntries(root, statusEntries(result.stdout)));
+  const reads = [status, hashes, index, headRead];
+  for (const read of reads) {
+    read.catch(() => {});
   }
-
-  entries.sort((a, b) => a.path.localeCompare(b.path));
-
-  // 2. Index hash (whole repository, not just cwd)
-  const lsResult = await gitIn(root, ["ls-files", "--stage", "-z"], bound);
-  const indexHash = sha256(lsResult.stdout);
-
-  // 3. HEAD; exit 1 here means a repository without commits, so "unborn" is correct.
-  const headResult = await gitRead(root, ["rev-parse", "--verify", "-q", "HEAD"], bound);
-  const head = headResult.exitCode === 0 ? headResult.stdout.trim() : "unborn";
-
-  return {
-    workTree: entries,
-    indexHash,
-    head,
-  };
+  try {
+    await status;
+    const entries = await hashes;
+    entries.sort((a, b) => a.path.localeCompare(b.path));
+    const indexHash = sha256((await index).stdout);
+    const headResult = await headRead;
+    return {
+      workTree: entries,
+      indexHash,
+      head: headResult.exitCode === 0 ? headResult.stdout.trim() : "unborn",
+    };
+  } catch (err) {
+    group.abort();
+    await Promise.allSettled(reads);
+    throw err;
+  }
 }
 
 /**

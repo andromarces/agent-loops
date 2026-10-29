@@ -802,8 +802,11 @@ export const failureOf = (err) => (err instanceof ReadFailure ? err.cause : err)
 // order throws as soon as it is reached, the error the same reads run in sequence
 // surfaced. A later sibling that is slow or stalled never delays that error. On a
 // failure the remaining reads are cancelled and settled before the throw, so no
-// `gh` child outlives the caller.
-export async function inOrder(gh, makers) {
+// `gh` child outlives the caller. `stopWhen(value)` ends the group early, as a
+// sequential caller that returns at that value would: the later reads are
+// cancelled and settled, their failures are never surfaced, and the values read
+// so far are returned.
+export async function inOrder(gh, makers, stopWhen = () => false) {
   const group = new AbortController();
   const scoped = withSignal(gh, group.signal);
   const reads = makers.map((make) => make(scoped));
@@ -813,7 +816,13 @@ export async function inOrder(gh, makers) {
   try {
     const values = [];
     for (const read of reads) {
-      values.push(await read);
+      const value = await read;
+      values.push(value);
+      if (stopWhen(value)) {
+        group.abort();
+        await Promise.allSettled(reads);
+        break;
+      }
     }
     return values;
   } catch (err) {
