@@ -212,8 +212,12 @@ async function killedDispatch({
   return { repo, turnDir: turn.dir, tmpRoot, childPid: turn.pid };
 }
 
-const nextCall = (repo) =>
-  executeRoleCommand(withRepo(dispatchArgv(), repo), { ...basicDeps(), stdin: stdinPrompt });
+// The recovery call inherits the temporary directory that held the turn directory, as a call of the
+// same host does. A record of another parent is refused (issue #1216).
+const nextCall = (repo, tmpRoot) => {
+  for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, tmpRoot);
+  return executeRoleCommand(withRepo(dispatchArgv(), repo), { ...basicDeps(), stdin: stdinPrompt });
+};
 
 // Usefulness: verifies issue #1207 acceptance 1, that the call which marks a run `interrupted`
 // after its dispatch process died mid-turn removes the directory of that turn.
@@ -221,7 +225,7 @@ test("the call that marks a killed dispatch interrupted removes its turn directo
   const { repo, turnDir, tmpRoot } = await killedDispatch();
   expect(existsSync(turnDir)).toBe(true);
 
-  const next = await nextCall(repo);
+  const next = await nextCall(repo, tmpRoot);
 
   expect(next.exitCode).toBe(1);
   expect(next.payload.error).toContain("interrupted");
@@ -233,10 +237,10 @@ test("the call that marks a killed dispatch interrupted removes its turn directo
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
 // does not fail the call and the run is still marked `interrupted`.
 test("a recorded turn directory that is gone does not fail the interrupted mark", async () => {
-  const { repo, turnDir } = await killedDispatch();
+  const { repo, turnDir, tmpRoot } = await killedDispatch();
   await removePath(turnDir);
 
-  const next = await nextCall(repo);
+  const next = await nextCall(repo, tmpRoot);
 
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
@@ -251,7 +255,7 @@ test("a directory that replaced the recorded turn directory keeps its content", 
   const sentinel = join(turnDir, "sentinel.txt");
   writeFileSync(sentinel, "keep\n");
 
-  const next = await nextCall(repo);
+  const next = await nextCall(repo, tmpRoot);
 
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
@@ -261,10 +265,10 @@ test("a directory that replaced the recorded turn directory keeps its content", 
 // Usefulness: verifies issue #1207 review blocker 2, that a child of the dead dispatch which still
 // runs keeps its turn directory, and the run is still marked `interrupted`.
 test("a live child of the killed dispatch keeps the turn directory", async () => {
-  const { repo, turnDir, childPid } = await killedDispatch({ keepChild: true });
+  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
   expect(processExists(childPid)).toBe(true);
 
-  const next = await nextCall(repo);
+  const next = await nextCall(repo, tmpRoot);
 
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
@@ -387,4 +391,14 @@ test("a failed record write and a failed result write leave the run dispatched w
   expect(state.lifecycle).toBe("dispatched");
   expect(state.stepsUsed).toBe(stepsBefore + 1);
   expect(state.lastResult.status).not.toBe("error");
+});
+
+// Usefulness: verifies issue #1216 stale record, that a record write which fails leaves no record in
+// the state that the later error-result write saves, because the directory is already removed.
+// Not redundant with the lifecycle tests above, which never read the saved record.
+test("a failed record write leaves no turn directory record in the saved state", async () => {
+  const { repo } = await dispatchWithRecordFailure(1);
+
+  const state = await readRepoState(repo);
+  expect(state.lastDispatch.turnTmpdir).toBeUndefined();
 });

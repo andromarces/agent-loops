@@ -149,8 +149,9 @@ const TURN_DIR_NAME = /^al-[A-Za-z0-9]{6}$/;
  * too. Otherwise the removal is the one of a normal turn:
  * it acts only on a directory with the recorded device and inode, so a directory that is gone or
  * that something replaced is not followed. A record that is not the shape of a created turn
- * directory is refused without a removal. Every outcome other than a removal warns and never
- * throws.
+ * directory is refused without a removal, and so is a record whose parent is not the real path of
+ * the temporary directory that this call inherited, because a turn directory is created there only.
+ * Every outcome other than a removal warns and never throws.
  * known-limit: on POSIX only the recorded child is checked, because an orphan is reparented and
  * the table no longer names the child as its parent. A descendant that outlives a dead child
  * there, and a Windows descendant below a chain with no live link, are not found.
@@ -165,6 +166,12 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
     TURN_DIR_NAME.test(basename(dir));
   if (!wellFormed) {
     logWarn("turn temporary directory not removed, the recorded directory is not a turn directory");
+    return;
+  }
+  if (!(await inInheritedTmpdir(parentReal))) {
+    logWarn(
+      `turn temporary directory not removed, the recorded parent is not the temporary directory of this call: ${dir}`,
+    );
     return;
   }
   if (!Number.isInteger(child?.pid) || child.pid <= 0) {
@@ -197,6 +204,15 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
     }
   }
   await removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs);
+}
+
+// True when `parentReal` is the real path of the temporary directory that this process inherited.
+async function inInheritedTmpdir(parentReal) {
+  try {
+    return (await realpath(resolve(tmpdir()))) === parentReal;
+  } catch {
+    return false;
+  }
 }
 
 // The pid of a live process that descends from `rootPid` through the parent pids of `table`, or null.

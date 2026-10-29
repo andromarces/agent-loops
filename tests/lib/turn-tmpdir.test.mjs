@@ -154,6 +154,19 @@ test("a failed record of the turn directory stops the turn and removes the direc
   });
 });
 
+// Usefulness: verifies issue #1216 record origin, that a record whose parent is not the inherited
+// temporary directory of the call removes nothing, so an edited state file cannot steer the removal
+// at an `al-` directory elsewhere with its real identity.
+test("an abandoned-directory record outside the inherited temporary directory removes nothing", async () => {
+  await withRoot(async (root, base) => {
+    const elsewhere = join(base, "elsewhere");
+    mkdirSync(elsewhere);
+    const record = abandonedRecord(elsewhere, { pid: await deadPid() });
+    await removeAbandonedTurnTmpdir(record);
+    expect(existsSync(join(record.dir, "sentinel.txt"))).toBe(true);
+  });
+});
+
 // Usefulness: verifies issue #1207 review blocker 2, that a recorded child that still runs keeps
 // the directory, because the recovery would delete a directory that the live child still uses.
 test("an abandoned directory whose recorded child still runs is kept", async () => {
