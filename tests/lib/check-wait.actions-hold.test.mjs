@@ -288,3 +288,16 @@ test("the --all wait reads again after the base read of the head guard fails", a
   expect(result.timedOut).toBe(false);
   expect(elapsed).toBeGreaterThan(0);
 });
+
+// Usefulness: verifies the stated limit for a workflow that runs only on `push`: even an unfiltered
+// `push` trigger, which runs for every head branch, never holds the pass, so the docs claim that
+// `--expect` stays needed for its check is true (issue #1234); the `push: branches: [main]` case above
+// does not cover an unfiltered trigger.
+test("the --all wait passes at once for a push-only workflow that runs for every branch", async () => {
+  const { result, elapsed } = await holdWait({
+    workflow: "name: push-all\non:\n  push:\n",
+    runsByPoll: [[WORKERS]],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(elapsed).toBe(0);
+});
