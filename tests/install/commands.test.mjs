@@ -184,6 +184,29 @@ test.each(["install", "uninstall"])(
   },
 );
 
+// Usefulness: verifies acceptance (#1186) — sharing the flag walk with the run parsers must not
+// let `install` take the run flags; the unknown-flag test above never names these four.
+test.each(["--cwd=.", "--task=x", "--pr=1", "--require-ci=1"])(
+  "CLI install still refuses the run flag %s",
+  async (flag) => {
+    const originalLog = console.log;
+    const originalError = console.error;
+    const errors = [];
+    console.log = () => {};
+    console.error = (message) => errors.push(String(message));
+    try {
+      process.exitCode = 0;
+      await cliMain(["install", flag]);
+      expect(process.exitCode).toBe(1);
+      expect(errors.join("\n")).toContain(`Unknown argument: ${flag}`);
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+      process.exitCode = 0;
+    }
+  },
+);
+
 // Usefulness: verifies acceptance (#215) — the install parser rejects an inline
 // value on any boolean flag, empty or not, without a hand-maintained list.
 test("CLI install rejects an inline value on a boolean flag", async () => {

@@ -15,6 +15,7 @@ import {
   roleState,
   readTaskFile,
   roleFlags,
+  STOP_FLAG_WALK,
   TASK_SOURCE_CONFLICT,
 } from "./lib/args.mjs";
 import {
@@ -80,9 +81,10 @@ export function parseArgs(argv) {
     options[`${role}Effort`] = null;
   }
 
+  let helpRequested = false;
   parseFlags(argv, options, {
     roleFlagMap: ROLE_FLAGS,
-    onFlag: (arg, readInline, inline) => {
+    onFlag: (arg, readInline) => {
       switch (arg) {
         case "--no-copy-local-files":
           options.copyLocalFiles = false;
@@ -94,17 +96,19 @@ export function parseArgs(argv) {
 
         case "--help":
         case "-h":
-          if (inline) {
-            throw new Error(`${arg} does not take a value.`);
-          }
-          printHelp();
-          process.exit(0);
+          helpRequested = true;
+          return STOP_FLAG_WALK;
 
         default:
           return false;
       }
     },
   });
+
+  if (helpRequested) {
+    printHelp();
+    process.exit(0);
+  }
 
   // A task file is read in `main`, which then applies the same check.
   const refusal = initRefusal(options, {

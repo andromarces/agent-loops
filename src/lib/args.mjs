@@ -353,20 +353,20 @@ export function initRefusal(
   return null;
 }
 
+/** Returned by an `onFlag` handler to end the walk after the flag it consumed. */
+export const STOP_FLAG_WALK = Symbol("stop flag walk");
+
 /**
- * Runs the flag loop of the headless CLI and the role subcommand over `argv[start..]`, writing into
- * `args`. The flags both commands read are handled here. `onFlag(arg, readInline, inline)` handles
- * the rest and returns true when it consumed `arg`. A flag whose handler read no value is boolean,
- * so an inline value on it is an error rather than a silently dropped argument. `--timeout` also
- * sets `args.timeoutProvided` when `args` carries that key.
+ * Walks `argv[start..]` and hands each flag to `onFlag(arg, readInline, inline)`, which returns true
+ * when it consumed `arg`, `STOP_FLAG_WALK` to consume it and end the walk, or false for an unknown
+ * flag. `readInline(flag, allowDash)` reads the value of the flag, inline or from the next argument.
+ * A flag whose handler read no value is boolean, so an inline value on it is an error rather than a
+ * silently dropped argument.
  * @param {string[]} argv
- * @param {object} args parsed options; mutated
- * @param {object} config
- * @param {number} [config.start] index of the first flag
- * @param {Record<string, string>} config.roleFlagMap `--<role>[-model|-effort]` flag to option key
- * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean} config.onFlag
+ * @param {number} start index of the first flag
+ * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean | symbol} onFlag
  */
-export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag }) {
+export function walkFlags(argv, start, onFlag) {
   for (let i = start; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
@@ -380,16 +380,38 @@ export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag }) {
       return readInlineValue(inline, flag);
     };
 
-    if (Object.hasOwn(roleFlagMap, arg)) {
-      args[roleFlagMap[arg]] = readInline(arg);
-    } else if (!applyCommonFlag(args, arg, readInline) && !onFlag(arg, readInline, inline)) {
+    const consumed = onFlag(arg, readInline, inline);
+    if (!consumed) {
       throw new Error(`Unknown argument: ${raw}`);
     }
-
     if (inline && !inlineUsed) {
       throw new Error(`${arg} does not take a value.`);
     }
+    if (consumed === STOP_FLAG_WALK) {
+      return;
+    }
   }
+}
+
+/**
+ * Runs the flag loop of the headless CLI and the role subcommand over `argv[start..]`, writing into
+ * `args`. The flags both commands read are handled here. `onFlag` handles the rest as in
+ * `walkFlags`. `--timeout` also sets `args.timeoutProvided` when `args` carries that key.
+ * @param {string[]} argv
+ * @param {object} args parsed options; mutated
+ * @param {object} config
+ * @param {number} [config.start] index of the first flag
+ * @param {Record<string, string>} config.roleFlagMap `--<role>[-model|-effort]` flag to option key
+ * @param {Parameters<typeof walkFlags>[2]} config.onFlag
+ */
+export function parseFlags(argv, args, { start = 0, roleFlagMap, onFlag }) {
+  walkFlags(argv, start, (arg, readInline, inline) => {
+    if (Object.hasOwn(roleFlagMap, arg)) {
+      args[roleFlagMap[arg]] = readInline(arg);
+      return true;
+    }
+    return applyCommonFlag(args, arg, readInline) || onFlag(arg, readInline, inline);
+  });
 }
 
 // The flags that both commands read into the same option keys. Returns false for any other flag.

@@ -16,7 +16,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { initRefusal, readStdinText, readTaskFile } from "../../src/lib/args.mjs";
+import {
+  initRefusal,
+  readStdinText,
+  readTaskFile,
+  STOP_FLAG_WALK,
+  walkFlags,
+} from "../../src/lib/args.mjs";
 
 // Usefulness: acceptance (#490) — a read failure that is `null`, `undefined`, or has a throwing
 // `message` getter still ends in the documented read error, so the catch block adds no second error.
@@ -124,5 +130,37 @@ test("initRefusal refuses an orphan model and skips the task check on request", 
   );
   expect(initRefusal({ ...validInit, task: null }, { ...initConfig, blankTaskText: null })).toBe(
     null,
+  );
+});
+
+// Usefulness: acceptance (#1186) — walkFlags is the one flag loop, so its value, boolean, unknown
+// and stop outcomes are what the CLI, role, and install parsers all inherit.
+test("walkFlags hands each flag to its handler and enforces the value rules", () => {
+  const seen = [];
+  const onFlag = (arg, readInline) => {
+    if (arg === "--name") {
+      seen.push([arg, readInline(arg)]);
+      return true;
+    }
+    if (arg === "--on") {
+      seen.push([arg]);
+      return true;
+    }
+    return false;
+  };
+  walkFlags(["skip", "--name", "a", "--name=b", "--on"], 1, onFlag);
+  expect(seen).toEqual([["--name", "a"], ["--name", "b"], ["--on"]]);
+  expect(() => walkFlags(["--on=1"], 0, onFlag)).toThrow("--on does not take a value.");
+  expect(() => walkFlags(["--other=1"], 0, onFlag)).toThrow("Unknown argument: --other=1");
+  expect(() => walkFlags(["--name"], 0, onFlag)).toThrow("Missing value for --name.");
+});
+
+// Usefulness: acceptance (#1186) — a handler that ends the walk still gets the inline-value
+// refusal, which `--help=1` relies on, and the arguments after it stay unread.
+test("walkFlags stops after a handler asks to and still refuses an inline value", () => {
+  const onFlag = (arg) => (arg === "--help" ? STOP_FLAG_WALK : false);
+  expect(() => walkFlags(["--help", "--bogus"], 0, onFlag)).not.toThrow();
+  expect(() => walkFlags(["--help=1", "--bogus"], 0, onFlag)).toThrow(
+    "--help does not take a value.",
   );
 });

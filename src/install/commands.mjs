@@ -4,7 +4,7 @@
 // `--harness`.
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { readArgValue, readInlineValue, splitInlineFlag } from "../lib/args.mjs";
+import { walkFlags } from "../lib/args.mjs";
 import { readableErrorText, readProp } from "../lib/error-message.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
 import { nearestHarness } from "../lib/process-ancestry.mjs";
@@ -35,18 +35,7 @@ function parseHarnessList(value) {
 
 function parseFlags(argv) {
   const options = { harnesses: null, yes: false, dryRun: false, help: false };
-  for (let i = 0; i < argv.length; i++) {
-    const raw = argv[i];
-    const inline = splitInlineFlag(raw);
-    const arg = inline ? inline.flag : raw;
-    let inlineUsed = false;
-    const readInline = (flag) => {
-      if (!inline) {
-        return readArgValue(argv, flag, ++i);
-      }
-      inlineUsed = true;
-      return readInlineValue(inline, flag);
-    };
+  walkFlags(argv, 0, (arg, readInline) => {
     if (arg === "--harness") {
       options.harnesses = parseHarnessList(readInline(arg));
     } else if (arg === "--yes" || arg === "-y") {
@@ -58,15 +47,10 @@ function parseFlags(argv) {
     } else if (arg === "--help" || arg === "-h") {
       options.help = true;
     } else {
-      throw new Error(`Unknown argument: ${raw}`);
+      return false;
     }
-
-    // A flag that read no value is boolean, so an inline value is an error
-    // rather than a silently dropped argument.
-    if (inline && !inlineUsed) {
-      throw new Error(`${arg} does not take a value.`);
-    }
-  }
+    return true;
+  });
   return options;
 }
 
