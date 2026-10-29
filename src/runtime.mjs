@@ -386,10 +386,24 @@ export async function runLoop(options) {
       // A fatal error ends the run with no result event, so the command result and the
       // work tree compare the runtime already read are emitted here, and the transcript
       // keeps them (ADR 0017).
-      const { testRun, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries } =
-        pickTurnEvidence(failedTurnEvidence(err));
+      const {
+        testRun,
+        sharedGitChanged,
+        lockfileChanged,
+        inheritedTmpdirEntries,
+        packageStoreEntries,
+      } = pickTurnEvidence(failedTurnEvidence(err));
       if (testRun) {
         onEvent({ type: "test-run", role: roleName, testRun, fatal: true, stepsUsed });
+      }
+      if (sharedGitChanged) {
+        onEvent({
+          type: "shared-git",
+          role: roleName,
+          items: sharedGitChanged,
+          fatal: true,
+          stepsUsed,
+        });
       }
       if (lockfileChanged) {
         onEvent({

@@ -618,6 +618,34 @@ test("a worker turn whose post-turn shared Git read fails reports no shared Git 
   });
 });
 
+// Usefulness: verifies requirement "an interrupted worker dispatch reports the shared Git change in
+// the envelope and `lastResult`" (issue #1224): a canceled turn that changed `core.hooksPath` or a
+// remote leaves no other trace, and the change affects every work tree of the repository.
+test("a canceled worker dispatch still reports the shared Git state it changed", async () => {
+  await withLinkedWorkTree(async (linked) => {
+    const cancelingWorker = recordingAdapter([
+      async (_state, _prompt, options) => {
+        await execa("git", ["remote", "add", "origin", "https://user:token-9@example.test/a.git"], {
+          cwd: options.cwd,
+        });
+        throw Object.assign(new Error("canceled"), { isCanceled: true });
+      },
+    ]);
+    const agents = { fake1: cancelingWorker, fake2: recordingAdapter([]) };
+
+    const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.sharedGitChanged).toEqual(["remote.origin"]);
+    expect(JSON.stringify(result.payload)).not.toContain("token-9");
+    const state = await readRepoState(linked);
+    expect(state.lifecycle).toBe("interrupted");
+    expect(state.lastResult.sharedGitChanged).toEqual(["remote.origin"]);
+  });
+});
+
 // Usefulness: verifies requirement "a failed shared Git read warns without the Git stderr or a
 // hook path, and leaves the envelope and the state file free of both" (issue #992): the unit tests
 // cover the thrown error, and only a dispatch covers the warning that the worker turn writes.

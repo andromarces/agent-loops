@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { entryCarrier } from "./entry-report.mjs";
 import { sha256 } from "./hash.mjs";
 import { gitRead, SnapshotError, sha256File } from "./snapshot.mjs";
 
@@ -110,6 +111,17 @@ export function diffSharedGit(before, after) {
   for (const name of differing(before.remotes, after.remotes)) changed.push(`remote.${name}`);
   return changed.sort();
 }
+
+const carrier = entryCarrier("sharedGitChanged");
+
+/**
+ * Carries the item names on a fatal error as `err.sharedGitChanged`. A frozen error or a throwing
+ * setter keeps the original error, and the names stay readable through `failedSharedGitChanged`.
+ */
+export const carrySharedGitChanged = carrier.carry;
+
+/** Returns the item names a fatal error carries, or `undefined` when it carries none. */
+export const failedSharedGitChanged = carrier.failed;
 
 function differing(before, after) {
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(

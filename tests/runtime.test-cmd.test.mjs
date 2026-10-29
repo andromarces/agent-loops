@@ -2,6 +2,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { testSlotRule } from "../src/prompts/report.mjs";
@@ -532,6 +533,45 @@ test("a fatal worker error emits the lockfile paths it changed", async () => {
     expect(events.find((e) => e.type === "lockfile")).toMatchObject({
       role: "worker",
       paths: ["pnpm-lock.yaml"],
+      fatal: true,
+      stepsUsed: 1,
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies requirement "a fatal worker error emits the shared Git items it changed"
+// (issue #1224): a canceled worker ends the run with no result event, so the transcript would
+// otherwise lose a hook or remote change that affects every work tree.
+test("a fatal worker error emits the shared Git items it changed", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const fatal = Object.assign(new Error("canceled"), { isCanceled: true });
+    const error = await runLoop({
+      task: "Update the remote.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_worker", prompt: "work" })]),
+        work: scripted([
+          async () => {
+            await execa("git", ["remote", "add", "origin", "https://example.test/a.git"], {
+              cwd: repo,
+            });
+            throw fatal;
+          },
+        ]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBe(fatal);
+    expect(events.find((e) => e.type === "shared-git")).toMatchObject({
+      role: "worker",
+      items: ["remote.origin"],
       fatal: true,
       stepsUsed: 1,
     });
