@@ -142,6 +142,12 @@ function ghApiFailure(endpoint, { status, stderr, transient }) {
   return err;
 }
 
+/**
+ * Runs `gh api` with `args` (the `"api"` word is added here) and parses stdout as JSON.
+ * @returns {Promise<unknown>} the parsed body, or null when stdout is empty
+ * @throws {Error} on a non-zero exit, with `transient` set when the reply was a retryable failure;
+ *   stdout that is not JSON throws a raw `SyntaxError`
+ */
 export async function ghApi(gh, args, cwd) {
   const { status, stdout, stderr, transient } = await gh(["api", ...args], cwd);
   if (status !== 0) {
@@ -499,11 +505,12 @@ export async function readOne(read, endpoint, cwd) {
  * run rather than reaching the gate (issue #280).
  * @param {object} options
  * @param {(stderr: string) => boolean} options.absentOnError the one non-zero
- *   reply that proves this source holds no required check, compared whole.
- *   the exact `Branch not protected` 404 for classic protection, and a predicate that never matches
+ *   reply that proves this source holds no required check, compared whole: the exact
+ *   `Branch not protected` 404 for classic protection, and a predicate that never matches
  *   for repository rulesets, whose endpoint does not write it.
  * @param {(data: unknown) => boolean} [options.malformed] whether a parsed body has a
- *   shape the classification cannot interpret; read by the status read only.
+ *   shape the classification cannot interpret; only the readers that refuse on `unparsed`
+ *   (the status read and the check wait) act on it.
  * @param {(data: unknown) => ({ state: string, contexts: object[] })} options.classify
  *   the classification of a successful reply body.
  * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[], unparsed?: boolean }>}
@@ -540,8 +547,8 @@ async function readRequiredSource(
   const { state, contexts } = classify(body);
   // `unparsed` marks a successful reply that is not the JSON object or array the
   // endpoint returns, or whose shape `malformed` cannot interpret. The gate
-  // ignores it. The status read refuses on it, because that reply may hide a
-  // required context (issue #349).
+  // ignores it. The status read and the check wait refuse on it, because that
+  // reply may hide a required context (issue #349).
   return {
     state,
     contexts,
@@ -710,7 +717,7 @@ function classifyProtection(data) {
   return { state: HAS_CONTEXTS, contexts };
 }
 
-// Whether a classic protection body has a shape the status read cannot interpret.
+// Whether a classic protection body has a shape the status read and the check wait cannot interpret.
 // A body with no `required_status_checks` is interpretable: the branch is
 // protected without a required check. Any other shape that is not an object, a
 // list of names, or a list of `{ context }` entries is not (issue #349).
@@ -815,6 +822,12 @@ export async function inOrder(gh, makers) {
   }
 }
 
+/**
+ * Reads the PR fields the gate judges: `headRefOid`, `baseRefName`, `mergeStateStatus`,
+ * `potentialMergeCommit`, and `state`.
+ * @returns {Promise<object>} the parsed `gh pr view` stdout, with no shape check
+ * @throws {Error} on a non-zero exit; stdout that is not JSON throws a raw `SyntaxError`
+ */
 export async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
     [
@@ -867,9 +880,9 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
  * named checks, exit 1 or 8 (a failing or pending check) with a non-empty list of named checks, or
  * the exact `no required checks reported` answer on exit 1 with no stdout. Any other exit, an empty
  * list on a non-zero exit, an error text that merely contains those words, and the `no checks
- * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read
- * refuses on it, because the list may name a required check no configuration source did (issue
- * #349). A reply that is no list carries `transient` and the `failure` text only for a clean
+ * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read and
+ * the check wait refuse on it, because the list may name a required check no configuration source
+ * did (issue #349). A reply that is no list carries `transient` and the `failure` text only for a clean
  * server-error failure, which the wait retries (#1121).
  * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */

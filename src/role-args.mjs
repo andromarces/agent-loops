@@ -325,7 +325,9 @@ export function parseRoleArgs(argv) {
 
 /**
  * Rejects each flag that belongs to another operation: `--role` is for dispatch,
- * `--reason` for abort, and `--require-accept` and `--require-ci` for finish.
+ * `--reason` for abort, `--all`, `--expect`, and `--head` for wait-checks, and
+ * `--compare-head`, `--require-accept`, and `--require-ci` for finish. It also
+ * refuses `--expect` without `--all` on wait-checks.
  * The checks run in a fixed order, and abort's missing `--reason` is reported
  * before a finish gate, so each refusal keeps its error text.
  */

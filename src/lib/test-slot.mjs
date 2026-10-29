@@ -163,7 +163,7 @@ export function testSlotOptions(
 
 // One pass under the short `acquire.lock`: counts the slot files held by live owners and, while
 // fewer than `slots` are held, takes the lowest free index (`tryStateLock` reclaims a dead
-// owner's file). Returns `{ index, lockFile, release }`, or null when the pass wins no slot.
+// owner's file). Returns `{ index, lockFile, release, nonce }`, or null when the pass wins no slot.
 async function tryAcquireSlot(root, slots) {
   const releaseTable = await tryStateLock(join(root, "acquire.lock"), {
     label: "Test slot table",
