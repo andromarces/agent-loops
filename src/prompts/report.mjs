@@ -29,6 +29,20 @@ export const processRule =
 export const SHELL_EXCEPTION =
   "A user Codex execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception. That rule can run a shell command with an expansion outside the sandbox, with network. The runtime does not prevent that.";
 
+/**
+ * Scopes the Codex sandbox network limit to the shell commands that the sandbox runs. Every
+ * orchestrator and reviewer prompt that states the limit uses this sentence.
+ */
+export const SHELL_ONLY_LIMIT_SENTENCE =
+  "That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.";
+
+/**
+ * The actions that the remote-write rule bars. The orchestrator and reviewer prompts each add their
+ * own lead sentence and status-read exception.
+ */
+export const REMOTE_WRITE_ACTIONS =
+  "do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state.";
+
 const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 
 // Characters that one of bash, PowerShell, and cmd expands or reinterprets inside

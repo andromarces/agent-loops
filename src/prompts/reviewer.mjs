@@ -1,6 +1,8 @@
 import { escapeLineSeparators } from "./escape.mjs";
 import {
+  REMOTE_WRITE_ACTIONS,
   SHELL_EXCEPTION,
+  SHELL_ONLY_LIMIT_SENTENCE,
   initTaskBlock,
   processRule,
   reportBlock,
@@ -94,8 +96,7 @@ function testRunLines(testRun) {
 // A reviewer turn never writes to a remote. The runtime mutation check reads only
 // the local work tree, so this rule is advisory and the runtime does not detect a
 // breach (issue #422).
-const remoteWriteRule =
-  "Do not write to GitHub or any remote: do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state. A read-only query changes nothing, so it stays allowed.";
+const remoteWriteRule = `Do not write to GitHub or any remote: ${REMOTE_WRITE_ACTIONS} A read-only query changes nothing, so it stays allowed.`;
 
 // A package-manager install writes to the shared store outside the repository and to `node_modules`,
 // both ignored, so the mutation check passes and every work tree that links the store is exposed.
@@ -164,13 +165,13 @@ const sandboxNotes = {
   ],
   "read-only": [
     "Sandbox note, supplied by the runtime:",
-    "- This turn runs in a read-only sandbox. The shell commands that you run have no network access, and a child process spawn or a test run can fail here. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.",
+    `- This turn runs in a read-only sandbox. The shell commands that you run have no network access, and a child process spawn or a test run can fail here. ${SHELL_ONLY_LIMIT_SENTENCE}`,
     `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
     noEditLine,
   ],
   "workspace-write": [
     "Sandbox note, supplied by the runtime:",
-    "- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. That limit covers shell commands only: it does not block model-side tools, such as web search, or any other channel outside the sandbox.",
+    `- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. ${SHELL_ONLY_LIMIT_SENTENCE}`,
     `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
     "- A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
     noEditLine,
