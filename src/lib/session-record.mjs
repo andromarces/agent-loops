@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { sha256 } from "./hash.mjs";
+import { tmpRoot } from "./tmp-root.mjs";
 import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
 import { resolveWriteTarget, writeFileAtomic } from "./atomic-write.mjs";
@@ -74,10 +74,8 @@ export async function sessionRecordPath(transcript) {
  * The directory of all session records: `AGENT_LOOP_SESSION_RECORDS_ROOT`, else
  * `<os tmpdir>/agent-loops/session-records`.
  */
-export function sessionRecordsRoot() {
-  const override = process.env.AGENT_LOOP_SESSION_RECORDS_ROOT;
-  return override ? resolve(override) : join(tmpdir(), "agent-loops", "session-records");
-}
+export const sessionRecordsRoot = () =>
+  tmpRoot("AGENT_LOOP_SESSION_RECORDS_ROOT", "session-records");
 
 function recordPath(key) {
   return join(sessionRecordsRoot(), `${key}.json`);

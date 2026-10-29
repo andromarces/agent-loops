@@ -20,7 +20,7 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 const redaction = vi.hoisted(() => ({ throwOnRedact: false }));
-vi.mock("../src/lib/test-cmd.mjs", async (importOriginal) => {
+vi.mock("../src/lib/redact.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,

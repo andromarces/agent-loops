@@ -10,7 +10,7 @@ import {
   writeSessionRecord,
 } from "./session-record.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
-import { redactAndClean } from "./test-cmd.mjs";
+import { redactAndClean } from "./redact.mjs";
 
 /**
  * Owns the transcript data and every write of it: the file, the force-exit write, and the

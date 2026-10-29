@@ -17,7 +17,7 @@ import {
   matchingGate,
   refuseDeclaredPrConflict,
   resetGate,
-} from "./lib/continuation.mjs";
+} from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { failedTurnEvidence, invoke, runChild } from "./child-turn.mjs";

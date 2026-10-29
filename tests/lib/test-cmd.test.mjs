@@ -5,7 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
-import { TAIL_CHARS, redactAndClean, runTestCmd } from "../../src/lib/test-cmd.mjs";
+import { redactAndClean } from "../../src/lib/redact.mjs";
+import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   createTempRepo,

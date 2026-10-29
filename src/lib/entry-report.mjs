@@ -1,4 +1,4 @@
-import { redactAndClean } from "./test-cmd.mjs";
+import { redactAndClean } from "./redact.mjs";
 
 // Names that one report lists at most.
 const MAX_ENTRIES = 20;

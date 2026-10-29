@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { logDebug, logInfo } from "./log.mjs";
-import { rootPins, withPnpmDepsCheckWarn } from "./root-pins.mjs";
+import { rootPins } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
 
 /**
@@ -58,6 +58,25 @@ export function withNpmLogSettings(env, callerEnv = {}) {
   const out = Object.fromEntries(Object.entries(env).filter(([name]) => !settingOf(name)));
   if (!held.dir && !held.max) held.max = "0";
   for (const [key, value] of Object.entries(held)) out[`npm_config_logs_${key}`] = value;
+  return out;
+}
+
+// pnpm reads this setting from an environment name of any case.
+const PNPM_DEPS_CHECK_NAME = /^pnpm_config_verify_deps_before_run$/i;
+
+/**
+ * Returns `env`, the complete child environment, with `pnpm_config_verify_deps_before_run` set to
+ * `warn` in one spelling, so pnpm never installs from its dependency check before `pnpm run` or
+ * `pnpm exec` (issue #1145). The default `install` can write to the `node_modules` of the work tree
+ * and to the shared pnpm store, outside the reach of the mutation check. The environment overrides
+ * a `verifyDepsBeforeRun` workspace setting. An inherited value of any case is dropped, and `warn`
+ * wins over a user value.
+ */
+export function withPnpmDepsCheckWarn(env) {
+  const out = Object.fromEntries(
+    Object.entries(env).filter(([name]) => !PNPM_DEPS_CHECK_NAME.test(name)),
+  );
+  out.pnpm_config_verify_deps_before_run = "warn";
   return out;
 }
 

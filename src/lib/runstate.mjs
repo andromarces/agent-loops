@@ -12,9 +12,9 @@
 // single-file index at `<root>/sessions/<parent-session>`; init never writes it,
 // and the directory name avoids a file-versus-directory clash at that path.
 import { mkdir, readFile, readdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { sha256 } from "./hash.mjs";
+import { tmpRoot } from "./tmp-root.mjs";
 import { isJsonObject } from "./json.mjs";
 import { writeFileAtomic } from "./atomic-write.mjs";
 
@@ -57,10 +57,7 @@ export function statePaths({ cwd, parentSession } = {}) {
 }
 
 /** The directory of all run state: `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. */
-export function stateRoot() {
-  const override = process.env.AGENT_LOOP_RUNS_ROOT;
-  return override ? resolve(override) : join(tmpdir(), "agent-loops", "runs");
-}
+export const stateRoot = () => tmpRoot("AGENT_LOOP_RUNS_ROOT", "runs");
 
 /**
  * The name of the state directory of the run in one work tree, which is also the key that binds
