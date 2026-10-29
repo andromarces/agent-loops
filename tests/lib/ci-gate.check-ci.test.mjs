@@ -6,7 +6,7 @@ import {
   isPagedRead,
   pagedApiArgs,
   pageStdout,
-} from "../runtime-helpers.mjs";
+} from "../gh-doubles.mjs";
 import {
   barrierGh,
   commitStatus,

@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
-import { createTempRepo, prGateGh, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
+import { createTempRepo, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
+import { prGateGh } from "./gh-doubles.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 export const WORKER_REPLY = `${REPORT}\nContinuing next turn.`;

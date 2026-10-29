@@ -15,16 +15,8 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { runLoop } from "../src/runtime.mjs";
-import {
-  cleanRepoGit,
-  createCleanRepoDir,
-  gateRoles,
-  REVIEW_ACCEPT,
-  REVIEW_REJECT,
-  removePath,
-  scripted,
-  SUMMARY,
-} from "./runtime-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, removePath, scripted } from "./runtime-helpers.mjs";
+import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./gh-doubles.mjs";
 
 // 29. Usefulness: verifies --require-accept refuses a finish with no later
 // reviewer accept, then allows the finish once a reviewer accepts that state

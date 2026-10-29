@@ -22,13 +22,10 @@ import {
   cleanRepoGit,
   createCleanRepoDir,
   createTempRepo,
-  freePlanGh,
-  gateRoles,
   removePath,
-  REVIEW_ACCEPT,
   scripted,
-  SUMMARY,
 } from "./runtime-helpers.mjs";
+import { freePlanGh, gateRoles, REVIEW_ACCEPT, SUMMARY } from "./gh-doubles.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 

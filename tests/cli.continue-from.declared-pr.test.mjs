@@ -23,9 +23,8 @@ import {
   cleanRepoGit,
   continueAgents,
   createWithContinueRepo,
-  prGateGh,
-  SUMMARY,
 } from "./runtime-helpers.mjs";
+import { prGateGh, SUMMARY } from "./gh-doubles.mjs";
 
 const withContinueRepo = createWithContinueRepo(doubles);
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];

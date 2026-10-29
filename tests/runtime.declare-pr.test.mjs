@@ -19,18 +19,20 @@ import {
   CLEAN_REPO_HEAD,
   cleanRepoGit,
   createCleanRepoDir,
+  removePath,
+  scripted,
+} from "./runtime-helpers.mjs";
+import {
   equalsArgs,
   freePlanGh,
   gateRoles,
   PASSING_RUN,
   prGateGh,
   prViewArgs,
-  removePath,
   REVIEW_ACCEPT,
-  scripted,
   SUMMARY,
   unreachableGh,
-} from "./runtime-helpers.mjs";
+} from "./gh-doubles.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 const MATCH = {

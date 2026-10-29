@@ -34,10 +34,9 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit, removePath } from "./runtime-helpers.mjs";
 import {
   apiArgs,
-  CLEAN_REPO_HEAD,
-  cleanRepoGit,
   equalsArgs,
   expectNoReplyToMalformedCalls,
   gateReadCalls,
@@ -48,9 +47,8 @@ import {
   prChecksArgs,
   prGateGh,
   prViewArgs,
-  removePath,
   REPO_VIEW_ARGS,
-} from "./runtime-helpers.mjs";
+} from "./gh-doubles.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

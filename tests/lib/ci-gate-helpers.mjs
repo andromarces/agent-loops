@@ -6,7 +6,7 @@ import {
   prChecksArgs,
   prViewArgs,
   REPO_VIEW_ARGS,
-} from "../runtime-helpers.mjs";
+} from "../gh-doubles.mjs";
 
 export const HEAD = "1111111111111111111111111111111111111111";
 

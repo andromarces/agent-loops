@@ -11,7 +11,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { freePlanGh, PASSING_RUN, prGateGh, unreachableGh } from "./runtime-helpers.mjs";
+import { freePlanGh, PASSING_RUN, prGateGh, unreachableGh } from "./gh-doubles.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

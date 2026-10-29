@@ -18,15 +18,17 @@ import {
   CLEAN_REPO_HEAD,
   cleanRepoGit,
   createCleanRepoDir,
+  removePath,
+  scripted,
+} from "./runtime-helpers.mjs";
+import {
   freePlanGh,
   gateRoles,
   prGateGh,
-  removePath,
   REVIEW_ACCEPT,
-  scripted,
   SUMMARY,
   unreachableGh,
-} from "./runtime-helpers.mjs";
+} from "./gh-doubles.mjs";
 
 const REVIEW_THEN_FINISH = [
   JSON.stringify({ action: "run_reviewer", prompt: "review" }),

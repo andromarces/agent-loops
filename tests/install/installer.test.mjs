@@ -1,7 +1,7 @@
-import { existsSync, realpathSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
@@ -9,9 +9,7 @@ import { deepEqual } from "../../src/install/settings.mjs";
 import { sha256 } from "../../src/lib/hash.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
-import { detectHarnesses } from "../../src/install/detect-harnesses.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
-import { isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { manifestLockFile, manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import {
   PACKAGE_ROOT,
@@ -177,18 +175,6 @@ test("dry-run reports planned writes and changes nothing", async () => {
   expect(existsSync(manifestPath(home))).toBe(false);
 });
 
-// Usefulness: verifies detection from a controlled PATH, so the result does not depend on machine load.
-test("detectHarnesses returns a subset of the registry", async () => {
-  const bin = await makeHome();
-  await writeFile(join(bin, "codex"), "");
-  await writeFile(join(bin, "claude"), "");
-  const detected = await detectHarnesses({ path: bin });
-  expect(detected).toEqual(["claude", "codex"]);
-  for (const harness of detected) {
-    expect(HARNESS_ORDER).toContain(harness);
-  }
-});
-
 // Usefulness: verifies the development-install acceptance — after a clone
 // moves, re-running install points every rendered entry at the new package
 // location, because the entries follow `packageRoot`, not the process cwd.
@@ -280,125 +266,6 @@ test("install refuses a bunx or yarn dlx temporary package root", async () => {
     expect(error.message, packageRoot).toMatch(/^Refusing to install.*(bunx|yarn dlx)/);
     expect(error.message, packageRoot).toMatch(/install globally/i);
     expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
-  }
-});
-
-const BUNX_LAYOUT = ["bunx-501-@andromarces", "agent-loops@0.5.0", "node_modules", "pkg"];
-const BUNX_UNSCOPED_LAYOUT = ["bunx-501-ccstatusline@latest", "node_modules", "pkg"];
-const YARN_LAYOUT = ["xfs-8de51b90", "dlx-31536", ".yarn", "cache", "x.zip", "node_modules", "pkg"];
-
-// Usefulness: verifies #207 — a complete bunx or yarn dlx layout is refused directly under each resolved temporary root.
-test("a bunx or yarn dlx layout directly under a temporary root is refused", () => {
-  const tempRoots = new Set([tmpdir(), realpathSync(tmpdir())]);
-  for (const root of tempRoots) {
-    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
-      expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
-    }
-  }
-  const bunxRoots = ["/tmp", "/private/tmp"].filter((root) => existsSync(root));
-  for (const root of bunxRoots) {
-    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT]) {
-      expect(isEphemeralPackageRoot(join(root, ...layout)), join(root, ...layout)).toBe(true);
-    }
-  }
-});
-
-// Usefulness: verifies #962 — a package root reached through a link into a temporary root is refused like its canonical spelling, so a symlinked `/var` against `/private/var` cannot hide a layout.
-test("a runner layout reached through a link to a temporary root is refused", async () => {
-  const base = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-alias-")));
-  trackHome(base);
-  const realTemp = join(base, "real");
-  const linkTemp = join(base, "link");
-  await mkdir(realTemp);
-  await symlink(realTemp, linkTemp, process.platform === "win32" ? "junction" : "dir");
-  const temp = { bunx: [realTemp], yarn: [realTemp] };
-  for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
-    await mkdir(join(realTemp, ...layout), { recursive: true });
-    const viaLink = join(linkTemp, ...layout);
-    expect(isEphemeralPackageRoot(join(realTemp, ...layout), process.platform, temp)).toBe(true);
-    expect(isEphemeralPackageRoot(viaLink, process.platform, temp), viaLink).toBe(true);
-  }
-});
-
-// Usefulness: verifies #962 — a `..` segment in the package root is resolved before the match, so it neither hides a temporary layout nor makes a stable layout look temporary.
-test("a package root with a .. segment is compared by its canonical path", () => {
-  const temp = { bunx: [tmpdir()], yarn: [tmpdir()] };
-  const raw = (...segments) => segments.join(sep);
-  for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
-    const hidden = raw(tmpdir(), "elsewhere", "..", ...layout);
-    expect(isEphemeralPackageRoot(hidden, process.platform, temp), hidden).toBe(true);
-  }
-  const climbed = raw(tmpdir(), ...BUNX_LAYOUT.slice(0, 3), "..", "..", "stable", "pkg");
-  expect(isEphemeralPackageRoot(climbed, process.platform, temp), climbed).toBe(false);
-});
-
-// Usefulness: verifies #207 does not over-match — a complete bunx or yarn dlx layout under a stable parent is still accepted.
-test("a bunx or yarn dlx layout under a stable parent is not refused", () => {
-  const stableParents = [join("home", "user", "projects"), join("home", "user", "tmp")];
-  for (const parent of stableParents) {
-    for (const layout of [BUNX_LAYOUT, BUNX_UNSCOPED_LAYOUT, YARN_LAYOUT]) {
-      expect(isEphemeralPackageRoot(join(parent, ...layout)), join(parent, ...layout)).toBe(false);
-    }
-  }
-  const split = { bunx: ["/var/T", "/tmp"], yarn: ["/var/T"] };
-  expect(isEphemeralPackageRoot(join("/tmp", ...BUNX_LAYOUT), "linux", split)).toBe(true);
-  expect(isEphemeralPackageRoot(join("/tmp", ...YARN_LAYOUT), "linux", split)).toBe(false);
-  const lookalikes = [
-    join(tmpdir(), "bunx-501-tools", "node_modules", "pkg"),
-    join(tmpdir(), "bunx-demo", "node_modules", "pkg"),
-    join(tmpdir(), "dlx-31536", "node_modules", "pkg"),
-    join(tmpdir(), "xfs-8de51b90", "project", "dlx-31536", "node_modules", "pkg"),
-  ];
-  for (const packageRoot of lookalikes) {
-    expect(isEphemeralPackageRoot(packageRoot), packageRoot).toBe(false);
-  }
-});
-
-// Usefulness: verifies #207 and #625 on Windows — every runner layout compares case-insensitively there, and only there.
-test("windows folds case for every runner layout", () => {
-  const winTemp = "C:\\Users\\Dev\\AppData\\Local\\Temp";
-  const temp = { bunx: [winTemp], yarn: [winTemp] };
-  const upperTemp = "C:\\USERS\\DEV\\APPDATA\\LOCAL\\TEMP";
-  for (const layout of [BUNX_LAYOUT, YARN_LAYOUT]) {
-    const upper = [upperTemp, ...layout.map((segment) => segment.toUpperCase())].join("\\");
-    expect(isEphemeralPackageRoot(upper, "win32", temp), upper).toBe(true);
-    expect(isEphemeralPackageRoot(upper, "linux", temp), upper).toBe(false);
-  }
-  const stable = ["C:\\Projects-stable-parent", ...BUNX_LAYOUT].join("\\");
-  expect(isEphemeralPackageRoot(stable, "win32", temp), stable).toBe(false);
-  const npxRoots = [
-    ["C:", "cache", "_npx", "09f5e92d3f3f415f", "node_modules", "pkg"],
-    ["C:", "cache", "_NPX", "09F5E92D3F3F415F", "node_modules", "pkg"],
-    ["C:", "cache", "_Npx", "09f5e92d3f3f415f", "Node_Modules", "pkg"],
-  ].map((segments) => segments.join("\\"));
-  const dlxRoots = [
-    ["C:", "pnpm", "dlx", "0dd49d4f3230c83239c085437bfea068", "node_modules"],
-    ["C:", "pnpm", "DLX", "0DD49D4F3230C83239C085437BFEA068", "node_modules"],
-    ["C:", "pnpm", "Dlx", "0dd49d4f3230c83239c085437bfea068", "work", "NODE_MODULES"],
-  ].map((segments) => segments.join("\\"));
-  for (const packageRoot of [...npxRoots, ...dlxRoots]) {
-    expect(isEphemeralPackageRoot(packageRoot, "win32", temp), packageRoot).toBe(true);
-  }
-  const mixedCase = [...npxRoots, ...dlxRoots].filter(
-    (root) => root !== npxRoots[0] && root !== dlxRoots[0],
-  );
-  for (const packageRoot of mixedCase) {
-    expect(isEphemeralPackageRoot(packageRoot, "linux", temp), packageRoot).toBe(false);
-  }
-});
-
-// Usefulness: verifies #625 does not over-match — on Windows a `_NPX` or `DLX` segment outside the cache layout (hash directory, then node_modules) is still accepted.
-test("windows accepts a case-different npx or dlx look-alike outside the cache layout", () => {
-  const temp = { bunx: [], yarn: [] };
-  const lookalikes = [
-    ["C:", "work", "DLX", "project", "node_modules", "pkg"],
-    ["C:", "work", "_NPX", "tools", "node_modules", "pkg"],
-    ["C:", "work", "DLX", "09F5E92D3F3F415F", "src", "pkg"],
-    ["C:", "work", "_NPX", "short", "node_modules", "pkg"],
-    ["C:", "DLX", "node_modules", "09F5E92D3F3F415F", "pkg"],
-  ].map((segments) => segments.join("\\"));
-  for (const packageRoot of lookalikes) {
-    expect(isEphemeralPackageRoot(packageRoot, "win32", temp), packageRoot).toBe(false);
   }
 });
 

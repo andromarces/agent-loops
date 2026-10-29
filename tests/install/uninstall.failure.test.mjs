@@ -6,16 +6,13 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
 import { removeDirQuiet } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath, readManifest } from "../../src/install/manifest.mjs";
 import { removePath, restoreAgentLoopHome } from "../runtime-helpers.mjs";
-import { readText } from "./install-helpers.mjs";
-
-const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+import { PACKAGE_ROOT, cleanupHomes, makeHome, readText, trackHome } from "./install-helpers.mjs";
 
 // Caller-set path -> error code for a forced `rmdir` failure.
 const control = vi.hoisted(() => ({ failures: new Map() }));
@@ -37,18 +34,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const homes = [];
-
-async function makeHome() {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-uninstall-failure-"));
-  homes.push(home);
-  return home;
-}
-
 // Home under a path longer than 300 characters, whatever TMPDIR is.
 async function makeLongPathHome() {
   const parent = await mkdtemp(join(tmpdir(), "agent-loop-uninstall-long-"));
-  homes.push(parent);
+  trackHome(parent);
   const home = join(parent, "a".repeat(120), "b".repeat(120), "home");
   await mkdir(home, { recursive: true });
   return home;
@@ -56,10 +45,7 @@ async function makeLongPathHome() {
 
 afterEach(async () => {
   control.failures.clear();
-  for (const home of homes) {
-    await removePath(home);
-  }
-  homes.length = 0;
+  await cleanupHomes();
 });
 
 function deepestDir(dirs) {

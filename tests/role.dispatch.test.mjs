@@ -37,13 +37,8 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import {
-  createTempRepo,
-  gitWhileDotGitExists,
-  PASSING_RUN,
-  prGateGh,
-  removePath,
-} from "./runtime-helpers.mjs";
+import { createTempRepo, gitWhileDotGitExists, removePath } from "./runtime-helpers.mjs";
+import { PASSING_RUN, prGateGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Every test body runs through a body barrier (issue #943)
