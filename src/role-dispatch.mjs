@@ -28,7 +28,7 @@ import {
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
-import { failedTurnEvidence, runChild } from "./child-turn.mjs";
+import { failedTurnEvidence, pickTurnEvidence, runChild } from "./child-turn.mjs";
 import {
   normalizedLocalPaths,
   rejectInitFlagChanges,
@@ -557,30 +557,6 @@ function recordTurn(state, roleName, result, at) {
   });
 }
 
-// The evidence fields of a turn result, in both the ok and the error envelope. `runChild` leaves out
-// an empty field, so a truthy test picks the fields that the turn carries.
-// - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
-//   (issue #984).
-// - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
-//   reviewer turn. Advisory: the runtime cannot attribute them to the turn (issue #1024).
-// - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
-//   Advisory, like the temporary directory entries (issue #1045).
-// - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the
-//   comparison with the Checks line. The state file keeps it beside the response in `lastResult`,
-//   and the turn history keeps its fixed shape.
-const TURN_EVIDENCE_FIELDS = [
-  "sharedGitChanged",
-  "inheritedTmpdirEntries",
-  "packageStoreEntries",
-  "testRun",
-];
-
-function turnEvidence(result) {
-  return Object.fromEntries(
-    TURN_EVIDENCE_FIELDS.filter((field) => result[field]).map((field) => [field, result[field]]),
-  );
-}
-
 // Builds the envelope for one dispatched turn. When the closing block does not
 // parse, `raw` carries the whole response: a bounded tail can drop the head of a
 // long block and with it the text the report was meant to preserve (issue #268).
@@ -591,7 +567,7 @@ function dispatchPayload(roleName, result) {
       status: "error",
       error: result.error,
       ...(result.transient ? { transient: result.transient } : {}),
-      ...turnEvidence(result),
+      ...pickTurnEvidence(result),
     };
   }
   const report = parseReportBlock(result.response);
@@ -604,7 +580,7 @@ function dispatchPayload(roleName, result) {
   if (result.workTree) {
     payload.workTree = result.workTree;
   }
-  Object.assign(payload, turnEvidence(result));
+  Object.assign(payload, pickTurnEvidence(result));
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
     if (result.reviewed) {
