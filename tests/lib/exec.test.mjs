@@ -462,3 +462,18 @@ test("exec replaces an inherited pnpm dependency check install for a reviewer sp
     }),
   ).toEqual(warn);
 });
+
+// Usefulness: verifies the spawn hook gets the pid of the child while it runs, and that a hook which
+// rejects never changes the outcome of the child.
+test("exec hands the child pid to onSpawn and ignores a rejecting hook", async () => {
+  const pids = [];
+  const result = await exec(process.execPath, ["-e", 'console.log("ran")'], {
+    onSpawn: async (pid) => {
+      pids.push(pid);
+      throw new Error("hook failed");
+    },
+  });
+  expect(result.stdout.trim()).toBe("ran");
+  expect(pids).toHaveLength(1);
+  expect(Number.isInteger(pids[0])).toBe(true);
+});

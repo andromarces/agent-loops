@@ -1,10 +1,19 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removeAbandonedTurnTmpdir, withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
+import { processStartTime } from "../../src/lib/process-identity.mjs";
+import { deadPid, removePath } from "../runtime-helpers.mjs";
 
 const TMP_VARS = ["TMPDIR", "TEMP", "TMP"];
 
@@ -94,3 +103,86 @@ test("a replacement during the removal keeps its empty directory", async () => {
     }
   });
 }, 60_000);
+
+// Usefulness: verifies a recorded directory whose name is not a turn directory name is never
+// removed, so an edited state file cannot steer the removal at another directory.
+test("an abandoned-directory record with another name removes nothing", async () => {
+  await withRoot(async (root) => {
+    const other = join(root, "keep-me");
+    mkdirSync(other);
+    writeFileSync(join(other, "sentinel.txt"), "keep\n");
+    await removeAbandonedTurnTmpdir({ dir: other, parentReal: root, device: "1", inode: "1" });
+    expect(existsSync(join(other, "sentinel.txt"))).toBe(true);
+  });
+});
+
+// The record that `onCreated` would hand over for a directory that a test made, with the identity
+// of that directory and the given recorded child.
+function abandonedRecord(root, child) {
+  const dir = join(root, "al-abc123");
+  mkdirSync(dir);
+  writeFileSync(join(dir, "sentinel.txt"), "keep\n");
+  const stat = lstatSync(dir, { bigint: true });
+  return {
+    dir,
+    parentReal: dirname(realpathSync.native(dir)),
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    ...(child && { child }),
+  };
+}
+
+// Usefulness: verifies issue #1207 review blocker 1, that a record the caller could not persist
+// stops the turn before the child starts and leaves no turn directory behind.
+test("a failed record of the turn directory stops the turn and removes the directory", async () => {
+  await withRoot(async (root) => {
+    let started = false;
+    await expect(
+      withTurnTmpdir(
+        async () => {
+          started = true;
+        },
+        {
+          onCreated: async () => {
+            throw new Error("state write failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("state write failed");
+    expect(started).toBe(false);
+    expect(readdirSync(root)).toEqual([]);
+  });
+});
+
+// Usefulness: verifies issue #1207 review blocker 2, that a recorded child that still runs keeps
+// the directory, because the recovery would delete a directory that the live child still uses.
+test("an abandoned directory whose recorded child still runs is kept", async () => {
+  await withRoot(async (root) => {
+    const record = abandonedRecord(root, {
+      pid: process.pid,
+      startTime: (await processStartTime(process.pid)) ?? undefined,
+    });
+    await removeAbandonedTurnTmpdir(record);
+    expect(existsSync(join(record.dir, "sentinel.txt"))).toBe(true);
+  });
+});
+
+// Usefulness: verifies issue #1207 review blocker 2, that a record with no child pid keeps the
+// directory, because no process of the dead turn can be ruled out.
+test("an abandoned directory with no recorded child is kept", async () => {
+  await withRoot(async (root) => {
+    const record = abandonedRecord(root);
+    await removeAbandonedTurnTmpdir(record);
+    expect(existsSync(join(record.dir, "sentinel.txt"))).toBe(true);
+  });
+});
+
+// Usefulness: verifies that the liveness check does not keep a directory forever, so a recorded
+// child that has ended lets the removal run.
+test("an abandoned directory whose recorded child has ended is removed", async () => {
+  await withRoot(async (root) => {
+    const record = abandonedRecord(root, { pid: await deadPid() });
+    await removeAbandonedTurnTmpdir(record);
+    expect(existsSync(record.dir)).toBe(false);
+  });
+});
