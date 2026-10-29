@@ -1,23 +1,12 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 import { install } from "../../src/install/installer.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { PACKAGE_ROOT, cleanupHomes, makeHome } from "./install-helpers.mjs";
 
-const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const homes = [];
-
-afterEach(async () => {
-  for (const home of homes.splice(0)) {
-    await removePath(home);
-  }
-});
+afterEach(cleanupHomes);
 
 async function skillNote(harness, skillsDir) {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-notes-home-"));
-  homes.push(home);
+  const home = await makeHome();
   const reports = await install({ harnesses: [harness], home, packageRoot: PACKAGE_ROOT });
   const note = reports.find((r) => r.action === "note" && r.path === join(home, ...skillsDir));
   expect(note).toBeDefined();
@@ -43,8 +32,7 @@ test.each([
 test.each([{ dryRun: true }, { dryRun: false }])(
   "the Codex trust note names the hook and says the guard stays inactive until trusted (dryRun: $dryRun)",
   async ({ dryRun }) => {
-    const home = await mkdtemp(join(tmpdir(), "agent-loop-notes-home-"));
-    homes.push(home);
+    const home = await makeHome();
     const reports = await install({
       harnesses: ["codex"],
       home,
@@ -82,8 +70,7 @@ test.each([
 ])(
   "notes for $harnesses keep their order (dryRun: $dryRun)",
   async ({ harnesses, dryRun, paths }) => {
-    const home = await mkdtemp(join(tmpdir(), "agent-loop-notes-home-"));
-    homes.push(home);
+    const home = await makeHome();
     const reports = await install({ harnesses, home, packageRoot: PACKAGE_ROOT, dryRun });
     const notes = reports.filter((r) => r.action === "note").map((r) => r.path);
     expect(notes).toEqual(paths.map((p) => join(home, ...p.split("/"))));

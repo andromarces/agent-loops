@@ -1,7 +1,7 @@
 import {} from "node:path";
 import { expect, test } from "vite-plus/test";
 import { checkCi, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
-import { equalsArgs } from "../runtime-helpers.mjs";
+import { equalsArgs } from "../gh-doubles.mjs";
 import {
   barrierGh,
   commitStatus,

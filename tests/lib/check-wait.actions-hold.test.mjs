@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { pageStdout } from "../runtime-helpers.mjs";
+import { pageStdout } from "../gh-doubles.mjs";
 import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./check-wait-helpers.mjs";
 
 // The `--all` wait holds a pass while a `pull_request` workflow of the base branch can run for the PR

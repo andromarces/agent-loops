@@ -10,6 +10,7 @@ import { ANTIGRAVITY_GUARDED_TOOLS } from "../../src/hook/antigravity-guarded-to
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
+import { PACKAGE_ROOT } from "../install/install-helpers.mjs";
 import { createTempRepo, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
 
 const noopAdapter = {
@@ -444,8 +445,7 @@ test("installed Claude hook command runs the guard through a shell", async () =>
     { agents: INIT_AGENTS, stdin: async () => "work" },
   );
 
-  const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
-  const targets = await buildTargets("claude", { home: packageRoot, packageRoot });
+  const targets = await buildTargets("claude", { home: PACKAGE_ROOT, packageRoot: PACKAGE_ROOT });
   const command = targets.settings[0].entry.hooks[0].command;
 
   const denied = await runShellHookCommand(
@@ -540,8 +540,6 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
   expect(afterAbort.code).toBe(0);
   expect(afterAbort.stdout).toBe("");
 });
-
-const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 // Renders the Antigravity targets through the installer, so the behavioral
 // tests below drive the adapter with the exact tools, command, and shim the

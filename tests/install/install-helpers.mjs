@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
+import { readTextOrNull } from "../../src/install/fsutil.mjs";
 import { deepEqual } from "../../src/install/settings.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { removePath } from "../runtime-helpers.mjs";
@@ -34,16 +35,7 @@ export async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-export async function readText(path) {
-  try {
-    return await readFile(path, "utf8");
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
-}
+export { readTextOrNull as readText };
 
 export function claudeSeed() {
   return {
@@ -80,7 +72,7 @@ export async function targetPaths(harness, home, extra = {}) {
 // The guard the harness owns is present in its settings file.
 export async function guardIsInstalled(home, harness) {
   const target = (await targetPaths(harness, home)).settings[0];
-  const settings = JSON.parse(await readText(target.path));
+  const settings = JSON.parse(await readTextOrNull(target.path));
   if (target.locator.kind === "key") {
     return deepEqual(settings[target.locator.key], target.entry);
   }

@@ -27,14 +27,10 @@ import {
   cleanRepoGit,
   createCleanRepoDir,
   createTempRepo,
-  gateRoles,
-  prGateGh,
   removePath,
-  REVIEW_ACCEPT,
-  REVIEW_REJECT,
   scripted,
-  SUMMARY,
 } from "./runtime-helpers.mjs";
+import { gateRoles, prGateGh, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./gh-doubles.mjs";
 
 // Usefulness: verifies a worker turn that ran in a replacement conversation is followed by one
 // preamble-only turn in that conversation, in the same step, and never reruns the task, so its

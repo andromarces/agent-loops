@@ -19,7 +19,8 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { createTempRepo, freePlanGh, unreachableGh } from "./runtime-helpers.mjs";
+import { createTempRepo } from "./runtime-helpers.mjs";
+import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
 
 afterEach(cleanup);
 

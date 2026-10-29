@@ -24,6 +24,10 @@ import {
   cleanRepoGit,
   createCleanRepoDir,
   createTempRepo,
+  removePath,
+  scripted,
+} from "./runtime-helpers.mjs";
+import {
   equalsArgs,
   gateRoles,
   isPagedRead,
@@ -34,12 +38,10 @@ import {
   prChecksArgs,
   prGateGh,
   prViewArgs,
-  removePath,
   REVIEW_ACCEPT,
   REVIEW_REJECT,
-  scripted,
   SUMMARY,
-} from "./runtime-helpers.mjs";
+} from "./gh-doubles.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 
