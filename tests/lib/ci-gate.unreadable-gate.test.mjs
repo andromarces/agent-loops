@@ -56,14 +56,12 @@ function recordingGh(table) {
   return { calls, gh: (args, ...rest) => (calls.push(args.join(" ")), gh(args, ...rest)) };
 }
 
-const readsOtherSources = (call) => call.includes("/protection") || call.startsWith("pr checks");
-
-// Usefulness: verifies #1182 — the preflight judges only the ruleset source, so a readable ruleset
-// read starts no branch-protection read and no `gh pr checks`, which the answer never depends on.
-it("a readable ruleset read finishes the preflight with no protection read and no pr checks", async () => {
+// Usefulness: verifies #1182 — the preflight starts no `gh pr checks`, which its answer never
+// depends on, when the ruleset read settles something.
+it("a readable ruleset read finishes the preflight with no pr checks", async () => {
   const { calls, gh } = recordingGh(routes());
   expect(await unreadableGateReason({ pr: 42, cwd: ".", gh })).toBeNull();
-  expect(calls.some(readsOtherSources)).toBe(false);
+  expect(calls.some((call) => call.startsWith("pr checks"))).toBe(false);
 });
 
 const UNREADABLE_RULESETS = [
@@ -86,4 +84,38 @@ it("an unreadable ruleset source is still refused, with no pr checks", async () 
 it("an unreadable ruleset source beside a failed protection read is no refusal", async () => {
   const gh = fakeGh([...UNREADABLE_RULESETS, [PROTECTION, "stderr: gh: Bad Gateway (HTTP 502)"]]);
   expect(await unreadableGateReason({ pr: 42, cwd: ".", gh })).toBeNull();
+});
+
+/** A `gh` over `table` that answers each call in `delays` (keyed by the route) after that many ms. */
+function slowGh(table, delays) {
+  const gh = fakeGh(table);
+  return async (args, ...rest) => {
+    const key = args.join(" ");
+    const wait = Object.entries(delays).find(([route]) => key.startsWith(route))?.[1] ?? 0;
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    return gh(args, ...rest);
+  };
+}
+
+// Usefulness: verifies #1182 changes no result within the same deadline — the ruleset and protection
+// reads run together, so two replies that each fit the deadline refuse though their sum does not.
+it("an unreadable ruleset source beside a slow protection read is refused within the deadline", async () => {
+  const gh = slowGh([...UNREADABLE_RULESETS, [PROTECTION, null]], {
+    "api repos/andromarces/agent-loops/rules": 400,
+    [PROTECTION]: 400,
+  });
+  expect(await unreadableGateReason({ pr: 42, cwd: ".", gh, timeoutMs: 600 })).toMatch(
+    /repository rulesets/,
+  );
+});
+
+// Usefulness: verifies #1182 — a ruleset read that settles something ends the preflight at once, so a
+// protection read that does not answer is canceled and never holds the declaration open.
+it("a settled ruleset read cancels a protection read that does not answer", async () => {
+  const hung = hungGh(() => {});
+  const gh = (args, cwd, options) =>
+    args.join(" ") === PROTECTION ? hung(args, cwd, options) : fakeGh(routes())(args, cwd, options);
+  const begun = Date.now();
+  expect(await unreadableGateReason({ pr: 42, cwd: ".", gh, timeoutMs: 60_000 })).toBeNull();
+  expect(Date.now() - begun).toBeLessThan(5_000);
 });

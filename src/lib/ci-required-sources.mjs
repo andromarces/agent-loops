@@ -961,20 +961,34 @@ function readProtection(gh, slug, base, cwd, retryable = false) {
 
 /**
  * The ruleset state of `base`, the one answer a caller that judges nothing else needs, with the
- * result of `requiredContexts` and none of its reads that cannot change it. A ruleset state that
- * settled something (not `UNKNOWN`) is the answer whatever the protection read does: a protection
- * read that fails throws, which a caller treats as no answer, and one that succeeds adds nothing. Only
- * an `UNKNOWN` state reads the protection source too, because a failed read of it throws and then
- * no refusal stands. The names read of `gh pr checks --required` never decides the answer, so it is
- * not made (#1182).
+ * result of `requiredContexts` and none of its reads that cannot change it. The ruleset and
+ * protection reads start together, as in `requiredContexts`, so both fit one deadline as they did
+ * there. A ruleset state that settled something (not `UNKNOWN`) is the answer whatever the protection
+ * read does: a protection read that fails throws, which a caller treats as no answer, and one that
+ * succeeds adds nothing. The protection read is then canceled. Only an `UNKNOWN` state waits for it,
+ * because a failed read of it throws and then no refusal stands. The names read of
+ * `gh pr checks --required` never decides the answer, so it is not made (#1182).
  * @returns {Promise<string>} `ABSENT`, `EMPTY`, `UNKNOWN`, or the state of a source that names a context
  */
 export async function readRulesetState(gh, slug, base, cwd) {
-  const { state } = await readRulesets(gh, slug, base, cwd);
-  if (state === UNKNOWN) {
-    await readProtection(gh, slug, base, cwd);
+  const group = new AbortController();
+  const scoped = withSignal(gh, group.signal);
+  const rules = readRulesets(scoped, slug, base, cwd);
+  const protection = readProtection(scoped, slug, base, cwd);
+  rules.catch(() => {});
+  protection.catch(() => {});
+  try {
+    const { state } = await rules;
+    if (state === UNKNOWN) {
+      await protection;
+    }
+    return state;
+  } catch (err) {
+    throw new ReadFailure(err, gh.deadline?.aborted ?? false);
+  } finally {
+    group.abort();
+    await Promise.allSettled([rules, protection]);
   }
-  return state;
 }
 
 // Required status contexts from every source: repository rulesets, classic branch

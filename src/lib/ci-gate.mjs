@@ -602,8 +602,8 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
 
 /**
  * Why a run that declares `pr` could never finish through the `--require-ci` gate, or null. Reads the
- * repository rulesets of the PR base once, as the gate does, and the protection source only when the
- * rulesets settle nothing (a failed protection read ends in null, as it always did), and reports the one answer the gate
+ * repository rulesets of the PR base once, as the gate does, beside the protection source, which only an
+ * unsettled rulesets read waits for (a failed protection read ends in null, as it always did), and reports the one answer the gate
  * refuses whatever the other sources hold: a repository-rulesets read that settled nothing, such as
  * the Free-plan 403. A read that fails for another reason, such as the network, logs a warning and
  * returns null, because the gate may read the sources when the run finishes.
