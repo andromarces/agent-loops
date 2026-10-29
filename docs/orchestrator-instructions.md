@@ -274,15 +274,22 @@ The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
 The no-upstream rule guards a plain `git push` only when `push.default` follows
-the upstream. With `push.default=matching`, a plain `git push` pushes every local
-branch that has a remote branch of the same name, and a linked work tree shares
-its local branches with the main checkout, so a local default branch that is
-ahead of `origin/<default>` is pushed too. Tell the worker to push only with
-`git push -u origin <branch>` or `git push -u origin <pr branch>`, which names the
-refspec, and never with a plain `git push`. Read `git config push.default` before
-the first dispatch. If it prints `matching`, state the named push in the task
-text. The remaining limit: a worker that runs a plain `git push` anyway can push
-the default branch under `matching`, and no work tree setting prevents it.
+the upstream. With `push.default=matching`, a plain `git push` pushes every
+local branch that has a remote branch of the same name. A linked work tree
+shares its local branches with the main checkout. So a local default branch that
+is ahead of `origin/<default>` is pushed too.
+
+Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or
+`git push -u origin <pr branch>` for an existing PR branch. Never let the worker
+run a plain `git push`. Before the first dispatch, read
+`git -C "<work tree>" config push.default`. If it prints `matching`, state the
+named push in the task text.
+
+The named push closes the gap only when the worker follows it. A worker that
+runs a plain `git push` anyway can push the default branch under `matching`.
+With `extensions.worktreeConfig` on, `git config --worktree push.default`
+overrides the repository value for one work tree. The command above reads the
+effective value of the work tree, override included.
 
 A repository with no remote has no `origin/<default>`, so the command above
 fails. Use the local default branch as the base:

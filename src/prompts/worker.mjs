@@ -4,6 +4,12 @@ import { initTaskBlock, processRule, reportBlock, testSlotRule } from "./report.
 const prBodyRule =
   "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";
 
+// Under `push.default=matching`, a plain `git push` also pushes every other local branch that has a
+// remote branch of the same name, such as a default branch that the linked work trees share (issue
+// #1226). A named refspec keeps the push on the PR branch.
+const namedPushRule =
+  "Push only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`. Under `push.default=matching`, a plain `git push` also pushes every other local branch that has a remote branch of the same name, such as the default branch.";
+
 // A probe copy without a usable `node_modules` makes `vp` install into the shared package store
 // (issue #1026). pnpm also installs from its dependency check before `pnpm run` and `pnpm exec`
 // (issue #1145).
@@ -23,10 +29,12 @@ const conclusionFirstRule =
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the PR
-    // body rule. It repeats the closing block too, because a worker drifts from the block as the
+    // body rule and the named push rule. It repeats the closing block too, because a worker drifts from the block as the
     // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
     // (issue #1179).
     return escapeLineSeparators(`${prompt}
+
+${namedPushRule}
 
 ${prBodyRule}
 
@@ -49,6 +57,7 @@ Your role:
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
   request.
+- ${namedPushRule}
 - ${prBodyRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or

@@ -1260,3 +1260,14 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     expect(wordings).toHaveLength(1);
   });
 });
+
+// Usefulness: verifies requirement "the headless prompt states the named-refspec push rule of the
+// interactive instructions" (issue #1226): without it a compliant worker runs a plain `git push`,
+// which under `push.default=matching` pushes a shared local default branch.
+test("initialPrompt tells the worker to push only with a named refspec", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "The worker pushes only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`.",
+  );
+  expect(prompt).toContain("`push.default=matching`");
+});
