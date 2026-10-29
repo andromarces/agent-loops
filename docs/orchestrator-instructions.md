@@ -230,7 +230,7 @@ Apply these parent rules:
   carries the field too. A turn that changed none carries no field.
 - A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
   tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
-  lockfiles by path only. The worker never installs, so the installed dependencies no longer match
+  lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts as changed. The worker never installs, so the installed dependencies no longer match
   the lockfile. When the field appears, run the lockfile install in that work tree, for example
   `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
   turn carries the field too. A turn that changed none carries no field.

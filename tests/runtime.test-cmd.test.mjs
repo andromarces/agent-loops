@@ -503,6 +503,43 @@ test("a fatal reviewer error emits the inherited temporary directory entries", a
   }
 });
 
+// Usefulness: verifies requirement "a fatal worker error emits the lockfile paths" (issue #1180): a
+// canceled worker ends the run with no result event, so the transcript would otherwise lose the
+// reinstall signal before `--continue-from`.
+test("a fatal worker error emits the lockfile paths it changed", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const fatal = Object.assign(new Error("canceled"), { isCanceled: true });
+    const error = await runLoop({
+      task: "Update the dependencies.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_worker", prompt: "work" })]),
+        work: scripted([
+          async () => {
+            await writeFile(join(repo, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+            throw fatal;
+          },
+        ]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBe(fatal);
+    expect(events.find((e) => e.type === "lockfile")).toMatchObject({
+      role: "worker",
+      paths: ["pnpm-lock.yaml"],
+      fatal: true,
+      stepsUsed: 1,
+    });
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a command text that holds the value of a secret-named environment
 // variable reaches the reviewer prompt, the result event, and the orchestrator prompt as
 // `[redacted:NAME]`, on a completed turn and on an adapter error (issue #431, ADR 0017).
