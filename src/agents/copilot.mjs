@@ -74,7 +74,7 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
  * the text does not repeat is not flagged, because no recorded event stream shows the denial.
  */
 export async function runCopilot(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role } = options;
+  const { cwd, readOnly, timeout, signal, role, env, onTurnChild } = options;
   const requestedSessionId = state.sessionId;
   await requireHeldUnconfirmedSession(
     state,
@@ -100,7 +100,15 @@ export async function runCopilot(state, prompt, options = {}) {
 
   let stdout;
   try {
-    ({ stdout } = await exec("copilot", args, { cwd, input: prompt, timeout, signal, role }));
+    ({ stdout } = await exec("copilot", args, {
+      cwd,
+      input: prompt,
+      timeout,
+      signal,
+      role,
+      ...(env && { env }),
+      ...(onTurnChild && { onSpawn: onTurnChild }),
+    }));
   } catch (error) {
     const failedEvents = parseJsonLines(error?.stdout ?? "");
     const failedResult = findResultEvent(failedEvents);

@@ -91,9 +91,17 @@ async function ownsSession(id, cwd, role) {
  * `sessionMissing` error before any CLI starts, so the runtime reruns the turn as a first turn.
  */
 export async function runClaude(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role, onSessionAssigned } = options;
+  const { cwd, readOnly, timeout, signal, role, onSessionAssigned, env, onTurnChild } = options;
   const args = ["-p"];
-  const execOptions = { cwd, input: prompt, timeout, signal, role };
+  const execOptions = {
+    cwd,
+    input: prompt,
+    timeout,
+    signal,
+    role,
+    ...(env && { env }),
+    ...(onTurnChild && { onSpawn: onTurnChild }),
+  };
   const requestedSessionId = state.sessionId;
   await requireHeldUnconfirmedSession(
     state,
@@ -114,7 +122,7 @@ export async function runClaude(state, prompt, options = {}) {
     // Plan mode is a write guard here, not a planning workflow. Without this variable it
     // delegates research to the built-in Explore and Plan subagents, which inherit the role
     // model (Explore capped at Opus on the Claude API). Requires Claude Code v2.1.198+.
-    execOptions.env = { CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" };
+    execOptions.env = { ...env, CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" };
   }
 
   if (state.model) {

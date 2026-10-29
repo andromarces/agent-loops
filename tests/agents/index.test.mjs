@@ -1,4 +1,7 @@
-import { expect, test, vi } from "vite-plus/test";
+import { readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { describe, expect, test, vi } from "vite-plus/test";
 import { defaultAgents, runAgent } from "../../src/agents/index.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 
@@ -94,5 +97,54 @@ test.each(["claude", "agy", "copilot", "opencode"])(
     for (const sandbox of ["none", "read-only", "workspace-write"]) {
       expect(await argvFor(sandbox)).toEqual(baseline);
     }
+  },
+);
+
+// Requirement (#1178, ADR 0068): a Claude, agy, Copilot, or opencode turn runs with a private
+// temporary directory, so a file that the CLI writes through `TMPDIR` never lands in the inherited
+// directory, and the runtime removes the private one on a clean turn and on a failed one. Not
+// redundant: the Codex tests cover only the Codex adapter.
+describe.each(["claude", "agy", "copilot", "opencode"])(
+  "%s private turn temporary directory",
+  (kind) => {
+    const inherited = () => resolve(tmpdir());
+
+    /** Runs one turn whose mocked CLI writes a file through `TMPDIR`, and reports what it saw. */
+    async function turnWriting(ok) {
+      const seen = {};
+      vi.mocked(exec).mockImplementationOnce(async (_command, _args, options) => {
+        const env = options?.env ?? {};
+        Object.assign(seen, { TMPDIR: env.TMPDIR, TEMP: env.TEMP, TMP: env.TMP });
+        seen.file = join(env.TMPDIR ?? inherited(), `scratch-${kind}.out`);
+        await writeFile(seen.file, "scratch");
+        seen.during = await readdir(env.TMPDIR ?? inherited());
+        if (!ok) throw Object.assign(new Error("boom"), { stdout: "", stderr: "" });
+        return { stdout: CLEAN_OUTPUT[kind] ?? "", stderr: "" };
+      });
+      const state = { kind, sessionId: null };
+      const outcome = await runAgent(state, "task", { cwd: "/path", role: "worker" }).then(
+        () => "ok",
+        () => "error",
+      );
+      return { seen, outcome };
+    }
+
+    test.each([true, false])(
+      "keeps the scratch file of a turn (ok: %s) out of the inherited directory",
+      async (ok) => {
+        const { seen, outcome } = await turnWriting(ok);
+        try {
+          if (!ok) expect(outcome).toBe("error");
+          expect(seen.TMPDIR).toBeTypeOf("string");
+          expect([seen.TEMP, seen.TMP]).toEqual([seen.TMPDIR, seen.TMPDIR]);
+          expect(dirname(seen.TMPDIR)).toBe(inherited());
+          expect(seen.during).toContain(`scratch-${kind}.out`);
+          expect(await readdir(inherited())).not.toContain(`scratch-${kind}.out`);
+          await expect(stat(seen.TMPDIR)).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+          await rm(seen.file ?? "", { force: true });
+        }
+      },
+    );
   },
 );

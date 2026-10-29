@@ -31,9 +31,17 @@ const READONLY_CONFIG =
   '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"},{"action":"edit","resource":"*","effect":"deny"}]}';
 
 export async function runOpenCode(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role } = options;
+  const { cwd, readOnly, timeout, signal, role, env, onTurnChild } = options;
   const args = ["run", "--standalone", "--format", "json"];
-  const execOptions = { cwd, input: prompt, timeout, signal, role };
+  const execOptions = {
+    cwd,
+    input: prompt,
+    timeout,
+    signal,
+    role,
+    ...(env && { env }),
+    ...(onTurnChild && { onSpawn: onTurnChild }),
+  };
 
   if (state.sessionId) {
     args.push("--session", state.sessionId);
@@ -41,7 +49,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   if (readOnly) {
     args.push("--agent", "plan");
-    execOptions.env = { OPENCODE_CONFIG_CONTENT: READONLY_CONFIG };
+    execOptions.env = { ...env, OPENCODE_CONFIG_CONTENT: READONLY_CONFIG };
   }
 
   // Argument validation rejects an effort without a model; this guards a direct adapter call.

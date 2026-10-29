@@ -180,11 +180,11 @@ export function failedTurnEvidence(err) {
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
- * `onTurnTmpdir(record)` is awaited by the Codex adapter after it creates the private temporary
- * directory of the turn and before its CLI starts. Other adapters never call it. A dispatcher uses
+ * `onTurnTmpdir(record)` is awaited after the private temporary directory of the turn exists and
+ * before its CLI starts, for an adapter of any kind (ADR 0068). A dispatcher uses
  * it to persist the record, so a later call can remove the directory of a dispatch that died
  * mid-turn (issue #1207). A failed `onTurnTmpdir` fails the turn before the CLI starts.
- * `onTurnChild(pid)` is called by the Codex adapter once the CLI has started, so the dispatcher can
+ * `onTurnChild(pid)` is called once the CLI has started, so the dispatcher can
  * record which process the directory belongs to. A rejection warns and never changes the turn.
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, prChecks?: object } & TurnEvidence | { role: string, status: "error", error: string, transient?: string } & TurnEvidence>}
