@@ -555,8 +555,8 @@ export async function waitChecks({
     return err;
   };
   // The contexts the required wait judges: every source of the gate, so an app-qualified
-  // context keeps its app, and the names `gh pr checks --required` listed.
-  const contextsOf = async (base, names) => {
+  // context keeps its app, plus the names `gh pr checks --required` listed.
+  const contextsOf = async (base, listed, names) => {
     const required = await requiredContexts(bounded, slug, base, pr, cwd, { names });
     // The gate's own refusals, and any source that settled nothing: such a source may hold a
     // required check or an app qualifier that this read never saw, so no pass can follow.
@@ -569,7 +569,13 @@ export async function waitChecks({
         `${required.unknown.join(" and ")} could not be read, so the required checks of PR ${pr} and their apps are unresolved.`,
       );
     }
-    return required.contexts;
+    const contexts = [...required.contexts];
+    for (const { name } of listed.checks) {
+      if (!contexts.some((context) => context.name === name)) {
+        contexts.push({ name, appId: null });
+      }
+    }
+    return contexts;
   };
   // Whether the `gh` no-required-checks answer is an established absence, decided by the same
   // `requiredAbsence` the `--require-ci` gate uses (#1013). A source that settled nothing, and a
@@ -666,7 +672,9 @@ export async function waitChecks({
       const entries = await readCommit(sha);
       runNames = entries.runs.map((run) => run.name);
       headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
-      items = all ? allItems(entries) : requiredItems(entries, await contextsOf(base, names), sha);
+      items = all
+        ? allItems(entries)
+        : requiredItems(entries, await contextsOf(base, listed, names), sha);
     } catch (raw) {
       // A failure that `gh pr checks` lists settles the wait, so a commit or source read
       // that fails never delays it. The bound and every other failure still end it.

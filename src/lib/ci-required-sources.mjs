@@ -899,9 +899,7 @@ export function requiredNamesOf({ status, stdout, stderr }) {
     const named = parsed.every((check) => typeof check?.name === "string" && check.name !== "");
     const succeeded = status === 0 || ((status === 1 || status === 8) && parsed.length > 0);
     return {
-      names: parsed
-        .map((check) => (typeof check?.name === "string" ? check.name.trim() : ""))
-        .filter(Boolean),
+      names: parsed.map((check) => check?.name).filter(Boolean),
       ok: named && succeeded,
     };
   }
@@ -946,6 +944,39 @@ export function readRulesets(gh, slug, base, cwd) {
   });
 }
 
+// The classic branch-protection source of `base`, classified. With `retryable`, the read is a
+// status-classified `--include` read (#1091).
+function readProtection(gh, slug, base, cwd, retryable = false) {
+  return readRequiredSource(
+    retryable ? (args, readCwd) => readOne(gh, args[1], readCwd) : gh,
+    [`repos/${slug}/branches/${base}/protection`],
+    cwd,
+    {
+      absentOnError: (stderr) => isExactReply(stderr, NOT_PROTECTED_404),
+      classify: classifyProtection,
+      malformed: isProtectionMalformed,
+    },
+  );
+}
+
+/**
+ * The ruleset state of `base`, the one answer a caller that judges nothing else needs, with the
+ * result of `requiredContexts` and none of its reads that cannot change it. A ruleset state that
+ * settled something (not `UNKNOWN`) is the answer whatever the protection read does: a protection
+ * read that fails throws, which a caller treats as no answer, and one that succeeds adds nothing. Only
+ * an `UNKNOWN` state reads the protection source too, because a failed read of it throws and then
+ * no refusal stands. The names read of `gh pr checks --required` never decides the answer, so it is
+ * not made (#1182).
+ * @returns {Promise<string>} `ABSENT`, `EMPTY`, `UNKNOWN`, or the state of a source that names a context
+ */
+export async function readRulesetState(gh, slug, base, cwd) {
+  const { state } = await readRulesets(gh, slug, base, cwd);
+  if (state === UNKNOWN) {
+    await readProtection(gh, slug, base, cwd);
+  }
+  return state;
+}
+
 // Required status contexts from every source: repository rulesets, classic branch
 // protection, and `gh pr checks --required`.
 // Deduplicated by name and app qualifier. `unknown` names every configuration
@@ -979,17 +1010,7 @@ export async function requiredContexts(
 
   const [rules, protection, listed] = await inOrder(gh, [
     (read) => readRulesets(read, slug, base, cwd),
-    (read) =>
-      readRequiredSource(
-        retryable ? (args, readCwd) => readOne(read, args[1], readCwd) : read,
-        [`repos/${slug}/branches/${base}/protection`],
-        cwd,
-        {
-          absentOnError: (stderr) => isExactReply(stderr, NOT_PROTECTED_404),
-          classify: classifyProtection,
-          malformed: isProtectionMalformed,
-        },
-      ),
+    (read) => readProtection(read, slug, base, cwd, retryable),
     (read) => (names ? Promise.resolve(names) : ghRequiredNames(read, pr, cwd)),
   ]);
   for (const [source, label] of [

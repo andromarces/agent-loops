@@ -66,15 +66,24 @@ it("a readable ruleset read finishes the preflight with no protection read and n
   expect(calls.some(readsOtherSources)).toBe(false);
 });
 
+const UNREADABLE_RULESETS = [
+  [PR_VIEW, prInfo()],
+  [REPO_VIEW, "andromarces/agent-loops"],
+  [RULES_PAGE, `stderr: ${FREE_PLAN_403}`],
+];
+const PROTECTION = "api repos/andromarces/agent-loops/branches/main/protection";
+
 // Usefulness: verifies #1182 keeps the one refusal the preflight exists for, an unreadable ruleset
-// source, now that the other sources are no longer read.
-it("an unreadable ruleset source is still refused with no protection read and no pr checks", async () => {
-  const table = [
-    [PR_VIEW, prInfo()],
-    [REPO_VIEW, "andromarces/agent-loops"],
-    [RULES_PAGE, `stderr: ${FREE_PLAN_403}`],
-  ];
-  const { calls, gh } = recordingGh(table);
+// source, and that the one protection read it makes then starts no `gh pr checks`.
+it("an unreadable ruleset source is still refused, with no pr checks", async () => {
+  const { calls, gh } = recordingGh([...UNREADABLE_RULESETS, [PROTECTION, null]]);
   expect(await unreadableGateReason({ pr: 42, cwd: ".", gh })).toMatch(/repository rulesets/);
-  expect(calls.some(readsOtherSources)).toBe(false);
+  expect(calls.some((call) => call.startsWith("pr checks"))).toBe(false);
+});
+
+// Usefulness: verifies #1182 changes no result — an unreadable ruleset source beside a protection read
+// that fails (HTTP 502) is no refusal, as before: the failed read leaves the gate to read at finish.
+it("an unreadable ruleset source beside a failed protection read is no refusal", async () => {
+  const gh = fakeGh([...UNREADABLE_RULESETS, [PROTECTION, "stderr: gh: Bad Gateway (HTTP 502)"]]);
+  expect(await unreadableGateReason({ pr: 42, cwd: ".", gh })).toBeNull();
 });
