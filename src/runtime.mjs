@@ -153,9 +153,11 @@ export async function runLoop(options) {
   // Only the Codex adapter applies a mode, so any other reviewer has none.
   const sandboxMode = reviewer?.kind === "codex" ? reviewerSandbox : null;
 
+  const continuedPr = continued ? earlierPr : null;
+
   // A continued run keeps the PR that the earlier run declared. The CLI refuses a conflict first,
   // and this check holds for any other caller, before the first child spawn.
-  refuseDeclaredPrConflict(continued ? earlierPr : null, { pr, requireCi, mode, compareHead });
+  refuseDeclaredPrConflict(continuedPr, { pr, requireCi, mode, compareHead });
   // The compare is for a run with no declared PR, because a declared PR ends through its gate. The
   // CLI refuses the flags first, and this check holds for any other caller (#1104).
   if (compareHead !== null && (pr !== null || requireCi !== null)) {
@@ -166,7 +168,7 @@ export async function runLoop(options) {
   // so the start refuses it before any child spawn (#1092). A continued run that restored its PR
   // makes no read here: the earlier run read at its own start when it took `--pr`, or before it
   // declared a PR that a worker turn opened (#1097).
-  const readAtStart = pr !== null && (continued ? earlierPr : null) === null;
+  const readAtStart = pr !== null && continuedPr === null;
   if (readAtStart) {
     const unreadable = await unreadableGateReason({
       pr,
@@ -235,7 +237,7 @@ export async function runLoop(options) {
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
   // from null to a number, and only the runtime sets it. A continued run with neither flag takes
   // the PR that the earlier run declared, so the declared-PR finish rule survives `--continue-from`.
-  const restoredPr = continued && pr === null && requireCi === null ? earlierPr : null;
+  const restoredPr = pr === null && requireCi === null ? continuedPr : null;
   let declaredPr = pr ?? restoredPr;
   // The PR that a worker turn opened and the runtime refused to declare, because the required-check
   // sources are unreadable (#1097). The finish compares its head with the reviewed commit, as
@@ -246,7 +248,7 @@ export async function runLoop(options) {
   // that only `--pr` names has no gate, because that flag is a child-free run input that carries
   // none. A PR that the runtime resolved is not an operator input and no child chose it, so the
   // gate applies to it (ADR 0045).
-  let gatedPr = requireCi ?? (continued ? earlierPr : null);
+  let gatedPr = requireCi ?? continuedPr;
   // The event is written for every continuation of a declared run, whatever flags it passes. A
   // flag can only name the declared PR, and a later continuation of this transcript reads the
   // declaration from the event.
