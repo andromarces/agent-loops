@@ -65,11 +65,38 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
   return response;
 }
 
+// The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
+// and the fatal-path events. Each new field joins this list and nothing else.
+// - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
+//   (issue #984).
+// - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
+//   reviewer turn. Advisory: the runtime cannot attribute them to the turn (issue #1024).
+// - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
+//   Advisory, like the temporary directory entries (issue #1045).
+// - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the
+//   comparison with the Checks line. The state file keeps it beside the response in `lastResult`,
+//   and the turn history keeps its fixed shape.
+const TURN_EVIDENCE_FIELDS = [
+  "sharedGitChanged",
+  "inheritedTmpdirEntries",
+  "packageStoreEntries",
+  "testRun",
+];
+
+/** Picks the evidence fields of `source` that carry a value. A falsy field and an empty list are dropped. */
+export function pickTurnEvidence(source) {
+  return Object.fromEntries(
+    TURN_EVIDENCE_FIELDS.filter((field) =>
+      Array.isArray(source[field]) ? source[field].length > 0 : source[field],
+    ).map((field) => [field, source[field]]),
+  );
+}
+
 /**
  * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result and the two
  * advisory lists. An absent or empty field is skipped, and so is an error that cannot take it.
  */
-export function carryTurnEvidence(err, { testRun, inheritedTmpdirEntries, packageStoreEntries }) {
+function carryTurnEvidence(err, { testRun, inheritedTmpdirEntries, packageStoreEntries }) {
   if (!err || typeof err !== "object") return;
   if (testRun) carryTestRun(err, testRun);
   if (inheritedTmpdirEntries?.length > 0) carryInheritedTmpdirEntries(err, inheritedTmpdirEntries);
@@ -84,6 +111,8 @@ export function failedTurnEvidence(err) {
     packageStoreEntries: failedPackageStoreEntries(err),
   };
 }
+
+/** @typedef {{ sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
 
 /**
  * Run one worker or reviewer turn with the same guards as the headless loop:
@@ -122,7 +151,7 @@ export function failedTurnEvidence(err) {
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, transient?: string, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }>}
+ * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, prChecks?: object } & TurnEvidence | { role: string, status: "error", error: string, transient?: string } & TurnEvidence>}
  */
 export async function runChild(options) {
   const {
@@ -477,11 +506,13 @@ export async function runChild(options) {
       ...(shellDenied ? { shellDenied } : {}),
       ...(reviewed ? { reviewed } : {}),
       ...(workTree ? { workTree } : {}),
-      ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
-      ...(inheritedTmpdirEntries.length > 0 ? { inheritedTmpdirEntries } : {}),
-      ...(packageStoreEntries.length > 0 ? { packageStoreEntries } : {}),
       ...(prChecks ? { prChecks } : {}),
-      ...(testRun ? { testRun } : {}),
+      ...pickTurnEvidence({
+        sharedGitChanged,
+        inheritedTmpdirEntries,
+        packageStoreEntries,
+        testRun,
+      }),
     };
   } catch (err) {
     const name = readProp(err, "name");
@@ -529,10 +560,12 @@ export async function runChild(options) {
       status: "error",
       error: errorMessage,
       ...(typeof transient === "string" ? { transient } : {}),
-      ...(sharedGitChanged.length > 0 ? { sharedGitChanged } : {}),
-      ...(inheritedTmpdirEntries.length > 0 ? { inheritedTmpdirEntries } : {}),
-      ...(packageStoreEntries.length > 0 ? { packageStoreEntries } : {}),
-      ...(testRun ? { testRun } : {}),
+      ...pickTurnEvidence({
+        sharedGitChanged,
+        inheritedTmpdirEntries,
+        packageStoreEntries,
+        testRun,
+      }),
     };
   } finally {
     if (!keepReplacedMark) delete role.conversationReplaced;

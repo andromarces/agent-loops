@@ -20,7 +20,7 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
-import { failedTurnEvidence, invoke, runChild } from "./child-turn.mjs";
+import { failedTurnEvidence, invoke, pickTurnEvidence, runChild } from "./child-turn.mjs";
 import { decide } from "./orchestrator.mjs";
 import { testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
@@ -386,28 +386,26 @@ export async function runLoop(options) {
       // A fatal error ends the run with no result event, so the command result and the
       // work tree compare the runtime already read are emitted here, and the transcript
       // keeps them (ADR 0017).
-      const {
-        testRun: carried,
-        inheritedTmpdirEntries: entries,
-        packageStoreEntries: storeEntries,
-      } = failedTurnEvidence(err);
-      if (carried) {
+      const { testRun, inheritedTmpdirEntries, packageStoreEntries } = pickTurnEvidence(
+        failedTurnEvidence(err),
+      );
+      if (testRun) {
+        onEvent({ type: "test-run", role: roleName, testRun, fatal: true, stepsUsed });
+      }
+      if (inheritedTmpdirEntries) {
         onEvent({
-          type: "test-run",
+          type: "inherited-tmpdir",
           role: roleName,
-          testRun: carried,
+          entries: inheritedTmpdirEntries,
           fatal: true,
           stepsUsed,
         });
       }
-      if (entries) {
-        onEvent({ type: "inherited-tmpdir", role: roleName, entries, fatal: true, stepsUsed });
-      }
-      if (storeEntries) {
+      if (packageStoreEntries) {
         onEvent({
           type: "package-store",
           role: roleName,
-          entries: storeEntries,
+          entries: packageStoreEntries,
           fatal: true,
           stepsUsed,
         });
