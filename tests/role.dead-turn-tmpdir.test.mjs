@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
+import { readProcessCommands, readProcessTable } from "../src/lib/process-ancestry.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
   basicDeps,
@@ -28,17 +29,32 @@ async function fakePid(scratch) {
   return pid > 0 ? pid : null;
 }
 
-// Ends a dispatcher and everything below it. The fake `codex` is a descendant until the dispatcher
-// dies, so the tree is ended first, whether or not the fake has reported yet.
-function endTree(child) {
+// Ends a dispatcher and every process below it, with no window between a spawn and its end. On
+// POSIX the dispatcher is stopped first, so it spawns nothing more, then every descendant that the
+// process table shows is ended, then the dispatcher. A process group would miss a child that
+// starts its own group. On Windows `taskkill /T` walks the tree.
+async function endTree(child) {
   try {
     if (process.platform === "win32") {
       spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
-    } else {
-      process.kill(-child.pid, "SIGKILL");
+      return;
     }
+    process.kill(child.pid, "SIGSTOP");
+    const table = await readProcessTable();
+    const below = new Set([child.pid]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const { pid, ppid } of table) {
+        if (below.has(ppid) && !below.has(pid)) {
+          below.add(pid);
+          grew = true;
+        }
+      }
+    }
+    for (const pid of below) process.kill(pid, "SIGKILL");
   } catch {
-    // The tree is already gone.
+    // The tree is already gone, or the table is unreadable and the pid fallback decides.
+    if (process.platform !== "win32") child.kill("SIGKILL");
   }
 }
 
@@ -48,7 +64,7 @@ async function endSpawned() {
   for (const child of dispatches.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((resolve) => child.once("exit", resolve));
-      endTree(child);
+      await endTree(child);
       await exited;
     }
   }
@@ -64,10 +80,11 @@ afterEach(async () => {
   for (const dir of scratches.splice(0)) await removePath(dir);
 });
 
-// A fake `codex` that writes its pid first, in a path that the test owns, then reports its
-// temporary directory after `FAKE_CODEX_DELAY_MS`, leaves a file in that directory, and hangs, so a
-// test can kill the dispatch that owns it mid-turn.
+// A fake `codex` that waits `FAKE_CODEX_START_DELAY_MS` before its first statement, writes its pid in
+// a path that the test owns, reports its temporary directory after `FAKE_CODEX_DELAY_MS`, leaves a
+// file in that directory, and hangs, so a test can kill the dispatch that owns it mid-turn.
 const FAKE_CODEX = `
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_CODEX_START_DELAY_MS));
 const fs = require("fs");
 const dir = process.env.TMPDIR;
 fs.writeFileSync(process.env.FAKE_CODEX_PID, String(process.pid));
@@ -86,7 +103,12 @@ setTimeout(() => process.exit(0), 60000);
  * directory of the turn (as the turn child saw it), the temporary root that holds it, and the pid
  * of the fake `codex`.
  */
-async function killedDispatch({ keepChild = false, startupMs = 30_000, reportDelayMs = 0 } = {}) {
+async function killedDispatch({
+  keepChild = false,
+  startupMs = 30_000,
+  reportDelayMs = 0,
+  startDelayMs = 0,
+} = {}) {
   const repo = await newRunRepo();
   const scratch = await mkdtemp(join(tmpdir(), "dead-turn-"));
   scratches.push(scratch);
@@ -133,8 +155,6 @@ async function killedDispatch({ keepChild = false, startupMs = 30_000, reportDel
     ],
     {
       stdio: "ignore",
-      // Its own process group on POSIX, so `endTree` can end the whole group.
-      detached: process.platform !== "win32",
       env: {
         ...process.env,
         PATH: `${bin}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}`,
@@ -144,6 +164,7 @@ async function killedDispatch({ keepChild = false, startupMs = 30_000, reportDel
         FAKE_CODEX_REPORT: report,
         FAKE_CODEX_PID: join(scratch, "pid.txt"),
         FAKE_CODEX_DELAY_MS: String(reportDelayMs),
+        FAKE_CODEX_START_DELAY_MS: String(startDelayMs),
       },
     },
   );
@@ -228,16 +249,33 @@ test("a live child of the killed dispatch keeps the turn directory", async () =>
   expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
 }, 60_000);
 
-// Usefulness: verifies issue #1207 review item 1, that teardown ends the fake `codex` when startup
-// times out before the child has reported, so a delayed report leaves no orphan.
-test("teardown ends the fake codex when startup times out before its report", async () => {
-  await expect(killedDispatch({ startupMs: 3000, reportDelayMs: 20_000 })).rejects.toThrow();
+// The pids of the processes that run the fake `codex` script of `scratch`.
+async function fakeProcesses(scratch) {
+  const script = join(scratch, "bin", "fake-codex.cjs");
+  return (await readProcessCommands())
+    .filter(({ command }) => command.includes(script))
+    .map(({ pid }) => pid)
+    .filter((pid) => pid !== process.pid);
+}
+
+// Usefulness: verifies issue #1207 review items 1 and 2, that teardown ends the fake `codex` when
+// startup times out after the spawn and before the child writes its pid or its report, the window
+// that no pid file or process group can cover.
+test("teardown ends a fake codex that is delayed before its first statement", async () => {
+  await expect(
+    killedDispatch({ startupMs: 3000, reportDelayMs: 20_000, startDelayMs: 20_000 }),
+  ).rejects.toThrow();
   const scratch = scratches.at(-1);
-  const pid = await fakePid(scratch);
-  expect(pid).toBeGreaterThan(0);
-  expect(processExists(pid)).toBe(true);
+  expect(await fakePid(scratch)).toBeNull();
+  let running = [];
+  await vi.waitFor(async () => {
+    running = await fakeProcesses(scratch);
+    expect(running.length).toBeGreaterThan(0);
+  });
 
   await endSpawned();
 
-  await vi.waitFor(() => expect(processExists(pid)).toBe(false), { timeout: 5000 });
+  await vi.waitFor(async () => expect(await fakeProcesses(scratch)).toEqual([]), {
+    timeout: 5000,
+  });
 }, 60_000);
