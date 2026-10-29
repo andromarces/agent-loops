@@ -725,3 +725,92 @@ test("the required wait never returns noCheckSource", async () => {
   });
   expect(result.noCheckSource).toBeUndefined();
 });
+
+/** Wraps `gh` so that each call whose endpoint matches `pattern` waits a moment, and records the most such calls in flight. */
+function trackInFlight(gh, pattern) {
+  const seen = { max: 0 };
+  let flying = 0;
+  const tracked = async (args, cwd, options) => {
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (!pattern.test(endpoint)) {
+      return gh(args, cwd, options);
+    }
+    flying += 1;
+    seen.max = Math.max(seen.max, flying);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    try {
+      return await gh(args, cwd, options);
+    } finally {
+      flying -= 1;
+    }
+  };
+  return { tracked, seen };
+}
+
+async function trackedWait(options, pattern) {
+  const { tracked, seen } = trackInFlight(probeGh(options), pattern);
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    all: true,
+    gh: tracked,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  return { result, seen };
+}
+
+// Usefulness: verifies the workflow files of the base branch are read together (issue #1187), so
+// the probe costs one read round trip for the files, not one per file; the verdict is unchanged.
+test("the probe reads the base workflow files concurrently", async () => {
+  const workflows = {
+    "a.yml": INERT_WORKFLOW,
+    "b.yml": INERT_WORKFLOW,
+    "c.yml": INERT_WORKFLOW,
+  };
+  const { result, seen } = await trackedWait(
+    { workflows },
+    /^repos\/owner\/repo\/contents\/\.github\/workflows\/[^?]+\?ref=/,
+  );
+  expect(seen.max).toBeGreaterThan(1);
+  expect(result.noCheckSource).toBe(true);
+});
+
+// Usefulness: verifies the base SHA and the PR files are read together (issue #1187), since the
+// SHA read does not depend on the files.
+test("the probe reads the base SHA and the PR files concurrently", async () => {
+  const { result, seen } = await trackedWait(
+    {},
+    /^repos\/owner\/repo\/(?:commits\/main$|pulls\/42\/files\?)/,
+  );
+  expect(seen.max).toBeGreaterThan(1);
+  expect(result.noCheckSource).toBe(true);
+});
+
+// Usefulness: verifies the check reads of the latest merged PR heads run together (issue #1187),
+// and that a head with a check still keeps the wait.
+test("the probe reads the commits of tied merged heads concurrently", async () => {
+  const { result, seen } = await trackedWait(
+    {
+      mergedPrs: [MERGED_PR, { ...MERGED_PR, number: 8, head: { sha: TIED_HEAD } }],
+    },
+    new RegExp(`^repos/owner/repo/commits/(?:${MERGED_HEAD}|${TIED_HEAD})/`),
+  );
+  expect(seen.max).toBeGreaterThan(2);
+  expect(result.noCheckSource).toBe(true);
+});
+
+// Usefulness: verifies a failed read of a later merged head never replaces the outcome that an
+// earlier head already settled, as the sequential reads gave (issue #1187): the first failure in
+// read order wins, and a failure after the settling head is not reached.
+test("a failed later merged-head read does not change the outcome an earlier head settled", async () => {
+  const { result } = await probedWait({
+    mergedPrs: [MERGED_PR, { ...MERGED_PR, number: 8, head: { sha: TIED_HEAD } }],
+    mergedRuns: [BASE_RUN],
+    failing: `commits/${TIED_HEAD}/check-runs`,
+  });
+  expect(result.noCheckSource).toBeUndefined();
+  expect(result).toMatchObject({ timedOut: true, checks: [] });
+});

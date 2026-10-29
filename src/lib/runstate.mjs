@@ -13,10 +13,14 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { mapInBatches } from "./batches.mjs";
 import { sha256 } from "./hash.mjs";
 import { tmpRoot } from "./tmp-root.mjs";
 import { isJsonObject } from "./json.mjs";
 import { writeFileAtomic } from "./atomic-write.mjs";
+
+// State files that one batch of reads handles at once.
+const READ_BATCH_SIZE = 32;
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 
@@ -110,15 +114,11 @@ function assertSessionId(sessionId) {
 export async function readStatesForSession(parentSession) {
   const { sessionRunsDir, legacyIndexFile } = statePaths({ parentSession });
   const stateFiles = await readSessionEntryPaths(sessionRunsDir, legacyIndexFile);
-  const states = [];
-  for (const stateFile of stateFiles) {
-    try {
-      states.push(JSON.parse(await readFile(stateFile, "utf8")));
-    } catch {
-      // Skip an unreadable or corrupt state file; it never denies on its own.
-    }
-  }
-  return states;
+  const states = await Promise.all(
+    stateFiles.map((stateFile) => readState(stateFile).catch(() => null)),
+  );
+  // An absent, unreadable, corrupt, or non-object state file reads as null and never denies on its own.
+  return states.filter((state) => state !== null);
 }
 
 // Collects the state file path from every entry file in the new directory and
@@ -127,16 +127,12 @@ export async function readStatesForSession(parentSession) {
 async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
   const stateFiles = [];
   try {
-    for (const name of await readdir(sessionRunsDir)) {
-      if (name.endsWith(".tmp")) {
-        continue;
-      }
-      try {
-        stateFiles.push((await readFile(join(sessionRunsDir, name), "utf8")).trim());
-      } catch {
-        // Skip an unreadable entry.
-      }
-    }
+    const names = (await readdir(sessionRunsDir)).filter((name) => !name.endsWith(".tmp"));
+    const texts = await Promise.all(
+      names.map((name) => readFile(join(sessionRunsDir, name), "utf8").catch(() => null)),
+    );
+    // An unreadable entry reads as null and is skipped.
+    stateFiles.push(...texts.filter((text) => text !== null).map((text) => text.trim()));
   } catch {
     // No entry directory: every run predates the new format or none registered.
   }
@@ -183,13 +179,14 @@ export async function readClaudeSessions(stateDir) {
     return [];
   }
   const entries = [];
-  for (const name of names.filter((n) => /^state(\..+)?\.json$/.test(n))) {
-    let roles;
-    try {
-      roles = (await readState(join(stateDir, name))).roles;
-    } catch {
-      continue;
-    }
+  const files = names.filter((n) => /^state(\..+)?\.json$/.test(n));
+  const rolesOfFiles = await mapInBatches(files, READ_BATCH_SIZE, (name) =>
+    readState(join(stateDir, name)).then(
+      (state) => state?.roles,
+      () => undefined,
+    ),
+  );
+  for (const roles of rolesOfFiles) {
     for (const [role, state] of Object.entries(isJsonObject(roles) ? roles : {})) {
       if (isJsonObject(state) && state.kind === "claude" && typeof state.sessionId === "string") {
         entries.push({ role, sessionId: state.sessionId });

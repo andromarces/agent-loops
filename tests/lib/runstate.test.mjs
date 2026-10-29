@@ -361,6 +361,46 @@ test("readStatesForSession ignores an entry temp file", async () => {
   }
 });
 
+// Usefulness: verifies a registered state file that is valid JSON but not an object is skipped, as
+// the shape check of `readState` demands (issue #1187), so the guard hook never sees a value that is
+// not a state, and the other runs of the session still read in entry order.
+test("readStatesForSession skips a state file that is not a JSON object and keeps entry order", async () => {
+  const runsRoot = await tempDir();
+  process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+  try {
+    const sessionRunsDir = statePaths({
+      cwd: await tempDir(),
+      parentSession: "ses_shape",
+    }).sessionRunsDir;
+    await mkdir(sessionRunsDir, { recursive: true });
+    const texts = [
+      JSON.stringify({ parentSession: "ses_shape", n: 1 }),
+      "[1]",
+      "7",
+      "null",
+      "not json",
+      JSON.stringify({ parentSession: "ses_shape", n: 2 }),
+    ];
+    for (const [i, text] of texts.entries()) {
+      const stateFile = join(await tempDir(), "state.json");
+      await writeFile(stateFile, text, "utf8");
+      await writeFile(
+        join(sessionRunsDir, `entry${i}`),
+        `${stateFile}
+`,
+        "utf8",
+      );
+    }
+
+    expect(await readStatesForSession("ses_shape")).toEqual([
+      { parentSession: "ses_shape", n: 1 },
+      { parentSession: "ses_shape", n: 2 },
+    ]);
+  } finally {
+    restoreRunsRoot();
+  }
+});
+
 // Usefulness: verifies a state file that is valid JSON but not an object throws with its path; no other test reaches this error path.
 test("readState throws on a state file that is not a JSON object", async () => {
   const dir = await tempDir();

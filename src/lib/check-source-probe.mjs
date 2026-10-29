@@ -1,7 +1,7 @@
 // The probe of the `--all` check wait that decides whether any source can report a check for a PR
 // head. It reads only, through the bounded `gh` runner of the wait (#1054).
 import { commitEntries } from "./ci-gate.mjs";
-import { ghApi, pagedRead, readOne } from "./ci-required-sources.mjs";
+import { ghApi, inOrder, pagedRead, readOne } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
 import { prEventsFilteredOut, prWorkflowMayRun, UNREADABLE_TEXT } from "./workflow-paths.mjs";
 
@@ -146,6 +146,22 @@ async function baseShaOf({ bounded, slug, cwd }, base) {
   return isFullSha(found.toLowerCase()) ? found.toLowerCase() : null;
 }
 
+/**
+ * The base SHA and the PR files, read together. The files read is skipped in effect when the SHA read
+ * is null: it is cancelled, and its entry is null.
+ */
+async function baseAndChangedOf(context, base) {
+  const [baseSha, changed = null] = await inOrder(
+    context.bounded,
+    [
+      (read) => baseShaOf({ ...context, bounded: read }, base),
+      (read) => changedFilesOf({ ...context, bounded: read }),
+    ],
+    (sha) => sha === null,
+  );
+  return [baseSha, changed];
+}
+
 /** Whether a commit read shows no check run and no commit status. */
 const hasNoEntries = ({ runs, statuses }) => runs.length === 0 && statuses.length === 0;
 
@@ -194,27 +210,35 @@ async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
       return null;
     }
   }
-  const texts = [];
+  // The files before the first entry of another shape are read together, in listing order, so a
+  // read failure or an unreadable file ahead of that entry still decides, as in sequential reads.
+  const files = [];
+  let shapeOk = true;
   for (const entry of entries) {
     if (!isJsonObject(entry) || typeof entry.path !== "string" || !WORKFLOW_PATH.test(entry.path)) {
-      return null;
+      shapeOk = false;
+      break;
     }
     if (entry.type === "dir") {
       continue;
     }
     if (entry.type !== "file") {
-      return null;
+      shapeOk = false;
+      break;
     }
-    const path = entry.path.split("/").map(encodeURIComponent).join("/");
-    const read = await readOne(bounded, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
-    const body = read.status === 0 ? JSON.parse(read.stdout) : null;
-    const text = isJsonObject(body) ? workflowText(body, entry.path) : null;
-    if (text === null) {
-      return null;
-    }
-    texts.push(text);
+    files.push(entry.path);
   }
-  return texts;
+  const texts = await inOrder(
+    bounded,
+    files.map((filePath) => async (read) => {
+      const path = filePath.split("/").map(encodeURIComponent).join("/");
+      const reply = await readOne(read, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
+      const body = reply.status === 0 ? JSON.parse(reply.stdout) : null;
+      return isJsonObject(body) ? workflowText(body, filePath) : null;
+    }),
+    (text) => text === null,
+  );
+  return shapeOk && texts.every((text) => text !== null) ? texts : null;
 }
 
 /**
@@ -237,12 +261,8 @@ async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
  */
 export async function noCheckSource(context, sha, base) {
   const { bounded, slug, cwd } = context;
-  const baseSha = await baseShaOf(context, base);
-  if (baseSha === null) {
-    return false;
-  }
-  const changed = await changedFilesOf(context);
-  if (changed === null) {
+  const [baseSha, changed] = await baseAndChangedOf(context, base);
+  if (baseSha === null || changed === null) {
     return false;
   }
   for (const file of changed) {
@@ -274,10 +294,14 @@ export async function noCheckSource(context, sha, base) {
   if (mergedHeads === null) {
     return false;
   }
-  for (const mergedHead of mergedHeads) {
-    if (!hasNoEntries(await commitEntries(bounded, slug, mergedHead, cwd, true))) {
-      return false;
-    }
+  // The reads run together. A head that shows an entry ends them, so a later read never surfaces.
+  const entries = await inOrder(
+    bounded,
+    mergedHeads.map((mergedHead) => (read) => commitEntries(read, slug, mergedHead, cwd, true)),
+    (shown) => !hasNoEntries(shown),
+  );
+  if (!entries.every(hasNoEntries)) {
+    return false;
   }
   return (await unmoved(context, sha, base, baseSha)) === true;
 }
@@ -309,8 +333,7 @@ async function unmoved(context, sha, base, baseSha) {
  * @returns {Promise<boolean | null>}
  */
 export async function pullRequestWorkflowMayRun(context, sha, base) {
-  const baseSha = await baseShaOf(context, base);
-  const changed = baseSha === null ? null : await changedFilesOf(context);
+  const [baseSha, changed] = await baseAndChangedOf(context, base);
   if (changed === null) {
     return null;
   }

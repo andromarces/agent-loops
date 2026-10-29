@@ -554,8 +554,17 @@ export async function runChild(options) {
     }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
-    const workTree = roleName === "worker" ? await readWorkTree() : null;
-    const sharedGitChanged = await readSharedGitChanged();
+    // The two reads are independent, so they run together. Both settle before a failure throws, so
+    // a cancel in the work tree read leaves the shared Git items read once and kept for the catch path.
+    const [workTreeRead, sharedRead] = await Promise.allSettled([
+      roleName === "worker" ? readWorkTree() : null,
+      readSharedGitChanged(),
+    ]);
+    for (const read of [workTreeRead, sharedRead]) {
+      if (read.status === "rejected") throw read.reason;
+    }
+    const workTree = workTreeRead.value;
+    const sharedGitChanged = sharedRead.value;
     const lockfileChanged = await readLockfileChanged();
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
