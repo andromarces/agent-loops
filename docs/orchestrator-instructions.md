@@ -287,9 +287,10 @@ named push in the task text.
 
 The named push closes the gap only when the worker follows it. A worker that
 runs a plain `git push` anyway can push the default branch under `matching`.
-With `extensions.worktreeConfig` on, `git config --worktree push.default`
-overrides the repository value for one work tree. The command above reads the
-effective value of the work tree, override included.
+With `extensions.worktreeConfig` on, `git config --worktree push.default matching`
+sets the value for one work tree only. That value overrides the repository
+value. The command above reads the effective value of the work tree, override
+included.
 
 A repository with no remote has no `origin/<default>`, so the command above
 fails. Use the local default branch as the base:
