@@ -66,7 +66,12 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 }
 
 // The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
-// and the fatal-path events. Each new field joins this list and nothing else.
+// and the fatal-path events. The consumers of this list pick up a new field with no change. The field
+// still needs these edits:
+// - The producer in `runChild` sets its value, in the ok result and in the error result.
+// - The `TurnEvidence` typedef below names it.
+// - A field that must survive a fatal error also joins `carryTurnEvidence` and `failedTurnEvidence`.
+//   The fatal-path events in `runtime.mjs` also name it. `sharedGitChanged` does neither.
 // - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
 //   (issue #984).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
