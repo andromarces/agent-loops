@@ -322,7 +322,8 @@ const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true }
  * target names another host. The request host is resolved once per read (`state.hosts`), and only
  * for a reply that carries a `Link` target. It returns `{ end, reply }` for a failure or a refusal,
  * where `end` is the `gh`-shaped result and `reply` the parsed reply, or null with no status block,
- * and `{ reply, json }` for a 2xx reply whose body is exactly one JSON value.
+ * and `{ reply, json }` for a 2xx reply whose body is exactly one JSON value. Both carry `targets`, the
+ * `Link` targets of the reply, so a caller does not parse the headers again.
  * @param {Function} read
  * @param {string[]} args the `gh` arguments of the request
  * @param {string} cwd
@@ -339,6 +340,7 @@ async function readReply(read, args, cwd, state) {
   if (foreign !== null) {
     return {
       reply,
+      targets,
       end: {
         status: 1,
         stdout: "",
@@ -349,15 +351,15 @@ async function readReply(read, args, cwd, state) {
   if (result.status !== 0) {
     const transient =
       reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
-    return { reply, end: { ...result, ...(transient ? { transient: true } : {}) } };
+    return { reply, targets, end: { ...result, ...(transient ? { transient: true } : {}) } };
   }
   if (reply === null || reply.status < 200 || reply.status > 299) {
-    return { reply, end: refusal("the reply carries no 2xx HTTP status block") };
+    return { reply, targets, end: refusal("the reply carries no 2xx HTTP status block") };
   }
   try {
-    return { reply, json: JSON.parse(reply.body) };
+    return { reply, targets, json: JSON.parse(reply.body) };
   } catch {
-    return { reply, end: refusal("the reply body is not exactly one JSON value") };
+    return { reply, targets, end: refusal("the reply body is not exactly one JSON value") };
   }
 }
 
@@ -457,17 +459,17 @@ export const pagedRead =
  * @param {string} cwd
  */
 export async function readOne(read, endpoint, cwd) {
-  const { reply, end } = await readReply(read, ["api", endpoint, "--include"], cwd, {});
+  const { reply, end, targets } = await readReply(read, ["api", endpoint, "--include"], cwd, {});
   if (end) {
     const exact =
       end.status !== 0 &&
       reply?.status === 404 &&
       end.stderr.trim() === "gh: Not Found (HTTP 404)" &&
-      linkTargets(reply.headers).length === 0 &&
+      targets.length === 0 &&
       isJsonBody(reply.body);
     return { ...end, ...(exact ? { notFound: true } : {}) };
   }
-  if (linkTargets(reply.headers).length > 0) {
+  if (targets.length > 0) {
     return refusal("the reply carries a Link header, so it may be one page of a longer list");
   }
   return { status: 0, stdout: reply.body, stderr: "" };
@@ -930,6 +932,65 @@ function addContext(contexts, name, appId = null) {
   }
 }
 
+// The repository-rulesets source of `base`, classified. The endpoint paginates at 30 rules per page by
+// default, so a single read can stop before a required-status-check rule and report an absence for a
+// branch that requires one. Every page is fetched by page number, never by a reply-supplied `Link`
+// URL, and a body the gate cannot account for every page of is unknown or an error (issue #336
+// review, #1033).
+export function readRulesets(gh, slug, base, cwd) {
+  return readRequiredSource(pagedRead(gh), [`repos/${slug}/rules/branches/${base}`], cwd, {
+    absentOnError: () => false,
+    classify: classifyRulesets,
+  });
+}
+
+// The classic branch-protection source of `base`, classified. With `retryable`, the read is a
+// status-classified `--include` read (#1091).
+function readProtection(gh, slug, base, cwd, retryable = false) {
+  return readRequiredSource(
+    retryable ? (args, readCwd) => readOne(gh, args[1], readCwd) : gh,
+    [`repos/${slug}/branches/${base}/protection`],
+    cwd,
+    {
+      absentOnError: (stderr) => isExactReply(stderr, NOT_PROTECTED_404),
+      classify: classifyProtection,
+      malformed: isProtectionMalformed,
+    },
+  );
+}
+
+/**
+ * The ruleset state of `base`, the one answer a caller that judges nothing else needs, with the
+ * result of `requiredContexts` and none of its reads that cannot change it. The ruleset and
+ * protection reads start together, as in `requiredContexts`, so both fit one deadline as they did
+ * there. A ruleset state that settled something (not `UNKNOWN`) is the answer whatever the protection
+ * read does: a protection read that fails throws, which a caller treats as no answer, and one that
+ * succeeds adds nothing. The protection read is then canceled. Only an `UNKNOWN` state waits for it,
+ * because a failed read of it throws and then no refusal stands. The names read of
+ * `gh pr checks --required` never decides the answer, so it is not made (#1182).
+ * @returns {Promise<string>} `ABSENT`, `EMPTY`, `UNKNOWN`, or the state of a source that names a context
+ */
+export async function readRulesetState(gh, slug, base, cwd) {
+  const group = new AbortController();
+  const scoped = withSignal(gh, group.signal);
+  const rules = readRulesets(scoped, slug, base, cwd);
+  const protection = readProtection(scoped, slug, base, cwd);
+  rules.catch(() => {});
+  protection.catch(() => {});
+  try {
+    const { state } = await rules;
+    if (state === UNKNOWN) {
+      await protection;
+    }
+    return state;
+  } catch (err) {
+    throw new ReadFailure(err, gh.deadline?.aborted ?? false);
+  } finally {
+    group.abort();
+    await Promise.allSettled([rules, protection]);
+  }
+}
+
 // Required status contexts from every source: repository rulesets, classic branch
 // protection, and `gh pr checks --required`.
 // Deduplicated by name and app qualifier. `unknown` names every configuration
@@ -962,29 +1023,8 @@ export async function requiredContexts(
   const unparsed = [];
 
   const [rules, protection, listed] = await inOrder(gh, [
-    (read) =>
-      readRequiredSource(
-        // The endpoint paginates at 30 rules per page by default, so a single read can
-        // stop before a required-status-check rule and report an absence for a branch
-        // that requires one. Every page is fetched by page number, never by a reply-supplied
-        // `Link` URL, and a body the gate cannot account for every page of is unknown or an
-        // error (issue #336 review, #1033).
-        pagedRead(read),
-        [`repos/${slug}/rules/branches/${base}`],
-        cwd,
-        { absentOnError: () => false, classify: classifyRulesets },
-      ),
-    (read) =>
-      readRequiredSource(
-        retryable ? (args, readCwd) => readOne(read, args[1], readCwd) : read,
-        [`repos/${slug}/branches/${base}/protection`],
-        cwd,
-        {
-          absentOnError: (stderr) => isExactReply(stderr, NOT_PROTECTED_404),
-          classify: classifyProtection,
-          malformed: isProtectionMalformed,
-        },
-      ),
+    (read) => readRulesets(read, slug, base, cwd),
+    (read) => readProtection(read, slug, base, cwd, retryable),
     (read) => (names ? Promise.resolve(names) : ghRequiredNames(read, pr, cwd)),
   ]);
   for (const [source, label] of [

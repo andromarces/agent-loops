@@ -106,8 +106,9 @@ export function assertResumedSession(agent, idLabel, expected, received) {
  * here, so a failed turn never changes a resumed session.
  */
 export function keepFailedSessionId(state, id) {
-  if (!state.sessionId && typeof id === "string" && id) {
-    state.sessionId = id;
+  const kept = asSessionId(id);
+  if (!state.sessionId && kept) {
+    state.sessionId = kept;
   }
 }
 

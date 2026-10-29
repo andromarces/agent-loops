@@ -7,6 +7,7 @@ import {
   cliCommandForms,
 } from "./report.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
+import { pickTurnEvidence } from "../child-turn.mjs";
 import { agentHas } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
@@ -541,19 +542,14 @@ export function resultPrompt({
     ...(result.transient ? { transient: result.transient } : {}),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     ...(result.workTree ? { workTree: result.workTree } : {}),
-    ...(result.sharedGitChanged ? { sharedGitChanged: result.sharedGitChanged } : {}),
-    ...(result.inheritedTmpdirEntries
-      ? { inheritedTmpdirEntries: result.inheritedTmpdirEntries }
-      : {}),
-    ...(result.packageStoreEntries ? { packageStoreEntries: result.packageStoreEntries } : {}),
     // The status the runtime read for a declared PR, so the orchestrator holds
     // both it and the reviewer `Checks` line in one prompt and can compare them
     // (#320). A result with no read carries no field, so a turn that made no
     // read cannot be read as one that did.
     ...(result.prChecks ? { prChecks: result.prChecks } : {}),
-    // The test command result the runtime ran before the reviewer turn (ADR
-    // 0017), beside the reviewer response for the same comparison.
-    ...(result.testRun ? { testRun: result.testRun } : {}),
+    // The evidence fields, among them the test command result the runtime ran before the reviewer
+    // turn (ADR 0017), beside the reviewer response for the same comparison.
+    ...pickTurnEvidence(result),
     // A child turn whose adapter saw a refused tool call (ADR 0035), so a headless parent
     // holds what a `role dispatch` envelope carries. A turn with no denial carries no field.
     ...(result.shellDenied ? { shellDenied: true } : {}),

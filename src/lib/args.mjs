@@ -94,7 +94,7 @@ export function splitInlineFlag(arg) {
 // Both readers accept a safe integer only. Above `Number.MAX_SAFE_INTEGER`, an
 // integer double has no room for `value + 1`, so a step counter built from it
 // stops advancing and `--max-steps` stops bounding anything (#312).
-export function readPositiveInt(flag, value) {
+function readPositiveInt(flag, value) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 1) {
     throw new Error(`${flag} must be a positive integer.`);
@@ -108,15 +108,6 @@ function readNonNegativeInt(flag, value) {
     throw new Error(`${flag} must be a non-negative integer.`);
   }
   return val;
-}
-
-/**
- * The step budget, as `readPositiveInt` reads it, named so `--max-steps` can
- * state its accepted range where the budget is documented. The value is a step
- * count and a loop bound, so it must stay a safe integer.
- */
-function readMaxSteps(value) {
-  return readPositiveInt("--max-steps", value);
 }
 
 /**
@@ -145,7 +136,7 @@ export const REVIEWER_SANDBOX_MODES = ["none", ...REVIEWER_SANDBOX_FLAG_MODES];
  * @param {boolean | undefined} reviewerWorkspaceWrite the legacy field
  * @returns {"read-only" | "workspace-write"}
  */
-export function legacyReviewerSandbox(reviewerWorkspaceWrite) {
+function legacyReviewerSandbox(reviewerWorkspaceWrite) {
   return reviewerWorkspaceWrite === true ? "workspace-write" : "read-only";
 }
 
@@ -427,7 +418,7 @@ function applyCommonFlag(args, arg, readInline) {
       args.taskFile = readInline(arg, true);
       break;
     case "--max-steps":
-      args.maxSteps = readMaxSteps(readInline(arg));
+      args.maxSteps = readPositiveInt(arg, readInline(arg));
       break;
     case "--timeout": {
       const seconds = readNonNegativeInt(arg, readInline(arg));

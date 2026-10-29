@@ -252,7 +252,13 @@ function statusItem(status) {
 function latestOfEach(entries, keyOf, fields, what) {
   const groups = new Map();
   for (const entry of entries) {
-    groups.set(keyOf(entry), [...(groups.get(keyOf(entry)) ?? []), entry]);
+    const key = keyOf(entry);
+    const group = groups.get(key);
+    if (group) {
+      group.push(entry);
+    } else {
+      groups.set(key, [entry]);
+    }
   }
   return [...groups].map(([key, group]) => {
     const latest = latestBy(group, fields);

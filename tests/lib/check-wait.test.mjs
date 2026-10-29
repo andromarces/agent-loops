@@ -1936,3 +1936,31 @@ test.each([
   await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
   expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
 });
+
+/** One wait over a required list that names `" ci "`, with `runs` the check runs of the PR head. */
+function waitPaddedRequired(runs) {
+  const clock = fakeClock();
+  return waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    gh: scriptedGh([{ status: 0, checks: [check(" ci ", "pass", "SUCCESS")] }], {
+      commits: { [HEAD_A]: runs },
+    }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+}
+
+// Usefulness: verifies #1182 changes no result — a required name that the list pads stays required as
+// written, so a run of the trimmed name alone does not satisfy it and the wait does not pass.
+test("waitChecks does not pass a padded required name on the run of the trimmed name", async () => {
+  expect((await waitPaddedRequired([PASSED_ITEM])).timedOut).toBe(true);
+});
+
+// Usefulness: verifies #1182 changes no result — the padded required name and its trimmed form are
+// both required, so the wait passes once a run carries each name.
+test("waitChecks passes a padded required name once a run carries each name", async () => {
+  const result = await waitPaddedRequired([PASSED_ITEM, check(" ci ", "pass", "SUCCESS")]);
+  expect(result.timedOut).toBe(false);
+});

@@ -22,6 +22,7 @@ import {
   readTimeout,
   prInfo,
   repoSlug,
+  readRulesetState,
   requiredContexts,
   ReadFailure,
   withSignal,
@@ -473,8 +474,16 @@ function readExpired(call, err) {
 // `refuseInfo(info)` runs right after the PR read and `refuseUnknownRuleset(info)`
 // after the contexts read. A truthy return from either comes back as `{ stop }`, so
 // each caller keeps its own refusal order and wording. Otherwise the result is
-// `{ info, slug, required }`.
-async function readCiPreamble({ gh, cwd, pr, refuseInfo, refuseUnknownRuleset }) {
+// `{ info, slug, required }`. With `rulesetsOnly`, `required` holds the `rulesetState` alone, read by
+// `readRulesetState`, for a caller that judges nothing else.
+async function readCiPreamble({
+  gh,
+  cwd,
+  pr,
+  refuseInfo,
+  refuseUnknownRuleset,
+  rulesetsOnly = false,
+}) {
   const canceler = new AbortController();
   const slugRead = repoSlug(withSignal(gh, canceler.signal), cwd);
   slugRead.catch(() => {});
@@ -485,7 +494,9 @@ async function readCiPreamble({ gh, cwd, pr, refuseInfo, refuseUnknownRuleset })
       return { stop: infoStop };
     }
     const slug = await slugRead;
-    const required = await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
+    const required = rulesetsOnly
+      ? { rulesetState: await readRulesetState(gh, slug, info.baseRefName, cwd) }
+      : await requiredContexts(gh, slug, info.baseRefName, pr, cwd);
     if (required.rulesetState === UNKNOWN) {
       return { stop: refuseUnknownRuleset(info) };
     }
@@ -591,7 +602,8 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
 
 /**
  * Why a run that declares `pr` could never finish through the `--require-ci` gate, or null. Reads the
- * required-check sources of the PR base once, as the gate does, and reports the one answer the gate
+ * repository rulesets of the PR base once, as the gate does, beside the protection source, which only an
+ * unsettled rulesets read waits for (a failed protection read ends in null, as it always did), and reports the one answer the gate
  * refuses whatever the other sources hold: a repository-rulesets read that settled nothing, such as
  * the Free-plan 403. A read that fails for another reason, such as the network, logs a warning and
  * returns null, because the gate may read the sources when the run finishes.
@@ -619,6 +631,7 @@ export async function unreadableGateReason({
       pr,
       refuseInfo: () => null,
       refuseUnknownRuleset: () => RULESETS_UNREADABLE,
+      rulesetsOnly: true,
     });
     throwIfCanceled(signal);
     return preamble.stop ?? null;
