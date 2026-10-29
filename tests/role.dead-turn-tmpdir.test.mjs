@@ -6,17 +6,37 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readProcessCommands, readProcessTable } from "../src/lib/process-ancestry.mjs";
+import { withTurnTmpdir } from "../src/lib/turn-tmpdir.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
   basicDeps,
   cleanup,
   dispatchArgv,
+  initRun,
   newRunRepo,
   readRepoState,
+  REPORT,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
 import { processExists, removePath } from "./runtime-helpers.mjs";
+
+// Passes every state write through, except the ones that a test arms to fail after the record write
+// of a turn directory. `failures` is how many of the next writes throw, `Infinity` for every one.
+const stateWrites = vi.hoisted(() => ({ failures: 0 }));
+vi.mock("../src/lib/atomic-write.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    writeFileAtomic: async (...args) => {
+      if (stateWrites.failures > 0) {
+        stateWrites.failures -= 1;
+        throw new Error("EIO: injected state write failure");
+      }
+      return real.writeFileAtomic(...args);
+    },
+  };
+});
 
 const ROLE = fileURLToPath(new URL("../src/role.mjs", import.meta.url));
 const scratches = [];
@@ -75,6 +95,8 @@ async function endSpawned() {
 }
 
 afterEach(async () => {
+  stateWrites.failures = 0;
+  vi.unstubAllEnvs();
   await endSpawned();
   await cleanup();
   for (const dir of scratches.splice(0)) await removePath(dir);
@@ -279,3 +301,90 @@ test("teardown ends a fake codex that is delayed before its first statement", as
     timeout: 5000,
   });
 }, 60_000);
+
+// Runs one `role dispatch` of a worker whose adapter mirrors the Codex adapter: it creates the turn
+// directory with `withTurnTmpdir` and hands the record to `onTurnTmpdir`, then starts its child.
+// `failAfterRecord` arms the state writes that follow the start of the record write: the write of
+// the record itself is the first one to fail. Returns the call result, the number of children
+// started, the turn directory, the temporary root that held it, and the step count before the call.
+async function dispatchWithRecordFailure(failAfterRecord) {
+  const repo = await newRunRepo();
+  const tmpRoot = await mkdtemp(join(tmpdir(), "record-failure-"));
+  scratches.push(tmpRoot);
+  let armed = false;
+  let started = 0;
+  let turnDir = null;
+  const agents = {
+    fake1: {
+      async run(_state, _prompt, options) {
+        await withTurnTmpdir(
+          async (env) => {
+            started += 1;
+            return env;
+          },
+          {
+            onCreated: async (record) => {
+              if (armed) {
+                turnDir = record.dir;
+                stateWrites.failures = failAfterRecord;
+              }
+              await options.onTurnTmpdir(record);
+            },
+          },
+        );
+        return REPORT;
+      },
+    },
+    fake2: { run: async () => REPORT },
+  };
+  await initRun(repo, { agents });
+  armed = true;
+  started = 0;
+  const stepsBefore = (await readRepoState(repo)).stepsUsed;
+  vi.stubEnv("TMPDIR", tmpRoot);
+  vi.stubEnv("TEMP", tmpRoot);
+  vi.stubEnv("TMP", tmpRoot);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  stateWrites.failures = 0;
+  return { repo, result, started, turnDir, tmpRoot, stepsBefore };
+}
+
+// Usefulness: verifies ADR 0058 decision 1, first sentences, that a dispatch whose record write
+// fails once starts no child, removes the turn directory, charges the step, and returns the run to
+// `active` with an error result. Not redundant with tests/lib/turn-tmpdir.test.mjs, which stops at
+// `withTurnTmpdir` and never reaches the lifecycle or the step count.
+test("a failed record write starts no child and returns the run to active with the step charged", async () => {
+  const { repo, result, started, turnDir, tmpRoot, stepsBefore } =
+    await dispatchWithRecordFailure(1);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(started).toBe(0);
+  expect(existsSync(turnDir)).toBe(false);
+  expect(readdirSync(tmpRoot)).toEqual([]);
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("active");
+  expect(state.stepsUsed).toBe(stepsBefore + 1);
+  expect(state.lastResult.status).toBe("error");
+});
+
+// Usefulness: verifies ADR 0058 decision 1, last sentences, that when the write of the error result
+// fails too, the call fails and the run keeps the durable `dispatched` state of the write before the
+// spawn, with the step charged, no child started, and the turn directory removed.
+test("a failed record write and a failed result write leave the run dispatched with the step charged", async () => {
+  const { repo, result, started, turnDir, tmpRoot, stepsBefore } =
+    await dispatchWithRecordFailure(Infinity);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("injected state write failure");
+  expect(started).toBe(0);
+  expect(existsSync(turnDir)).toBe(false);
+  expect(readdirSync(tmpRoot)).toEqual([]);
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("dispatched");
+  expect(state.stepsUsed).toBe(stepsBefore + 1);
+  expect(state.lastResult.status).not.toBe("error");
+});
