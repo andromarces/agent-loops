@@ -1219,9 +1219,14 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
       reviewerKind,
       reviewerSandbox,
     });
-  const unique = (texts, pattern) => [
-    ...new Set(texts.flatMap((text) => [...text.matchAll(pattern)].map((match) => match[0]))),
-  ];
+  const matchesIn = (text, pattern) => [...text.matchAll(pattern)].map((match) => match[0]);
+  // A surface that drops the rule matches nothing, so each surface must state it at least once.
+  const unique = (texts, pattern) => {
+    for (const text of texts) {
+      expect(matchesIn(text, pattern).length).toBeGreaterThan(0);
+    }
+    return [...new Set(texts.flatMap((text) => matchesIn(text, pattern)))];
+  };
 
   test("the shell-only sandbox limit", () => {
     const surfaces = [
