@@ -86,25 +86,34 @@ it("an unreadable ruleset source beside a failed protection read is no refusal",
   expect(await unreadableGateReason({ pr: 42, cwd: ".", gh })).toBeNull();
 });
 
-/** A `gh` over `table` that answers each call in `delays` (keyed by the route) after that many ms. */
-function slowGh(table, delays) {
+const RULESETS = "api repos/andromarces/agent-loops/rules";
+
+/** A `gh` over `table` whose replies to `routes` wait until every one of those reads has started, or until the call is canceled. */
+function barrierGh(table, routes) {
   const gh = fakeGh(table);
-  return async (args, ...rest) => {
-    const key = args.join(" ");
-    const wait = Object.entries(delays).find(([route]) => key.startsWith(route))?.[1] ?? 0;
-    await new Promise((resolve) => setTimeout(resolve, wait));
-    return gh(args, ...rest);
+  let started = 0;
+  let allStarted;
+  const barrier = new Promise((resolve) => (allStarted = resolve));
+  return async (args, cwd, { signal } = {}) => {
+    if (routes.some((route) => args.join(" ").startsWith(route))) {
+      if (++started === routes.length) allStarted();
+      const canceled = new Promise((resolve) =>
+        signal?.addEventListener("abort", () => resolve("canceled"), { once: true }),
+      );
+      if ((await Promise.race([barrier, canceled])) === "canceled") {
+        return { status: 1, stdout: "", stderr: "gh was canceled" };
+      }
+    }
+    return gh(args, cwd, { signal });
   };
 }
 
 // Usefulness: verifies #1182 changes no result within the same deadline — the ruleset and protection
-// reads run together, so two replies that each fit the deadline refuse though their sum does not.
+// reads run together. Each reply settles only once both reads have started, so reads that run one after
+// the other never settle, with no reliance on a wall-clock margin.
 it("an unreadable ruleset source beside a slow protection read is refused within the deadline", async () => {
-  const gh = slowGh([...UNREADABLE_RULESETS, [PROTECTION, null]], {
-    "api repos/andromarces/agent-loops/rules": 400,
-    [PROTECTION]: 400,
-  });
-  expect(await unreadableGateReason({ pr: 42, cwd: ".", gh, timeoutMs: 600 })).toMatch(
+  const gh = barrierGh([...UNREADABLE_RULESETS, [PROTECTION, null]], [RULESETS, PROTECTION]);
+  expect(await unreadableGateReason({ pr: 42, cwd: ".", gh, timeoutMs: 5_000 })).toMatch(
     /repository rulesets/,
   );
 });
