@@ -612,8 +612,9 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   // Neither text keeps the repair procedure or the unrecoverable claim. Outside "Work tree ownership"
   // the only `git worktree` command is the single removal command (#998). Inside it, the creation
   // commands are the one for new work (#985) and the no-remote form (#1099), and any other
-  // `git worktree` call is an `add`: the commands of an existing PR branch (#1218) belong to the
-  // whole-section pin, so this test names none of their strings.
+  // `git worktree` call is an `add`, at most one: the command of an existing PR branch (#1218). The
+  // count of `add` calls fixes the number of commands and never reads their words, so the whole-section
+  // pin owns the strings of that command.
   const { start, end } = REFUSED_CWD_BLOCKS.instructions;
   const from = instructions.indexOf(start);
   const stop = instructions.indexOf(end);
@@ -623,12 +624,11 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   expect(outside.replace(WORK_TREE_REMOVE_COMMAND, "")).not.toContain("git worktree");
   expect(section.split(WORK_TREE_CREATE_COMMAND)).toHaveLength(2);
   expect(section.split(WORK_TREE_CREATE_NO_REMOTE_COMMAND)).toHaveLength(2);
-  expect(
-    section
-      .replace(WORK_TREE_CREATE_COMMAND, "")
-      .replace(WORK_TREE_CREATE_NO_REMOTE_COMMAND, "")
-      .match(/git worktree(?! add )/g) ?? [],
-  ).toEqual([]);
+  const rest = section
+    .replace(WORK_TREE_CREATE_COMMAND, "")
+    .replace(WORK_TREE_CREATE_NO_REMOTE_COMMAND, "");
+  expect(rest.match(/git worktree(?! add )/g) ?? []).toEqual([]);
+  expect((rest.match(/git worktree add /g) ?? []).length).toBeLessThanOrEqual(1);
   expect(prompt).not.toContain("git worktree");
   for (const gone of ["not recoverable", "unrecoverable"]) {
     expect(instructions).not.toContain(gone);
