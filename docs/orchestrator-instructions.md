@@ -273,6 +273,17 @@ Without `--no-track`, the new branch gets the upstream `origin/<default>` when
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
+The no-upstream rule guards a plain `git push` only when `push.default` follows
+the upstream. With `push.default=matching`, a plain `git push` pushes every local
+branch that has a remote branch of the same name, and a linked work tree shares
+its local branches with the main checkout, so a local default branch that is
+ahead of `origin/<default>` is pushed too. Tell the worker to push only with
+`git push -u origin <branch>` or `git push -u origin <pr branch>`, which names the
+refspec, and never with a plain `git push`. Read `git config push.default` before
+the first dispatch. If it prints `matching`, state the named push in the task
+text. The remaining limit: a worker that runs a plain `git push` anyway can push
+the default branch under `matching`, and no work tree setting prevents it.
+
 A repository with no remote has no `origin/<default>`, so the command above
 fails. Use the local default branch as the base:
 
