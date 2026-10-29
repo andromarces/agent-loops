@@ -12,8 +12,8 @@ import { ownerAlive } from "./process-identity.mjs";
 import { slotsRoot } from "./slots-root.mjs";
 import { lockHeld, readLockOwner, tryStateLock } from "./state-lock.mjs";
 
-export const TEST_SLOT_USAGE_EXIT = 64;
-export const TEST_SLOT_TIMEOUT_EXIT = 75;
+const TEST_SLOT_USAGE_EXIT = 64;
+const TEST_SLOT_TIMEOUT_EXIT = 75;
 const DEFAULT_WAIT_SECONDS = 1800;
 // One slot on every host: 2 slots on a 16-CPU host gave 15 s test timeouts (ADR 0046).
 const DEFAULT_SLOTS = 1;

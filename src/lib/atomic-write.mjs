@@ -10,18 +10,23 @@ import { setTimeout as delay } from "node:timers/promises";
 // only the file its own call created (#353).
 let stateTempCounter = 0;
 
+// On Windows, rename fails while another process holds the destination open.
+// EPERM is the observed code; EACCES and EBUSY join the retry set for the
+// general Windows and network-mount failure set. `removeTemp` and
+// `renameWithRetry` share it.
+const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
 // A transient unlink failure clears once the holder lets go, so a failed removal
 // is retried once. A persistent failure is swallowed: this runs on the way out
 // of an already-failed operation, and the leftover temp is a lesser problem than
 // replacing the error the caller must act on (#353).
-const UNLINK_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 
 export async function removeTemp(path) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await rm(path, { force: true });
     } catch (err) {
-      if (!UNLINK_RETRY_CODES.has(err.code) || attempt >= 1) {
+      if (!RETRY_CODES.has(err.code) || attempt >= 1) {
         return;
       }
       await delay(10);
@@ -164,23 +169,20 @@ export function writeFileAtomicSync(file, text) {
   }
 }
 
-// Rename is the atomic replace step, but on Windows it fails while another
-// process holds the destination open. EPERM is the observed code; EACCES and
-// EBUSY join the retry set for the general Windows and network-mount failure
-// set. A continuous reader can hold the destination past a fixed short delay,
-// so the wait grows across attempts. The budget is about 400 ms, enough to
-// outlast the observed hold while a real failure still surfaces quickly: the
-// original error is rethrown once the schedule is spent (#233, #242).
-const RENAME_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+// Rename is the atomic replace step, but a continuous reader can hold the
+// destination past a fixed short delay, so the wait grows across attempts. The
+// budget is about 400 ms, enough to outlast the observed hold while a real
+// failure still surfaces quickly: the original error is rethrown once the
+// schedule is spent (#233, #242).
 // Wait before each retry, in order. Six attempts total wait 385 ms.
 const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 
-export async function renameWithRetry(from, to) {
+async function renameWithRetry(from, to) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await rename(from, to);
     } catch (err) {
-      if (!RENAME_RETRY_CODES.has(err.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
+      if (!RETRY_CODES.has(err.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
         throw err;
       }
       await delay(RENAME_RETRY_DELAYS_MS[attempt]);

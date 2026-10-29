@@ -120,10 +120,15 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   // condition this path cannot reach. The gate runs only when nothing above
   // refused, so a refused finish never reads GitHub (#302).
   const refusals = [];
+  // The init-time `--pr` declaration is the run's PR input, so a declared run
+  // can only end through the gate for that PR. A state file written before this
+  // field has no `pr`, so an absent declaration keeps the marker-only behavior.
+  const declaredPr = state.pr ?? null;
+  const reviewed = state.lastResult?.reviewed ?? null;
   // The headless gate refuses the same combination with the same words, so the
   // message is one function rather than two copies (#293).
   const markerReason = unresolvedCompareReason({
-    pr: state.pr ?? null,
+    pr: declaredPr,
     requireCi: args.requireCi,
   });
   const markerRefused = markerReason !== null && validated.value.unresolvedCompare;
@@ -145,10 +150,6 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
       refusals.push(reason);
     }
   }
-  // The init-time `--pr` declaration is the run's PR input, so a declared run
-  // can only end through the gate for that PR. A state file written before this
-  // field has no `pr`, so an absent declaration keeps the marker-only behavior.
-  const declaredPr = state.pr ?? null;
   if (declaredPr !== null && args.requireCi !== declaredPr) {
     refusals.push(missingGateRefusal(declaredPr, args.requireCi).reason);
   }
@@ -165,7 +166,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (args.requireCi !== null) {
     const gate = await checkCi({
       pr: args.requireCi,
-      reviewed: state.lastResult?.reviewed ?? null,
+      reviewed,
       cwd: args.cwd,
       gh,
       signal,
@@ -178,7 +179,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (args.compareHead !== null) {
     const compare = await checkPrHead({
       pr: args.compareHead,
-      reviewed: state.lastResult?.reviewed ?? null,
+      reviewed,
       cwd: args.cwd,
       gh,
       signal,

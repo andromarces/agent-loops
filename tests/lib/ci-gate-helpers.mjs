@@ -68,7 +68,7 @@ export const commitStatus = (context, state, updatedAt = "2026-01-01T00:00:00Z")
 
 // The route of one page of a paged read: the exact request, with the page number and no
 // `--paginate`. The replies of such a route are the one page, behind a `200` status block.
-export const pageRoute = (endpoint, page = 1) => pagedApiArgs(endpoint, page).join(" ");
+const pageRoute = (endpoint, page = 1) => pagedApiArgs(endpoint, page).join(" ");
 
 // Routes a `gh` call by the leading elements of its argument array, so a call
 // that merges arguments into one element gets no reply. A paged route answers a success with one
@@ -132,7 +132,7 @@ export const PR_CHECKS = prChecksArgs(42).join(" ");
 
 export const REPO_VIEW = REPO_VIEW_ARGS.join(" ");
 
-export const RULES_PAGE = pageRoute(`repos/${SLUG}/rules/branches/main`);
+const RULES_PAGE = pageRoute(`repos/${SLUG}/rules/branches/main`);
 
 export const MERGE_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${MERGE}/check-runs`);
 
@@ -145,7 +145,7 @@ const HEAD_STATUS = pageRoute(`repos/${SLUG}/commits/${HEAD}/status`);
 // The routes of a commit status read that spans pages: page `k` lists `pages[k - 1]`, and every
 // page but the last is padded with filler statuses to the 100 a full page holds, so the read goes on.
 // `total_count` is the padded total, as the endpoint reports it.
-export function statusPageRoutes(commit, pages) {
+function statusPageRoutes(commit, pages) {
   const full = pages.map((statuses, i) =>
     i === pages.length - 1
       ? statuses

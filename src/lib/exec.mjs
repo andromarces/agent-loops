@@ -47,7 +47,7 @@ const settingOf = (name) => NPM_LOG_NAME.exec(name)?.[1].toLowerCase();
  * directory still receives its logs. The caller must spawn without `extendEnv`, because a name
  * that is missing from `env` would return from the process environment.
  */
-export function withNpmLogSettings(env, callerEnv = {}) {
+function withNpmLogSettings(env, callerEnv = {}) {
   const held = {};
   for (const source of [process.env, callerEnv]) {
     for (const [name, value] of Object.entries(source)) {
