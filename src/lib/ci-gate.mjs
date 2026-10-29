@@ -404,20 +404,38 @@ export async function checkCi({
  * head part of `checkCi` alone: it makes the one PR read, whose merge-state field it ignores, so no
  * required-check source is read and no merge state or check result is evaluated or claimed. It serves a repository whose required-check sources
  * settle nothing, where `checkCi` refuses every finish (#1098).
- * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function }} options
+ *
+ * The read ends after `timeoutMs` and when `signal` aborts, with the cancel and timeout rules of `checkCi`: an
+ * aborted `signal` starts no read and the call rejects with `isCanceled` set, and a deadline rejects with
+ * `timedOut` set, never a verified compare (#1200).
+ * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
-export async function checkPrHead({ pr, reviewed, cwd, gh = runGh }) {
+export async function checkPrHead({
+  pr,
+  reviewed,
+  cwd,
+  gh = runGh,
+  timeoutMs = DEFAULT_READ_TIMEOUT_MS,
+  signal = null,
+}) {
+  throwIfCanceled(signal);
   const refused = reviewedRefusal(reviewed);
   if (refused) {
     return refused;
   }
+  const call = boundedCall(gh, timeoutMs, signal);
   let info;
   try {
-    info = await prInfo(gh, pr, cwd);
+    info = await prInfo(call, pr, cwd);
   } catch (err) {
+    throwIfCanceled(signal);
+    if (readExpired(call, err)) {
+      throw readTimeout(timeoutMs);
+    }
     throw failureOf(err);
   }
+  throwIfCanceled(signal);
   if (info.state !== "OPEN") {
     return fail(
       typeof info.state === "string"

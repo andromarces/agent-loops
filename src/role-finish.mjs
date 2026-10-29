@@ -181,6 +181,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
       reviewed: state.lastResult?.reviewed ?? null,
       cwd: args.cwd,
       gh,
+      signal,
     });
     if (!compare.ok) {
       throw new RoleError(`Finish refused: ${compare.reason}.`);
