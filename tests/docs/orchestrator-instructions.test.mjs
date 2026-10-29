@@ -265,11 +265,17 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
-// Usefulness: verifies every surface that states the `--all` wait says it holds a pass for a GitHub
-// Actions check run while a `pull_request` workflow of the base branch can run, and that `--expect`
-// is then not needed for that workflow check (issue #1228). A parent that misses it adds `--expect`
-// for a check the wait covers, or trusts an early pass for a check it never held.
-test("the --all surfaces state the hold for a pull_request workflow and the --expect scope", async () => {
+// The hold rule of the --all wait (issue #1228), word for word on every surface that states it. The
+// hold is the default, and only the exclusions named here skip it, so a surface that drops an
+// exclusion, or adds one, fails here instead of telling a parent that --expect is unneeded where the
+// wait would not hold.
+const HOLD_RULE_PASSAGE = `The --all wait holds a pass while a pull_request workflow of the base branch may run for the PR and the head has no GitHub Actions check run, so --expect is not needed for that workflow check. The hold skips a workflow only when its text proves that no run starts for the PR: no pull_request trigger, a paths list that matches no PR file, a paths-ignore list that matches every PR file, a branches list that omits the base branch, or a branches-ignore list that names it. A types filter never skips. A trigger or filter form that the command cannot settle, a workflow file that the PR changes, and a read that fails or cannot be parsed hold the pass, and the hold ends at the bound with timedOut true, never a pass. A failing check still settles the wait. --expect stays needed for a check of a third-party app.`;
+
+// Usefulness: verifies every surface that states the --all hold carries the whole rule: the hold,
+// the exact skip conditions, the filters that never skip, the fail-closed cases, the bound, and the
+// --expect scope (issue #1228). The passage is compared word for word, so no word added, removed, or
+// changed on one surface passes.
+test("the --all surfaces state the same hold rule and limits", async () => {
   const prompt = initialPrompt({
     task: "Implement feature X",
     maxSteps: 10,
@@ -285,8 +291,7 @@ test("the --all surfaces state the hold for a pull_request workflow and the --ex
     "utf8",
   );
   for (const text of [prompt, instructions, roleDoc]) {
-    expectRule(text, /`?pull_request`? workflow/i, /GitHub Actions check run/i, /holds? a pass/i);
-    expectRule(text, /`?--expect`?[^.]*(?:not needed|no need)[^.]*workflow/i);
+    expect(wordsOf(text)).toContain(wordsOf(HOLD_RULE_PASSAGE));
   }
 });
 

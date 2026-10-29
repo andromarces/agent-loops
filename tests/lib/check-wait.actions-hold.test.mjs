@@ -38,12 +38,18 @@ function fileReply(text) {
 }
 
 /** A scripted `gh` whose head check runs are `runsByPoll[n]` on poll `n`, the last entry repeating. */
-function holdGh({ workflow = PR_WORKFLOW, prFiles = [{ filename: "src/a.js" }], runsByPoll }) {
+function holdGh({
+  workflow = PR_WORKFLOW,
+  prFiles = [{ filename: "src/a.js" }],
+  runsByPoll,
+  listingFailures = 0,
+}) {
   const inner = scriptedGh([{ status: 0, checks: [{ name: WORKERS.name, bucket: "pass" }] }], {
     all: true,
   });
   const repo = "repos/owner/repo";
   let polls = 0;
+  let failuresLeft = listingFailures;
   return async (args, cwd) => {
     if (args[0] === "pr" && args[1] === "view") {
       polls += 1;
@@ -56,6 +62,10 @@ function holdGh({ workflow = PR_WORKFLOW, prFiles = [{ filename: "src/a.js" }], 
       return readOk(prFiles);
     }
     if (endpoint === `${repo}/contents/.github/workflows?ref=${BASE_HEAD}`) {
+      if (failuresLeft > 0) {
+        failuresLeft -= 1;
+        return { status: 1, stdout: "", stderr: "gh: Bad Gateway (HTTP 502)", timedOut: false };
+      }
       return readOk([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file" }]);
     }
     if (endpoint === `${repo}/contents/.github/workflows/ci.yml?ref=${BASE_HEAD}`) {
@@ -146,6 +156,94 @@ test("the --all wait holds when the paths filter matches a PR file", async () =>
 test("the --all wait passes at once when the pull_request trigger has a branches filter", async () => {
   const { result, elapsed } = await holdWait({
     workflow: "name: ci\non:\n  pull_request:\n    branches:\n      - release\n",
+    runsByPoll: [[WORKERS]],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(elapsed).toBe(0);
+});
+
+// Usefulness: verifies a base workflow whose `pull_request` trigger is unfiltered in any form (a bare
+// key, an empty map, a string, a list) holds the pass, so a passing third-party check never settles
+// the wait before the workflow registers (issue #1228, reviewer blocker 1).
+test.each([
+  ["a bare key", "name: ci\non:\n  pull_request:\n"],
+  ["an empty map", "name: ci\non:\n  pull_request: {}\n"],
+  ["a flow map", "name: ci\non: { pull_request: {} }\n"],
+  ["a string", "name: ci\non: pull_request\n"],
+  ["a list", "name: ci\non: [push, pull_request]\n"],
+])("the --all wait holds for an unfiltered pull_request trigger as %s", async (_form, workflow) => {
+  const { result } = await holdWait({ workflow, runsByPoll: [[WORKERS]] });
+  expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies a filter that the PR meets, or that never proves exclusion, holds the pass:
+// `branches` naming the base, the default `types`, `paths-ignore` with a source change, a
+// `branches-ignore` that omits the base, and a pattern that cannot be settled (reviewer blocker 2).
+test.each([
+  ["branches naming the base", "branches:\n      - main"],
+  ["a branches pattern for the base", "branches:\n      - 'ma*'"],
+  ["the default types", "types: [opened, synchronize, reopened]"],
+  ["types that omit synchronize", "types: [labeled]"],
+  ["paths-ignore with a source change", "paths-ignore:\n      - 'docs/**'"],
+  ["branches-ignore that omits the base", "branches-ignore:\n      - release"],
+  ["an unsettled paths pattern", "paths:\n      - '!docs/**'"],
+  ["an unsettled branches pattern", "branches:\n      - 'rel[ea]se'"],
+])("the --all wait holds for a pull_request trigger with %s", async (_filter, filter) => {
+  const { result } = await holdWait({
+    workflow: `name: ci\non:\n  pull_request:\n    ${filter}\n`,
+    runsByPoll: [[WORKERS]],
+  });
+  expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies a filter that proves no run starts for this PR skips the hold, so the exclusion
+// rules are not a blanket hold: `paths-ignore` that covers every PR file, `branches` that omits the
+// base, and `branches-ignore` that names it.
+test.each([
+  ["paths-ignore covering every file", "paths-ignore:\n      - 'src/**'"],
+  ["branches omitting the base", "branches:\n      - release"],
+  ["branches-ignore naming the base", "branches-ignore:\n      - main"],
+])("the --all wait passes at once when %s", async (_filter, filter) => {
+  const { result, elapsed } = await holdWait({
+    workflow: `name: ci\non:\n  pull_request:\n    ${filter}\n`,
+    runsByPoll: [[WORKERS]],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(elapsed).toBe(0);
+});
+
+// Usefulness: verifies a workflow text that cannot be settled, and a PR that changes a workflow file,
+// hold the pass instead of skipping it (issue #1228 fail-closed rule).
+test.each([
+  ["a syntax error", { workflow: "name: ci\non:\n  pull_request:\njobs: [\n" }],
+  ["an anchor", { workflow: "name: ci\non: &t\n  pull_request:\n" }],
+  [
+    "a changed workflow file",
+    { workflow: INERT_WORKFLOW, prFiles: [{ filename: ".github/workflows/ci.yml" }] },
+  ],
+])("the --all wait holds for %s", async (_case, options) => {
+  const { result } = await holdWait({ ...options, runsByPoll: [[WORKERS]] });
+  expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies a failed workflow read (a 502) holds the pass to the bound, and the next poll
+// reads again, so a transient failure delays the pass until the run registers (reviewer blocker 3).
+test("the --all wait holds when the workflow read fails and retries on the next poll", async () => {
+  const bound = await holdWait({ listingFailures: 99, runsByPoll: [[WORKERS]] });
+  expect(bound.result.timedOut).toBe(true);
+  const retried = await holdWait({
+    listingFailures: 1,
+    runsByPoll: [[WORKERS], [WORKERS, ACTIONS]],
+  });
+  expect(retried.result.timedOut).toBe(false);
+  expect(retried.result.checks.map(({ name }) => name)).toContain("checks");
+});
+
+// Usefulness: verifies a workflow with no `pull_request` trigger skips the hold, so a repository whose
+// workflows cannot run for a PR keeps the immediate pass.
+test("the --all wait passes at once when no workflow names pull_request", async () => {
+  const { result, elapsed } = await holdWait({
+    workflow: "name: push-only\non:\n  push:\n    branches: [main]\n",
     runsByPoll: [[WORKERS]],
   });
   expect(result.timedOut).toBe(false);

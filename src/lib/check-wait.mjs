@@ -25,7 +25,7 @@ import {
   UNKNOWN,
   withSignal,
 } from "./ci-required-sources.mjs";
-import { isFullSha, noCheckSource, pullRequestWorkflowRuns } from "./check-source-probe.mjs";
+import { isFullSha, noCheckSource, pullRequestWorkflowMayRun } from "./check-source-probe.mjs";
 import { isJsonObject } from "./json.mjs";
 
 export { isFullSha };
@@ -414,10 +414,11 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
  * register a check run after the first ones passed, so a pass without it is not evidence. A
  * missing expected name keeps the wait running to the bound, where `awaiting` lists it. A failing
  * check still settles the wait (#978).
- * An `--all` pass is held while a `pull_request` workflow of the base branch can run for the PR (see
- * `pullRequestWorkflowRuns`) and `sha` has no check run from GitHub Actions: a workflow registers
- * its run after a fast check of another app passed. The hold needs no `expect` name, ends at the bound
- * with `timedOut: true`, and a failing check still settles the wait (#1228).
+ * An `--all` pass is held while a workflow of the base branch may run for the PR (see
+ * `pullRequestWorkflowMayRun`) and `sha` has no check run from GitHub Actions: a workflow registers
+ * its run after a fast check of another app passed. The hold skips only a workflow that provably
+ * cannot run, so a read that fails or a form that is not settled holds too. It needs no `expect` name,
+ * ends at the bound with `timedOut: true`, and a failing check still settles the wait (#1228).
  *
  * `gh pr checks` names no commit, because it queries by PR identity, so the check states
  * never come from it. Each poll reads the PR head `sha` (`gh pr view`), runs `gh pr checks`
@@ -629,24 +630,27 @@ export async function waitChecks({
   };
   // Whether the probe of `noCheckSource` ran. It runs at most once per wait.
   let probed = false;
-  // Whether a `pull_request` workflow of the base branch can run for the PR head `sha`: read once
-  // per head, and false when the read fails, so the wait keeps its earlier pass rule (#1228).
-  let workflowRuns = { sha: null, value: false };
-  const workflowRunsFor = async (sha, base) => {
-    if (workflowRuns.sha !== sha) {
-      let value = false;
+  // Whether a workflow of the base branch may run for the PR head `sha`, read once per head. A read
+  // that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
+  let workflowMayRun = { sha: null, value: true };
+  const workflowMayRunFor = async (sha, base) => {
+    if (workflowMayRun.sha !== sha) {
+      let value = null;
       try {
         await ensureSlug();
-        value = await pullRequestWorkflowRuns({ bounded, slug, cwd, pr }, base);
+        value = await pullRequestWorkflowMayRun({ bounded, slug, cwd, pr }, base);
       } catch (raw) {
-        // A failed read does not hold the pass. The bound still ends the wait.
+        // A failed read holds the pass. The bound still ends the wait.
         if (failureOf(raw) instanceof BoundReached) {
           throw failureOf(raw);
         }
       }
-      workflowRuns = { sha, value };
+      if (value === null) {
+        return true;
+      }
+      workflowMayRun = { sha, value };
     }
-    return workflowRuns.value;
+    return workflowMayRun.value;
   };
   const probe = async (sha, base) => {
     await ensureSlug();
@@ -754,7 +758,7 @@ export async function waitChecks({
     const failing = prFailures.length > 0 || items.some(isFailing);
     const passing = read.settled && listed.settled && awaiting.length === 0;
     // A pass waits for the run of a base workflow that has not registered on `sha` yet (#1228).
-    const held = !failing && passing && all && !actionsRun && (await workflowRunsFor(sha, base));
+    const held = !failing && passing && all && !actionsRun && (await workflowMayRunFor(sha, base));
     return { settled: failing || (passing && !held), checks: read.checks };
   };
   const poll = async () => {

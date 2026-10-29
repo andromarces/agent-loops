@@ -3,7 +3,7 @@
 import { commitEntries } from "./ci-gate.mjs";
 import { ghApi, pagedRead, readOne } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
-import { prEventsFilteredOut, prWorkflowRuns } from "./workflow-paths.mjs";
+import { prEventsFilteredOut, prWorkflowMayRun, UNREADABLE_TEXT } from "./workflow-paths.mjs";
 
 // The workflow triggers that can run for a PR head, and the directory that holds the workflows. The
 // probe scans the text of each workflow file for a trigger name instead of parsing the YAML, so a name
@@ -12,11 +12,6 @@ const PR_TRIGGERS =
   /\b(?:pull_request|pull_request_target|push|merge_group|workflow_run|check_suite)\b/;
 const WORKFLOW_DIR = ".github/workflows";
 const WORKFLOW_PATH = /^\.github\/workflows\//i;
-// A text the scan cannot read as plain trigger names: a backslash starts a YAML escape or a line
-// continuation that can spell an event name (`"pull_request"`), and a control character, as a
-// NUL in UTF-16 text, hides names from the scan. Such a text keeps the wait.
-// oxlint-disable-next-line no-control-regex -- the control characters are the point of the pattern
-const UNREADABLE_TEXT = /[\\\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 // A base64 string as the contents API sends it, line breaks removed.
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 // The most items that the files endpoint of a PR (3,000) and the contents endpoint of a directory
@@ -290,20 +285,29 @@ export async function noCheckSource(context, sha, base) {
 }
 
 /**
- * Whether a workflow file of `base` has a `pull_request` trigger that runs for the PR: the base
- * branch resolves to one SHA, the files of the PR and the workflow files at that SHA are read as
- * `noCheckSource` reads them, and the trigger and `paths` rules of `prWorkflowRuns` decide. The wait
- * holds a pass for a GitHub Actions check run only when this is true (#1228). A read that fails or is
- * not exactly the expected shape returns false, so the wait keeps its earlier pass rule. Its limits: a
- * workflow of the PR head that the PR changes is not read, and a trigger filter that the rules do not
- * settle (`branches`, `types`, `paths-ignore`) never holds.
+ * Whether a workflow file of `base` may run for the PR, so the wait holds a pass for a GitHub Actions
+ * check run (#1228). The base branch resolves to one SHA, the files of the PR and the workflow files
+ * at that SHA are read as `noCheckSource` reads them, and `prWorkflowMayRun` judges each file. A PR
+ * that changes a workflow file may run it, whatever the base files say. False means every workflow
+ * text proves that no run starts for the PR. Null means a read failed or has another shape, which is
+ * unresolved: the caller holds the pass and reads again on its next poll. A throw is unresolved too.
  * @param {{ bounded: Function, slug: string, cwd: string, pr: number }} context the bounded `gh` runner of the wait
  * @param {string} base the base branch of the PR
- * @returns {Promise<boolean>}
+ * @returns {Promise<boolean | null>}
  */
-export async function pullRequestWorkflowRuns(context, base) {
+export async function pullRequestWorkflowMayRun(context, base) {
   const baseSha = await baseShaOf(context, base);
   const changed = baseSha === null ? null : await changedFilesOf(context);
-  const texts = changed === null ? null : await workflowTextsOf(context, baseSha);
-  return texts !== null && texts.some((text) => prWorkflowRuns(text, changedPathsOf(changed)));
+  if (changed === null) {
+    return null;
+  }
+  const changesWorkflow = changed.some(
+    (file) => WORKFLOW_PATH.test(file.filename) || WORKFLOW_PATH.test(file.previous_filename ?? ""),
+  );
+  if (changesWorkflow) {
+    return true;
+  }
+  const texts = await workflowTextsOf(context, baseSha);
+  const paths = changedPathsOf(changed);
+  return texts === null ? null : texts.some((text) => prWorkflowMayRun(text, paths, base));
 }
