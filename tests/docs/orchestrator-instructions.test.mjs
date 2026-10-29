@@ -124,6 +124,8 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),
   (text) => expectRule(text, /lockfiles by path only/i),
   (text) => expectRule(text, /lockfile install/i, /before the next reviewer dispatch/i),
+  // Issue #1225: an unread work tree root names every lockfile, so the parent still reinstalls.
+  (text) => expectRule(text, /could not read the work tree root/i, /every lockfile/i),
   // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
   // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
   (text) =>
@@ -264,6 +266,36 @@ test("the parent surfaces name --expect for a check that registers late", async 
     // Exact name matching, and a commit status never satisfies a name (issue #978).
     expectRule(text, /check run/i, /exact/i, /trimmed/i, /case-sensitiv/i, /any app/i);
     expectRule(text, /commit status/i, /never match/i);
+  }
+});
+
+// The hold rule of the --all wait (issue #1228), word for word on every surface that states it. The
+// hold is the default, and only the exclusions named here skip it, so a surface that drops an
+// exclusion, or adds one, fails here instead of telling a parent that --expect is unneeded where the
+// wait would not hold.
+const HOLD_RULE_PASSAGE = `The --all wait holds a pass while a pull_request workflow of the base branch may run for the PR and the head has no GitHub Actions check run, so --expect is not needed for that workflow check. The hold skips a workflow only when its text proves that no run starts for the PR: no pull_request trigger, a paths list that matches no PR file, a paths-ignore list that matches every PR file, a branches list that omits the base branch, or a branches-ignore list that names it. A types filter never skips. A trigger or filter form that the command cannot settle, a workflow file that the PR changes, and a read that fails or cannot be parsed hold the pass, and the hold ends at the bound with timedOut true, never a pass. A PR head or base branch that moves during the reads holds the pass. A failing check still settles the wait. --expect stays needed for a check of a third-party app.`;
+
+// Usefulness: verifies every surface that states the --all hold carries the whole rule: the hold,
+// the exact skip conditions, the filters that never skip, the fail-closed cases, the bound, and the
+// --expect scope (issue #1228). The passage is compared word for word, so no word added, removed, or
+// changed on one surface passes.
+test("the --all surfaces state the same hold rule and limits", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readInstructions();
+  const roleDoc = await readFile(
+    join(dirname(instructionsPath), "reference/wait-checks.md"),
+    "utf8",
+  );
+  for (const text of [prompt, instructions, roleDoc]) {
+    expect(wordsOf(text)).toContain(wordsOf(HOLD_RULE_PASSAGE));
   }
 });
 
@@ -639,6 +671,9 @@ const REFUSED_CWD_BLOCKS = {
       "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
       "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
       "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",
+      "The no-upstream rule guards a plain `git push` only when `push.default` follows the upstream. With `push.default=matching`, a plain `git push` pushes every local branch that has a remote branch of the same name. A linked work tree shares its local branches with the main checkout. So a local default branch that is ahead of `origin/<default>` is pushed too.",
+      'Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or `git push -u origin <pr branch>` for an existing PR branch. Never let the worker run a plain `git push`. Before the first dispatch, read `git -C "<work tree>" config push.default`. If it prints `matching`, state the named push in the task text.',
+      "The named push closes the gap only when the worker follows it. A worker that runs a plain `git push` anyway can push the default branch under `matching`. With `extensions.worktreeConfig` on, `git config --worktree push.default matching` sets the value for one work tree only. That value overrides the repository value. The command above reads the effective value of the work tree, override included.",
       "A repository with no remote has no `origin/<default>`, so the command above fails. Use the local default branch as the base:",
       "```bash git worktree add --no-track -b <branch> <work tree> <default> ```",
       "In that repository, a worker commits in the work tree and never pushes, because there is no remote for `git push -u origin <branch>`. After `finish`, the parent merges the branch or hands it to the user.",

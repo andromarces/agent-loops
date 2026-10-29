@@ -21,16 +21,20 @@ const READ_BOUND_MS = 10_000;
 const UNREADABLE = "unreadable";
 
 /**
- * Reads the content hash of each lockfile at the work tree root of `cwd`, or null, after a
- * warning, when the work tree root cannot be read in time. An absent lockfile reads as null, so a
- * lockfile that a turn adds or deletes differs from the earlier read. A lockfile whose hash fails or
- * does not end within `boundMs` reads as unreadable after a warning, and `diffLockfiles` reports
- * it. The read has its own time bound and takes no turn signal, so a canceled turn is read too and
- * the read never changes the cancel outcome.
- * known-limit: the bound ends the wait, not the file system request, which can outlive the bound
- * and stay pending in the background when the file system stalls.
+ * Reads the content hash of each lockfile at the work tree root of `cwd`. An absent lockfile reads
+ * as null, so a lockfile that a turn adds or deletes differs from the earlier read. A lockfile whose
+ * hash fails or does not end within `boundMs` reads as unreadable after a warning, and
+ * `diffLockfiles` reports it. When the work tree root cannot be read in time, every lockfile reads
+ * as unreadable, so the parent reinstalls instead of reading a silent "no change". The read has its
+ * own time bound and takes no turn signal, so a canceled turn is read too and the read never
+ * changes the cancel outcome. The bound aborts the signal that each hash read takes, which stops a
+ * read that has not yet started its file system request.
+ * known-limit: the bound ends the wait, not a file system request already in flight. Node checks the
+ * signal only between requests, so a stalled `lstat`, `readlink`, or content read stays pending after
+ * the bound, can keep its file handle, and can keep the process alive. No test shows bounded handle
+ * release, because a stalled request cannot be produced portably.
  * @param {{ boundMs?: number }} [options]
- * @returns {Promise<Record<string, string | null> | null>}
+ * @returns {Promise<Record<string, string | null>>}
  */
 export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
   const bound = new AbortController();
@@ -45,7 +49,7 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
   stopped.catch(() => {});
   const hash = async (root, name) => {
     try {
-      return await Promise.race([sha256File(join(root, name)), stopped]);
+      return await Promise.race([sha256File(join(root, name), { signal: bound.signal }), stopped]);
     } catch (err) {
       // A file system error message carries the path, so the warning names the error code only.
       const code = typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "";
@@ -62,8 +66,10 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
     const hashes = await Promise.all(LOCKFILES.map((name) => hash(root, name)));
     return Object.fromEntries(LOCKFILES.map((name, i) => [name, hashes[i]]));
   } catch (err) {
-    logWarn(`worker: the lockfile read failed: ${firstErrorLine(readableErrorText(err))}`);
-    return null;
+    logWarn(
+      `worker: the lockfile read failed: ${firstErrorLine(readableErrorText(err))}; reporting every lockfile as changed`,
+    );
+    return Object.fromEntries(LOCKFILES.map((name) => [name, UNREADABLE]));
   } finally {
     clearTimeout(timer);
   }
@@ -72,8 +78,8 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
 /**
  * Names the lockfiles that differ between two `readLockfiles` results, by path only. Sorted. A
  * lockfile that is unreadable in either result counts as changed, because a reinstall is harmless and
- * a missed one leaves the next reviewer on stale dependencies. Returns [] when a whole read failed,
- * because no lockfile is known then.
+ * a missed one leaves the next reviewer on stale dependencies. Returns [] when a result is missing,
+ * which is a turn that took no read.
  */
 export function diffLockfiles(before, after) {
   if (!before || !after) return [];

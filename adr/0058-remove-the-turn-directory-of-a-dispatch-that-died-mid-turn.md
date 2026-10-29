@@ -2,9 +2,17 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Extends [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md). Decisions 5 and 6 of ADR 0047 remove the directory after the turn, which a dead process never reaches. This ADR adds the removal by a later call. No decision of ADR 0047 is replaced.
+
+Superseded in part by [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md):
+
+- Decision 3, the conditions that keep the directory: ADR 0063 adds a live POSIX process group of the child.
+- Decision 4, the refusal of a record: ADR 0063 adds a record whose parent is not the inherited temporary directory of the call.
+- The consequence "On POSIX only the recorded child is checked": ADR 0063 replaces it.
+
+Decisions 1, 2, and 5, the shape check of decision 4, the other consequences, and both alternatives remain in force.
 
 ## Date
 
@@ -43,7 +51,10 @@ Andro Marces
 ## Links
 
 - [Issue #1207](https://github.com/andromarces/agent-loops/issues/1207)
+- [Issue #1216](https://github.com/andromarces/agent-loops/issues/1216)
+- [PR #1230](https://github.com/andromarces/agent-loops/pull/1230)
 - [PR #1212](https://github.com/andromarces/agent-loops/pull/1212)
+- [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md)
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:

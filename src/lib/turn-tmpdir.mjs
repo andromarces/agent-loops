@@ -143,17 +143,20 @@ const TURN_DIR_NAME = /^al-[A-Za-z0-9]{6}$/;
  * `onCreated` of `withTurnTmpdir` received, plus `child`, the `{ pid, startTime }` of the child of
  * the turn that the dispatcher added after the spawn. The directory stays, with a warning, while a
  * process of the dead turn may still use it: a record with no child, a child that `ownerAlive`
- * reads as running or cannot read, and, on Windows, a live process below the recorded pid. A
- * Windows `.cmd` shim ends with its dispatcher while the CLI that it started keeps running, and the
- * table keeps the parent pid of that CLI. A process table that cannot be read keeps the directory
- * too. Otherwise the removal is the one of a normal turn:
- * it acts only on a directory with the recorded device and inode, so a directory that is gone or
+ * reads as running or cannot read, on POSIX, a live process group that the child led, and, on
+ * Windows, a live process below the recorded pid. The group is the one that `exec` makes with
+ * `killDescendants`: its id is the pid of the child and stays reserved while any member runs, so
+ * the group names a descendant that was reparented. A Windows `.cmd` shim ends with its dispatcher
+ * while the CLI that it started keeps running, and the table keeps the parent pid of that CLI. A
+ * process table that cannot be read keeps the directory too. Otherwise the removal is the one of a
+ * normal turn: it acts only on a directory with the recorded device and inode, so a directory that is gone or
  * that something replaced is not followed. A record that is not the shape of a created turn
- * directory is refused without a removal. Every outcome other than a removal warns and never
- * throws.
- * known-limit: on POSIX only the recorded child is checked, because an orphan is reparented and
- * the table no longer names the child as its parent. A descendant that outlives a dead child
- * there, and a Windows descendant below a chain with no live link, are not found.
+ * directory is refused without a removal, and so is a record whose parent is not the real path of
+ * the temporary directory that this call inherited, because a turn directory is created there only.
+ * Every outcome other than a removal warns and never throws.
+ * known-limit: a POSIX descendant that left the group of the child, and a Windows descendant below
+ * a chain with no live link, are not found. A group id that the OS reused for a new group after the
+ * old one ended keeps the directory, with the warning.
  */
 export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_MS) {
   if (record === undefined || record === null) return;
@@ -167,6 +170,12 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
     logWarn("turn temporary directory not removed, the recorded directory is not a turn directory");
     return;
   }
+  if (!(await inInheritedTmpdir(parentReal))) {
+    logWarn(
+      `turn temporary directory not removed, the recorded parent is not the temporary directory of this call: ${dir}`,
+    );
+    return;
+  }
   if (!Number.isInteger(child?.pid) || child.pid <= 0) {
     logWarn(
       `turn temporary directory kept, no child of the dead turn is recorded and one may still run: ${dir}`,
@@ -176,6 +185,12 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
   if (await ownerAlive(child)) {
     logWarn(
       `turn temporary directory kept, a child of the dead turn may still run (pid ${child.pid}): ${dir}`,
+    );
+    return;
+  }
+  if (process.platform !== "win32" && processGroupAlive(child.pid)) {
+    logWarn(
+      `turn temporary directory kept, a process in the group of the dead child may still run (group ${child.pid}): ${dir}`,
     );
     return;
   }
@@ -197,6 +212,26 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
     }
   }
   await removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs);
+}
+
+// True unless no process runs in the POSIX process group `pgid`. A signal 0 reaches no process
+// and fails with ESRCH only when the group is empty. Any other error keeps the group as alive.
+function processGroupAlive(pgid) {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return err?.code !== "ESRCH";
+  }
+}
+
+// True when `parentReal` is the real path of the temporary directory that this process inherited.
+async function inInheritedTmpdir(parentReal) {
+  try {
+    return (await realpath(resolve(tmpdir()))) === parentReal;
+  } catch {
+    return false;
+  }
 }
 
 // The pid of a live process that descends from `rootPid` through the parent pids of `table`, or null.

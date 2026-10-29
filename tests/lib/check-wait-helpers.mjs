@@ -162,6 +162,24 @@ export function scriptedGh(
         timedOut: false,
       };
     }
+    // The reads of the Actions hold: a base branch with no workflow file and a PR with no file, so a
+    // test that scripts no workflow never holds for a run.
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (endpoint === "repos/owner/repo/commits/main") {
+      return ok(pageStdout({ sha: "c".repeat(40) }));
+    }
+    if (endpoint.startsWith("repos/owner/repo/pulls/") && endpoint.includes("/files")) {
+      return ok(pageStdout([]));
+    }
+    if (endpoint.startsWith("repos/owner/repo/contents/.github/workflows")) {
+      return {
+        status: 1,
+        stdout:
+          'HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found"}',
+        stderr: "gh: Not Found (HTTP 404)",
+        timedOut: false,
+      };
+    }
     const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)(?:\?.*)?$/.exec(
       args[0] === "api" ? args[1] : "",
     );

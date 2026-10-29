@@ -299,3 +299,16 @@ test("first worker turn tells a probe copy to avoid the pnpm dependency check in
     "Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly, because pnpm installs from its dependency check by default.",
   );
 });
+
+// Usefulness: verifies requirement "a worker pushes only with a named refspec" (issue #1226): under
+// `push.default=matching` a plain `git push` also pushes a shared local default branch, and the
+// push wording alone ("push it") leaves the refspec to the worker. Every turn that can push carries it.
+test("worker turns push only with a named refspec and never a plain git push", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Push only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`.",
+    );
+    expect(prompt).toContain("`push.default=matching`");
+  }
+});

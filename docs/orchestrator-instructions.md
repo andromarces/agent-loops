@@ -233,7 +233,10 @@ Apply these parent rules:
   such a read.
 - A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
   tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
-  lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts as changed. The worker never installs, so the installed dependencies no longer match
+  lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts
+  as changed. When the runtime could not read the work tree root, the field names every lockfile,
+  which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
+  never installs, so the installed dependencies no longer match
   the lockfile. When the field appears, run the lockfile install in that work tree, for example
   `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
   turn carries the field too. A turn that changed none carries no field.
@@ -275,6 +278,25 @@ Without `--no-track`, the new branch gets the upstream `origin/<default>` when
 `branch.autoSetupMerge` is at its default.
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
+
+The no-upstream rule guards a plain `git push` only when `push.default` follows
+the upstream. With `push.default=matching`, a plain `git push` pushes every
+local branch that has a remote branch of the same name. A linked work tree
+shares its local branches with the main checkout. So a local default branch that
+is ahead of `origin/<default>` is pushed too.
+
+Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or
+`git push -u origin <pr branch>` for an existing PR branch. Never let the worker
+run a plain `git push`. Before the first dispatch, read
+`git -C "<work tree>" config push.default`. If it prints `matching`, state the
+named push in the task text.
+
+The named push closes the gap only when the worker follows it. A worker that
+runs a plain `git push` anyway can push the default branch under `matching`.
+With `extensions.worktreeConfig` on, `git config --worktree push.default matching`
+sets the value for one work tree only. That value overrides the repository
+value. The command above reads the effective value of the work tree, override
+included.
 
 A repository with no remote has no `origin/<default>`, so the command above
 fails. Use the local default branch as the base:
