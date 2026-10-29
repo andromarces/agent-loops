@@ -101,13 +101,12 @@ const CHECK_RUN_STATUSES = new Set([
 ]);
 const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"]);
 
-// The status read parses the check-run and commit-status replies strictly. The
-// gate accepts a missing or malformed field as an empty list. A reply that is not
-// the paginated shape, or that holds an entry the judgment cannot read, throws in
-// strict mode, and the read reports it as unresolved instead of judging the
-// entries that did parse. The latest entry for a name decides, so an id or a
-// timestamp that cannot be ordered is malformed too: it could rank an old pass
-// above a newer failure (issue #349).
+// The status read, the check wait, and the source probe parse the check-run and commit-status
+// replies strictly. The gate accepts a missing or malformed field as an empty list. A reply that is
+// not the paginated shape, or that holds an entry the judgment cannot read, throws in strict mode,
+// and the reader reports it as unresolved instead of judging the entries that did parse. The
+// latest entry for a name decides, so an id or a timestamp that cannot be ordered is malformed too:
+// it could rank an old pass above a newer failure (issue #349).
 function pagesOf(data, field, what) {
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error(`malformed ${what} reply`);
