@@ -27,8 +27,12 @@ const UNREADABLE = "unreadable";
  * `diffLockfiles` reports it. When the work tree root cannot be read in time, every lockfile reads
  * as unreadable, so the parent reinstalls instead of reading a silent "no change". The read has its
  * own time bound and takes no turn signal, so a canceled turn is read too and the read never
- * changes the cancel outcome. The bound aborts the content reads, which close their file handles.
- * known-limit: `lstat` and `readlink` take no signal, so a stalled one stays pending after the bound.
+ * changes the cancel outcome. The bound aborts the signal that each hash read takes, which stops a
+ * read that has not yet started its file system request.
+ * known-limit: the bound ends the wait, not a file system request already in flight. Node checks the
+ * signal only between requests, so a stalled `lstat`, `readlink`, or content read stays pending after
+ * the bound, can keep its file handle, and can keep the process alive. No test shows bounded handle
+ * release, because a stalled request cannot be produced portably.
  * @param {{ boundMs?: number }} [options]
  * @returns {Promise<Record<string, string | null>>}
  */

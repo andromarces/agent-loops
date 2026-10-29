@@ -61,8 +61,10 @@ export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, 
 // file it points to, so two links with different targets never share a hash and
 // a dangling or directory link still has a content identity. The link text is
 // tagged before hashing, so a link never collides with a regular file that
-// holds the same bytes. An aborted `signal` stops the content read, which closes its handle, and
-// the read rejects with an AbortError. The `lstat` and `readlink` calls take no signal.
+// holds the same bytes. An aborted `signal` rejects with an AbortError before the read starts, and
+// it rejects an `fs` read that has not yet begun its request. Node checks the signal only between
+// requests, so an `fs` request already in flight is not interrupted, and a stalled read can keep its
+// file handle past the abort. The `lstat` and `readlink` calls take no signal.
 export async function sha256File(path, { signal } = {}) {
   signal?.throwIfAborted();
   let s;

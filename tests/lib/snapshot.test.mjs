@@ -663,8 +663,9 @@ test.skipIf(!canSimulateReadFailure)("sha256File rethrows non-ENOENT read errors
   }
 });
 
-// Usefulness: verifies requirement "a read that its signal stopped releases its file handle"
-// (issue #1225): the read stops with an abort error instead of hashing, so no read outlives the caller.
+// Usefulness: verifies requirement "an aborted signal stops a read before it starts" (issue #1225):
+// the call rejects with an abort error instead of hashing. It shows no handle release for a read
+// already in flight.
 test("sha256File rejects with an abort error when its signal is already aborted", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
   try {

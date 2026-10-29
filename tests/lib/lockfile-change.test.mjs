@@ -58,9 +58,9 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
   expect(warn.mock.calls.some((call) => String(call[0]).includes("lockfile"))).toBe(true);
 });
 
-// Usefulness: verifies requirement "a read past the bound is stopped, not left pending" (issue
-// #1225): the hash read gets a signal that aborts at the bound, so the read releases its handle.
-test("a hash read still pending at the bound receives an abort", async () => {
+// Usefulness: verifies requirement "the bound aborts the signal of a hash read" (issue #1225), so a
+// read that has not started its request stops. It shows the signal, not release of an open handle.
+test("a hash read still pending at the bound receives an aborted signal", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
   await readLockfiles(repo, { boundMs: 200 });
