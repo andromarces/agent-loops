@@ -22,7 +22,12 @@ import {
   failedLockfileChanged,
   readLockfiles,
 } from "./lib/lockfile-change.mjs";
-import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
+import {
+  carrySharedGitChanged,
+  diffSharedGit,
+  failedSharedGitChanged,
+  readSharedGit,
+} from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import {
   carryTestRun,
@@ -32,6 +37,9 @@ import {
 } from "./lib/test-cmd.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
+
+// Default time bound of the whole post-turn shared Git read, which takes no turn signal.
+const SHARED_GIT_READ_BOUND_MS = 10_000;
 
 // Task of the preamble-only worker turn that follows a replaced conversation.
 const PREAMBLE_ONLY_TASK =
@@ -77,7 +85,7 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 // - The producer in `runChild` sets its value, in the ok result and in the error result.
 // - The `TurnEvidence` typedef below names it.
 // - A field that must survive a fatal error also joins `carryTurnEvidence` and `failedTurnEvidence`.
-//   The fatal-path events in `runtime.mjs` also name it. `sharedGitChanged` does neither.
+//   The fatal-path events in `runtime.mjs` also name it.
 // - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
 //   (issue #984).
 // - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
@@ -107,16 +115,17 @@ export function pickTurnEvidence(source) {
 }
 
 /**
- * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result, the lockfile
- * paths, and the two advisory lists. An absent or empty field is skipped, and so is an error that
- * cannot take it.
+ * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result, the shared Git
+ * items, the lockfile paths, and the two advisory lists. An absent or empty field is skipped, and
+ * so is an error that cannot take it.
  */
 function carryTurnEvidence(
   err,
-  { testRun, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries },
+  { testRun, sharedGitChanged, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries },
 ) {
   if (!err || typeof err !== "object") return;
   if (testRun) carryTestRun(err, testRun);
+  if (sharedGitChanged?.length > 0) carrySharedGitChanged(err, sharedGitChanged);
   if (lockfileChanged?.length > 0) carryLockfileChanged(err, lockfileChanged);
   if (inheritedTmpdirEntries?.length > 0) carryInheritedTmpdirEntries(err, inheritedTmpdirEntries);
   if (packageStoreEntries?.length > 0) carryPackageStoreEntries(err, packageStoreEntries);
@@ -126,6 +135,7 @@ function carryTurnEvidence(
 export function failedTurnEvidence(err) {
   return {
     testRun: failedTestRun(err),
+    sharedGitChanged: failedSharedGitChanged(err),
     lockfileChanged: failedLockfileChanged(err),
     inheritedTmpdirEntries: failedInheritedTmpdirEntries(err),
     packageStoreEntries: failedPackageStoreEntries(err),
@@ -198,6 +208,7 @@ export async function runChild(options) {
     onTurnChild,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
+    sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
     onEvent = () => {},
   } = options;
 
@@ -407,11 +418,11 @@ export async function runChild(options) {
   /**
    * Reads the shared Git state (hooks path, common hook files, remotes) of a worker turn. A failed
    * read warns and returns null, so the turn reports no shared Git change rather than a guess. A
-   * cancel throws.
+   * read that takes the turn signal throws on a cancel.
    */
-  const readShared = async () => {
+  const readShared = async (bound = { signal }) => {
     try {
-      return await readSharedGit(cwd, { signal });
+      return await readSharedGit(cwd, bound);
     } catch (err) {
       if (readProp(err, "isCanceled")) throw err;
       logWarn(
@@ -435,14 +446,23 @@ export async function runChild(options) {
   // The post-turn advisory lists, kept once read so a cancel after the reads reuses them.
   let advisory = null;
 
-  /** Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. */
+  // The post-turn shared Git items, kept once read so a cancel after the read reuses them.
+  let sharedGitItems = null;
+
+  /**
+   * Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. The
+   * read has its own time bound and takes no turn signal, so a canceled turn is read too and the read
+   * never changes the cancel outcome (issue #1224).
+   */
   const readSharedGitChanged = async () => {
-    const after = sharedBefore ? await readShared() : null;
-    const changed = after ? diffSharedGit(sharedBefore, after) : [];
-    if (changed.length > 0) {
-      logWarn(`worker: shared Git state changed: ${changed.join(", ")}`);
+    if (sharedGitItems === null) {
+      const after = sharedBefore ? await readShared({ deadlineMs: sharedGitReadBoundMs }) : null;
+      sharedGitItems = after ? diffSharedGit(sharedBefore, after) : [];
+      if (sharedGitItems.length > 0) {
+        logWarn(`worker: shared Git state changed: ${sharedGitItems.join(", ")}`);
+      }
     }
-    return changed;
+    return sharedGitItems;
   };
   /** Paths of the lockfiles that differ from the pre-turn read, or [] when none or unread. */
   const readLockfileChanged = async () => {
@@ -582,6 +602,7 @@ export async function runChild(options) {
       if (err && typeof err === "object") {
         carryTurnEvidence(err, {
           testRun,
+          sharedGitChanged: await readSharedGitChanged(),
           lockfileChanged: await readLockfileChanged(),
           ...(await readAdvisory()),
         });
@@ -595,18 +616,10 @@ export async function runChild(options) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
-    // The failed turn may have changed the shared state before it failed. The lockfile read comes
-    // first and takes no turn signal, so a cancel that the shared Git read throws still carries it.
+    // The failed turn may have changed the shared state before it failed. Neither read takes the
+    // turn signal, so a cancel never loses what they read.
+    const sharedGitChanged = await readSharedGitChanged();
     const lockfileChanged = await readLockfileChanged();
-    let sharedGitChanged;
-    try {
-      sharedGitChanged = await readSharedGitChanged();
-    } catch (canceled) {
-      if (canceled && typeof canceled === "object") {
-        carryTurnEvidence(canceled, { testRun, lockfileChanged, ...(await readAdvisory()) });
-      }
-      throw canceled;
-    }
     const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory();
     // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn. This
     // throw leaves the catch block, so it carries the evidence just read, as the fatal path does.
@@ -615,6 +628,7 @@ export async function runChild(options) {
     } catch (canceled) {
       carryTurnEvidence(canceled, {
         testRun,
+        sharedGitChanged,
         lockfileChanged,
         inheritedTmpdirEntries,
         packageStoreEntries,

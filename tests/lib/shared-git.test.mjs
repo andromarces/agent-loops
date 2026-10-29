@@ -7,12 +7,23 @@ import { execa } from "execa";
 // Makes the named `node:fs/promises` function throw an error whose message and path carry
 // `FS_MARKER`, as a Node file system error carries the path, while `fsFailure.operation` is set.
 const FS_MARKER = "secret-hook-marker-7731";
-const fsFailure = vi.hoisted(() => ({ operation: null }));
+// `fsFailure.requests` records every request on a file named `hook-*`, and `fsFailure.lstatDelayMs`
+// delays each `lstat` of one, as a slow file system does.
+const fsFailure = vi.hoisted(() => ({
+  operation: null,
+  stallReaddir: false,
+  lstatDelayMs: 0,
+  requests: [],
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const real = await importOriginal();
   const failing =
     (operation) =>
     async (path, ...rest) => {
+      if (String(path).includes("hook-")) fsFailure.requests.push(operation);
+      if (operation === "lstat" && fsFailure.lstatDelayMs > 0 && String(path).includes("hook-")) {
+        await new Promise((resolve) => setTimeout(resolve, fsFailure.lstatDelayMs));
+      }
       if (fsFailure.operation === operation) {
         const failedPath = `/${"secret-hook-marker-7731"}/${operation}`;
         throw Object.assign(new Error(`EACCES: permission denied, ${operation} '${failedPath}'`), {
@@ -25,7 +36,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     };
   return {
     ...real,
-    readdir: failing("readdir"),
+    readdir: (...args) =>
+      fsFailure.stallReaddir ? new Promise(() => {}) : failing("readdir")(...args),
     // A symlink needs a privilege on Windows, so a `readlink` failure reports every entry as one.
     lstat: (...args) =>
       fsFailure.operation === "readlink"
@@ -58,6 +70,9 @@ const dirs = [];
 afterEach(async () => {
   configExit.code = null;
   fsFailure.operation = null;
+  fsFailure.stallReaddir = false;
+  fsFailure.lstatDelayMs = 0;
+  fsFailure.requests.length = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -178,6 +193,42 @@ for (const place of ["main", "linked"]) {
     expect(worktreeChanged).toEqual(["core.hooksPath"]);
   });
 }
+
+// Usefulness: verifies requirement "a stalled hooks directory read ends at the deadline" (issue
+// #1224): the deadline covers the whole read, not the `git` processes alone, so a canceled worker
+// turn that reads the shared Git state after the cancel reports within the bound.
+test("a stalled hooks directory read rejects at the deadline", async () => {
+  const { linked } = await createLinkedWorkTree();
+  fsFailure.stallReaddir = true;
+  const started = Date.now();
+  await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
+  expect(Date.now() - started).toBeLessThan(5_000);
+});
+
+// Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
+// that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
+// dispatch has reported its result and a late file system request would run past the end of the turn.
+test("no hook file system request starts after the deadline", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
+  fsFailure.lstatDelayMs = 800;
+  await expect(readSharedGit(linked, { deadlineMs: 2_000 })).rejects.toThrow(/2000 ms/);
+  const atDeadline = [...fsFailure.requests];
+  expect(atDeadline).toContain("lstat");
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  expect(fsFailure.requests).toEqual(atDeadline);
+}, 20_000);
+
+// Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):
+// passing both must not drop the turn signal.
+test("a canceled turn signal stops a read that also has a deadline", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    readSharedGit(linked, { deadlineMs: 60_000, signal: controller.signal }),
+  ).rejects.toMatchObject({ isCanceled: true });
+});
 
 // Usefulness: verifies "an unexpected `git config` exit is a read failure, not an empty state"
 // (issue #984 review): an empty state read before or after a turn would report a false change.
