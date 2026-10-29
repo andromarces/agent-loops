@@ -38,7 +38,7 @@ function flagCapacityFailure(err, events) {
 }
 
 export async function runCodex(state, prompt, options = {}) {
-  const { cwd, readOnly, sandbox, timeout, signal, role } = options;
+  const { cwd, readOnly, sandbox, timeout, signal, role, onTurnTmpdir } = options;
   const configArgs = [];
 
   // `sandbox` is the reviewer-only mode input (ADR 0038): `none`, `read-only`, or `workspace-write`.
@@ -80,8 +80,10 @@ export async function runCodex(state, prompt, options = {}) {
   try {
     // The CLI creates two empty `.tmp*` directories in its temporary directory on every turn, so it
     // gets a private one that the runtime removes (issue #955).
-    ({ stdout } = await withTurnTmpdir((env) =>
-      exec("codex", args, { cwd, input: prompt, timeout, signal, role, ...(env && { env }) }),
+    ({ stdout } = await withTurnTmpdir(
+      (env) =>
+        exec("codex", args, { cwd, input: prompt, timeout, signal, role, ...(env && { env }) }),
+      { onCreated: onTurnTmpdir },
     ));
   } catch (err) {
     // A failed first turn still emits `thread.started` before the failure. Keep that id, then rethrow.

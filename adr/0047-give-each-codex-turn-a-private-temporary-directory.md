@@ -56,6 +56,7 @@ Andro Marces
 - [PR #958](https://github.com/andromarces/agent-loops/pull/958)
 - Related issues: #709, #903
 - [ADR 0042: Remove the reviewer scratch folder in the runtime](0042-remove-the-reviewer-scratch-folder-in-the-runtime.md)
+- [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Implementation:
   - Source: `src/lib/turn-tmpdir.mjs`, `src/lib/turn-tmpdir-remove.mjs`, `src/lib/inherited-tmpdir.mjs`, `runCodex` in `src/agents/codex.mjs`, `temporaryRoots` in `src/install/package-root.mjs`
   - Tests: `tests/agents/codex.test.mjs`, `tests/lib/turn-tmpdir.test.mjs`, `tests/lib/turn-tmpdir.race.test.mjs`, `tests/lib/turn-tmpdir.helper-bound.test.mjs`

@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
+import { removeAbandonedTurnTmpdir, withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
 const TMP_VARS = ["TMPDIR", "TEMP", "TMP"];
@@ -94,3 +94,15 @@ test("a replacement during the removal keeps its empty directory", async () => {
     }
   });
 }, 60_000);
+
+// Usefulness: verifies a recorded directory whose name is not a turn directory name is never
+// removed, so an edited state file cannot steer the removal at another directory.
+test("an abandoned-directory record with another name removes nothing", async () => {
+  await withRoot(async (root) => {
+    const other = join(root, "keep-me");
+    mkdirSync(other);
+    writeFileSync(join(other, "sentinel.txt"), "keep\n");
+    await removeAbandonedTurnTmpdir({ dir: other, parentReal: root, device: "1", inode: "1" });
+    expect(existsSync(join(other, "sentinel.txt"))).toBe(true);
+  });
+});

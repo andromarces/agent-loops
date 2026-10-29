@@ -1,6 +1,6 @@
 import { lstat, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
@@ -37,9 +37,12 @@ export const isTurnTmpdirName = (name) => createdNames.has(name);
  * check of a package-runner root. `env` is undefined, after a warning, when the directory cannot
  * be created. A failed or refused removal warns and never fails the turn. The caller awaits the
  * child first, so no child of the turn is left to write into the directory. The removal helper
- * ends at `removalBoundMs`, so the turn never waits longer for it.
+ * ends at `removalBoundMs`, so the turn never waits longer for it. `onCreated(record)` is awaited
+ * after the creation and before `run`, with the record that `removeAbandonedTurnTmpdir` needs, so
+ * a caller can persist it ahead of a process death. A failed `onCreated` warns and never fails
+ * the turn.
  */
-export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } = {}) {
+export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS, onCreated } = {}) {
   let created = null;
   const pins = rootPins();
   const inherited = inheritedTmpdirsForChild(tmpdir());
@@ -50,6 +53,15 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS } 
     logWarn(
       `turn temporary directory not created, the turn uses the inherited one: ${firstErrorLine(readableErrorText(err))}`,
     );
+  }
+  if (created !== null && onCreated) {
+    try {
+      await onCreated({ ...created });
+    } catch (err) {
+      logWarn(
+        `turn temporary directory not recorded, a dead process leaves it: ${created.dir}: ${firstErrorLine(readableErrorText(err))}`,
+      );
+    }
   }
   try {
     const dir = created?.dir;
@@ -127,4 +139,29 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
     // the runtime's own, so a report can list it (issue #1024).
     createdNames.delete(basename(dir));
   }
+}
+
+// The suffix of a `mkdtemp` name is six characters of this set.
+const TURN_DIR_NAME = /^al-[A-Za-z0-9]{6}$/;
+
+/**
+ * Removes the turn directory of a process that died before it could, from the record that
+ * `onCreated` of `withTurnTmpdir` received. The removal is the one of a normal turn: it acts only
+ * on a directory with the recorded device and inode, so a directory that is gone or that something
+ * replaced is not followed. A record that is not the shape of a created turn directory is refused
+ * without a removal. Every outcome other than a removal warns and never throws.
+ */
+export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_MS) {
+  if (record === undefined || record === null) return;
+  const { dir, parentReal, device, inode } = record;
+  const wellFormed =
+    [dir, parentReal, device, inode].every((value) => typeof value === "string") &&
+    isAbsolute(dir) &&
+    isAbsolute(parentReal) &&
+    TURN_DIR_NAME.test(basename(dir));
+  if (!wellFormed) {
+    logWarn("turn temporary directory not removed, the recorded directory is not a turn directory");
+    return;
+  }
+  await removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs);
 }

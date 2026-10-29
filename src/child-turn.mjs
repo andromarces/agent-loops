@@ -121,6 +121,10 @@ export function failedTurnEvidence(err) {
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
  * dispatcher uses it to persist the id ahead of a crash (issue #395).
+ * `onTurnTmpdir(record)` is awaited by the Codex adapter after it creates the private temporary
+ * directory of the turn and before its CLI starts. Other adapters never call it. A dispatcher uses
+ * it to persist the record, so a later call can remove the directory of a dispatch that died
+ * mid-turn (issue #1207).
  * @param {object} options
  * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], prChecks?: object, testRun?: object } | { role: string, status: "error", error: string, transient?: string, sharedGitChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }>}
  */
@@ -139,6 +143,7 @@ export async function runChild(options) {
     testCmd = null,
     reviewerSandbox = null,
     onSessionAssigned,
+    onTurnTmpdir,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     onEvent = () => {},
@@ -181,6 +186,7 @@ export async function runChild(options) {
         readOnly,
         ...(sandbox ? { sandbox } : {}),
         ...(onSessionAssigned ? { onSessionAssigned } : {}),
+        ...(onTurnTmpdir ? { onTurnTmpdir } : {}),
         timeout,
         signal,
       },

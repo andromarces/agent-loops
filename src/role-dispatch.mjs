@@ -28,6 +28,7 @@ import {
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
+import { removeAbandonedTurnTmpdir } from "./lib/turn-tmpdir.mjs";
 import { failedTurnEvidence, runChild } from "./child-turn.mjs";
 import {
   normalizedLocalPaths,
@@ -324,6 +325,12 @@ async function dispatchLocked(
         recordRoleSession(state.roles[roleName], { sessionId: id, ...pickUnconfirmed(role, id) });
         await writeState(paths.stateFile, state);
       },
+      // The record of the private turn directory is written before the CLI starts, so a dispatch
+      // that dies mid-turn leaves it for the call that marks the run `interrupted` (issue #1207).
+      onTurnTmpdir: async (record) => {
+        state.lastDispatch.turnTmpdir = record;
+        await writeState(paths.stateFile, state);
+      },
       // The command is the flag value, which init stored a digest of or the digest
       // check above matched. Nothing the state file holds is run.
       testCmd: testCmdInput(
@@ -407,6 +414,8 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
     // child ran, so there is no verdict and no reviewed head to record. Role
     // and time come from that turn's `lastDispatch`, because this call's
     // `--role` need not be the role that ended uncertainly (#312).
+    // The lock owner is dead, so no child of that turn writes into its turn directory (#1207).
+    await removeAbandonedTurnTmpdir(state.lastDispatch?.turnTmpdir);
     recordTurn(
       state,
       state.lastDispatch?.role ?? roleName,
