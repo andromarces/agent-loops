@@ -184,7 +184,7 @@ export async function evaluateFinish({
     }
     const compare = conflict
       ? null
-      : await headCompareGate({ pr: compareHead, reviewed: gate.lastReviewed, cwd, gh });
+      : await headCompareGate({ pr: compareHead, reviewed: gate.lastReviewed, cwd, gh, signal });
     if (compare) {
       // Like the gate, the compare reads the reviewed state that only a reviewer turn sets.
       needsChildTurn = true;
@@ -261,9 +261,9 @@ export async function evaluateFinish({
  * @param {object} options
  * @returns {Promise<{ reason: string, recovery: string } | null>}
  */
-async function headCompareGate({ pr, reviewed, cwd, gh }) {
+async function headCompareGate({ pr, reviewed, cwd, gh, signal }) {
   const { refusal } = await readGate({
-    read: () => checkPrHead({ pr, reviewed, cwd, gh }),
+    read: () => checkPrHead({ pr, reviewed, cwd, gh, signal }),
     failedLog: "head compare could not run",
     failedReason: "the PR head compare could not be evaluated",
     failedRecovery: `That is a failure to read GitHub, not a verdict on the work. The only retry you can make is a reviewer turn, which re-reads the reviewed state, then a finish that compares PR ${pr} again. The finish carries no unresolvedCompare marker, because the runtime resolves the PR head from PR ${pr}.`,

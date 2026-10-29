@@ -1,7 +1,7 @@
-// Requirement (#1181): every GitHub read of the CI gate is bounded by a deadline and canceled by the
-// caller signal, so an aborted caller starts no read and a hung `gh` cannot stall the gate.
+// Requirement (#1181, #1200): every GitHub read of the CI gate and of the head compare is bounded by a
+// deadline and canceled by the caller signal, so an aborted caller starts no read and a hung `gh` cannot stall them.
 import { expect, it, vi } from "vite-plus/test";
-import { checkCi, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
+import { checkCi, checkPrHead, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
 import { fakeGh, HEAD, MERGE, prInfo, REVIEWED, routes, run } from "./ci-gate-helpers.mjs";
 
 /** A `gh` that never answers until its signal aborts, then fails the way a killed child does. */
@@ -263,4 +263,63 @@ it("readRequiredChecks never passes on a reply that arrives after the deadline",
   });
   expect(read.status).toBe("unresolved");
   expect(read.summary).toMatch(/timed out/);
+});
+
+// Usefulness: verifies acceptance of #1200 — an aborted caller signal starts no `gh` read in
+// `checkPrHead` and the call reports a cancel; the head compare took no signal before the fix.
+it("checkPrHead starts no read and reports a cancel when the caller signal is aborted", async () => {
+  const gh = vi.fn();
+  await expect(
+    checkPrHead({ pr: 42, reviewed: REVIEWED, cwd: ".", gh, signal: aborted() }),
+  ).rejects.toMatchObject({ isCanceled: true });
+  expect(gh).not.toHaveBeenCalled();
+});
+
+// Usefulness: verifies acceptance of #1200 — a `gh` read that never returns ends `checkPrHead` at its
+// deadline with a timeout, never a verified compare, where the head compare had no deadline before.
+it("checkPrHead ends a hung gh read at its deadline with a timeout", async () => {
+  const begun = Date.now();
+  await expect(
+    checkPrHead({ pr: 42, reviewed: REVIEWED, cwd: ".", gh: hungGh(() => {}), timeoutMs: 50 }),
+  ).rejects.toMatchObject({ timedOut: true, message: "the read timed out after 50ms" });
+  expect(Date.now() - begun).toBeLessThan(5_000);
+});
+
+// Usefulness: verifies a cancel during a hung head read is a cancel, not the failed-read error of
+// the killed child, so the CLI maps it to exit 130.
+it("checkPrHead reports a cancel when the caller aborts a hung read", async () => {
+  const controller = new AbortController();
+  await expect(
+    checkPrHead({
+      pr: 42,
+      reviewed: REVIEWED,
+      cwd: ".",
+      gh: hungGh(() => controller.abort()),
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    }),
+  ).rejects.toMatchObject({ isCanceled: true });
+});
+
+// Usefulness: verifies a read failure keeps its text and is no timeout, as in #1181.
+it("checkPrHead keeps the text of a read failure", async () => {
+  const error = await checkPrHead({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: prReadDownGh(),
+  }).catch((err) => err);
+  expect(error.message).toMatch(/PR read down/);
+  expect(error.timedOut).toBeUndefined();
+});
+
+// Usefulness: verifies the compare never verifies on a matching reply that a runner marks as timed out.
+it("checkPrHead never verifies on a reply marked as timed out", async () => {
+  const error = await checkPrHead({
+    pr: 42,
+    reviewed: REVIEWED,
+    cwd: ".",
+    gh: markedTimedOut(PASSING()),
+  }).catch((err) => err);
+  expect(error).toMatchObject({ timedOut: true });
 });
