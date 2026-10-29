@@ -265,6 +265,31 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+// Usefulness: verifies every surface that states the `--all` wait says it holds a pass for a GitHub
+// Actions check run while a `pull_request` workflow of the base branch can run, and that `--expect`
+// is then not needed for that workflow check (issue #1228). A parent that misses it adds `--expect`
+// for a check the wait covers, or trusts an early pass for a check it never held.
+test("the --all surfaces state the hold for a pull_request workflow and the --expect scope", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readInstructions();
+  const roleDoc = await readFile(
+    join(dirname(instructionsPath), "reference/wait-checks.md"),
+    "utf8",
+  );
+  for (const text of [prompt, instructions, roleDoc]) {
+    expectRule(text, /`?pull_request`? workflow/i, /GitHub Actions check run/i, /holds? a pass/i);
+    expectRule(text, /`?--expect`?[^.]*(?:not needed|no need)[^.]*workflow/i);
+  }
+});
+
 // Usefulness: verifies both parent surfaces tell the parent to act only on the `noCheckSource` field of
 // the `--all` envelope: dispatch the reviewer, record the CI status as not verified, never as passed
 // (issue #1054). A parent that reads the workflows itself leaves its role contract, and one that

@@ -241,6 +241,8 @@ required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 
+The `--all` wait holds a pass while a `pull_request` workflow of the base branch can run for the PR and the head has no GitHub Actions check run, so `--expect` is not needed for that workflow check. A workflow registers its run after a fast check of another app passed, so the first pass can lack it. The command reads the files of the PR and the workflow files of the base branch, as for `noCheckSource` below, and you read none of them. A workflow can run for the PR when its `on` key names `pull_request` with no filter, or with only a `paths` list that matches a PR file under the same rules as `noCheckSource`. A `types`, `branches`, or `branches-ignore` filter, `paths-ignore`, text that is not settled, and a read that fails never hold. The hold needs no `--expect` name. It ends at the bound with `timedOut: true`, never a pass, and a failing check still settles the wait at once. The limits: a workflow that the PR itself changes is not read, and `--expect` stays needed for a check of a third-party app, such as a deployment check, and for a workflow that the rules above do not settle.
+
 The `--all` wait also asks once whether any source can report a check for the PR
 head. It asks when the first read lists no check, no `--expect` name is set, and the
 read of the PR head by SHA finds no check run and no commit status. The command reads

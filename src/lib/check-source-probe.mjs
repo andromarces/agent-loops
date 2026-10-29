@@ -3,7 +3,7 @@
 import { commitEntries } from "./ci-gate.mjs";
 import { ghApi, pagedRead, readOne } from "./ci-required-sources.mjs";
 import { isJsonObject } from "./json.mjs";
-import { prEventsFilteredOut } from "./workflow-paths.mjs";
+import { prEventsFilteredOut, prWorkflowRuns } from "./workflow-paths.mjs";
 
 // The workflow triggers that can run for a PR head, and the directory that holds the workflows. The
 // probe scans the text of each workflow file for a trigger name instead of parsing the YAML, so a name
@@ -154,6 +154,74 @@ async function baseShaOf({ bounded, slug, cwd }, base) {
 /** Whether a commit read shows no check run and no commit status. */
 const hasNoEntries = ({ runs, statuses }) => runs.length === 0 && statuses.length === 0;
 
+/** The paths of the PR files, a renamed-from path included. */
+const changedPathsOf = (changed) =>
+  changed.flatMap((file) =>
+    file.previous_filename == null ? [file.filename] : [file.filename, file.previous_filename],
+  );
+
+/**
+ * The file entries of the PR, or null for a read that fails, a list at the API cap, or an entry of
+ * another shape.
+ */
+async function changedFilesOf({ bounded, slug, cwd, pr }) {
+  const pages = await ghApi(pagedRead(bounded, null), [`repos/${slug}/pulls/${pr}/files`], cwd);
+  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+    return null;
+  }
+  const changed = pages.flat();
+  if (changed.length >= PR_FILES_CAP) {
+    return null;
+  }
+  return changed.every((file) => isJsonObject(file) && typeof file.filename === "string")
+    ? changed
+    : null;
+}
+
+/**
+ * The texts of the workflow files at `baseSha`, or null for a read that fails, a listing at the API
+ * cap, or an entry or file of another shape. A missing workflow directory holds no file.
+ */
+async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
+  const listing = await readOne(
+    bounded,
+    `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`,
+    cwd,
+  );
+  let entries = [];
+  if (listing.status !== 0) {
+    if (!listing.notFound) {
+      return null;
+    }
+  } else {
+    entries = JSON.parse(listing.stdout);
+    if (!Array.isArray(entries) || entries.length >= DIRECTORY_CAP) {
+      return null;
+    }
+  }
+  const texts = [];
+  for (const entry of entries) {
+    if (!isJsonObject(entry) || typeof entry.path !== "string" || !WORKFLOW_PATH.test(entry.path)) {
+      return null;
+    }
+    if (entry.type === "dir") {
+      continue;
+    }
+    if (entry.type !== "file") {
+      return null;
+    }
+    const path = entry.path.split("/").map(encodeURIComponent).join("/");
+    const read = await readOne(bounded, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
+    const body = read.status === 0 ? JSON.parse(read.stdout) : null;
+    const text = isJsonObject(body) ? workflowText(body, entry.path) : null;
+    if (text === null) {
+      return null;
+    }
+    texts.push(text);
+  }
+  return texts;
+}
+
 /**
  * Whether no source can report a check for the PR head `sha`, once its own check runs and commit
  * statuses came back empty: the PR changes no file under `.github/workflows/`, no workflow of the
@@ -173,61 +241,27 @@ const hasNoEntries = ({ runs, statuses }) => runs.length === 0 && statuses.lengt
  * @returns {Promise<boolean>}
  */
 export async function noCheckSource(context, sha, base) {
-  const { bounded, slug, cwd, pr, headOf } = context;
+  const { bounded, slug, cwd, headOf } = context;
   const baseSha = await baseShaOf(context, base);
   if (baseSha === null) {
     return false;
   }
-  const pages = await ghApi(pagedRead(bounded, null), [`repos/${slug}/pulls/${pr}/files`], cwd);
-  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
-    return false;
-  }
-  const changed = pages.flat();
-  if (changed.length >= PR_FILES_CAP) {
+  const changed = await changedFilesOf(context);
+  if (changed === null) {
     return false;
   }
   for (const file of changed) {
-    if (!isJsonObject(file) || typeof file.filename !== "string") {
-      return false;
-    }
     if (WORKFLOW_PATH.test(file.filename) || WORKFLOW_PATH.test(file.previous_filename ?? "")) {
       return false;
     }
   }
-  const changedPaths = changed.flatMap((file) =>
-    file.previous_filename == null ? [file.filename] : [file.filename, file.previous_filename],
-  );
-  const listing = await readOne(
-    bounded,
-    `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`,
-    cwd,
-  );
-  let entries = [];
-  if (listing.status !== 0) {
-    if (!listing.notFound) {
-      return false;
-    }
-  } else {
-    entries = JSON.parse(listing.stdout);
-    if (!Array.isArray(entries) || entries.length >= DIRECTORY_CAP) {
-      return false;
-    }
+  const changedPaths = changedPathsOf(changed);
+  const texts = await workflowTextsOf(context, baseSha);
+  if (texts === null) {
+    return false;
   }
-  for (const entry of entries) {
-    if (!isJsonObject(entry) || typeof entry.path !== "string" || !WORKFLOW_PATH.test(entry.path)) {
-      return false;
-    }
-    if (entry.type === "dir") {
-      continue;
-    }
-    if (entry.type !== "file") {
-      return false;
-    }
-    const path = entry.path.split("/").map(encodeURIComponent).join("/");
-    const read = await readOne(bounded, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
-    const body = read.status === 0 ? JSON.parse(read.stdout) : null;
-    const text = isJsonObject(body) ? workflowText(body, entry.path) : null;
-    if (text === null || UNREADABLE_TEXT.test(text)) {
+  for (const text of texts) {
+    if (UNREADABLE_TEXT.test(text)) {
       return false;
     }
     // A file that names a trigger keeps the wait unless every trigger is a PR event whose `paths`
@@ -253,4 +287,23 @@ export async function noCheckSource(context, sha, base) {
   // Neither the base branch nor the PR head moved while the probe read.
   const moved = await headOf();
   return moved.head === sha && moved.base === base && (await baseShaOf(context, base)) === baseSha;
+}
+
+/**
+ * Whether a workflow file of `base` has a `pull_request` trigger that runs for the PR: the base
+ * branch resolves to one SHA, the files of the PR and the workflow files at that SHA are read as
+ * `noCheckSource` reads them, and the trigger and `paths` rules of `prWorkflowRuns` decide. The wait
+ * holds a pass for a GitHub Actions check run only when this is true (#1228). A read that fails or is
+ * not exactly the expected shape returns false, so the wait keeps its earlier pass rule. Its limits: a
+ * workflow of the PR head that the PR changes is not read, and a trigger filter that the rules do not
+ * settle (`branches`, `types`, `paths-ignore`) never holds.
+ * @param {{ bounded: Function, slug: string, cwd: string, pr: number }} context the bounded `gh` runner of the wait
+ * @param {string} base the base branch of the PR
+ * @returns {Promise<boolean>}
+ */
+export async function pullRequestWorkflowRuns(context, base) {
+  const baseSha = await baseShaOf(context, base);
+  const changed = baseSha === null ? null : await changedFilesOf(context);
+  const texts = changed === null ? null : await workflowTextsOf(context, baseSha);
+  return texts !== null && texts.some((text) => prWorkflowRuns(text, changedPathsOf(changed)));
 }

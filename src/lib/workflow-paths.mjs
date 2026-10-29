@@ -87,6 +87,45 @@ function pathsOf(event) {
   return event.paths.length > 0 && event.paths.every(isSettledPattern) ? event.paths : null;
 }
 
+/** Whether `files` holds only strings that the matcher settles. */
+const areSettledFiles = (files) =>
+  files.every(
+    (file) => typeof file === "string" && file.isWellFormed() && !UNSETTLED_NAME.test(file),
+  );
+
+/**
+ * Whether the text of one workflow file settles that a `pull_request` run starts for a PR that changes
+ * `files`: true only when the text is exactly one well-formed YAML document whose `on` key names
+ * `pull_request` with no filter but a settled `paths` list that some file matches. A `types`,
+ * `branches`, or `branches-ignore` filter, `paths-ignore`, or any unsettled text is not settled, so the
+ * answer is false and the caller does not hold for a run that may never start.
+ */
+export function prWorkflowRuns(text, files) {
+  if (!areSettledFiles(files)) {
+    return false;
+  }
+  const workflow = onlyDocument(text);
+  if (!isJsonObject(workflow) || "true" in workflow) {
+    return false;
+  }
+  const on = workflow.on;
+  if (on === "pull_request" || (Array.isArray(on) && on.includes("pull_request"))) {
+    return true;
+  }
+  if (!isJsonObject(on) || !("pull_request" in on)) {
+    return false;
+  }
+  const event = on.pull_request;
+  if (event === null) {
+    return true;
+  }
+  const patterns = isJsonObject(event) && Object.keys(event).length === 1 ? pathsOf(event) : null;
+  return (
+    patterns !== null &&
+    patterns.some((pattern) => files.some((file) => patternRegExp(pattern).test(file)))
+  );
+}
+
 /**
  * Whether no workflow run can start for a PR that changes `files` (every path as a string, renamed-from
  * paths included), judged from the text of one workflow file: true only when the text is exactly one
@@ -97,11 +136,7 @@ function pathsOf(event) {
  * with a control character, a line separator, or a lone surrogate.
  */
 export function prEventsFilteredOut(text, files) {
-  if (
-    !files.every(
-      (file) => typeof file === "string" && file.isWellFormed() && !UNSETTLED_NAME.test(file),
-    )
-  ) {
+  if (!areSettledFiles(files)) {
     return false;
   }
   const workflow = onlyDocument(text);
