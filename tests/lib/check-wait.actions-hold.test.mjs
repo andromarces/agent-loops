@@ -44,6 +44,7 @@ function holdGh({
   runsByPoll,
   listingFailures = 0,
   heads = [HEAD_A],
+  failBaseRead = 0,
 }) {
   const inner = scriptedGh([{ status: 0, checks: [{ name: WORKERS.name, bucket: "pass" }] }], {
     all: true,
@@ -52,12 +53,17 @@ function holdGh({
   const repo = "repos/owner/repo";
   let polls = 0;
   let failuresLeft = listingFailures;
+  let baseReads = 0;
   return async (args, cwd) => {
     if (args[0] === "pr" && args[1] === "view") {
       polls += 1;
     }
     const endpoint = args[0] === "api" ? args[1] : "";
     if (endpoint === `${repo}/commits/main`) {
+      baseReads += 1;
+      if (baseReads === failBaseRead) {
+        return { status: 1, stdout: "", stderr: "gh: Bad Gateway (HTTP 502)", timedOut: false };
+      }
       return readOk({ sha: BASE_HEAD });
     }
     if (endpoint.startsWith(`${repo}/pulls/42/files`)) {
@@ -267,4 +273,18 @@ test("the --all wait does not skip a workflow for a head that moved during the f
     { head: HEAD_A },
   );
   expect(result.timedOut).toBe(true);
+});
+
+// Usefulness: verifies a failed final base read (a 502) of the head guard is unresolved, not a move:
+// it holds the pass for that poll, is not kept, and the next poll reads again, so the excluded
+// workflow still skips once the read succeeds (issue #1228). A kept hold would run to the bound.
+test("the --all wait reads again after the base read of the head guard fails", async () => {
+  const { result, elapsed } = await holdWait({
+    workflow: "name: src\non:\n  pull_request:\n    paths:\n      - 'src/**'\n",
+    prFiles: [{ filename: "docs/b.md" }],
+    failBaseRead: 2,
+    runsByPoll: [[WORKERS]],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(elapsed).toBeGreaterThan(0);
 });

@@ -279,13 +279,17 @@ export async function noCheckSource(context, sha, base) {
       return false;
     }
   }
-  return unmoved(context, sha, base, baseSha);
+  return (await unmoved(context, sha, base, baseSha)) === true;
 }
 
-/** Whether neither the base branch nor the PR head moved while a probe read. */
+/**
+ * Whether neither the base branch nor the PR head moved while a probe read, or null when the base
+ * branch cannot be read again: a failed read shows no move, so it is unresolved, never a move.
+ */
 async function unmoved(context, sha, base, baseSha) {
   const moved = await context.headOf();
-  return moved.head === sha && moved.base === base && (await baseShaOf(context, base)) === baseSha;
+  const again = await baseShaOf(context, base);
+  return again === null ? null : moved.head === sha && moved.base === base && again === baseSha;
 }
 
 /**
@@ -296,7 +300,8 @@ async function unmoved(context, sha, base, baseSha) {
  * text proves that no run starts for the PR. Null means a read failed or has another shape, which is
  * unresolved: the caller holds the pass and reads again on its next poll. A throw is unresolved too.
  * An exclusion is bound to the judged head: when the PR head or the base branch moved while the files
- * were read, they may belong to another head, so the answer is true and no workflow is skipped.
+ * were read, they may belong to another head, so the answer is true and no workflow is skipped. A
+ * failed read of the base branch for that check is unresolved: the answer is null.
  * @param {{ bounded: Function, slug: string, cwd: string, pr: number, headOf: () => Promise<{ head: string, base: string }> }} context
  *   `headOf` reads the PR head again
  * @param {string} sha the PR head the wait judges
@@ -320,8 +325,9 @@ export async function pullRequestWorkflowMayRun(context, sha, base) {
   if (texts === null) {
     return null;
   }
-  return (
-    texts.some((text) => prWorkflowMayRun(text, paths, base)) ||
-    !(await unmoved(context, sha, base, baseSha))
-  );
+  if (texts.some((text) => prWorkflowMayRun(text, paths, base))) {
+    return true;
+  }
+  const still = await unmoved(context, sha, base, baseSha);
+  return still === null ? null : !still;
 }
