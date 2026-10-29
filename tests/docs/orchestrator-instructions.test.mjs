@@ -116,7 +116,9 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /never a value/i, /URL/),
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),
-  (text) => expectRule(text, /failed worker turn/i, /field too/i),
+  (text) => expectRule(text, /failed or canceled worker turn/i, /field too/i),
+  // Issue #1224: a shared Git read that fails or passes its deadline reports no field.
+  (text) => expectRule(text, /fails or passes its 10 second deadline/i, /no field/i, /not prove/i),
   // Issue #1180: a worker turn that changed a lockfile is reported by path, and the parent
   // reinstalls before the next reviewer dispatch.
   (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),

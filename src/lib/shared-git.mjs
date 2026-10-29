@@ -16,26 +16,28 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
  * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
  * a change. The read starts two `git` processes at once, because every worker turn reads twice and
  * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`,
- * and `deadlineMs`, which ends the whole read: the `git` processes, the directory read, and the
- * hashing. A read that passes the deadline rejects with a `SnapshotError`, and the `git` processes
- * stop. A read that needs no turn signal, such as the one after a cancel, sets the deadline.
- * known-limit: the deadline ends the wait, not the file system request, which can outlive it and
- * stay pending in the background when the file system stalls.
+ * and `deadlineMs`, which stops the whole read: the `git` processes, the directory read, and the
+ * hashing. The deadline joins `signal`, so either one stops the read. After it, no new file system
+ * request starts, the `git` processes end (SIGTERM, then SIGKILL after 1 s), and the read rejects
+ * with a `SnapshotError` that names the deadline. A read that needs no turn signal, such as the one
+ * after a cancel, sets the deadline.
+ * known-limit: a file system request already in flight cannot be stopped. The read stops waiting
+ * for it, and it can stay pending in the background when the file system stalls.
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
  */
-export async function readSharedGit(cwd, { deadlineMs, ...bound } = {}) {
-  if (deadlineMs === undefined) return readWithin(cwd, bound);
-  const stop = new AbortController();
-  const timer = setTimeout(
-    () => stop.abort(new SnapshotError(`the shared Git read took over ${deadlineMs} ms`)),
-    deadlineMs,
-  );
+export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
+  if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), deadlineMs);
   timer.unref();
-  const stopped = new Promise((_, reject) => {
-    stop.signal.addEventListener("abort", () => reject(stop.signal.reason), { once: true });
-  });
   try {
-    return await Promise.race([readWithin(cwd, { ...bound, signal: stop.signal }), stopped]);
+    const stop = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    return await readWithin(cwd, { ...bound, signal: stop });
+  } catch (err) {
+    if (deadline.signal.aborted) {
+      throw new SnapshotError(`the shared Git read took over ${deadlineMs} ms`);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -43,15 +45,19 @@ export async function readSharedGit(cwd, { deadlineMs, ...bound } = {}) {
 
 async function readWithin(cwd, bound) {
   const read = (args) => gitRead(cwd, args, { ...bound, allowExit: [0], createError: readFailure });
-  const [commonResult, listResult] = await Promise.all([
+  // Both processes end before the read rejects, so none outlives a stopped read.
+  const settled = await Promise.allSettled([
     read(["rev-parse", "--git-common-dir"]),
     read(["config", "-z", "--list", "--show-scope"]),
   ]);
+  const failed = settled.find((outcome) => outcome.status === "rejected");
+  if (failed) throw failed.reason;
+  const [commonResult, listResult] = settled.map((outcome) => outcome.value);
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
   const { hooksPath, remotes } = readConfigState(listResult.stdout);
 
-  return { hooksPath, hooks: await readHooks(join(commonPath, "hooks")), remotes };
+  return { hooksPath, hooks: await readHooks(join(commonPath, "hooks"), bound.signal), remotes };
 }
 
 // Names the failed `git` operation and the exit code only: git stderr can carry a config value,
@@ -103,20 +109,38 @@ function hookFailure(operation, err) {
   return new SnapshotError(`${operation} failed (${code})`);
 }
 
+const canceled = () => new SnapshotError("the shared Git read was canceled", { isCanceled: true });
+
+// Runs one file system request unless `signal` has aborted, and stops waiting for it when `signal`
+// aborts. The request itself cannot be stopped.
+function whileNotAborted(signal, request) {
+  if (!signal) return request();
+  if (signal.aborted) throw canceled();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(canceled());
+    signal.addEventListener("abort", onAbort, { once: true });
+    request()
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 // A `.sample` file is the template `git init` writes, never an active hook.
-async function readHooks(hooksDir) {
+async function readHooks(hooksDir, signal) {
   let names;
   try {
-    names = await readdir(hooksDir);
+    names = await whileNotAborted(signal, () => readdir(hooksDir));
   } catch (err) {
+    if (err.isCanceled) throw err;
     if (err.code === "ENOENT" || err.code === "ENOTDIR") return {};
     throw hookFailure("the hooks directory read", err);
   }
   const hooks = {};
   for (const name of names.filter((n) => !n.endsWith(".sample")).sort()) {
     try {
-      hooks[name] = await sha256File(join(hooksDir, name));
+      hooks[name] = await whileNotAborted(signal, () => sha256File(join(hooksDir, name)));
     } catch (err) {
+      if (err.isCanceled) throw err;
       throw hookFailure("a hook file read", err);
     }
   }

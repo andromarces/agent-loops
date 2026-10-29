@@ -50,6 +50,20 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
+// Records every hook hash that starts and delays each one by `hashing.delayMs`.
+const hashing = vi.hoisted(() => ({ started: [], delayMs: 0 }));
+vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    sha256File: async (path) => {
+      hashing.started.push(path);
+      if (hashing.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, hashing.delayMs));
+      return actual.sha256File(path);
+    },
+  };
+});
+
 import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.mjs";
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
@@ -60,6 +74,8 @@ afterEach(async () => {
   configExit.code = null;
   fsFailure.operation = null;
   fsFailure.stallReaddir = false;
+  hashing.started.length = 0;
+  hashing.delayMs = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -190,6 +206,31 @@ test("a stalled hooks directory read rejects at the deadline", async () => {
   const started = Date.now();
   await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
   expect(Date.now() - started).toBeLessThan(5_000);
+});
+
+// Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a slow hooks
+// directory must not start a new hook hash after the deadline, because the dispatch has reported its
+// result and a late file system request would run past the end of the turn.
+test("no hook hash starts after the deadline", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
+  hashing.delayMs = 800;
+  await expect(readSharedGit(linked, { deadlineMs: 2_000 })).rejects.toThrow(/2000 ms/);
+  const startedAtDeadline = hashing.started.length;
+  expect(startedAtDeadline).toBeGreaterThan(0);
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  expect(hashing.started).toHaveLength(startedAtDeadline);
+}, 20_000);
+
+// Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):
+// passing both must not drop the turn signal.
+test("a canceled turn signal stops a read that also has a deadline", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    readSharedGit(linked, { deadlineMs: 60_000, signal: controller.signal }),
+  ).rejects.toMatchObject({ isCanceled: true });
 });
 
 // Usefulness: verifies "an unexpected `git config` exit is a read failure, not an empty state"
