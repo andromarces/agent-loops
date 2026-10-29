@@ -1936,3 +1936,21 @@ test.each([
   await expect(waitOn(gh, all)).rejects.toThrow(/Link header names a host other than/);
   expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
 });
+
+// Usefulness: verifies #1182 — a padded name in the `gh pr checks --required` list is one required
+// context, the trimmed name the check run carries, so the wait passes instead of judging a second,
+// padded context that no run can satisfy.
+test("waitChecks treats a padded required name as the check run of the trimmed name", async () => {
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 60,
+    gh: scriptedGh([{ status: 0, checks: [check(" ci ", "pass", "SUCCESS")] }], {
+      commits: { [HEAD_A]: [PASSED_ITEM] },
+    }),
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+});
