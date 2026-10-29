@@ -663,6 +663,22 @@ test.skipIf(!canSimulateReadFailure)("sha256File rethrows non-ENOENT read errors
   }
 });
 
+// Usefulness: verifies requirement "an aborted signal stops a read before it starts" (issue #1225):
+// the call rejects with an abort error instead of hashing. It shows no handle release for a read
+// already in flight.
+test("sha256File rejects with an abort error when its signal is already aborted", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "file.txt");
+    await writeFile(file, "content\n");
+    await expect(sha256File(file, { signal: AbortSignal.abort() })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  } finally {
+    await removePath(dir);
+  }
+});
+
 // Usefulness: verifies snapshot() wraps file-hash read failures in SnapshotError so runChild treats them as fatal.
 test.skipIf(!canSimulateReadFailure)(
   "snapshot rejects with SnapshotError when a tracked file is unreadable",

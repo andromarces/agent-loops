@@ -1,14 +1,24 @@
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { createTempRepo, removePath } from "../runtime-helpers.mjs";
 
-const hashing = vi.hoisted(() => ({ stall: false, failing: new Set() }));
+const hashing = vi.hoisted(() => ({
+  stall: false,
+  failing: new Set(),
+  captureSignal: false,
+  signals: [],
+}));
 vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    sha256File: (path) => {
+    sha256File: (path, options) => {
+      if (hashing.captureSignal) {
+        hashing.signals.push(options?.signal);
+        return new Promise(() => {});
+      }
       if (hashing.stall) return new Promise(() => {});
       if ([...hashing.failing].some((name) => path.endsWith(name))) {
         return Promise.reject(Object.assign(new Error(`busy: ${path}`), { code: "EBUSY" }));
@@ -26,6 +36,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   hashing.stall = false;
+  hashing.captureSignal = false;
+  hashing.signals.length = 0;
   hashing.failing.clear();
   vi.restoreAllMocks();
   await removePath(repo);
@@ -44,6 +56,40 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
   expect(Date.now() - started).toBeLessThan(5_000);
   expect(diffLockfiles(before, after)).toContain("pnpm-lock.yaml");
   expect(warn.mock.calls.some((call) => String(call[0]).includes("lockfile"))).toBe(true);
+});
+
+// Usefulness: verifies requirement "the bound aborts the signal of a hash read" (issue #1225), so a
+// read that has not started its request stops. It shows the signal, not release of an open handle.
+test("a hash read still pending at the bound receives an aborted signal", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  hashing.captureSignal = true;
+  await readLockfiles(repo, { boundMs: 200 });
+  expect(hashing.signals.length).toBeGreaterThan(0);
+  expect(hashing.signals.every((signal) => signal?.aborted === true)).toBe(true);
+});
+
+// Usefulness: verifies requirement "an unread work tree root reaches the parent" (issue #1225): the
+// parent reads only the envelope, so a null read would look like "no change". An unread root counts
+// as changed for every lockfile, like an unreadable lockfile.
+test("an unread work tree root reports every lockfile as changed", async () => {
+  const before = await readLockfiles(repo);
+  const outside = await mkdtemp(join(tmpdir(), "agent-loops-no-repo-"));
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const after = await readLockfiles(outside);
+    expect(after).not.toBeNull();
+    expect(diffLockfiles(before, after)).toEqual([
+      "bun.lock",
+      "bun.lockb",
+      "npm-shrinkwrap.json",
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+    ]);
+    expect(warn.mock.calls.some((call) => String(call[0]).includes("lockfile"))).toBe(true);
+  } finally {
+    await removePath(outside);
+  }
 });
 
 // Usefulness: verifies requirement "a lockfile that cannot be read is reported as changed" (issue
