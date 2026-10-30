@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -98,33 +98,48 @@ test("lists at most 20 names", async () => {
   expect(await appearedInInheritedTmpdir(before)).toHaveLength(20);
 });
 
-// Usefulness: verifies requirement "a reviewer turn does not report the turn directory of a
-// concurrent turn of another run" (issue #1240): the directory is registered by a process other
-// than the one that reads the list, so the exact-name set of the reader cannot cover it.
-test("leaves out the turn directory that another process created", async () => {
+// Usefulness: verifies requirement "a reviewer turn tells the turn directory of a concurrent run
+// apart" (issue #1240): the directory is registered by a process other than the one that reads the
+// list, so the exact-name set of the reader cannot cover it, and the entry stays visible, marked.
+test("marks the turn directory that another process created and keeps it listed", async () => {
   const other = await anotherProcess();
   const before = await snapshotInheritedTmpdir();
+  let name;
   const seen = await other.withTurnTmpdir(async (env) => {
-    expect(env).toBeDefined();
+    name = basename(env.TMPDIR);
     return appearedInInheritedTmpdir(before);
   });
-  expect(seen).toEqual([]);
+  expect(seen).toEqual([`registered/${name}`]);
 });
 
-// Usefulness: verifies requirement "an al- name that no agent-loop process created is still
-// reported" (issue #1240) next to a registered one, so the pattern alone hides nothing.
-test("reports an al- directory that no process registered beside one that another process did", async () => {
+// Usefulness: verifies requirement "an al- name that no agent-loop process created is reported as
+// before" (issue #1240) next to a registered one, so the pattern alone marks nothing.
+test("lists an al- directory that no process registered without a mark", async () => {
   const other = await anotherProcess();
   const before = await snapshotInheritedTmpdir();
   await mkdir(join(root, "al-Zq81xT"));
   const seen = await other.withTurnTmpdir(async () => appearedInInheritedTmpdir(before));
-  expect(seen).toEqual(["al-Zq81xT"]);
+  expect(seen).toContain("al-Zq81xT");
 });
 
-// Usefulness: verifies requirement "a registered name does not hide a different directory" (issue
-// #1240): a turn directory that the removal refused and a reviewer replaced stays reported by the
-// identity of the entry, whichever process registered the name.
-test("reports a replacement of the turn directory of another process", async () => {
+// Usefulness: verifies requirement "no turn can remove an entry from the report by writing a record"
+// (issue #1240, ADR 0068 decision 4, ADR 0069): a record that a turn forges for its own directory
+// at most adds a mark, and the entry stays listed.
+test("keeps a directory listed when a turn forges a registration for it", async () => {
+  const before = await snapshotInheritedTmpdir();
+  const dir = join(root, "al-Ab1234");
+  await mkdir(dir);
+  const { dev, ino } = await stat(dir, { bigint: true });
+  await mkdir(join(runsRoot, "turn-tmpdirs"), { recursive: true });
+  await writeFile(join(runsRoot, "turn-tmpdirs", "al-Ab1234"), `${dev}:${ino}`);
+  const entries = await appearedInInheritedTmpdir(before);
+  expect(entries.some((entry) => entry.endsWith("al-Ab1234"))).toBe(true);
+});
+
+// Usefulness: verifies requirement "a registered name does not mark a different directory" (issue
+// #1240): a turn directory that the removal refused and a reviewer replaced is listed without the
+// mark, whichever process registered the name.
+test("lists a replacement of the turn directory of another process without a mark", async () => {
   const other = await anotherProcess();
   const before = await snapshotInheritedTmpdir();
   let name;

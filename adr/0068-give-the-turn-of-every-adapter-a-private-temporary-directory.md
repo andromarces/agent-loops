@@ -6,9 +6,11 @@ partially-superseded
 
 Partially supersedes [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md). This ADR replaces the scope of decision 1, which covered a Codex turn only. Every other decision of ADR 0047 holds, and it now applies to the turn of every adapter.
 
-Superseded in part by [ADR 0069: Leave out the turn directories that any agent-loop process registered](0069-leave-out-the-turn-directories-that-any-agent-loop-process-registered.md):
+Superseded in part by [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md):
 
-- Decision 4, the `al-*` names stay reported: ADR 0069 leaves out the turn directory that any agent-loop process registered, by name and identity. Any other `al-` name stays reported.
+- Decision 4, the `al-*` names stay reported: ADR 0069 keeps every entry listed and marks the turn directory that an agent-loop process registered with the prefix `registered/`. The exact-name leave-out of the turn directories of this process stays.
+
+Decisions 1 to 3 remain in force: every adapter, one place, and recovery.
 
 ## Date
 
@@ -54,7 +56,7 @@ Andro Marces
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
 - [ADR 0049: Pin the machine-wide roots for every child turn](0049-pin-the-machine-wide-roots-for-every-child-turn.md)
 - [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
-- Superseded in part by: [ADR 0069](0069-leave-out-the-turn-directories-that-any-agent-loop-process-registered.md)
+- Superseded in part by: [ADR 0069](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md)
 - [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md)
 - Implementation:
   - Source: `runAgent` and `defaultAgents` in `src/agents/index.mjs`, `src/agents/claude.mjs`, `src/agents/agy.mjs`, `src/agents/copilot.mjs`, `src/agents/opencode.mjs`
