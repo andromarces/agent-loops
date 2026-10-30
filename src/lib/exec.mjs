@@ -8,7 +8,7 @@ import { cwdHash } from "./runstate.mjs";
 /**
  * Environment variable that marks a process spawned for a worker or reviewer turn. Its value is
  * a comma-separated list of run keys, the names of state directories: the keys of every enclosing
- * run, outermost first, then the key of the run that dispatched the turn. `role extend`, `finish`,
+ * run, outermost first, then the key of the run that dispatched the turn. `role extend`, `set-model`, `finish`,
  * and `abort` refuse a caller whose list holds the key they use to find the run state, so a
  * descendant of a run never ends or extends it, while a parent that inherited the marker of
  * another run is not refused. Every descendant of the spawned process inherits it (issues #392,

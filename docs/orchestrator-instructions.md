@@ -124,7 +124,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--task` only when its value differs from the stored task.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
-  exception is the step budget, which only `role extend` changes (see below).
+  exceptions are the step budget, which only `role extend` changes, and the model of a role with no
+  completed turn, which only `role set-model` changes (see below).
 
 ## Dispatch
 
@@ -757,6 +758,7 @@ The conditions that the `--require-accept` and `--require-ci` gates check at `fi
   needs `abort` or `dispatch --resume-interrupted`.
 - `declare-pr` sets the run PR once after init, as the section on declaring a PR
   run states. The caller must pass the stored `--parent-session` id, as for `extend`.
+- A CLI refuses a role model on the first turn of that role (for example `The 'gpt-6.1' model is not supported`): do not abort. Run `agent-loop role set-model --cwd "<work tree>" --parent-session "<parent session id>" --reviewer-model <valid model>` (or `--worker-model`), then dispatch again. It needs an `active` run and a role with no `ok` turn. Ask the user for the valid model.
 - `halted` lifecycle (reviewer mutation or snapshot error): the run is already
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
@@ -790,7 +792,7 @@ A run stores the `--parent-session` of the session that started it. The
 parent-edit guard and `extend` match that id, and no later call changes it. After init,
 each subcommand treats `--parent-session` as follows:
 
-- `extend` and `declare-pr`: required. A missing value or any value other than the stored id is
+- `extend`, `declare-pr`, and `set-model`: required. A missing value or any value other than the stored id is
   refused, and the refusal does not name the stored id. The stored id is
   accepted.
 - `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
@@ -805,6 +807,6 @@ call moves the stored id to the new session. The new session can run `dispatch`,
 `finish`, and `abort` by omitting `--parent-session`. It can run `extend` and
 `declare-pr` only by passing the stored id. Both compare the id only, so that call succeeds for
 any parent-side caller that holds the id, and it gives no guard coverage. A child
-role never runs `extend` or `declare-pr`: the spawn-time marker refuses it, and the prompt rule
+role never runs `extend`, `declare-pr`, or `set-model`: the spawn-time marker refuses it, and the prompt rule
 backs the marker. To get a guard, call `abort` and start a new run with
 the new session id. A new run starts every role on a new session (ADR 0021).

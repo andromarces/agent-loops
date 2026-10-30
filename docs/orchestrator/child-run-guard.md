@@ -1,8 +1,8 @@
 # Child run guard
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child role ran `extend`, `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child role ran `extend`, `declare-pr`, `set-model`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
-A child role never runs `extend`, `declare-pr`, `finish`, or `abort`. Each subcommand refuses a
+A child role never runs `extend`, `declare-pr`, `set-model`, `finish`, or `abort`. Each subcommand refuses a
 caller whose `AGENT_LOOP_SPAWNED_RUN` list holds the key of the run it acts on. The
 runtime sets the variable, as a comma-separated list of the keys of every
 enclosing run and then the key of the dispatching run, in the environment of every worker and reviewer process, and in no other spawn. The key

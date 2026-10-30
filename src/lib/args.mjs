@@ -241,7 +241,7 @@ export function roleState(source, roleName) {
  * The OpenCode model and effort pair of one role, validated once for both paths.
  * @returns {string | null} the refusal, or null when the pair is valid or the kind is not OpenCode
  */
-function openCodeOptionsError(role, kind, model, effort) {
+export function openCodeOptionsError(role, kind, model, effort) {
   if (kind && normalizeAgent(kind) !== "opencode") {
     return null;
   }

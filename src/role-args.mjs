@@ -87,7 +87,8 @@ export function validateInitFlags(args, agents = {}) {
 /**
  * Later calls read configuration from the state file and reject any change.
  * `extend` passes `maxSteps` in `allowed`, because raising it is that operation's
- * purpose; every other init field stays fixed.
+ * purpose, and `set-model` passes `roleModel` for the same reason; every other init field
+ * stays fixed.
  */
 export function rejectInitFlagChanges(args, state, allowed = []) {
   // The command is compared by digest, so the refusal never prints a stored value.
@@ -158,6 +159,9 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
       [`${roleName}Effort`, "effort"],
     ]) {
       const value = args[flag];
+      if (path === "model" && allowed.includes("roleModel")) {
+        continue;
+      }
       if (value !== null) {
         // Only the role kind is normalized (`antigravity` -> `agy`); model and
         // effort are opaque pass-through strings compared verbatim. A role the
@@ -181,12 +185,20 @@ function kebab(name) {
   return name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
-const OPERATIONS = new Set(["dispatch", "finish", "abort", "extend", "declare-pr", "wait-checks"]);
+const OPERATIONS = new Set([
+  "dispatch",
+  "finish",
+  "abort",
+  "extend",
+  "declare-pr",
+  "set-model",
+  "wait-checks",
+]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
 export const ROLE_USAGE = [
-  "Usage: agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]",
+  "Usage: agent-loop role [dispatch|finish|abort|extend|declare-pr|set-model|wait-checks] [flags]",
   "",
   "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
   "state file. One JSON object on stdout, except this help; logs on stderr.",
@@ -198,7 +210,7 @@ export const ROLE_USAGE = [
 ].join("\n");
 
 /**
- * Parses `agent-loop role [dispatch|finish|abort|extend|declare-pr|wait-checks] [flags]`. Reuses the flag
+ * Parses `agent-loop role [dispatch|finish|abort|extend|declare-pr|set-model|wait-checks] [flags]`. Reuses the flag
  * reading rules of the headless CLI. The OpenCode validation runs later through
  * `validateInitFlags`. Semantics that depend on the state file (init detection, change rejection)
  * are checked at execution time, not parse time.

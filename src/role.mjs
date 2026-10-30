@@ -4,7 +4,7 @@
 // envelope per invocation, except `--help`, which prints plain usage; all logs go
 // to stderr.
 import { defaultAgents } from "./agents/index.mjs";
-import { REVIEW_ONLY_PR_REFUSAL } from "./lib/args.mjs";
+import { CHILD_ROLE_KINDS, REVIEW_ONLY_PR_REFUSAL, openCodeOptionsError } from "./lib/args.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
 import { isSpawnedByRun } from "./lib/exec.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
@@ -31,8 +31,9 @@ import { finishRun } from "./role-finish.mjs";
 
 export { parseRoleArgs };
 
-// Operations that end, extend, or set the PR of a run. A child process of that run never runs them.
-const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend", "declare-pr"]);
+// Operations that end, extend, or change the PR or a model of a run. A child process of that run
+// never runs them.
+const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend", "declare-pr", "set-model"]);
 
 /**
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
@@ -181,6 +182,73 @@ async function declarePr(args, { gh, signal } = {}) {
 }
 
 /**
+ * `set-model`: replaces the model of one role that has completed no turn, so a model that the CLI
+ * refused on the first turn of that role is repaired on the same run, where `abort` and a new run
+ * start every role on a new session (#1254). The role is the one whose `--<role>-model` flag the
+ * call carries, and exactly one is required. Only an `active` run takes it: a `dispatched` or
+ * `interrupted` run can still have a child on the old model. A role with an `ok` turn is refused,
+ * because its conversation already ran on the old model. The change is appended to `modelChanges`.
+ * The role keeps its stored session id, which is `null` or unconfirmed after a refused first turn.
+ */
+async function setModel(args) {
+  rejectMisplacedFlags(args, "set-model");
+  const named = CHILD_ROLE_KINDS.filter((name) => args[`${name}Model`] !== null);
+  if (named.length !== 1) {
+    throw new RoleError("set-model requires exactly one of --worker-model and --reviewer-model.");
+  }
+  const [roleName] = named;
+  const model = args[`${roleName}Model`];
+  requireParentSessionFlag(args, "set-model");
+
+  return withOpenRun(
+    args,
+    {},
+    async (state, paths) => {
+      if (state.lifecycle !== "active") {
+        throw new RoleError(
+          `set-model is refused while the run is ${state.lifecycle}: only an active run takes a model change.`,
+        );
+      }
+      const role = state.roles?.[roleName];
+      if (!role) {
+        throw new RoleError(`set-model is refused: the run has no ${roleName}.`);
+      }
+      if (
+        !Array.isArray(state.turns) ||
+        state.turns.some((turn) => turn.role === roleName && turn.status === "ok")
+      ) {
+        throw new RoleError(
+          `set-model is refused: the ${roleName} completed a turn, or the run kept no turn history, so its conversation may hold the earlier model.`,
+        );
+      }
+      const refusal = openCodeOptionsError(roleName, role.kind, model, role.effort);
+      if (refusal) {
+        throw new RoleError(refusal);
+      }
+      if (!Array.isArray(state.modelChanges)) {
+        state.modelChanges = [];
+      }
+      const previousModel = role.model ?? null;
+      state.modelChanges.push({
+        role: roleName,
+        from: previousModel,
+        to: model,
+        at: new Date().toISOString(),
+      });
+      role.model = model;
+      await writeState(paths.stateFile, state);
+      logInfo(`${roleName} model replaced (${state.stepsUsed} steps used)`);
+      return {
+        exitCode: 0,
+        payload: { status: "ok", lifecycle: state.lifecycle, role: roleName, model, previousModel },
+      };
+    },
+    ["roleModel"],
+    (state) => requireStoredParentSession(args, state),
+  );
+}
+
+/**
  * The caller must pass the run's stored parent session id, the id the parent-edit guard matches.
  * The refusal does not name the stored id.
  * known-limit: the id check does not identify the caller. The spawn-time run marker refuses a
@@ -303,6 +371,8 @@ export async function executeRoleCommand(args, deps = {}) {
         return await extend(args);
       case "declare-pr":
         return await declarePr(args, deps);
+      case "set-model":
+        return await setModel(args);
       case "wait-checks":
         return await waitChecksOperation(args, deps);
       default:
