@@ -33,7 +33,7 @@ export async function registerTurnTmpdir(name, stat) {
   }
 }
 
-/** Removes the registration of `name`. A failure is ignored: a stale file hides only its own identity. */
+/** Removes the registration of `name`. A failure is ignored: a stale file only adds the `registered/` prefix to a listed entry with its identity. */
 export async function unregisterTurnTmpdir(name) {
   await rm(join(registryDir(), name), { force: true }).catch(() => {});
 }
