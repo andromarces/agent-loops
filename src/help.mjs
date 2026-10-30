@@ -90,6 +90,11 @@ Role operations:
                                 Refuses a run that already has a PR, a terminal run,
                                 and review-only. The run then ends only through
                                 --require-ci <pr> for that PR.
+  set-model                     Replace the model of one role that has completed no
+                                turn, on an active run, with --worker-model or
+                                --reviewer-model (exactly one), so a model that the CLI
+                                refused is repaired without a new run. Needs the stored
+                                --parent-session id. Refuses a role with an ok turn.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
@@ -115,14 +120,14 @@ Role flags:
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Must be inside a Git work tree.
                                 Defaults to the current directory.
-  --parent-session <id>         Required on the init call, on extend, and on declare-pr. The harness
+  --parent-session <id>         Required on the init call, on extend, declare-pr, and set-model. The harness
                                 session id the parent-edit guard matches; later calls
-                                reject a changed value, and extend and declare-pr refuse a mismatch. The headless form (no subcommand) is the explicit
+                                reject a changed value, and extend, declare-pr, and set-model refuse a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
   --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files / --copy-local-path
                                 First (init) call only. Later calls read these from the
                                 state file and reject any attempt to change them.
-                                Only extend takes --max-steps after init.
+                                Only extend takes --max-steps after init, and only set-model takes a role model.
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
   --resume-interrupted          Explicitly continue after an uncertain previous turn.
