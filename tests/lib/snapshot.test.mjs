@@ -1,8 +1,10 @@
+import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+import { sha256 } from "../../src/lib/hash.mjs";
 import { cancelOnSigInt } from "../../src/lib/sigint.mjs";
 import {
   MutationError,
@@ -23,6 +25,43 @@ import {
   removePath,
   withGitHangingAfter,
 } from "../runtime-helpers.mjs";
+
+// Runs `onFirstChunk` once, after the consumer takes the first chunk of the next streamed file
+// read, so a test can change the file or cancel the read while the read is in progress.
+const readHook = vi.hoisted(() => ({ onFirstChunk: null, afterLstat: null, stream: null }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    // Runs `afterLstat` once, after the next `lstat` returns, so a test can change the file
+    // between the stat and the open of a hash.
+    lstat: async (...args) => {
+      const result = await actual.lstat(...args);
+      const hook = readHook.afterLstat;
+      readHook.afterLstat = null;
+      hook?.();
+      return result;
+    },
+  };
+});
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    createReadStream: (...args) => {
+      const stream = actual.createReadStream(...args);
+      return (async function* () {
+        readHook.stream = stream;
+        for await (const chunk of stream) {
+          yield chunk;
+          const hook = readHook.onFirstChunk;
+          readHook.onFirstChunk = null;
+          hook?.();
+        }
+      })();
+    },
+  };
+});
 
 // Usefulness: verifies assertGitWorkTree passes inside a git repository and rejects a non-git directory.
 test("assertGitWorkTree validates git directory", async () => {
@@ -678,6 +717,132 @@ test("sha256File rejects with an abort error when its signal is already aborted"
     await removePath(dir);
   }
 });
+
+// Usefulness: verifies requirement "digests stay byte-identical" (issue #1241): a file that spans
+// several read chunks hashes to the whole-content digest, so recorded snapshot digests still match.
+test("sha256File hashes a multi-chunk file to the whole-content digest", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "large.bin");
+    const content = Buffer.alloc(512 * 1024, "abcdefghij");
+    await writeFile(file, content);
+    await expect(sha256File(file)).resolves.toBe(sha256(content));
+  } finally {
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "a file that grows during the read keeps the digest of its
+// initial bytes" (issue #1241), as the whole-file read did, so a concurrent append never changes
+// a recorded digest.
+test("sha256File digests only the initial bytes of a file that grows during the read", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "growing.bin");
+    const content = Buffer.alloc(1024 * 1024, "abcdefghij");
+    await writeFile(file, content);
+    readHook.onFirstChunk = () => appendFileSync(file, "late");
+    await expect(sha256File(file)).resolves.toBe(sha256(content));
+  } finally {
+    readHook.onFirstChunk = null;
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "the digest covers the file as the whole-file read saw it"
+// (issue #1241): a file that grows between the stat and the open hashes with the appended bytes, as
+// the whole-file read sized itself from the opened file.
+test("sha256File digests the size at open of a file that grows before the read starts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "growing.bin");
+    const content = Buffer.alloc(256 * 1024, "abcdefghij");
+    await writeFile(file, content);
+    readHook.afterLstat = () => appendFileSync(file, "late");
+    await expect(sha256File(file)).resolves.toBe(
+      sha256(Buffer.concat([content, Buffer.from("late")])),
+    );
+  } finally {
+    readHook.afterLstat = null;
+    await removePath(dir);
+  }
+});
+
+// Cancel reasons: the default `DOMException` that `abort()` makes, and a custom `Error`.
+const CANCEL_REASONS = [
+  ["the default reason", undefined],
+  ["a custom Error reason", new Error("stop")],
+];
+
+// Usefulness: verifies requirement "a cancel wins over a later read error" (issue #1241): a cancel
+// after the stat rejects with Node's AbortError (code ABORT_ERR, the reason as cause) even when the
+// file is then deleted, as the whole-file read did, instead of reporting the file as absent.
+test.each(CANCEL_REASONS)(
+  "sha256File rejects with Node's AbortError when it aborts with %s after the stat and the file vanishes",
+  async (_label, reason) => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+    try {
+      const file = join(dir, "vanishing.txt");
+      await writeFile(file, "content\n");
+      const controller = new AbortController();
+      readHook.afterLstat = () => {
+        controller.abort(reason);
+        rmSync(file);
+      };
+      const error = await sha256File(file, { signal: controller.signal }).catch((err) => err);
+      expect(error).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(error.cause).toBe(controller.signal.reason);
+    } finally {
+      readHook.afterLstat = null;
+      await removePath(dir);
+    }
+  },
+);
+
+// Usefulness: verifies requirement "a read error names the path" (issue #1241): a file replaced by a
+// directory after the stat rejects with EISDIR and a message that names the path, as the
+// whole-file read did.
+test("sha256File names the path in the error of a file replaced by a directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "swapped.txt");
+    await writeFile(file, "content\n");
+    readHook.afterLstat = () => {
+      rmSync(file);
+      mkdirSync(file);
+    };
+    await expect(sha256File(file)).rejects.toMatchObject({
+      code: "EISDIR",
+      message: expect.stringContaining(file),
+    });
+  } finally {
+    readHook.afterLstat = null;
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "an abort during the read ends the stream and rejects" (issue
+// #1241): the abort lands while the stream is reading, so the call rejects with Node's AbortError
+// (code ABORT_ERR, the reason as cause) instead of returning a digest, and the stream closes.
+test.each(CANCEL_REASONS)(
+  "sha256File ends the stream and rejects with Node's AbortError when it aborts with %s during the read",
+  async (_label, reason) => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+    try {
+      const file = join(dir, "large.bin");
+      await writeFile(file, Buffer.alloc(8 * 1024 * 1024, "x"));
+      const controller = new AbortController();
+      readHook.onFirstChunk = () => controller.abort(reason);
+      const error = await sha256File(file, { signal: controller.signal }).catch((err) => err);
+      expect(error).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(error.cause).toBe(controller.signal.reason);
+      expect(readHook.stream.destroyed).toBe(true);
+    } finally {
+      readHook.onFirstChunk = null;
+      await removePath(dir);
+    }
+  },
+);
 
 // Usefulness: verifies snapshot() wraps file-hash read failures in SnapshotError so runChild treats them as fatal.
 test.skipIf(!canSimulateReadFailure)(

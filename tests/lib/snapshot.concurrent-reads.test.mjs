@@ -10,21 +10,23 @@ import { removePath } from "../runtime-helpers.mjs";
 // Probes of the reads a snapshot makes: the most file reads in flight, and the order of the events.
 const probe = vi.hoisted(() => ({ flying: 0, max: 0, events: [] }));
 
-vi.mock("node:fs/promises", async (importOriginal) => {
+vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
-    readFile: async (...args) => {
-      probe.flying += 1;
-      probe.max = Math.max(probe.max, probe.flying);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      try {
-        return await original.readFile(...args);
-      } finally {
-        probe.flying -= 1;
-        probe.events.push("hashed");
-      }
-    },
+    // Stands in for the stream of one file read, and holds it open for 5 ms so reads overlap.
+    createReadStream: (...args) =>
+      (async function* () {
+        probe.flying += 1;
+        probe.max = Math.max(probe.max, probe.flying);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        try {
+          yield* original.createReadStream(...args);
+        } finally {
+          probe.flying -= 1;
+          probe.events.push("hashed");
+        }
+      })(),
   };
 });
 
