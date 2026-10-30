@@ -144,9 +144,14 @@ export function ghFailureText({ status, stderr, stdout }) {
   return line ? `HTTP ${line[1]}` : `exit ${status}, no HTTP status line`;
 }
 
-/** The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did. */
-function ghApiFailure(endpoint, { status, stdout, stderr, transient }) {
-  const err = new Error(`gh api ${endpoint} failed: ${ghFailureText({ status, stdout, stderr })}`);
+/**
+ * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did. Only
+ * a result marked `include`, a failed `gh api --include` read, passes its stdout on for a status
+ * line (#1246): the stdout of any other read is a reply body.
+ */
+function ghApiFailure(endpoint, { status, stdout, stderr, transient, include }) {
+  const text = ghFailureText({ status, stdout: include ? stdout : undefined, stderr });
+  const err = new Error(`gh api ${endpoint} failed: ${text}`);
   if (transient) {
     err.transient = true;
   }
@@ -160,9 +165,15 @@ function ghApiFailure(endpoint, { status, stdout, stderr, transient }) {
  *   stdout that is not JSON throws a raw `SyntaxError`
  */
 export async function ghApi(gh, args, cwd) {
-  const { status, stdout, stderr, transient } = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, transient, include } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    throw ghApiFailure(args[0], { status, stdout, stderr, transient });
+    throw ghApiFailure(args[0], {
+      status,
+      stdout,
+      stderr,
+      transient,
+      include: include || args.includes("--include"),
+    });
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
@@ -362,7 +373,11 @@ async function readReply(read, args, cwd, state) {
   if (result.status !== 0) {
     const transient =
       reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
-    return { reply, targets, end: { ...result, ...(transient ? { transient: true } : {}) } };
+    return {
+      reply,
+      targets,
+      end: { ...result, include: true, ...(transient ? { transient: true } : {}) },
+    };
   }
   if (reply === null || reply.status < 200 || reply.status > 299) {
     return { reply, targets, end: refusal("the reply carries no 2xx HTTP status block") };
@@ -534,7 +549,10 @@ async function readRequiredSource(
   cwd,
   { absentOnError, classify, malformed = () => false },
 ) {
-  const { status, stdout, stderr, unreadable, transient } = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, unreadable, transient, include } = await gh(
+    ["api", ...args],
+    cwd,
+  );
   if (status !== 0) {
     if (unreadable) {
       return { state: UNKNOWN, contexts: [], unparsed: true };
@@ -545,7 +563,7 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw ghApiFailure(args[0], { status, stdout, stderr, transient });
+    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include });
   }
   const text = stdout.trim();
   if (text === "") {

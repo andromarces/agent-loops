@@ -256,6 +256,27 @@ ${headers}
     assert.ok(!err.message.includes(SECRET));
   });
 
+  // Verifies #1246: a read without `--include` writes the reply body to stdout, so a body that opens
+  // with a status line is no status. The default protection read reports its exit status only.
+  const PROTECTION_ENDPOINT = `repos/${SLUG}/branches/main/protection`;
+  const protectionRead = (protection, options) => {
+    const { gh } = serve({ [page(RULES, 1)]: reply([]), [PROTECTION_ENDPOINT]: protection });
+    return requiredContexts(gh, SLUG, "main", 42, ".", options).catch((error) => failureOf(error));
+  };
+
+  it("reports the exit status of a failed read without --include whose body opens with a status line", async () => {
+    const err = await protectionRead(silent(`HTTP/1.1 403 Forbidden\r\n\r\n{"x":"${SECRET}"}`));
+    assert.match(err.message, /failed: exit 1$/);
+    assert.ok(!err.message.includes("403"));
+  });
+
+  it("still names the status of a failed --include protection read", async () => {
+    const err = await protectionRead(silent(`HTTP/2.0 403 Forbidden\r\n\r\n{}`), {
+      retryable: true,
+    });
+    assert.match(err.message, /failed: HTTP 403$/);
+  });
+
   it("ends the ruleset read in an error for a 503 with a Link on another host", async () => {
     const gh = source([], { [page(RULES, 1)]: failure503(LINK) });
     await expect(
