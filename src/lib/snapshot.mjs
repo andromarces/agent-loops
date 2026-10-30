@@ -59,18 +59,27 @@ export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, 
   }
 }
 
+// The error that Node's `fs` reads reject with after a cancel, which carries the reason as cause.
+function abortError(signal) {
+  return Object.assign(new Error("The operation was aborted", { cause: signal.reason }), {
+    name: "AbortError",
+    code: "ABORT_ERR",
+  });
+}
+
 // Returns null only for an absent or non-regular, non-symlink entry; read errors
 // other than ENOENT propagate. A symlink hashes its link target text, not the
 // file it points to, so two links with different targets never share a hash and
 // a dangling or directory link still has a content identity. The link text is
 // tagged before hashing, so a link never collides with a regular file that
 // holds the same bytes. The file streams through the hash in chunks, so it is never held whole in
-// memory, and only the bytes up to the size at open count. An aborted `signal` rejects with an
-// AbortError before the lstat, the open, and the read, and a cancel wins over a later read error,
-// including a file that vanished after the cancel. An abort during the read destroys the stream,
-// which closes the file handle and rejects the read. An `fs` request already in flight is not
-// interrupted, so the destroy takes effect after that request returns. The `lstat` and
-// `readlink` calls take no signal.
+// memory, and only the bytes up to the size at open count. An aborted `signal` rejects with its
+// reason before the `lstat`. A cancel after the `lstat` rejects with Node's AbortError (code
+// ABORT_ERR, the reason as cause), and it wins over a later read error, including a file that
+// vanished after the cancel. An abort during the read destroys the stream, which closes the file
+// handle and rejects the read. An `fs` request already in flight is not interrupted, so the
+// destroy takes effect after that request returns. The `lstat` and `readlink` calls take no
+// signal.
 export async function sha256File(path, { signal } = {}) {
   signal?.throwIfAborted();
   let s;
@@ -89,7 +98,9 @@ export async function sha256File(path, { signal } = {}) {
     return null;
   }
   try {
-    signal?.throwIfAborted();
+    if (signal?.aborted) {
+      throw abortError(signal);
+    }
     const hash = createHash("sha256");
     const handle = await open(path, "r");
     let stream;
@@ -111,7 +122,9 @@ export async function sha256File(path, { signal } = {}) {
     return hash.digest("hex");
   } catch (err) {
     // A cancel wins over a read error that follows it.
-    signal?.throwIfAborted();
+    if (signal?.aborted && err.code !== "ABORT_ERR") {
+      throw abortError(signal);
+    }
     if (err.code === "ENOENT") {
       // Raced with deletion between lstat and read; treat as absent.
       return null;

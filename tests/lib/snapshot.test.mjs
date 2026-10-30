@@ -768,27 +768,36 @@ test("sha256File digests the size at open of a file that grows before the read s
   }
 });
 
+// Cancel reasons: the default `DOMException` that `abort()` makes, and a custom `Error`.
+const CANCEL_REASONS = [
+  ["the default reason", undefined],
+  ["a custom Error reason", new Error("stop")],
+];
+
 // Usefulness: verifies requirement "a cancel wins over a later read error" (issue #1241): a cancel
-// after the stat rejects with an abort error even when the file is then deleted, as the
-// whole-file read did, instead of reporting the file as absent.
-test("sha256File rejects with an abort error when its signal aborts after the stat and the file vanishes", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
-  try {
-    const file = join(dir, "vanishing.txt");
-    await writeFile(file, "content\n");
-    const controller = new AbortController();
-    readHook.afterLstat = () => {
-      controller.abort();
-      rmSync(file);
-    };
-    await expect(sha256File(file, { signal: controller.signal })).rejects.toMatchObject({
-      name: "AbortError",
-    });
-  } finally {
-    readHook.afterLstat = null;
-    await removePath(dir);
-  }
-});
+// after the stat rejects with Node's AbortError (code ABORT_ERR, the reason as cause) even when the
+// file is then deleted, as the whole-file read did, instead of reporting the file as absent.
+test.each(CANCEL_REASONS)(
+  "sha256File rejects with Node's AbortError when it aborts with %s after the stat and the file vanishes",
+  async (_label, reason) => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+    try {
+      const file = join(dir, "vanishing.txt");
+      await writeFile(file, "content\n");
+      const controller = new AbortController();
+      readHook.afterLstat = () => {
+        controller.abort(reason);
+        rmSync(file);
+      };
+      const error = await sha256File(file, { signal: controller.signal }).catch((err) => err);
+      expect(error).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(error.cause).toBe(controller.signal.reason);
+    } finally {
+      readHook.afterLstat = null;
+      await removePath(dir);
+    }
+  },
+);
 
 // Usefulness: verifies requirement "a read error names the path" (issue #1241): a file replaced by a
 // directory after the stat rejects with EISDIR and a message that names the path, as the
@@ -813,24 +822,27 @@ test("sha256File names the path in the error of a file replaced by a directory",
 });
 
 // Usefulness: verifies requirement "an abort during the read ends the stream and rejects" (issue
-// #1241): the abort lands while the stream is reading, so the call rejects instead of returning a
-// digest and the stream closes.
-test("sha256File ends the stream and rejects when its signal aborts during the read", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
-  try {
-    const file = join(dir, "large.bin");
-    await writeFile(file, Buffer.alloc(8 * 1024 * 1024, "x"));
-    const controller = new AbortController();
-    readHook.onFirstChunk = () => controller.abort();
-    await expect(sha256File(file, { signal: controller.signal })).rejects.toMatchObject({
-      name: "AbortError",
-    });
-    expect(readHook.stream.destroyed).toBe(true);
-  } finally {
-    readHook.onFirstChunk = null;
-    await removePath(dir);
-  }
-});
+// #1241): the abort lands while the stream is reading, so the call rejects with Node's AbortError
+// (code ABORT_ERR, the reason as cause) instead of returning a digest, and the stream closes.
+test.each(CANCEL_REASONS)(
+  "sha256File ends the stream and rejects with Node's AbortError when it aborts with %s during the read",
+  async (_label, reason) => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+    try {
+      const file = join(dir, "large.bin");
+      await writeFile(file, Buffer.alloc(8 * 1024 * 1024, "x"));
+      const controller = new AbortController();
+      readHook.onFirstChunk = () => controller.abort(reason);
+      const error = await sha256File(file, { signal: controller.signal }).catch((err) => err);
+      expect(error).toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+      expect(error.cause).toBe(controller.signal.reason);
+      expect(readHook.stream.destroyed).toBe(true);
+    } finally {
+      readHook.onFirstChunk = null;
+      await removePath(dir);
+    }
+  },
+);
 
 // Usefulness: verifies snapshot() wraps file-hash read failures in SnapshotError so runChild treats them as fatal.
 test.skipIf(!canSimulateReadFailure)(
