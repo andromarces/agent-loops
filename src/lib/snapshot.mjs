@@ -1,4 +1,6 @@
-import { lstat, readFile, readlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { execBounded } from "./exec.mjs";
@@ -62,10 +64,11 @@ export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, 
 // file it points to, so two links with different targets never share a hash and
 // a dangling or directory link still has a content identity. The link text is
 // tagged before hashing, so a link never collides with a regular file that
-// holds the same bytes. An aborted `signal` rejects with an AbortError before the read starts, and
-// it rejects an `fs` read that has not yet begun its request. Node checks the signal only between
-// requests, so an `fs` request already in flight is not interrupted, and a stalled read can keep its
-// file handle past the abort. The `lstat` and `readlink` calls take no signal.
+// holds the same bytes. The file streams through the hash in chunks, so it is never held whole in
+// memory. An aborted `signal` rejects with an AbortError before the read starts, and it destroys the
+// stream, which closes the file handle and rejects the read. An `fs` request already in flight is
+// not interrupted, so the destroy takes effect after that request returns. The `lstat` and
+// `readlink` calls take no signal.
 export async function sha256File(path, { signal } = {}) {
   signal?.throwIfAborted();
   let s;
@@ -84,8 +87,11 @@ export async function sha256File(path, { signal } = {}) {
     return null;
   }
   try {
-    const content = await readFile(path, { signal });
-    return sha256(content);
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(path, { signal })) {
+      hash.update(chunk);
+    }
+    return hash.digest("hex");
   } catch (err) {
     if (err.code === "ENOENT") {
       // Raced with deletion between lstat and read; treat as absent.
