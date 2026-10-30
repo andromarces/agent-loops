@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -762,6 +762,50 @@ test("sha256File digests the size at open of a file that grows before the read s
     await expect(sha256File(file)).resolves.toBe(
       sha256(Buffer.concat([content, Buffer.from("late")])),
     );
+  } finally {
+    readHook.afterLstat = null;
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "a cancel wins over a later read error" (issue #1241): a cancel
+// after the stat rejects with an abort error even when the file is then deleted, as the
+// whole-file read did, instead of reporting the file as absent.
+test("sha256File rejects with an abort error when its signal aborts after the stat and the file vanishes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "vanishing.txt");
+    await writeFile(file, "content\n");
+    const controller = new AbortController();
+    readHook.afterLstat = () => {
+      controller.abort();
+      rmSync(file);
+    };
+    await expect(sha256File(file, { signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  } finally {
+    readHook.afterLstat = null;
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "a read error names the path" (issue #1241): a file replaced by a
+// directory after the stat rejects with EISDIR and a message that names the path, as the
+// whole-file read did.
+test("sha256File names the path in the error of a file replaced by a directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "swapped.txt");
+    await writeFile(file, "content\n");
+    readHook.afterLstat = () => {
+      rmSync(file);
+      mkdirSync(file);
+    };
+    await expect(sha256File(file)).rejects.toMatchObject({
+      code: "EISDIR",
+      message: expect.stringContaining(file),
+    });
   } finally {
     readHook.afterLstat = null;
     await removePath(dir);
