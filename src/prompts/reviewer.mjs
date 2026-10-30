@@ -6,6 +6,7 @@ import {
   initTaskBlock,
   processRule,
   reportBlock,
+  secretFileRule,
   testSlotRule,
 } from "./report.mjs";
 
@@ -195,6 +196,7 @@ Do not change a tracked file or an untracked file that Git does not ignore, incl
 ${remoteWriteRule}
 ${noInstallRule}
 ${processRule}
+${secretFileRule}
 ${testSlotRule()}
 
 ${reviewerRules}${supplied}${tests}${sandbox}

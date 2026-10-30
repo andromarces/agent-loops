@@ -1,5 +1,11 @@
 import { escapeLineSeparators } from "./escape.mjs";
-import { initTaskBlock, processRule, reportBlock, testSlotRule } from "./report.mjs";
+import {
+  initTaskBlock,
+  processRule,
+  reportBlock,
+  secretFileRule,
+  testSlotRule,
+} from "./report.mjs";
 
 const prBodyRule =
   "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";
@@ -81,6 +87,7 @@ Your role:
 - ${tmpdirRule}
 - Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove. A PR body file in the system temporary directory is one example.
 - ${processRule}
+- ${secretFileRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
 - You do NOT decide when the loop ends.
 
