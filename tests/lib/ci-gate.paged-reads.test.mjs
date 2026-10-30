@@ -205,6 +205,57 @@ ${headers}
     assert.equal(err.transient, true);
   });
 
+  // Verifies #1242: a failed `--include` read whose stderr is empty names the first-line status of its
+  // stdout, never the body text, so the parent can tell a 4xx, a terminal 5xx, and a retryable one apart.
+  const silent = (stdout) => ({ status: 1, stdout, stderr: "" });
+  const SECRET = "server-supplied-text";
+
+  it.each([
+    ["check-run", RUNS, (gh) => checkRuns(gh, SLUG, SHA, ".", true)],
+    ["commit-status", STATUS, (gh) => commitStatuses(gh, SLUG, SHA, ".", true)],
+  ])("names the status of a failed %s read with empty stderr", async (_name, endpoint, read) => {
+    const { gh } = serve({
+      [page(endpoint, 1)]: silent(`HTTP/2.0 403 Forbidden\r\n\r\n{"message":"${SECRET}"}`),
+    });
+    const err = await read(gh).catch((error) => error);
+    assert.match(err.message, /failed: HTTP 403$/);
+    assert.ok(!err.transient);
+  });
+
+  it("names a terminal 5xx status and keeps its body out of the error", async () => {
+    const { gh } = serve({
+      [page(RUNS, 1)]: silent(`HTTP/2.0 502 Bad Gateway\r\n\r\n<html>${SECRET}</html>`),
+    });
+    const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
+    assert.match(err.message, /failed: HTTP 502$/);
+    assert.ok(!err.transient, "a 5xx with a body that is not JSON stays terminal (#1025)");
+  });
+
+  it("keeps a retryable 503 transient and names its status", async () => {
+    const { gh } = serve({ [page(RUNS, 1)]: silent("HTTP/2.0 503 Service Unavailable\r\n\r\n{}") });
+    const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
+    assert.match(err.message, /failed: HTTP 503$/);
+    assert.equal(err.transient, true);
+  });
+
+  it("says that a failed read with empty stderr and no status line has none", async () => {
+    const { gh } = serve({ [page(RUNS, 1)]: silent(SECRET) });
+    const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
+    assert.match(err.message, /failed: exit 1, no HTTP status line$/);
+    assert.ok(!err.message.includes(SECRET));
+  });
+
+  it("names the status of a failed ruleset read with empty stderr", async () => {
+    const gh = source([], {
+      [page(RULES, 1)]: silent(`HTTP/2.0 500 Internal Server Error\r\n\r\n<b>${SECRET}</b>`),
+    });
+    const err = await requiredContexts(gh, SLUG, "main", 42, ".").catch((error) =>
+      failureOf(error),
+    );
+    assert.match(err.message, /HTTP 500$/);
+    assert.ok(!err.message.includes(SECRET));
+  });
+
   it("ends the ruleset read in an error for a 503 with a Link on another host", async () => {
     const gh = source([], { [page(RULES, 1)]: failure503(LINK) });
     await expect(
