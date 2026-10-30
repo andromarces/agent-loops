@@ -1,7 +1,9 @@
 // The probe of the `--all` check wait that decides whether any source can report a check for a PR
 // head. It reads only, through the bounded `gh` runner of the wait (#1054).
 import { commitEntries } from "./ci-gate.mjs";
-import { ghApi, inOrder, pagedRead, readOne } from "./ci-required-sources.mjs";
+import { inOrder } from "./ci-required-sources.mjs";
+import { ghApi, pagedRead, readOne } from "./gh-api.mjs";
+import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject } from "./json.mjs";
 import { prEventsFilteredOut, prWorkflowMayRun, UNREADABLE_TEXT } from "./workflow-paths.mjs";
 
@@ -57,14 +59,6 @@ function isBranchName(name) {
   );
 }
 
-// A full object name, so two heads compare by equality. `gh` reports SHA-1 and SHA-256 names.
-const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-
-/** Whether `value` is a full commit SHA, the form a `--head` and a read head carry. */
-export function isFullSha(value) {
-  return typeof value === "string" && FULL_SHA.test(value);
-}
-
 /**
  * The text of a workflow file from its contents reply, or null when the reply is not valid evidence:
  * a file at `path` with base64 content whose string is well formed, whose decoded length equals
@@ -96,6 +90,9 @@ function workflowText(body, path) {
   }
 }
 
+// Whether `pages` is what a list read returns: an array of pages, each an array.
+const isPageList = (pages) => Array.isArray(pages) && pages.every(Array.isArray);
+
 /**
  * The head SHAs of the PRs merged into `base` that hold the commit `baseSha` and share the latest
  * merge time, so a tie never resolves by list order. The list is empty when no such PR exists, and
@@ -109,7 +106,7 @@ async function mergedHeadsOf({ bounded, slug, cwd }, baseSha, base) {
     [`repos/${slug}/commits/${baseSha}/pulls`],
     cwd,
   );
-  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+  if (!isPageList(pages)) {
     return null;
   }
   let latest = -Infinity;
@@ -177,7 +174,7 @@ const changedPathsOf = (changed) =>
  */
 async function changedFilesOf({ bounded, slug, cwd, pr }) {
   const pages = await ghApi(pagedRead(bounded, null), [`repos/${slug}/pulls/${pr}/files`], cwd);
-  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+  if (!isPageList(pages)) {
     return null;
   }
   const changed = pages.flat();

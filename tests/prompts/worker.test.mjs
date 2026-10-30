@@ -236,6 +236,17 @@ test("first worker turn tells the worker to remove temporary files it created ou
   );
 });
 
+// Usefulness: verifies acceptance #1249 — the worker is told to build a temporary path from
+// TMPDIR, TEMP, or TMP and never write a literal system temporary path, because a literal `/tmp`
+// path lands in the inherited directory that the runtime does not remove. workerPrompt takes no
+// adapter argument and every adapter receives its output unchanged, so one build covers them all.
+test("first worker turn bars a literal path to the system temporary directory", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "When a temporary path outside the work tree is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker updates the PR body after a push to a branch with an open
 // pull request" (issue #1002): without it the body describes the first head, not the head the reviewer
 // accepts, and the rule bars a revision log so the body stays a description, not a diary.

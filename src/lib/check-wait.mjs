@@ -4,6 +4,7 @@
 // Windows nor macOS by default. The runtime owns the bound instead (issue #329).
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  canceledError,
   commitEntries,
   evaluateContext,
   latestBy,
@@ -11,24 +12,23 @@ import {
   requiredAbsence,
   requiredNamesRefusal,
   requiredResolutionRefusal,
+  RUN_TIME_FIELDS,
+  STATUS_TIME_FIELDS,
 } from "./ci-gate.mjs";
 import {
   failureOf,
-  ghFailureText,
-  isServerErrorText,
   NO_CHECKS_YET,
   NO_REQUIRED_CHECKS,
   repoSlug,
   requiredContexts,
   requiredNamesOf,
-  runGh,
   UNKNOWN,
   withSignal,
 } from "./ci-required-sources.mjs";
-import { isFullSha, noCheckSource, pullRequestWorkflowMayRun } from "./check-source-probe.mjs";
+import { noCheckSource, pullRequestWorkflowMayRun } from "./check-source-probe.mjs";
+import { ghReadError, runGh } from "./gh-api.mjs";
+import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject } from "./json.mjs";
-
-export { isFullSha };
 
 // The app of the check runs that a workflow of the repository registers.
 const ACTIONS_APP_SLUG = "github-actions";
@@ -111,19 +111,6 @@ function isFailing(check) {
 }
 
 /**
- * The error of a failed `gh pr` read. It carries `transient` when `gh` named a server error, so the
- * wait retries the read on its next poll (#1121). Every other failure ends the wait.
- */
-function readFailure(label, { status, stdout, stderr }) {
-  const err = new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
-  // An unparseable reply is no clean server-error failure, so it ends the wait.
-  if (stdout.trim() === "" && isServerErrorText(stderr)) {
-    err.transient = true;
-  }
-  return err;
-}
-
-/**
  * One required-check read, mapped to the wait outcome the `gh` exit code and the
  * check list carry. Throws when the read is unresolved, so an unresolved read
  * never reads as a pass.
@@ -158,7 +145,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
       parsed = null;
     }
     if (!Array.isArray(parsed)) {
-      throw readFailure(label, { status, stdout, stderr });
+      throw ghReadError(label, { status, stdout, stderr });
     }
     const items = parsed.map(readItem);
     const bad = items.findIndex((item) => item === null);
@@ -193,7 +180,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     return { settled: false, checks, noChecksYet: true };
   }
   if (status !== 0) {
-    throw readFailure(label, { status, stdout, stderr });
+    throw ghReadError(label, { status, stdout, stderr });
   }
   return { settled: false, checks };
 }
@@ -206,7 +193,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
 function readHead(pr, { status, stdout, stderr }) {
   const label = `gh pr view ${pr}`;
   if (status !== 0) {
-    throw readFailure(label, { status, stdout, stderr });
+    throw ghReadError(label, { status, stdout, stderr });
   }
   let parsed = null;
   try {
@@ -282,13 +269,13 @@ function allItems({ runs, statuses }) {
     ...latestOfEach(
       runs,
       (run) => `${run.name} (app ${run.app?.id ?? "none"})`,
-      ["started_at", "completed_at"],
+      RUN_TIME_FIELDS,
       "check runs",
     ).map(runItem),
     ...latestOfEach(
       statuses,
       (status) => status.context,
-      ["updated_at", "created_at"],
+      STATUS_TIME_FIELDS,
       "commit statuses",
     ).map(statusItem),
   ];
@@ -307,11 +294,9 @@ function requiredItems({ runs, statuses }, contexts, commit) {
     const entries = [...matching.runs.map(runItem), ...matching.statuses.map(statusItem)];
     if (verdict === null) {
       return [
-        ...(matching.runs.length > 0
-          ? [runItem(latestBy(matching.runs, ["started_at", "completed_at"]))]
-          : []),
+        ...(matching.runs.length > 0 ? [runItem(latestBy(matching.runs, RUN_TIME_FIELDS))] : []),
         ...(matching.statuses.length > 0
-          ? [statusItem(latestBy(matching.statuses, ["updated_at", "created_at"]))]
+          ? [statusItem(latestBy(matching.statuses, STATUS_TIME_FIELDS))]
           : []),
       ];
     }
@@ -543,9 +528,7 @@ export async function waitChecks({
       // The sleep rejects on an abort; report it as the cancel the rest of the
       // role CLI reports, so Ctrl+C exits 130 instead of a read failure.
       if (signal?.aborted) {
-        const canceled = new Error("Interrupted by SIGINT");
-        canceled.isCanceled = true;
-        throw canceled;
+        throw canceledError();
       }
       throw err;
     }

@@ -3,7 +3,8 @@
 // names or changes the result.
 import { readableErrorText } from "./error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./ci-gate.mjs";
-import { ghFailureText, runGh } from "./ci-required-sources.mjs";
+import { ghFailureText, runGh } from "./gh-api.mjs";
+import { isJsonObject } from "./json.mjs";
 import { gitRead } from "./snapshot.mjs";
 
 // Cap of the list read. A reply of this size holds too many PRs to name one, so it is ambiguous.
@@ -76,8 +77,7 @@ async function readRunState(cwd, signal) {
 
 // One entry of the `gh pr list` reply as the resolver reads it. Any other shape is malformed.
 const isListEntry = (entry) =>
-  entry !== null &&
-  typeof entry === "object" &&
+  isJsonObject(entry) &&
   Number.isSafeInteger(entry.number) &&
   entry.number > 0 &&
   typeof entry.headRefName === "string" &&
