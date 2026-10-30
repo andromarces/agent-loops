@@ -128,14 +128,24 @@ export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv =
   };
 }
 
-/** The text a failed `gh` call reports: its trimmed stderr, or its exit status when stderr is empty. */
-export function ghFailureText({ status, stderr }) {
-  return stderr.trim() || `exit ${status}`;
+/**
+ * The text a failed `gh` call reports: its trimmed stderr, or its exit status when stderr is empty.
+ * With `stdout` of a `gh api --include` read, an empty stderr also names the status on the first line
+ * of that stdout, or says it has none (#1242). Only that number is named, never body text, which
+ * carries server-supplied text.
+ */
+export function ghFailureText({ status, stderr, stdout }) {
+  const text = stderr.trim();
+  if (text !== "" || stdout === undefined) {
+    return text || `exit ${status}`;
+  }
+  const line = /^HTTP\/\d(?:\.\d)? (\d{3})\b/.exec(stdout);
+  return line ? `HTTP ${line[1]}` : `exit ${status}, no HTTP status line`;
 }
 
 /** The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did. */
-function ghApiFailure(endpoint, { status, stderr, transient }) {
-  const err = new Error(`gh api ${endpoint} failed: ${ghFailureText({ status, stderr })}`);
+function ghApiFailure(endpoint, { status, stdout, stderr, transient }) {
+  const err = new Error(`gh api ${endpoint} failed: ${ghFailureText({ status, stdout, stderr })}`);
   if (transient) {
     err.transient = true;
   }
@@ -151,7 +161,7 @@ function ghApiFailure(endpoint, { status, stderr, transient }) {
 export async function ghApi(gh, args, cwd) {
   const { status, stdout, stderr, transient } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    throw ghApiFailure(args[0], { status, stderr, transient });
+    throw ghApiFailure(args[0], { status, stdout, stderr, transient });
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
@@ -534,7 +544,7 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw ghApiFailure(args[0], { status, stderr, transient });
+    throw ghApiFailure(args[0], { status, stdout, stderr, transient });
   }
   const text = stdout.trim();
   if (text === "") {
