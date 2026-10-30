@@ -56,5 +56,5 @@ Andro Marces
 - [Issue #602: Verify the nested isolation tree kill](https://github.com/andromarces/agent-loops/issues/602)
 - [Issue #635: Decide the ADR 0028 hard-kill limit for the Windows process tree](https://github.com/andromarces/agent-loops/issues/635)
 - [ADR 0017: Run an operator test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
-- Implementation: `killTreeOnExit` in `src/lib/exec-tree.mjs`, called directly in `src/lib/exec.mjs` (`exec` and `execBounded`), `tests/setup-tmpdir.test.mjs`, and `tests/lib/sigint.test.mjs`. Other modules reach it through `exec` and `execBounded`: `src/lib/ci-required-sources.mjs` (`runGh`), `src/lib/snapshot.mjs`, `src/lib/test-cmd.mjs`, and `src/lib/test-slot.mjs`. The test is in `tests/lib/exec-tree.test.mjs`
+- Implementation: `killTreeOnExit` in `src/lib/exec-tree.mjs`, called directly in `src/lib/exec.mjs` (`exec` and `execBounded`), `tests/setup-tmpdir.test.mjs`, and `tests/lib/sigint.test.mjs`. Other modules reach it through `exec` and `execBounded`: `src/lib/gh-api.mjs` (`runGh`), `src/lib/snapshot.mjs`, `src/lib/test-cmd.mjs`, and `src/lib/test-slot.mjs`. The test is in `tests/lib/exec-tree.test.mjs`
 - [ADR Index](README.md)

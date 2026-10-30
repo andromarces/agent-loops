@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
-import { runGh } from "../../src/lib/ci-required-sources.mjs";
+import { runGh } from "../../src/lib/gh-api.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,

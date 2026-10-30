@@ -9,9 +9,9 @@ import {
   ABSENT,
   UNKNOWN,
   failureOf,
-  readOne,
   requiredContexts,
 } from "../../src/lib/ci-required-sources.mjs";
+import { readOne } from "../../src/lib/gh-api.mjs";
 import { SLUG } from "./ci-gate-helpers.mjs";
 
 const SHA = "1111111111111111111111111111111111111111";

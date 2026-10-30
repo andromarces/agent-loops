@@ -8,15 +8,13 @@
 import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
+import { ghApi, pagedRead, runGh } from "./gh-api.mjs";
 import {
-  ghApi,
-  pagedRead,
   ABSENT,
   UNKNOWN,
   EMPTY,
   RULESETS,
   failureOf,
-  runGh,
   inOrder,
   boundedCall,
   readTimeout,
@@ -43,6 +41,8 @@ function reviewedRefusal(reviewed) {
   }
   return reviewed.clean ? null : fail("the reviewed work tree is not clean");
 }
+
+const headDiffers = () => fail("the PR head differs from the reviewed commit");
 
 /** The refusal for a pull request whose merge state is `BLOCKED` after the check pass. */
 const MERGE_BLOCKED_REFUSAL =
@@ -129,59 +129,65 @@ const isOrderable = (entry, fields) =>
   ) &&
   fields.every((field) => entry[field] == null || !Number.isNaN(Date.parse(entry[field])));
 
-/** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
-export async function checkRuns(gh, slug, sha, cwd, strict = false) {
+/**
+ * The entries of the list `field` of the commit endpoint `endpoint`, every page. `strict` makes a
+ * reply throw `malformed ${what} reply` when it is not paginated or an entry fails `isWellFormed`.
+ */
+async function commitList(gh, slug, sha, cwd, strict, { endpoint, field, what, isWellFormed }) {
   const pages = await ghApi(
-    pagedRead(gh, "check_runs"),
-    [`repos/${slug}/commits/${sha}/check-runs`],
+    pagedRead(gh, field),
+    [`repos/${slug}/commits/${sha}/${endpoint}`],
     cwd,
   );
   if (!strict) {
-    return pages.flatMap((page) => page?.check_runs ?? []);
+    return pages.flatMap((page) => page?.[field] ?? []);
   }
-  const runs = pagesOf(pages, "check_runs", "check-runs");
-  for (const run of runs) {
-    if (
-      !isJsonObject(run) ||
-      typeof run.name !== "string" ||
-      run.name === "" ||
-      !CHECK_RUN_STATUSES.has(run.status) ||
-      (run.status === "completed" && typeof run.conclusion !== "string") ||
-      // A queued run has not started, so it may carry no start time.
-      !(run.status === "completed" || run.status === "in_progress"
-        ? isOrderable(run, ["started_at", "completed_at"])
-        : Number.isFinite(run.id))
-    ) {
-      throw new Error("malformed check-runs reply");
-    }
+  const entries = pagesOf(pages, field, what);
+  if (!entries.every(isWellFormed)) {
+    throw new Error(`malformed ${what} reply`);
   }
-  return runs;
+  return entries;
 }
 
+// The timestamp fields that order the entries of one name, as `latestBy` and `isOrderable` read them.
+export const RUN_TIME_FIELDS = ["started_at", "completed_at"];
+export const STATUS_TIME_FIELDS = ["updated_at", "created_at"];
+
+const isWellFormedRun = (run) =>
+  isJsonObject(run) &&
+  typeof run.name === "string" &&
+  run.name !== "" &&
+  CHECK_RUN_STATUSES.has(run.status) &&
+  !(run.status === "completed" && typeof run.conclusion !== "string") &&
+  // A queued run has not started, so it may carry no start time.
+  (run.status === "completed" || run.status === "in_progress"
+    ? isOrderable(run, RUN_TIME_FIELDS)
+    : Number.isFinite(run.id));
+
+const isWellFormedStatus = (status) =>
+  isJsonObject(status) &&
+  typeof status.context === "string" &&
+  status.context !== "" &&
+  COMMIT_STATUS_STATES.has(status.state) &&
+  isOrderable(status, STATUS_TIME_FIELDS);
+
+/** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
+export const checkRuns = (gh, slug, sha, cwd, strict = false) =>
+  commitList(gh, slug, sha, cwd, strict, {
+    endpoint: "check-runs",
+    field: "check_runs",
+    what: "check-runs",
+    isWellFormed: isWellFormedRun,
+  });
+
 /** The commit statuses of `sha`, every page. `strict` makes a malformed reply throw. */
-export async function commitStatuses(gh, slug, sha, cwd, strict = false) {
-  const pages = await ghApi(
-    pagedRead(gh, "statuses"),
-    [`repos/${slug}/commits/${sha}/status`],
-    cwd,
-  );
-  if (!strict) {
-    return pages.flatMap((page) => page?.statuses ?? []);
-  }
-  const statuses = pagesOf(pages, "statuses", "commit status");
-  for (const status of statuses) {
-    if (
-      !isJsonObject(status) ||
-      typeof status.context !== "string" ||
-      status.context === "" ||
-      !COMMIT_STATUS_STATES.has(status.state) ||
-      !isOrderable(status, ["updated_at", "created_at"])
-    ) {
-      throw new Error("malformed commit status reply");
-    }
-  }
-  return statuses;
-}
+export const commitStatuses = (gh, slug, sha, cwd, strict = false) =>
+  commitList(gh, slug, sha, cwd, strict, {
+    endpoint: "status",
+    field: "statuses",
+    what: "commit status",
+    isWellFormed: isWellFormedStatus,
+  });
 
 /**
  * The check runs and commit statuses of `sha`, read together. A failure throws as `inOrder` does,
@@ -304,7 +310,7 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
     reason: `required check ${label} is ${failed ? "failing" : "pending"} (its entries cannot be ordered)`,
   });
   if (matchingRuns.length > 0) {
-    const run = latestBy(matchingRuns, ["started_at", "completed_at"]);
+    const run = latestBy(matchingRuns, RUN_TIME_FIELDS);
     if (run === null) {
       problem = unordered(matchingRuns.some(runFailed));
     } else if (run.status !== "completed") {
@@ -321,7 +327,7 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
   }
 
   if (matchingStatuses.length > 0) {
-    const status = latestBy(matchingStatuses, ["updated_at", "created_at"]);
+    const status = latestBy(matchingStatuses, STATUS_TIME_FIELDS);
     if (status === null) {
       problem ??= unordered(matchingStatuses.some(statusFailed));
     } else if (status.state !== "success" && problem === null) {
@@ -444,15 +450,19 @@ export async function checkPrHead({
     );
   }
   if (info.headRefOid !== reviewed.head) {
-    return fail("the PR head differs from the reviewed commit");
+    return headDiffers();
   }
   return { ok: true, commit: info.headRefOid };
 }
 
+/** The cancel error, as the rest of the role CLI reports it, so Ctrl+C exits 130. */
+export const canceledError = () =>
+  Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
+
 /** Throws the cancel error (`isCanceled`) when `signal` is aborted. */
 function throwIfCanceled(signal) {
   if (signal?.aborted) {
-    throw Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
+    throw canceledError();
   }
 }
 
@@ -532,7 +542,7 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
         return fail(early);
       }
       if (info.headRefOid !== reviewed.head) {
-        return fail("the PR head differs from the reviewed commit");
+        return headDiffers();
       }
       return null;
     },
