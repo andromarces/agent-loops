@@ -1,4 +1,5 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
@@ -25,10 +26,26 @@ import {
   withGitHangingAfter,
 } from "../runtime-helpers.mjs";
 
-// Wraps `readFile` so a test can assert that a path hashes without a whole-file read.
-vi.mock("node:fs/promises", async (importOriginal) => {
+// Runs `onFirstChunk` once, after the consumer takes the first chunk of the next streamed file
+// read, so a test can change the file or cancel the read while the read is in progress.
+const readHook = vi.hoisted(() => ({ onFirstChunk: null, stream: null }));
+vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, readFile: vi.fn(actual.readFile) };
+  return {
+    ...actual,
+    createReadStream: (...args) => {
+      const stream = actual.createReadStream(...args);
+      return (async function* () {
+        readHook.stream = stream;
+        for await (const chunk of stream) {
+          yield chunk;
+          const hook = readHook.onFirstChunk;
+          readHook.onFirstChunk = null;
+          hook?.();
+        }
+      })();
+    },
+  };
 });
 
 // Usefulness: verifies assertGitWorkTree passes inside a git repository and rejects a non-git directory.
@@ -686,35 +703,53 @@ test("sha256File rejects with an abort error when its signal is already aborted"
   }
 });
 
-// Usefulness: verifies requirement "sha256File streams the file" (issue #1241): a multi-chunk file
-// hashes to the whole-content digest without a whole-file read, so snapshot digests stay stable
-// while a batch of large files no longer sits in memory.
-test("sha256File streams a multi-chunk file to the whole-content digest", async () => {
+// Usefulness: verifies requirement "digests stay byte-identical" (issue #1241): a file that spans
+// several read chunks hashes to the whole-content digest, so recorded snapshot digests still match.
+test("sha256File hashes a multi-chunk file to the whole-content digest", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
   try {
     const file = join(dir, "large.bin");
     const content = Buffer.alloc(512 * 1024, "abcdefghij");
     await writeFile(file, content);
-    vi.mocked(readFile).mockClear();
     await expect(sha256File(file)).resolves.toBe(sha256(content));
-    expect(readFile).not.toHaveBeenCalled();
   } finally {
     await removePath(dir);
   }
 });
 
-// Usefulness: verifies requirement "an abort during the streamed read rejects" (issue #1241):
-// the abort lands after the call starts, so it ends the read instead of returning a digest.
-test("sha256File rejects with an abort error when its signal aborts during the read", async () => {
+// Usefulness: verifies requirement "a file that grows during the read keeps the digest of its
+// initial bytes" (issue #1241), as the whole-file read did, so a concurrent append never changes
+// a recorded digest.
+test("sha256File digests only the initial bytes of a file that grows during the read", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "growing.bin");
+    const content = Buffer.alloc(1024 * 1024, "abcdefghij");
+    await writeFile(file, content);
+    readHook.onFirstChunk = () => appendFileSync(file, "late");
+    await expect(sha256File(file)).resolves.toBe(sha256(content));
+  } finally {
+    readHook.onFirstChunk = null;
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "an abort during the read ends the stream and rejects" (issue
+// #1241): the abort lands while the stream is reading, so the call rejects instead of returning a
+// digest and the stream closes.
+test("sha256File ends the stream and rejects when its signal aborts during the read", async () => {
   const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
   try {
     const file = join(dir, "large.bin");
     await writeFile(file, Buffer.alloc(8 * 1024 * 1024, "x"));
     const controller = new AbortController();
-    const pending = sha256File(file, { signal: controller.signal });
-    controller.abort();
-    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    readHook.onFirstChunk = () => controller.abort();
+    await expect(sha256File(file, { signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(readHook.stream.destroyed).toBe(true);
   } finally {
+    readHook.onFirstChunk = null;
     await removePath(dir);
   }
 });

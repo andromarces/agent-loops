@@ -65,10 +65,10 @@ export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, 
 // a dangling or directory link still has a content identity. The link text is
 // tagged before hashing, so a link never collides with a regular file that
 // holds the same bytes. The file streams through the hash in chunks, so it is never held whole in
-// memory. An aborted `signal` rejects with an AbortError before the read starts, and it destroys the
-// stream, which closes the file handle and rejects the read. An `fs` request already in flight is
-// not interrupted, so the destroy takes effect after that request returns. The `lstat` and
-// `readlink` calls take no signal.
+// memory, and only the first `lstat` size bytes count. An aborted `signal` rejects with an
+// AbortError before the read starts, and it destroys the stream, which closes the file handle and
+// rejects the read. An `fs` request already in flight is not interrupted, so the destroy takes
+// effect after that request returns. The `lstat` and `readlink` calls take no signal.
 export async function sha256File(path, { signal } = {}) {
   signal?.throwIfAborted();
   let s;
@@ -88,7 +88,10 @@ export async function sha256File(path, { signal } = {}) {
   }
   try {
     const hash = createHash("sha256");
-    for await (const chunk of createReadStream(path, { signal })) {
+    // Bound the read to the size that `lstat` saw, so a file that grows during the read keeps the
+    // digest of its initial bytes. An empty file has no bound, as an unbounded stream reads to EOF.
+    const range = s.size > 0 ? { start: 0, end: s.size - 1 } : {};
+    for await (const chunk of createReadStream(path, { signal, ...range })) {
       hash.update(chunk);
     }
     return hash.digest("hex");
