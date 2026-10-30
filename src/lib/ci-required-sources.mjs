@@ -130,9 +130,10 @@ export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv =
 
 /**
  * The text a failed `gh` call reports: its trimmed stderr, or its exit status when stderr is empty.
- * With `stdout` of a `gh api --include` read, an empty stderr also names the status on the first line
- * of that stdout, or says it has none (#1242). Only that number is named, never body text, which
- * carries server-supplied text.
+ * With `stdout` of a `gh api --include` read and an empty stderr, the text is `HTTP <status>` from the
+ * first line of that stdout, with no exit status, or `exit <status>, no HTTP status line` when that
+ * line is no status line (#1242). Only that number is named, never body text, which carries
+ * server-supplied text.
  */
 export function ghFailureText({ status, stderr, stdout }) {
   const text = stderr.trim();
