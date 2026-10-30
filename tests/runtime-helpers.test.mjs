@@ -17,6 +17,7 @@ import {
   expectBoundKillsShim,
   pollUntil,
   untrackedFilesGit,
+  withGitHangingAfter,
   within,
 } from "./runtime-helpers.mjs";
 import {} from "./gh-doubles.mjs";
@@ -566,3 +567,23 @@ test("the scripted gh gives no reply to a merged-argument call", async () => {
   const unfiltered = ["pr", "checks", "42", "--json", "name,state,bucket"];
   expect((await scriptedGh([{ checks: [] }])(unfiltered, ".")).status).toBe(1);
 });
+
+// Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
+// calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
+// atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
+// or one that must hang passes (the CI failure of "a second cancel ends a hung evidence snapshot").
+test.skipIf(process.platform === "win32")(
+  "withGitHangingAfter passes exactly the requested number of concurrent calls",
+  async () => {
+    const passes = 30;
+    await withGitHangingAfter(passes, async () => {
+      const calls = await Promise.all(
+        Array.from({ length: 2 * passes }, () =>
+          execa("git", ["--version"], { reject: false, timeout: 5000 }),
+        ),
+      );
+      expect(calls.filter((call) => call.exitCode === 0)).toHaveLength(passes);
+    });
+  },
+  30_000,
+);
