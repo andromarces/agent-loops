@@ -9,6 +9,11 @@ import { logDebug, logWarn } from "./log.mjs";
 import { readProcessTable } from "./process-ancestry.mjs";
 import { ownerAlive } from "./process-identity.mjs";
 import { rootPins } from "./root-pins.mjs";
+import {
+  TURN_DIR_NAME,
+  registerTurnTmpdir,
+  unregisterTurnTmpdir,
+} from "./turn-tmpdir-registry.mjs";
 
 const REMOVER = fileURLToPath(new URL("./turn-tmpdir-remove.mjs", import.meta.url));
 const REMOVER_REFUSED = 3;
@@ -21,7 +26,8 @@ const PREFIX = "al-";
 
 // Names of the directories that this process created and has not finished removing. Only these
 // exact names are the runtime's own: the prefix alone is not, because a reviewer can create
-// `al-probe`. A name leaves the set when the removal ends, whatever its outcome.
+// `al-probe`. A name leaves the set when the removal ends, whatever its outcome. The registry of
+// `turn-tmpdir-registry.mjs` holds the same names for every other process on the host.
 const createdNames = new Set();
 
 /** True for the name of a turn directory that this process created and has not finished removing. */
@@ -82,6 +88,7 @@ async function createTurnTmpdir() {
   createdNames.add(basename(dir));
   const stat = await lstat(dir, { bigint: true });
   if (!stat.isDirectory()) throw new Error(`${dir} is not a directory`);
+  await registerTurnTmpdir(basename(dir), stat);
   return {
     dir,
     parentReal: dirname(await realpath(dir)),
@@ -132,11 +139,9 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
     // A directory that the removal refused or failed on stays in place, and its name is no longer
     // the runtime's own, so a report can list it (issue #1024).
     createdNames.delete(basename(dir));
+    await unregisterTurnTmpdir(basename(dir));
   }
 }
-
-// The suffix of a `mkdtemp` name is six characters of this set.
-const TURN_DIR_NAME = /^al-[A-Za-z0-9]{6}$/;
 
 /**
  * Removes the turn directory of a process that died before it could, from the record that
