@@ -583,8 +583,14 @@ test.skipIf(process.platform === "win32")(
         ),
       );
       // The message names the call-* count and each exit code, so a CI recurrence records them.
-      const claimed = (await readdir(shimDir)).filter((name) => name.startsWith("call-")).length;
-      const message = `call-* directories: ${claimed}; exit codes: ${calls.map((call) => call.exitCode).join(",")}`;
+      // The count read never throws, so the assertion below always runs. A call that timed out has
+      // no exit code and shows as "timeout".
+      const claimed = await readdir(shimDir).then(
+        (names) => String(names.filter((name) => name.startsWith("call-")).length),
+        (error) => `unreadable (${error.message})`,
+      );
+      const codes = calls.map((call) => call.exitCode ?? (call.timedOut ? "timeout" : "undefined"));
+      const message = `call-* directories: ${claimed}; exit codes: ${codes.join(",")}`;
       expect(
         calls.filter((call) => call.exitCode === 0),
         message,
