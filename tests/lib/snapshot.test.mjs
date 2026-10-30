@@ -28,7 +28,22 @@ import {
 
 // Runs `onFirstChunk` once, after the consumer takes the first chunk of the next streamed file
 // read, so a test can change the file or cancel the read while the read is in progress.
-const readHook = vi.hoisted(() => ({ onFirstChunk: null, stream: null }));
+const readHook = vi.hoisted(() => ({ onFirstChunk: null, afterLstat: null, stream: null }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    // Runs `afterLstat` once, after the next `lstat` returns, so a test can change the file
+    // between the stat and the open of a hash.
+    lstat: async (...args) => {
+      const result = await actual.lstat(...args);
+      const hook = readHook.afterLstat;
+      readHook.afterLstat = null;
+      hook?.();
+      return result;
+    },
+  };
+});
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -730,6 +745,25 @@ test("sha256File digests only the initial bytes of a file that grows during the 
     await expect(sha256File(file)).resolves.toBe(sha256(content));
   } finally {
     readHook.onFirstChunk = null;
+    await removePath(dir);
+  }
+});
+
+// Usefulness: verifies requirement "the digest covers the file as the whole-file read saw it"
+// (issue #1241): a file that grows between the stat and the open hashes with the appended bytes, as
+// the whole-file read sized itself from the opened file.
+test("sha256File digests the size at open of a file that grows before the read starts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-sha256-"));
+  try {
+    const file = join(dir, "growing.bin");
+    const content = Buffer.alloc(256 * 1024, "abcdefghij");
+    await writeFile(file, content);
+    readHook.afterLstat = () => appendFileSync(file, "late");
+    await expect(sha256File(file)).resolves.toBe(
+      sha256(Buffer.concat([content, Buffer.from("late")])),
+    );
+  } finally {
+    readHook.afterLstat = null;
     await removePath(dir);
   }
 });
