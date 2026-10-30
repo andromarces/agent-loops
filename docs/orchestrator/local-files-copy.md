@@ -12,7 +12,7 @@ followed: a symlink in the main work tree is skipped and named. The init envelop
 by name only, and a path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 The copy duplicates secrets such as `.env` into the run work tree, so remove that
-work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
+work tree when the run ends. The worker preamble and the reviewer prompt tell the child never to read, print, or quote `.env` or another ignored secret file, and to keep a content search to tracked files (issue #1248). That rule is advisory, and the runtime does not detect a breach. Pass `--no-copy-local-files` on the init call to turn
 the copy off. It is an init field, so a later call cannot change it.
 
 When the task needs other ignored reference data of the main work tree, such as a downloaded

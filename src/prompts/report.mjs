@@ -23,6 +23,14 @@ export const processRule =
   "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match. End only the exact PIDs your own commands started.";
 
 /**
+ * Secret file rule for every worker and reviewer turn (issue #1248). Init copies the untracked
+ * `.env` of the main work tree into the run work tree, and a repository-wide `grep` printed a token
+ * from it into a turn. The rule is advisory, and the runtime does not detect a breach.
+ */
+export const secretFileRule =
+  "Never read, print, or quote `.env`, `.dev.vars`, or another ignored secret file. Check a configuration value by name and presence only. Keep a content search to tracked files, for example `git grep`, or `rg` without `--no-ignore` and `-u`.";
+
+/**
  * Names the one way that a Codex shell command can reach the network despite the sandbox. The
  * orchestrator and reviewer prompts share it.
  */
