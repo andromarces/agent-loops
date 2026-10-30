@@ -12,7 +12,7 @@ import {
   recordedReviewerSandbox,
   roleFlags,
 } from "./lib/args.mjs";
-import { isFullSha } from "./lib/check-wait.mjs";
+import { isFullSha } from "./lib/git-sha.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { normalizeLocalPath } from "./lib/local-files.mjs";
 import { RoleError } from "./role-envelope.mjs";

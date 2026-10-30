@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
+import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject } from "./json.mjs";
 import { isAcceptedReview } from "./report.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "acceptedSinceWorker"];
-const HEAD_PATTERN = /^([0-9a-f]{40}|[0-9a-f]{64}|unborn)$/;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
 /** The gate state of a run that starts with no earlier run (#234). */
@@ -204,7 +204,7 @@ export async function matchingGate(earlierGate, cwd, { signal } = {}) {
     reviewed.exact !== true ||
     typeof reviewed.head !== "string" ||
     typeof reviewed.digest !== "string" ||
-    !HEAD_PATTERN.test(reviewed.head) ||
+    !(isFullSha(reviewed.head) || reviewed.head === "unborn") ||
     !DIGEST_PATTERN.test(reviewed.digest)
   ) {
     return null;
