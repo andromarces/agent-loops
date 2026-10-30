@@ -885,7 +885,8 @@ export async function endOwnedProcess(pid, marker, { timeoutMs = 3000 } = {}) {
  * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also
  * when calls start at once, and then hangs, so a test can let the before snapshot finish and stall
  * the read that follows. `run` gets `hungPid()`, which resolves with the pid of the hung `git` once
- * it started. The hung process carries the unique shim directory in its command line. The helper ends it through
+ * it started, and `shimDir`, the shim directory that holds one `call-<n>` directory per call. The
+ * hung process carries the unique shim directory in its command line. The helper ends it through
  * `endOwnedProcess` if the test left it alive, and removes the shim directory.
  */
 export async function withGitHangingAfter(passes, run) {
@@ -912,7 +913,7 @@ export async function withGitHangingAfter(passes, run) {
       return /^\d+\n$/.test(text) ? Number(text) : undefined;
     }, 20_000);
   try {
-    return await withShimOnPath(dir, () => run({ hungPid }));
+    return await withShimOnPath(dir, () => run({ hungPid, shimDir: dir }));
   } finally {
     const text = await readFile(pidFile, "utf8").catch(() => "");
     if (/^\d+\n$/.test(text)) {

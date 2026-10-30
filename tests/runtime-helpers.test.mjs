@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -576,13 +576,19 @@ test.skipIf(process.platform === "win32")(
   "withGitHangingAfter passes exactly the requested number of concurrent calls",
   async () => {
     const passes = 30;
-    await withGitHangingAfter(passes, async () => {
+    await withGitHangingAfter(passes, async ({ shimDir }) => {
       const calls = await Promise.all(
         Array.from({ length: 2 * passes }, () =>
           execa("git", ["--version"], { reject: false, timeout: 5000 }),
         ),
       );
-      expect(calls.filter((call) => call.exitCode === 0)).toHaveLength(passes);
+      // The message names the call-* count and each exit code, so a CI recurrence records them.
+      const claimed = (await readdir(shimDir)).filter((name) => name.startsWith("call-")).length;
+      const message = `call-* directories: ${claimed}; exit codes: ${calls.map((call) => call.exitCode).join(",")}`;
+      expect(
+        calls.filter((call) => call.exitCode === 0),
+        message,
+      ).toHaveLength(passes);
     });
   },
   30_000,
