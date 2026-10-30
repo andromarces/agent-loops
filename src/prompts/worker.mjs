@@ -23,6 +23,13 @@ const probeCopyRule =
 const ownNodeModulesRule =
   "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.";
 
+// Every turn runs with a private temporary directory that the runtime removes (ADR 0047, ADR 0068).
+// A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
+// cover, so a scratch file there outlives the turn and shows up as a reviewer
+// `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
+const tmpdirRule =
+  "When a temporary path outside the work tree is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.";
+
 // A Claude worker opened later turns with a prose sentence and put requested values on lines of
 // their own, so the response had no `Conclusion:` line and the report parsed to null (issue #1179).
 const conclusionFirstRule =
@@ -71,6 +78,7 @@ Your role:
 - Report what changed, what was verified, and state any disagreements with evidence.
 - State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
+- ${tmpdirRule}
 - Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove. A PR body file in the system temporary directory is one example.
 - ${processRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
