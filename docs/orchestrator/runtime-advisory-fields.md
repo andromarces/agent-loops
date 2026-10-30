@@ -9,8 +9,14 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
   Only the turn directories that this process created, matched by exact name, are left out, and
   only until the removal ends: a directory that the removal refused or failed on, such as a
-  replacement of the turn directory, is listed. Any other name is listed, an `al-` name too, and a
-  directory of a concurrent run can appear. The runtime reads the directory once, after the last
+  replacement of the turn directory, is listed. Every other entry is listed, an `al-` name too.
+  An entry that is the turn directory of another agent-loop process on the host, such as a
+  concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
+  #1240, ADR 0069). A process registers each turn directory in the runs root with its device and
+  inode, and the entry is marked only while it is still that directory. No entry name can hold
+  `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
+  own, so the prefix is a hint and never proof: the entry stays listed, and the parent reports it
+  under `open` as such. The runtime reads the directory once, after the last
   child call of the dispatch, a task-only turn in a replacement conversation included.
   Every reviewer turn that read the directory before it started carries the field: an ok turn, a
   handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The

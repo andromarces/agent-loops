@@ -16,15 +16,17 @@ import { removeAbandonedTurnTmpdir, withTurnTmpdir } from "../../src/lib/turn-tm
 import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { deadPid, removePath } from "../runtime-helpers.mjs";
 
-const TMP_VARS = ["TMPDIR", "TEMP", "TMP"];
+const TMP_VARS = ["TMPDIR", "TEMP", "TMP", "AGENT_LOOP_RUNS_ROOT"];
 
-// Runs `body(root, base)` with the inherited temporary directory set to a fresh `root`.
+// Runs `body(root, base)` with the inherited temporary directory set to a fresh `root`, and the
+// runs root beside it, so the registry of turn directories adds no entry to `root`.
 async function withRoot(body) {
   const base = await mkdtemp(join(tmpdir(), "turn-tmpdir-"));
   const saved = TMP_VARS.map((name) => process.env[name]);
   const root = join(base, "root");
   mkdirSync(root);
   for (const name of TMP_VARS) process.env[name] = root;
+  process.env.AGENT_LOOP_RUNS_ROOT = join(base, "runs");
   try {
     return await body(root, base);
   } finally {

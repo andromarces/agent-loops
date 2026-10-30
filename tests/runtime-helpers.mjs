@@ -882,23 +882,24 @@ export async function endOwnedProcess(pid, marker, { timeoutMs = 3000 } = {}) {
 }
 
 /**
- * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls and then
- * hangs, so a test can let the before snapshot finish and stall the read that follows. `run` gets
- * `hungPid()`, which resolves with the pid of the hung `git` once it started. The hung process
- * carries the unique shim directory in its command line. The helper ends it through
+ * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also
+ * when calls start at once, and then hangs, so a test can let the before snapshot finish and stall
+ * the read that follows. `run` gets `hungPid()`, which resolves with the pid of the hung `git` once
+ * it started. The hung process carries the unique shim directory in its command line. The helper ends it through
  * `endOwnedProcess` if the test left it alive, and removes the shim directory.
  */
 export async function withGitHangingAfter(passes, run) {
   const realGit = (await execa("sh", ["-c", "command -v git"])).stdout.trim();
   const dir = await mkdtemp(join(tmpdir(), "git-hang-after-"));
   const pidFile = join(dir, "hung.pid");
-  const count = join(dir, "count");
   await writeFile(
     join(dir, "git"),
     [
       "#!/bin/sh",
-      `n=$(cat '${count}' 2>/dev/null || echo 0)`,
-      `echo $((n + 1)) > '${count}'`,
+      // Calls can start at once, as the reads of one snapshot do. `mkdir` is atomic, so each call
+      // claims the first free number. A counter file loses updates and can be read half written.
+      "n=0",
+      `while ! mkdir '${dir}/call-'$n 2>/dev/null; do n=$((n + 1)); done`,
       `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
       `echo $$ > '${pidFile}'`,
       `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,

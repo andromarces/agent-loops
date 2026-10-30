@@ -510,14 +510,18 @@ const OK_EVENTS = [
   .map((e) => JSON.stringify(e))
   .join("\n");
 
-// Points the inherited temporary directory at `root` for `run`, then restores it.
-async function withInheritedTmp(root, run) {
-  const saved = TMP_VARS.map((name) => process.env[name]);
+// Points the inherited temporary directory at `root` for `run`, then restores it. `runsRoot`
+// moves the runs root, and with it the registry of turn directories, out of `root`, so a test that
+// lists `root` sees only entries of the turn.
+async function withInheritedTmp(root, run, runsRoot) {
+  const names = runsRoot === undefined ? TMP_VARS : [...TMP_VARS, "AGENT_LOOP_RUNS_ROOT"];
+  const saved = names.map((name) => process.env[name]);
   for (const name of TMP_VARS) process.env[name] = root;
+  if (runsRoot !== undefined) process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
   try {
     return await run();
   } finally {
-    TMP_VARS.forEach((name, i) => {
+    names.forEach((name, i) => {
       if (saved[i] === undefined) delete process.env[name];
       else process.env[name] = saved[i];
     });
@@ -556,13 +560,14 @@ test.each([
   const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
   try {
     const seen = fakeCodex();
-    await withInheritedTmp(root, () => runTurn(opts));
+    await withInheritedTmp(root, () => runTurn(opts), `${root}-runs`);
     expect(await readdir(root)).toEqual([]);
     expect(seen.home).not.toBe(root);
     for (const name of TMP_VARS) expect(seen.env[name]).toBe(seen.home);
     expect(basename(seen.home).length).toBeLessThanOrEqual(12);
   } finally {
     await removePath(root);
+    await removePath(`${root}-runs`);
   }
 });
 
@@ -578,10 +583,13 @@ test.each([
     fakeCodex(async () => {
       throw Object.assign(new Error("codex failed"), flags);
     });
-    await expect(withInheritedTmp(root, () => runTurn())).rejects.toThrow("codex failed");
+    await expect(withInheritedTmp(root, () => runTurn(), `${root}-runs`)).rejects.toThrow(
+      "codex failed",
+    );
     expect(await readdir(root)).toEqual([]);
   } finally {
     await removePath(root);
+    await removePath(`${root}-runs`);
   }
 });
 
@@ -593,10 +601,11 @@ test("a codex turn leaves a concurrent entry in the inherited temporary director
     await mkdir(join(root, ".tmpOther1"));
     await writeFile(join(root, "other.txt"), "keep\n");
     fakeCodex();
-    await withInheritedTmp(root, () => runTurn());
+    await withInheritedTmp(root, () => runTurn(), `${root}-runs`);
     expect((await readdir(root)).sort()).toEqual([".tmpOther1", "other.txt"]);
   } finally {
     await removePath(root);
+    await removePath(`${root}-runs`);
   }
 });
 
@@ -608,7 +617,7 @@ test("a codex turn works when the user temporary directory is a link", async (ct
     await mkdir(join(base, "real"));
     await symlinkOrSkip(ctx, join(base, "real"), join(base, "link"), "junction");
     const seen = fakeCodex();
-    await withInheritedTmp(join(base, "link"), () => runTurn());
+    await withInheritedTmp(join(base, "link"), () => runTurn(), join(base, "runs"));
     expect(seen.home.startsWith(join(base, "link"))).toBe(true);
     expect(await readdir(join(base, "real"))).toEqual([]);
   } finally {

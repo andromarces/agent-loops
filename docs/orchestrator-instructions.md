@@ -242,7 +242,9 @@ Apply these parent rules:
   turn carries the field too. A turn that changed none carries no field.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
-  entry to the turn, and it does not delete one. Report it in the finish summary under `open`, and
+  entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
+  directory of another agent-loop process, most likely a concurrent run: the prefix is a hint,
+  not proof. Report it in the finish summary under `open`, and
   do not treat it as a reason to reject (issue #1024). Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
