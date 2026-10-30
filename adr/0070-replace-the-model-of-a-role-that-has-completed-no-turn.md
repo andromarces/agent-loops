@@ -44,6 +44,7 @@ Andro Marces
 ## Links
 
 - [Issue #1254](https://github.com/andromarces/agent-loops/issues/1254)
+- [PR #1256](https://github.com/andromarces/agent-loops/pull/1256)
 - Related: [ADR 0014](0014-extend-the-step-budget-of-a-live-run.md), [ADR 0041](0041-declare-the-run-pr-after-init-with-declare-pr.md)
 - Implementation:
   - Source: `setModel` in `src/role.mjs`, `rejectInitFlagChanges` in `src/role-args.mjs`

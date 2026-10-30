@@ -199,3 +199,29 @@ test("set-model refuses --role", async () => {
   expect(refused.payload.error).toBe("--role is only valid for dispatch.");
   expect(parseRoleArgs(setModelArgv("--reviewer-model", "m")).operation).toBe("set-model");
 });
+
+// Usefulness: verifies a role whose refused first turn kept a session id still takes set-model, and
+// that the next dispatch resumes that kept session on the new model, where a new run would not.
+test("set-model accepts a role whose failed first turn kept a session id and the next dispatch resumes it", async () => {
+  const seen = [];
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    seen.push({ model: state.model, incomingSessionId: state.sessionId });
+    state.sessionId = "sess-kept";
+    if (state.model === "gpt-6.1") throw new Error(REFUSED);
+    return "Conclusion: done\nWhy: ok\nBlockers: none";
+  };
+  const agents = { fake1: modelAdapter(), fake2: reviewer };
+  const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"], agents });
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  expect((await readRepoState(repo)).roles.reviewer.sessionId).toBe("sess-kept");
+
+  expect((await setModel(repo, "--reviewer-model", "gpt-6.1-sol")).exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.sessionId).toBe("sess-kept");
+
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+  expect(seen).toEqual([
+    { model: "gpt-6.1", incomingSessionId: null },
+    { model: "gpt-6.1-sol", incomingSessionId: "sess-kept" },
+  ]);
+});
