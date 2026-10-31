@@ -55,3 +55,10 @@ test("exec rejects with isCanceled when the child outlives the cancel kill", asy
   await vi.advanceTimersByTimeAsync(60_000);
   expect((await outcome).isCanceled).toBe(true);
 });
+
+// Usefulness: a spawn double that returns a plain result, as the CLI tests do, still reaches the caller.
+test("exec and execBounded pass a plain spawn result through", async () => {
+  execa.mockReturnValue({ exitCode: 0, stdout: "out", stderr: "" });
+  expect((await exec("git", [])).stdout).toBe("out");
+  expect((await execBounded("git", [], { timeoutMs: 1000 })).stdout).toBe("out");
+});

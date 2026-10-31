@@ -145,7 +145,11 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
   else signal?.addEventListener("abort", onAbort, { once: true });
 
   // Read now: `execBounded` replaces `then` on the subprocess with this result.
-  const finished = new Promise((resolve, reject) => subprocess.then(resolve, reject));
+  // A spawn double in a test can return a plain result, which `await` passes through.
+  const finished =
+    typeof subprocess.then === "function"
+      ? new Promise((resolve, reject) => subprocess.then(resolve, reject))
+      : Promise.resolve(subprocess);
   return Promise.race([finished, gaveUp]).finally(() => {
     timers.forEach(clearTimeout);
     child.off?.("exit", onExit);
@@ -360,6 +364,7 @@ export function execBounded(
     options.cancelSignal = signal;
   }
   const subprocess = killTreeOnExit(execa(command, args, options));
+  if (typeof subprocess?.then !== "function") return subprocess;
   // The bounds apply to `await` and to `.then`, while `kill`, `pid`, and the streams stay execa's.
   const settled = settleWithin(subprocess, {
     timeoutMs,
