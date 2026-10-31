@@ -1380,25 +1380,101 @@ test("the shared-artifact rule covers a sequential identifier that concurrent ru
   expect(core).toContain("](orchestrator/shared-tracking-artifacts.md)");
 });
 
-// Usefulness: verifies the core file alone, not the core plus its reference files, states each
-// worker-envelope rule that the headless prompt shares with it (#1257). The parity tests read the
-// concatenated reference files, so a shared rule that moves out of the core still passes them.
-test("the core file itself keeps the worker-envelope rules that the headless prompt shares", async () => {
-  const core = (await readFile(instructionsPath, "utf8")).replaceAll("`", "").replace(/\s+/g, " ");
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 })
+/** Sentences of at least 30 characters, with code spans and whitespace flattened. */
+function flatSentences(text) {
+  return text
     .replaceAll("\`", "")
     .replaceAll("`", "")
-    .replace(/\s+/g, " ");
-  const sharedRules = [
-    "A worker envelope carries sharedGitChanged only when the turn changed shared Git state outside the work tree: core.hooksPath, a file in the common hooks/ directory, or a remote.",
-    "A change there affects the main work tree and every other linked work tree, and workTree does not show it. Report it in the finish summary under open.",
-    "A read of the shared Git state that fails or passes its 10 second deadline after the turn reports no field, so the absent field then does not prove that no change happened.",
-    "A worker envelope carries lockfileChanged only when the turn changed a lockfile at the work tree root, for example pnpm-lock.yaml after a merge of the base branch.",
-    "A lockfile that the runtime could not read before or after the turn counts as changed.",
-    "When the field appears, run the lockfile install in that work tree, for example pnpm install --frozen-lockfile, before the next reviewer dispatch",
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/(?<=[.:;?]) (?=[A-Z"])/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length >= 30);
+}
+
+/** Every run of five consecutive words of a sentence, lower-cased. */
+function fiveWordRuns(sentence) {
+  const words = sentence.toLowerCase().split(" ");
+  return Array.from({ length: Math.max(0, words.length - 4) }, (_, i) =>
+    words.slice(i, i + 5).join(" "),
+  );
+}
+
+/**
+ * Reference-file sentences that the headless prompt also states and that sit on origin/main in a
+ * reference file only, so the core never held them. Each entry is a file name and the start of the
+ * sentence. A sentence that a change moves out of the core never belongs here: add an entry only for
+ * a sentence that was in a reference file before that change, and say why in this comment.
+ */
+const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
+  ["reviewer-evidence.md", "Do not restate the spec as the pass condition"],
+  ["reviewer-evidence.md", "That status is advisory evidence"],
+  ["reviewer-evidence.md", "The --require-ci finish gate re-reads GitHub"],
+  ["runtime-advisory-fields.md", "It is advisory: the directory is shared"],
+  ["runtime-advisory-fields.md", "It is advisory: the store is shared"],
+  ["reviewer-sandbox.md", "A refused cleanup of a tool cache in its default location"],
+  ["waiting-for-checks.md", "The --all wait holds a pass while"],
+  ["waiting-for-checks.md", "The hold skips a workflow only when"],
+  ["waiting-for-checks.md", "A PR head or base branch that moves during the reads"],
+  ["waiting-for-checks.md", "A failing check still settles the wait"],
+  ["waiting-for-checks.md", "The hold covers no workflow that runs only on push"],
+  ["reviewer-evidence.md", "Name the guards and contracts that the change puts at risk"],
+  ["reviewer-evidence.md", "So the runtime reads the required-check status for that PR head"],
+  ["reviewer-evidence.md", "The runtime reports the status it read beside the reviewer result"],
+  ["reviewer-sandbox.md", "Output under a path that the reviewer chose"],
+  ["waiting-for-checks.md", "A check that a third-party app registers late"],
+];
+
+// Usefulness: verifies a sentence that the headless prompt shares with the instructions stays in the
+// core file (#1257). The parity tests read the core and the reference files as one text, so a shared
+// rule that moves into a reference file still passes them. This test reads the core file alone and
+// derives the shared set from the rendered prompt, so no sentence is chosen by hand. A reference
+// sentence counts as shared when the prompt states it whole or when 70% of its five-word runs occur in
+// the prompt, which also catches a rule that the prompt words differently.
+test("a sentence that the headless prompt shares with the instructions is in the core file", async () => {
+  const base = { task: "Implement feature X", maxSteps: 10 };
+  const variants = [
+    base,
+    { ...base, requireAccept: true },
+    { ...base, pr: 42 },
+    { ...base, pr: 42, requireCi: 42 },
+    { ...base, requireCi: 42, orchestratorKind: "claude", reviewerKind: "codex" },
+    { ...base, compareHead: 42 },
+    { ...base, testCmd: true },
+    { ...base, reviewerSandbox: "workspace-write" },
+    { ...base, mode: "review-only" },
+    { ...base, continued: true },
+    { ...base, continued: true, gateRestored: true },
   ];
-  for (const rule of sharedRules) {
-    expect(prompt, `the headless prompt lacks: ${rule}`).toContain(rule);
-    expect(core, `the core file lacks: ${rule}`).toContain(rule);
+  const promptSentences = new Set();
+  const promptRuns = new Set();
+  for (const variant of variants) {
+    const rendered = initialPrompt(variant);
+    for (const sentence of flatSentences(rendered)) promptSentences.add(sentence);
+    for (const run of fiveWordRuns(flatSentences(rendered).join(" "))) promptRuns.add(run);
   }
+  const coreSentences = new Set(flatSentences(await readFile(instructionsPath, "utf8")));
+  const misplaced = [];
+  const matched = new Set();
+  for (const name of await referenceSectionNames()) {
+    const text = await readFile(join(referenceSectionsDir, name), "utf8");
+    for (const sentence of flatSentences(text)) {
+      if (coreSentences.has(sentence)) continue;
+      const runs = fiveWordRuns(sentence);
+      const shared =
+        promptSentences.has(sentence) ||
+        (runs.length >= 3 && runs.filter((run) => promptRuns.has(run)).length / runs.length >= 0.9);
+      if (!shared) continue;
+      const allowed = SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES.findIndex(
+        ([file, start]) => file === name && sentence.startsWith(start),
+      );
+      if (allowed >= 0) matched.add(allowed);
+      else misplaced.push(`${name}: ${sentence}`);
+    }
+  }
+  expect(misplaced, "shared sentences that only a reference file holds").toEqual([]);
+  expect(
+    SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES.filter((_, index) => !matched.has(index)),
+    "allowlist entries that match no reference sentence",
+  ).toEqual([]);
 });

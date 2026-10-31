@@ -97,20 +97,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
     a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
-- `--task-file <path>` can replace `--task` on the init call, and the two cannot
-  be combined. `--task-file -` reads the task from stdin, which also carries the
-  prompt here. Stdin carries only one input, so pass `--prompt-file` for the
-  prompt with `--task-file -`. Init refuses `--task-file -` without it.
-  Stage that file before the first init call of the session, in the system
-  temporary directory outside every work tree. No run of the session is active
-  then, so the parent guard is not engaged. Write the file with the normal
-  file-write tool of the harness. After that init, never write a file: the guard
-  denies the file-edit tools of the parent for every path while any run of the
-  session is active.
-- A later init in the session, while another run is active, writes no file. Pass
-  the task with `--task`, or with a `--task-file <path>` that was staged before
-  the first init, and pass the prompt on stdin. Never use `--task-file -` there,
-  because it needs a new `--prompt-file`.
+- `--task-file <path>` can replace `--task` on init. The staging and stdin rules are in
+  [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
   registers each run under the session as its own entry keyed by the work tree,
   so a second run in a different work tree does not replace the first. A new
@@ -411,9 +399,8 @@ of this file.
   `matching`.
 - [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
   `--compare-head <pr>`, and when that finish is refused.
-- [Declared PR runs and unreadable required-check sources](orchestrator/declared-pr-gate-limits.md):
-  read it before init with `--pr`, and when an init with `--pr` is refused because a
-  required-check source settled nothing.
+- [Init with a task file](orchestrator/task-file-init.md): read it before an init with `--task-file`,
+  and before a later init in a session with an active run.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
@@ -630,10 +617,28 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   flag arrives on one command line, so `--mode review-only` with `--pr`,
   `--require-accept`, or `--require-ci` is a usage error before the run starts,
   with the same two wordings this section states.
-- A base branch with no required check, or one whose required-check sources this credential cannot
-  read, changes what `--pr` does at init and at finish. Those rules, and the `--compare-head` route
-  that follows a refused `--pr`, are in
-  [Declared PR runs and unreadable required-check sources](orchestrator/declared-pr-gate-limits.md).
+- A base branch with no required check does not refuse `--pr` when every
+  required-check source stated that it holds none. The gate passes on the PR head,
+  the clean reviewed tree, and the merge state, and the run records it, so a
+  declared run on such a branch ends and never keeps the #286 gap. A base branch
+  whose required checks this credential cannot read still refuses every finish,
+  because the gate cannot establish the absence, and the refusal names the source
+  it could not read.
+- Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
+  the gate, for example a private repository on the GitHub Free plan (#301), because
+  a declared run there refuses every finish and can end only through `abort`.
+  Init with `--pr`, `role declare-pr`, and the headless start read the required-check
+  sources of the PR base once. They refuse when the rulesets read settled nothing,
+  before any state file is written or child spawns. A read that fails for another
+  reason, such as a transport failure, warns and does not refuse. A `--continue-from`
+  run that restored its PR makes no start read, because the earlier run read at the
+  start of its own `--pr` run or before it declared a worker-opened PR, and its
+  prompt states none. After a refusal, omit
+  `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
+  `reviewed.head` in the runtime and requires the PR to be open. Use the `"unresolvedCompare": true` marker only
+  when the PR head itself cannot be read. The headless `--require-ci` with no
+  `--pr` declares nothing, so the start does not read it and its gate refuses at
+  finish.
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
