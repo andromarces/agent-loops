@@ -899,15 +899,12 @@ export async function shimCallRecords(shimDir) {
 }
 
 /**
- * Reads the pids that the `withGitHangingAfter` shim marked in `shimDir` as started, one
- * `start-<pid>` file per call that began running the shim, before it claimed a number. Rejects
- * when `shimDir` cannot be read.
+ * Reads the pids that the `withGitHangingAfter` shim marked in `shimDir/started`, one `<pid>` entry
+ * per call that began running the shim, before it claimed a number. Rejects when the directory
+ * cannot be read.
  */
 export async function shimStartPids(shimDir) {
-  return (await readdir(shimDir))
-    .map((name) => /^start-(\d+)$/.exec(name))
-    .filter((match) => match !== null)
-    .map((match) => Number(match[1]));
+  return (await readdir(join(shimDir, "started"))).filter((name) => /^\d+$/.test(name)).map(Number);
 }
 
 /**
@@ -916,7 +913,7 @@ export async function shimStartPids(shimDir) {
  * the read that follows. `run` gets `hungPid()`, which resolves with the pid of the hung `git` once
  * it started, and `shimDir`, the shim directory that holds one `call-<n>` directory per call, each
  * with a `record` file of the claimed number and the pid (read it with `shimCallRecords`), and one
- * `start-<pid>` file per call (read it with `shimStartPids`). The
+ * `started/<pid>` entry per call (read it with `shimStartPids`). The
  * hung process carries the unique shim directory in its command line. The helper ends it through
  * `endOwnedProcess` if the test left it alive, and removes the shim directory.
  */
@@ -924,12 +921,14 @@ export async function withGitHangingAfter(passes, run) {
   const realGit = (await execa("sh", ["-c", "command -v git"])).stdout.trim();
   const dir = await mkdtemp(join(tmpdir(), "git-hang-after-"));
   const pidFile = join(dir, "hung.pid");
+  await mkdir(join(dir, "started"));
   await writeFile(
     join(dir, "git"),
     [
       "#!/bin/sh",
-      // The marker tells a call that ran the shim from a call that ran another `git`.
-      `: > '${dir}/start-'$$`,
+      // The marker tells a call that ran the shim from a call that ran another `git`. `mkdir` is an
+      // external command, so a failed write never ends the shell and never skips the claim below.
+      `mkdir '${dir}/started/'$$ 2>/dev/null`,
       // Calls can start at once, as the reads of one snapshot do. `mkdir` is atomic, so each call
       // claims the first free number. A counter file loses updates and can be read half written.
       "n=0",

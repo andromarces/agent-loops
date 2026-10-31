@@ -603,6 +603,23 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
+// Usefulness: verifies a start marker that cannot be written never changes which calls the shim
+// lets through, because a diagnostic must not alter the path of a call (issue #1258); the marker
+// test above covers only the case where the write works.
+test.skipIf(process.platform === "win32")(
+  "withGitHangingAfter still claims a number when the start marker cannot be written",
+  async () => {
+    await withGitHangingAfter(1, async ({ shimDir }) => {
+      await rm(join(shimDir, "started"), { recursive: true });
+      await writeFile(join(shimDir, "started"), "");
+      const call = await execa("git", ["--version"], { reject: false, timeout: 5000 });
+      expect(call.exitCode).toBe(0);
+      expect((await shimCallRecords(shimDir)).map((record) => record.number)).toEqual([0]);
+    });
+  },
+  30_000,
+);
+
 // Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
 // calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
 // atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
@@ -612,39 +629,38 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const passes = 30;
     await withGitHangingAfter(passes, async ({ shimDir }) => {
-      const running = Array.from({ length: 2 * passes }, () =>
-        execa("git", ["--version"], { reject: false, timeout: 5000 }),
+      // GIT_TRACE2_EVENT makes every real `git` leave `trace-<index>`, also one that ran without the shim.
+      const running = Array.from({ length: 2 * passes }, (_, index) =>
+        execa("git", ["--version"], {
+          reject: false,
+          timeout: 5000,
+          env: { GIT_TRACE2_EVENT: join(shimDir, `trace-${index}`) },
+        }),
       );
       const pids = running.map((call) => call.pid);
       const calls = await Promise.all(running);
-      // The message names the call-* count and each exit code, so a CI recurrence records them.
-      // The reads never throw, so the assertion below always runs. A call that timed out has no
-      // exit code and shows as "timeout".
-      const claimed = await readdir(shimDir).then(
-        (names) => String(names.filter((name) => name.startsWith("call-")).length),
-        (error) => `unreadable (${error.message})`,
-      );
-      const records = await shimCallRecords(shimDir).catch(
-        (error) => `unreadable (${error.message})`,
-      );
+      // The message names the call-* count, the call-* directories without a record, and each exit
+      // code, so a CI recurrence records them. The reads never throw, so the assertion below always
+      // runs. A call that timed out has no exit code and shows as "timeout".
+      const names = await readdir(shimDir).catch(() => undefined);
+      const claimed = names?.filter((name) => name.startsWith("call-")).length;
+      const records = await shimCallRecords(shimDir).catch(() => undefined);
       const started = await shimStartPids(shimDir).catch(() => undefined);
       const codes = calls.map((call) => call.exitCode ?? (call.timedOut ? "timeout" : "undefined"));
-      // An unrecorded call shows as index:pid:exit code:whether the shim started. "shim not
-      // started" means the call ran no shim; "shim started" means it ran the shim and claimed no number.
-      const unrecorded =
-        typeof records === "string"
-          ? records
-          : calls
-              .map((call, index) => ({ index, pid: pids[index], code: codes[index] }))
-              .filter(({ pid }) => !records.some((record) => record.pid === pid))
-              .map(
-                ({ index, pid, code }) =>
-                  `${index}:${pid}:exit ${code}:${started === undefined ? "start unreadable" : started.includes(pid) ? "shim started" : "shim not started"}`,
-              );
-      const unrecordedText = Array.isArray(unrecorded)
-        ? `${unrecorded.length} [${unrecorded.join(" ")}]`
-        : unrecorded;
-      const message = `call-* directories: ${claimed}; calls without a shim record: ${unrecordedText}; exit codes: ${codes.join(",")}`;
+      // Each call without a record shows as index:pid:exit code:shim state:git state. "git ran"
+      // means that a real `git` wrote its trace file, so a call that exited 0 with "shim not
+      // started" and "git ran" bypassed the shim.
+      const unrecorded = calls
+        .map((_, index) => index)
+        .filter((index) => !records?.some((record) => record.pid === pids[index]))
+        .map((index) => {
+          const shim = started?.includes(pids[index]) ? "shim started" : "shim not started";
+          const git = names?.includes(`trace-${index}`) ? "git ran" : "git did not run";
+          return `${index}:${pids[index]}:exit ${codes[index]}:${shim}:${git}`;
+        });
+      const message = records
+        ? `call-* directories: ${claimed}; call-* directories without a record: ${claimed - records.length}; calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]; exit codes: ${codes.join(",")}`
+        : `the shim records or directory could not be read; exit codes: ${codes.join(",")}`;
       expect(
         calls.filter((call) => call.exitCode === 0),
         message,
