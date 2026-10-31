@@ -1,6 +1,6 @@
 # Init with a task file
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you stage a task file, which happens before init, and before a later init in a session that already has an active run.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you stage a task file, which happens before init, before any init with `--task-file`, and before a later init in a session that already has an active run.
 
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
   be combined. `--task-file -` reads the task from stdin, which also carries the

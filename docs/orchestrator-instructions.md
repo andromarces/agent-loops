@@ -97,7 +97,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
     a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
-- `--task-file <path>` can replace `--task` on init. Before you stage that file, read
+- `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
   [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
   registers each run under the session as its own entry keyed by the work tree,
@@ -408,8 +408,8 @@ of this file.
   `extensions.worktreeConfig` is on.
 - [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
   `--compare-head <pr>`, and when that finish is refused.
-- [Init with a task file](orchestrator/task-file-init.md): read it before you stage a task file,
-  and before a later init in a session with an active run.
+- [Init with a task file](orchestrator/task-file-init.md): read it before you stage a task file, before
+  any init with `--task-file`, and before a later init in a session with an active run.
 - [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
