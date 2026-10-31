@@ -156,6 +156,6 @@ export const PR_BODY_SCOPE =
 export const REQUIRE_CI_GATE_SENTENCE =
   "The --require-ci finish gate re-reads GitHub and enforces the condition.";
 
-/** The two sentences that a PR-head compare finish states after its condition. */
+/** The sentence that a PR-head compare finish states after its condition. */
 export const NO_CHECK_CLAIM =
   "It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed.";
