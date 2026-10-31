@@ -29,8 +29,8 @@ vi.mock("execa", async (importOriginal) => {
 
 import { exec } from "../../src/lib/exec.mjs";
 
-// Usefulness: output that the child wrote before it exited must reach the caller, even when the
-// consumer takes longer than the drain bound to deliver it (review of PR #1306).
+// Usefulness: output that the child wrote before it exited must reach the caller. This holds when
+// the consumer takes longer than the drain bound to deliver it (review of PR #1306).
 test("exec keeps output that a slow stdout consumer delivers after the child exit", async () => {
   const script = 'console.log("one"); console.log("two");';
   const result = await exec(process.execPath, ["-e", script]);

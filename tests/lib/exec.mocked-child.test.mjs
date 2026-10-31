@@ -25,8 +25,8 @@ function stuckChild() {
   return subprocess;
 }
 
-// Usefulness: a child that survives the timeout kill (stuck in the kernel) must not hold the call,
-// the state lock, or the lifecycle forever (issue #1302).
+// Usefulness: a child that survives the timeout kill (stuck in the kernel) must not hold the call.
+// It must not hold the state lock or the lifecycle forever either (issue #1302).
 test("exec rejects with timedOut when the child outlives the timeout kill", async () => {
   vi.useFakeTimers();
   stuckChild();
@@ -64,7 +64,7 @@ test("exec and execBounded pass a plain spawn result through", async () => {
   expect((await execBounded("git", [], { timeoutMs: 1000 })).stdout).toBe("out");
 });
 
-// Usefulness: a pipe that a paused reader has not drained is never cut, and an idle open pipe of an
+// Usefulness: a pipe that a paused reader has not drained is never cut. An idle open pipe of an
 // exited child gets the group kill and the end of the read (review of PR #1306).
 test("exec cuts an idle open pipe of an exited child and spares a paused one", async () => {
   vi.useFakeTimers();

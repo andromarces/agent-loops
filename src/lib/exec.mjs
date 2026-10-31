@@ -83,8 +83,8 @@ function withPnpmDepsCheckWarn(env) {
 }
 
 // Idle bound on the pipes of an exited child: no byte read for this long, and no read held back by
-// a slow consumer. A descendant that inherited a pipe and outlived the child keeps the pipe open,
-// and the child's own exit event is then the last event execa sees (issue #1302).
+// a slow consumer. A descendant that inherited a pipe and outlived the child keeps the pipe open.
+// The exit event of the child is then the last event that execa sees (issue #1302).
 const STDIO_DRAIN_GRACE_MS = 3000;
 // Bound on the wait for a child to exit after the timeout or the cancel killed it. It exceeds the
 // force-kill delays of `exec` (5 s) and `execBounded` (1 s). A child that no kill ends, for example
@@ -93,17 +93,18 @@ const KILL_GRACE_MS = 10_000;
 
 /**
  * Waits for `subprocess` like `await subprocess`, with two added bounds that never change a run
- * that ends on its own:
- * - `STDIO_DRAIN_GRACE_MS` after the child exits, and after each later read, a pipe of the child that
- *   is still open, idle, and not held back by a slow consumer is held by another process. The call
- *   then sends SIGKILL to the process group it owns (POSIX) and ends the read of that pipe, so the
- *   descendant no longer holds the call. Output that the child wrote stays in the result: a
- *   transform or reader downstream of the pipe still receives every byte that was read.
- * - `KILL_GRACE_MS` after `timeoutMs` passes or `signal` aborts, a child that did not exit gives its
- *   result up: the call settles as timed out or canceled with empty output, and the parent ends its
- *   own pipe ends.
- * A descendant that left the process group, and a Windows descendant of an exited child, survive
- * both bounds, because neither Node nor execa can reach them (ADR 0017).
+ * that ends on its own.
+ * - `STDIO_DRAIN_GRACE_MS` after the child exits, and after each later read, the call checks the
+ *   pipes of the child. An open, idle pipe that no slow consumer holds back is held by another
+ *   process. The call then sends SIGKILL to the process group it owns (POSIX) and ends the read
+ *   of that pipe. The descendant no longer holds the call. Output that the child wrote stays in
+ *   the result. A transform or reader downstream of the pipe still receives every byte read.
+ * - `KILL_GRACE_MS` after `timeoutMs` passes or `signal` aborts, a child that did not exit gives
+ *   its result up. The call settles as timed out or canceled with empty output. The parent ends
+ *   its own pipe ends.
+ *
+ * A descendant that left the process group survives both bounds. A Windows descendant of an
+ * exited child survives them too. Neither Node nor execa can reach them (ADR 0017).
  */
 function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
   const child = subprocess.nodeChildProcess ?? subprocess;
@@ -113,8 +114,8 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
     stopWaiting = resolve;
   });
   const after = (ms, action) => timers.add(setTimeout(action, ms));
-  // The OS pipes of the child. With a transform, the stream is the output of the transform, not a pipe,
-  // and execa ends it with its input, so the bound leaves it alone.
+  // The OS pipes of the child. With a transform, the stream is the output of the transform. Execa
+  // ends that stream with its input, so the bound leaves it alone.
   const pipes = [child.stdout, child.stderr].filter((stream) => stream instanceof Socket);
   let exited = false;
   let drainTimer;
