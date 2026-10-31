@@ -1,7 +1,7 @@
 # Agent Loops reference
 
 The full documentation of Agent Loops. The [README](../README.md) holds the short
-version. Each section keeps the anchor that it had in the README.
+version.
 
 - [Architecture and supported agents](reference/architecture.md)
   - [Architecture](reference/architecture.md#architecture)

@@ -71,7 +71,6 @@ export async function removeDirQuiet(path) {
     return true;
   } catch (err) {
     if (err.code === "ENOENT" || err.code === "ENOTEMPTY" || err.code === "EEXIST") {
-      // A non-empty or already-removed directory needs no action.
       return false;
     }
     throw err;

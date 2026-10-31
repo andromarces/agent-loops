@@ -156,7 +156,6 @@ export async function runCopilot(state, prompt, options = {}) {
     delete state.sessionUnconfirmed;
   }
 
-  // A resumed id must come back unchanged.
   assertResumedSession("Copilot", "session", requestedSessionId, returnedId);
 
   const messages = events

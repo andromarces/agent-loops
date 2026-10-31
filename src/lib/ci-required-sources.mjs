@@ -184,8 +184,8 @@ async function readRequiredSource(
 // a reply that names at least one, and `UNKNOWN` a reply that settles nothing.
 // `EMPTY` is the one outcome the ruleset source alone carries: a successful read
 // that found no rule. It is not a positive absence. It does not refuse the
-// per-check path. A classic-only repository therefore keeps the behavior it had
-// before the ruleset read was classified (issue #336 review).
+// per-check path, so a classic-only repository still finishes on that path
+// (issue #336).
 export const ABSENT = "absent";
 const HAS_CONTEXTS = "contexts";
 export const UNKNOWN = "unknown";
@@ -625,8 +625,7 @@ export async function requiredContexts(
     namesFailure: listed.failure ?? "",
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal. It contributes no contexts. It leaves
-    // the per-check path to the other sources, as it did before the ruleset read
-    // was classified (issue #336 review).
+    // the per-check path to the other sources (issue #336).
     rulesetState: rules.state,
     protectionState: protection.state,
     contexts: values
