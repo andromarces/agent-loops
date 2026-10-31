@@ -97,20 +97,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
     a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
-- `--task-file <path>` can replace `--task` on the init call, and the two cannot
-  be combined. `--task-file -` reads the task from stdin, which also carries the
-  prompt here. Stdin carries only one input, so pass `--prompt-file` for the
-  prompt with `--task-file -`. Init refuses `--task-file -` without it.
-  Stage that file before the first init call of the session, in the system
-  temporary directory outside every work tree. No run of the session is active
-  then, so the parent guard is not engaged. Write the file with the normal
-  file-write tool of the harness. After that init, never write a file: the guard
-  denies the file-edit tools of the parent for every path while any run of the
-  session is active.
-- A later init in the session, while another run is active, writes no file. Pass
-  the task with `--task`, or with a `--task-file <path>` that was staged before
-  the first init, and pass the prompt on stdin. Never use `--task-file -` there,
-  because it needs a new `--prompt-file`.
+- `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
+  [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
   registers each run under the session as its own entry keyed by the work tree,
   so a second run in a different work tree does not replace the first. A new
@@ -296,67 +284,11 @@ named push in the task text.
 
 The named push closes the gap only when the worker follows it. A worker that
 runs a plain `git push` anyway can push the default branch under `matching`.
-With `extensions.worktreeConfig` on, `git config --worktree push.default matching`
-sets the value for one work tree only. That value overrides the repository
-value. The command above reads the effective value of the work tree, override
-included.
-
-A repository with no remote has no `origin/<default>`, so the command above
-fails. Use the local default branch as the base:
-
-```bash
-git worktree add --no-track -b <branch> <work tree> <default>
-```
-
-In that repository, a worker commits in the work tree and never pushes, because
-there is no remote for `git push -u origin <branch>`. After `finish`, the parent
-merges the branch or hands it to the user.
-
-That run is not PR work, because no pull request can exist. Finish it with a plain
-`role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks`
-line on the latest changed state. Add `--require-accept` where it applies. Compare
-`reviewed.head` with the `workTree.head` of the last worker envelope. Never pass
-`--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set
-`unresolvedCompare`: each one concerns a PR head, and this run has none, so the
-#286 gap does not apply to it.
 
 A run on an existing pull request, such as a review or a correction of PR #N, must
-run on the PR head branch. Then the worker pushes to that branch, and
-`reviewed.head` can equal the PR head. Create the work tree on that branch from the
-remote branch:
-
-```bash
-git fetch origin <pr branch>
-git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>
-```
-
-`-B` creates the branch, or moves an existing local branch of that name to
-`origin/<pr branch>`. If the local branch exists, run
-`git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. A left
-count above 0 means the local branch is ahead of or diverged from the PR head. Then
-`-B` drops its local-only commits from the branch, so do not run the command:
-report to the user. A left count of 0 means the local branch equals or is behind the
-PR head, and the command is safe. The command fails when another work tree has the
-branch checked out. Then report to the user, and never remove that work tree.
-
-`-B` keeps the upstream of an existing local branch. A plain `git push` of a worker
-follows that upstream, so the upstream must be `origin/<pr branch>` or none, and
-never the default branch. Before the first dispatch, read it with
-`git -C "<work tree>" for-each-ref --format='%(upstream:short)' "refs/heads/<pr branch>"`.
-If it prints another branch, such as `origin/<default>`, run
-`git -C "<work tree>" branch --unset-upstream`, or set the PR branch with
-`git -C "<work tree>" branch -u origin/<pr branch>`.
-
-The upstream `origin/<pr branch>` is acceptable, because the PR branch is the branch
-that the worker must push. The `--no-track` rule guards a new branch that tracks
-`origin/<default>`. The worker pushes with `git push -u origin <pr branch>`.
-
-The work tree head must equal the PR head before the first dispatch: compare
-`git -C "<work tree>" rev-parse HEAD` with
-`gh pr view <pr> --json headRefOid --jq .headRefOid`. If they differ, the PR head
-moved after the fetch. Run `git fetch origin <pr branch>` and
-`git -C "<work tree>" merge --ff-only origin/<pr branch>`, then compare again. If
-the heads still differ, dispatch nothing and report to the user.
+run on the PR head branch. A repository with no remote has no `origin/<default>`.
+The setup for both, and the per-work-tree `push.default` override, are in
+[Work tree setup details](orchestrator/work-tree-setup.md).
 
 The parent installs the dependencies of the work tree, and no worker or reviewer
 does. After you create the work tree and before the first dispatch, run the
@@ -471,6 +403,15 @@ of this file.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
   dispatch several runs in one repository, so no two runs create the same tracking issue or take
   the same sequential identifier, such as an ADR number.
+- [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
+  tree for a repository with no remote or for a run on an existing PR, and when
+  `extensions.worktreeConfig` is on.
+- [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
+  `--compare-head <pr>`, and when that finish is refused.
+- [Init with a task file](orchestrator/task-file-init.md): read it before you stage a task file, before
+  any init with `--task-file`, and before a later init in a session with an active run.
+- [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
+  resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
@@ -636,30 +577,20 @@ field absent, or set to `false`, is a verified finish. The marker cannot be
 combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
 for example one whose base branch requires a check this credential cannot read,
-finishes with `--compare-head <pr>` below, or records the marker when it cannot
+finishes with `--compare-head <pr>`, or records the marker when it cannot
 read the PR head. A base branch whose required-check sources each state that it
 holds no required check can use the gate, which verifies the PR head, the clean
 reviewed tree, and the merge state.
 
-`--compare-head <pr>` makes the PR-head half of the gate and nothing else, for a
-repository whose required-check sources are unreadable, for example a private
-repository on the GitHub Free plan (#301, #1098):
-
-```bash
-printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}'   | agent-loop role finish --cwd "<work tree>" --compare-head <pr>
-```
-
-The runtime reads the PR head and state and refuses the finish unless the PR is open,
-its head equals `reviewed.head`, and the reviewed tree is clean. A closed or merged PR
-refuses even when its head is unchanged. The one `gh pr view` also returns the
-merge state, which the runtime does not evaluate. It reads no required-check
-source or check result and claims none, so `verified` still states what
-the checks showed. The envelope then carries `"headCompare": "verified"` and the
-state file records the same field beside `summary`. That record differs from
-`unresolvedCompare`, which says no one resolved the head. The flag is refused
-together with `--require-ci` and with `unresolvedCompare`, and a run that
-declares its PR still needs its `--require-ci` gate. Dispatch the reviewer again
-when the PR head moved, then repeat the finish.
+A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a repository
+whose required-check sources are unreadable (#301, #1098). The runtime reads the PR head and
+state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
+reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged. The runtime
+reads no required-check source or check result and claims none, so `verified` still states what
+the checks showed. A finish that also sets `unresolvedCompare` is refused, because the compare
+resolves that head. Dispatch the reviewer again when the PR head moved, then repeat the finish. The
+command and the `headCompare` record are in
+[Finish with --compare-head](orchestrator/finish-compare-head.md).
 
 Without the gate or `--compare-head`, the runtime never resolves the PR head, so it cannot tell an
 absent field from a verified compare. A finish that records the compare under
@@ -788,25 +719,5 @@ to resume with `dispatch --resume-interrupted`.
 `dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the
 Claude session of the role. Do not end that process. The maintainer ends it or waits for it.
 
-A run stores the `--parent-session` of the session that started it. The
-parent-edit guard and `extend` match that id, and no later call changes it. After init,
-each subcommand treats `--parent-session` as follows:
-
-- `extend`, `declare-pr`, and `set-model`: required. A missing value or any value other than the stored id is
-  refused, and the refusal does not name the stored id. The stored id is
-  accepted.
-- `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
-  and run. When given, a different value is refused with the error
-  `--parent-session cannot be changed after init`, which names the stored id.
-  A value equal to the stored id is accepted. `dispatch` also refuses a malformed
-  id.
-- `wait-checks`: reads no run state and ignores the flag.
-
-A run that a new session resumes is therefore unguarded for that session (issue #435). No
-call moves the stored id to the new session. The new session can run `dispatch`,
-`finish`, and `abort` by omitting `--parent-session`. It can run `extend` and
-`declare-pr` only by passing the stored id. Both compare the id only, so that call succeeds for
-any parent-side caller that holds the id, and it gives no guard coverage. A child
-role never runs `extend`, `declare-pr`, or `set-model`: the spawn-time marker refuses it, and the prompt rule
-backs the marker. To get a guard, call `abort` and start a new run with
-the new session id. A new run starts every role on a new session (ADR 0021).
+A run keeps the `--parent-session` of the session that started it. How each subcommand treats the
+flag after init is in [Parent session id after init](orchestrator/parent-session-guard.md).
