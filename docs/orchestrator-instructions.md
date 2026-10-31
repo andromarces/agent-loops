@@ -97,7 +97,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
     a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
-- `--task-file <path>` can replace `--task` on init. The staging and stdin rules are in
+- `--task-file <path>` can replace `--task` on init. Before you stage that file, read
   [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
   registers each run under the session as its own entry keyed by the work tree,
@@ -270,15 +270,24 @@ Without `--no-track`, the new branch gets the upstream `origin/<default>` when
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
+The no-upstream rule guards a plain `git push` only when `push.default` follows
+the upstream. With `push.default=matching`, a plain `git push` pushes every
+local branch that has a remote branch of the same name. A linked work tree
+shares its local branches with the main checkout. So a local default branch that
+is ahead of `origin/<default>` is pushed too.
+
 Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or
 `git push -u origin <pr branch>` for an existing PR branch. Never let the worker
 run a plain `git push`. Before the first dispatch, read
 `git -C "<work tree>" config push.default`. If it prints `matching`, state the
 named push in the task text.
 
+The named push closes the gap only when the worker follows it. A worker that
+runs a plain `git push` anyway can push the default branch under `matching`.
+
 A run on an existing pull request, such as a review or a correction of PR #N, must
 run on the PR head branch. A repository with no remote has no `origin/<default>`.
-The setup for both, and the `matching` risk, are in
+The setup for both, and the per-work-tree `push.default` override, are in
 [Work tree setup details](orchestrator/work-tree-setup.md).
 
 The parent installs the dependencies of the work tree, and no worker or reviewer
@@ -395,12 +404,14 @@ of this file.
   dispatch several runs in one repository, so no two runs create the same tracking issue or take
   the same sequential identifier, such as an ADR number.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
-  tree for a repository with no remote or for a run on an existing PR, and when `push.default` is
-  `matching`.
+  tree for a repository with no remote or for a run on an existing PR, and when
+  `extensions.worktreeConfig` is on.
 - [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
   `--compare-head <pr>`, and when that finish is refused.
-- [Init with a task file](orchestrator/task-file-init.md): read it before an init with `--task-file`,
+- [Init with a task file](orchestrator/task-file-init.md): read it before you stage a task file,
   and before a later init in a session with an active run.
+- [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
+  resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
@@ -571,8 +582,14 @@ read the PR head. A base branch whose required-check sources each state that it
 holds no required check can use the gate, which verifies the PR head, the clean
 reviewed tree, and the merge state.
 
-A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, which compares the PR head
-with `reviewed.head` and nothing else (#301, #1098). Its rules are in
+A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a repository
+whose required-check sources are unreadable (#301, #1098). The runtime reads the PR head and
+state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
+reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged. The runtime
+reads no required-check source or check result and claims none, so `verified` still states what
+the checks showed. A finish that also sets `unresolvedCompare` is refused, because the compare
+resolves that head. Dispatch the reviewer again when the PR head moved, then repeat the finish. The
+command and the `headCompare` record are in
 [Finish with --compare-head](orchestrator/finish-compare-head.md).
 
 Without the gate or `--compare-head`, the runtime never resolves the PR head, so it cannot tell an
@@ -702,25 +719,5 @@ to resume with `dispatch --resume-interrupted`.
 `dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the
 Claude session of the role. Do not end that process. The maintainer ends it or waits for it.
 
-A run stores the `--parent-session` of the session that started it. The
-parent-edit guard and `extend` match that id, and no later call changes it. After init,
-each subcommand treats `--parent-session` as follows:
-
-- `extend`, `declare-pr`, and `set-model`: required. A missing value or any value other than the stored id is
-  refused, and the refusal does not name the stored id. The stored id is
-  accepted.
-- `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
-  and run. When given, a different value is refused with the error
-  `--parent-session cannot be changed after init`, which names the stored id.
-  A value equal to the stored id is accepted. `dispatch` also refuses a malformed
-  id.
-- `wait-checks`: reads no run state and ignores the flag.
-
-A run that a new session resumes is therefore unguarded for that session (issue #435). No
-call moves the stored id to the new session. The new session can run `dispatch`,
-`finish`, and `abort` by omitting `--parent-session`. It can run `extend` and
-`declare-pr` only by passing the stored id. Both compare the id only, so that call succeeds for
-any parent-side caller that holds the id, and it gives no guard coverage. A child
-role never runs `extend`, `declare-pr`, or `set-model`: the spawn-time marker refuses it, and the prompt rule
-backs the marker. To get a guard, call `abort` and start a new run with
-the new session id. A new run starts every role on a new session (ADR 0021).
+A run keeps the `--parent-session` of the session that started it. How each subcommand treats the
+flag after init is in [Parent session id after init](orchestrator/parent-session-guard.md).

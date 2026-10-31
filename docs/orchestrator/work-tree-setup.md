@@ -1,15 +1,7 @@
 # Work tree setup details
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you create the work tree when the repository has no remote or the run is on an existing pull request, and when `push.default` is `matching`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you create the work tree when the repository has no remote or the run is on an existing pull request, and when `extensions.worktreeConfig` is on.
 
-The no-upstream rule guards a plain `git push` only when `push.default` follows
-the upstream. With `push.default=matching`, a plain `git push` pushes every
-local branch that has a remote branch of the same name. A linked work tree
-shares its local branches with the main checkout. So a local default branch that
-is ahead of `origin/<default>` is pushed too.
-
-The named push closes the gap only when the worker follows it. A worker that
-runs a plain `git push` anyway can push the default branch under `matching`.
 With `extensions.worktreeConfig` on, `git config --worktree push.default matching`
 sets the value for one work tree only. That value overrides the repository
 value. The `git config push.default` read in
