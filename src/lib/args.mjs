@@ -13,7 +13,7 @@ function missingValue(flag) {
  * Reads the value that follows `flag`. A value that starts with `-` is refused,
  * except a lone `-` where `allowDash` is set (stdin for `--task-file`).
  */
-export function readArgValue(argv, flag, index, allowDash = false) {
+function readArgValue(argv, flag, index, allowDash = false) {
   const value = argv[index];
   if (!value || (value.startsWith("-") && !(allowDash && value === "-"))) {
     throw missingValue(flag);
@@ -25,7 +25,7 @@ export function readArgValue(argv, flag, index, allowDash = false) {
  * Returns the value of an inline `--flag=value`. Throws the shared missing-value
  * error when the value is empty, so every CLI parser reports the same message.
  */
-export function readInlineValue(inline, flag) {
+function readInlineValue(inline, flag) {
   if (inline.value === "") {
     throw missingValue(flag);
   }
@@ -79,7 +79,7 @@ export async function readStdinText(
  * value, so a boolean flag cannot silently drop the value and an unknown flag
  * still reports the full token.
  */
-export function splitInlineFlag(arg) {
+function splitInlineFlag(arg) {
   if (!arg.startsWith("--")) {
     return null;
   }
