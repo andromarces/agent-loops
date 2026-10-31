@@ -360,7 +360,7 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
  * rule) fails closed.
  *
  * An unknown repository-rulesets read refuses the finish whatever the rest of the
- * union holds, because that reply can carry a required-status rule this caller
+ * union holds. That reply can carry a required-status rule this caller
  * never saw. A non-empty union from another source must not let the per-check
  * pass judge only the names it saw (issue #336).
  *

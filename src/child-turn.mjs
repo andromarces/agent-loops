@@ -150,8 +150,8 @@ export function failedTurnEvidence(err) {
  * and cancel propagation. Returns `{ role, status, response }` on success and
  * `{ role, status: "error", error }` on a handled failure. Throws on fatal
  * errors: detected mutation, snapshot failure, or cancel.
- * A reviewer result also carries `reviewed`, the runtime-owned identity of the
- * work tree the reviewer saw, and `prChecks`, the required-check status the
+ * A reviewer result also carries `reviewed` and `prChecks`. `reviewed` is the runtime-owned
+ * identity of the work tree the reviewer saw. `prChecks` is the required-check status the
  * runtime read for a declared PR (#320).
  * The evidence fields of `TURN_EVIDENCE_FIELDS` join a result. A fatal error carries them
  * through `carryTurnEvidence` and `failedTurnEvidence`.
