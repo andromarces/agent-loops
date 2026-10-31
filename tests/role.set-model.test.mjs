@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
@@ -86,6 +87,29 @@ test("set-model replaces the model of a role that completed no turn and keeps th
 
   expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
   expect(reviewer.models).toEqual(["gpt-6.1", "gpt-6.1-sol"]);
+});
+
+// Usefulness: verifies #1274 — a same-model request succeeds without recording a change that did not
+// happen, so the history lists only real replacements and the state file is not rewritten.
+test("set-model succeeds on the current model without a history entry or a state write", async () => {
+  const { repo } = await startRefusedReviewerRun();
+  expect((await setModel(repo, "--reviewer-model", "gpt-6.1-sol")).exitCode).toBe(0);
+  const { stateFile } = statePaths({ cwd: repo });
+  const before = await readRepoState(repo);
+  const mtimeBefore = (await stat(stateFile)).mtimeMs;
+
+  const repeated = await setModel(repo, "--reviewer-model", "gpt-6.1-sol");
+  expect(repeated.exitCode).toBe(0);
+  expect(repeated.payload).toEqual({
+    status: "ok",
+    lifecycle: "active",
+    role: "reviewer",
+    model: "gpt-6.1-sol",
+    previousModel: "gpt-6.1-sol",
+  });
+  expect(before.modelChanges).toHaveLength(1);
+  expect(await readRepoState(repo)).toEqual(before);
+  expect((await stat(stateFile)).mtimeMs).toBe(mtimeBefore);
 });
 
 // Usefulness: verifies the replacement cannot reach a role whose conversation already ran on the

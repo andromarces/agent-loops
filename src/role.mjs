@@ -225,10 +225,23 @@ async function setModel(args) {
       if (refusal) {
         throw new RoleError(refusal);
       }
+      const previousModel = role.model ?? null;
+      if (model === previousModel) {
+        // Idempotent success: no change happened, so no history entry and no state write.
+        return {
+          exitCode: 0,
+          payload: {
+            status: "ok",
+            lifecycle: state.lifecycle,
+            role: roleName,
+            model,
+            previousModel,
+          },
+        };
+      }
       if (!Array.isArray(state.modelChanges)) {
         state.modelChanges = [];
       }
-      const previousModel = role.model ?? null;
       state.modelChanges.push({
         role: roleName,
         from: previousModel,
