@@ -2,7 +2,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ExecError, SPAWNED_RUN_ENV, exec } from "../../src/lib/exec.mjs";
+import { ExecError, SPAWNED_RUN_ENV, exec, execFailureCause } from "../../src/lib/exec.mjs";
 import { setVerbose } from "../../src/lib/log.mjs";
 import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
@@ -476,4 +476,31 @@ test("exec hands the child pid to onSpawn and ignores a rejecting hook", async (
   expect(result.stdout.trim()).toBe("ran");
   expect(pids).toHaveLength(1);
   expect(Number.isInteger(pids[0])).toBe(true);
+});
+
+// Usefulness: verifies a failure whose property getters throw still yields the cause of the first readable flag, so a hostile error never replaces the original failure on an adapter error path.
+test("execFailureCause reads each failure property safely", () => {
+  const hostile = (name, rest) => {
+    const failure = { ...rest };
+    Object.defineProperty(failure, name, {
+      get() {
+        throw new Error(`${name} getter threw`);
+      },
+    });
+    return failure;
+  };
+
+  expect(execFailureCause("tool", hostile("timedOut", { isCanceled: true }), 5)).toBe(
+    "tool was canceled.",
+  );
+  expect(execFailureCause("tool", hostile("isCanceled", { isMaxBuffer: true }), 5)).toBe(
+    "tool output exceeded the buffer limit and was cut.",
+  );
+  expect(execFailureCause("tool", hostile("isMaxBuffer", { isTerminated: true }), 5)).toBe(
+    "tool was killed by a signal.",
+  );
+  expect(execFailureCause("tool", hostile("signal", { isTerminated: true, exitCode: 1 }), 5)).toBe(
+    "tool was killed by a signal.",
+  );
+  expect(execFailureCause("tool", hostile("exitCode", {}), 5)).toBe("tool failed to start.");
 });

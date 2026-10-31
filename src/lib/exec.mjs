@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { firstErrorLine, readProp, readableErrorText } from "./error-message.mjs";
 import { logDebug, logInfo, logWarn } from "./log.mjs";
 import { rootPins } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
@@ -120,20 +120,22 @@ export class ExecError extends Error {
  * value. `timeout` is the bound in seconds; a non-number gives the wording without it.
  */
 export function execFailureCause(command, failure, timeout) {
-  if (failure?.timedOut) {
+  // Each read is guarded, so a hostile getter on an error never replaces the original failure.
+  const read = (key) => readProp(failure, key);
+  if (read("timedOut")) {
     return typeof timeout === "number"
       ? `${command} timed out after ${timeout} seconds.`
       : `${command} timed out.`;
   }
-  if (failure?.isCanceled) return `${command} was canceled.`;
-  if (failure?.isMaxBuffer) return `${command} output exceeded the buffer limit and was cut.`;
-  if (failure?.isTerminated) {
+  if (read("isCanceled")) return `${command} was canceled.`;
+  if (read("isMaxBuffer")) return `${command} output exceeded the buffer limit and was cut.`;
+  if (read("isTerminated")) {
     // POSIX-only: execa cannot detect signal termination on Windows.
-    return `${command} was killed by ${failure.signal ?? "a signal"}.`;
+    return `${command} was killed by ${read("signal") ?? "a signal"}.`;
   }
   // POSIX-only: execa leaves exitCode undefined when the subprocess
   // could not be spawned (Windows reports exit code 1 instead).
-  if (failure?.exitCode == null) return `${command} failed to start.`;
+  if (read("exitCode") == null) return `${command} failed to start.`;
   return "";
 }
 

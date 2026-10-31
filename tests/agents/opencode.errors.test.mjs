@@ -351,6 +351,31 @@ test("opencode reports a timeout instead of a partial-stream error event", async
   expect(error.message).not.toContain("stream ended early");
 });
 
+// Usefulness: verifies an error whose timedOut getter throws still reports the cause it carries, so a
+// hostile error never replaces the original failure on the adapter error path.
+test("opencode reports the original cause when a timedOut getter throws", async () => {
+  const failure = Object.assign(new Error("opencode was canceled."), {
+    stdout: "",
+    stderr: "",
+    isCanceled: true,
+  });
+  Object.defineProperty(failure, "timedOut", {
+    get() {
+      throw new Error("timedOut getter threw");
+    },
+  });
+  vi.mocked(exec).mockRejectedValueOnce(failure);
+
+  const error = await runOpenCode(
+    { kind: "opencode", sessionId: null, model: null, effort: null },
+    "oc prompt",
+    { cwd: "/dir" },
+  ).catch((err) => err);
+
+  expect(error).toBe(failure);
+  expect(error.message).toBe("opencode was canceled.");
+});
+
 // Usefulness: verifies a buffer overflow keeps its cause through the adapter, not an exit-code
 // message that hides why the stream was cut (issue #578).
 test("opencode reports a buffer overflow instead of an exit-code message", async () => {
