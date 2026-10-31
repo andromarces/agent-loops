@@ -542,3 +542,52 @@ test("waitChecks passes a padded required name once a run carries each name", as
   const result = await waitPaddedRequired([PASSED_ITEM, check(" ci ", "pass", "SUCCESS")]);
   expect(result.timedOut).toBe(false);
 });
+
+/** Runs one wait over `reads` and returns the result with the count of reads per required source. */
+async function waitCountingSources(reads, { heads } = {}) {
+  const clock = fakeClock();
+  const inner = scriptedGh(reads, { heads });
+  const count = { rules: 0, protection: 0 };
+  const gh = async (args, cwd, options) => {
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (endpoint.includes("/rules/branches/")) {
+      count.rules += 1;
+    } else if (endpoint.endsWith("/protection")) {
+      count.protection += 1;
+    }
+    return inner(args, cwd, options);
+  };
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    gh,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  return { result, count };
+}
+
+// Usefulness: verifies #1267 — a wait of several polls reads the ruleset and the classic protection of
+// the base branch once each, not once per poll, and still returns the same verdict.
+test("waitChecks reads each required-check source once across the polls of a wait", async () => {
+  const { result, count } = await waitCountingSources([
+    { status: 8, checks: [PENDING_ITEM] },
+    { status: 8, checks: [PENDING_ITEM] },
+    { status: 8, checks: [PENDING_ITEM] },
+    { status: 0, checks: [PASSED_ITEM] },
+  ]);
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+  expect(count).toEqual({ rules: 1, protection: 1 });
+});
+
+// Usefulness: verifies #1267 keeps the per-poll names read — the cache never freezes the check list, so a
+// check that appears on a later poll is still judged.
+test("waitChecks still judges the checks of each poll while the sources are cached", async () => {
+  const { result } = await waitCountingSources([
+    { status: 8, checks: [PENDING_ITEM] },
+    { status: 8, checks: [PENDING_ITEM, check("lint", "pending", "IN_PROGRESS")] },
+    { status: 0, checks: [PASSED_ITEM, check("lint", "pass", "SUCCESS")] },
+  ]);
+  expect(result.checks).toEqual([PASSED_ITEM, check("lint", "pass", "SUCCESS")]);
+});

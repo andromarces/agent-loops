@@ -646,21 +646,37 @@ export async function readRulesetState(gh, slug, base, cwd) {
 //
 // With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is
 // not repeated (#1125).
+//
+// With `sourceCache`, a Map the caller owns, a ruleset or protection result that was read cleanly is
+// kept per base branch and reused by later calls with the same Map, so a repeated caller reads each
+// source once (#1267). A reply that could not be parsed is never kept, so the next call reads it
+// again. A change to the rules after the first read is not seen through the same Map.
 export async function requiredContexts(
   gh,
   slug,
   base,
   pr,
   cwd,
-  { retryable = false, names = null } = {},
+  { retryable = false, names = null, sourceCache = null } = {},
 ) {
   const contexts = new Map();
   const unknown = [];
   const unparsed = [];
 
+  const cached = async (kind, read) => {
+    const key = `${kind} ${base}`;
+    if (sourceCache?.has(key)) {
+      return sourceCache.get(key);
+    }
+    const source = await read();
+    if (sourceCache && !source.unparsed) {
+      sourceCache.set(key, source);
+    }
+    return source;
+  };
   const [rules, protection, listed] = await inOrder(gh, [
-    (read) => readRulesets(read, slug, base, cwd),
-    (read) => readProtection(read, slug, base, cwd, retryable),
+    (read) => cached("rules", () => readRulesets(read, slug, base, cwd)),
+    (read) => cached("protection", () => readProtection(read, slug, base, cwd, retryable)),
     (read) => (names ? Promise.resolve(names) : ghRequiredNames(read, pr, cwd)),
   ]);
   for (const [source, label] of [
