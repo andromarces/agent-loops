@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { firstErrorLine, readProp, readableErrorText } from "./error-message.mjs";
 import { logDebug, logInfo, logWarn } from "./log.mjs";
 import { rootPins } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
@@ -113,6 +113,33 @@ export class ExecError extends Error {
 }
 
 /**
+ * Names why a child ended abnormally, in the wording of the `exec` error message: a timeout, a
+ * cancel, a buffer overflow, a signal, or a spawn failure. Returns an empty string for an ordinary
+ * non-zero exit, which `exec` words with the exit code. `failure` takes the `ExecError` fields
+ * `timedOut`, `isCanceled`, `isMaxBuffer`, `isTerminated`, `exitCode`, and `signal`, and may be any
+ * value. `timeout` is the bound in seconds; a non-number gives the wording without it.
+ */
+export function execFailureCause(command, failure, timeout) {
+  // Each read is guarded, so a hostile getter on an error never replaces the original failure.
+  const read = (key) => readProp(failure, key);
+  if (read("timedOut")) {
+    return typeof timeout === "number"
+      ? `${command} timed out after ${timeout} seconds.`
+      : `${command} timed out.`;
+  }
+  if (read("isCanceled")) return `${command} was canceled.`;
+  if (read("isMaxBuffer")) return `${command} output exceeded the buffer limit and was cut.`;
+  if (read("isTerminated")) {
+    // POSIX-only: execa cannot detect signal termination on Windows.
+    return `${command} was killed by ${read("signal") ?? "a signal"}.`;
+  }
+  // POSIX-only: execa leaves exitCode undefined when the subprocess
+  // could not be spawned (Windows reports exit code 1 instead).
+  if (read("exitCode") == null) return `${command} failed to start.`;
+  return "";
+}
+
+/**
  * `options.onSpawn(pid)` is called once, right after the child starts and only when it has a pid.
  * It runs beside the child and is awaited before `exec` returns or throws. A rejection warns and
  * never changes the outcome of the child.
@@ -185,23 +212,12 @@ export async function exec(command, args = [], options = {}) {
 
   if (result.exitCode !== 0 || timedOut || isCanceled || isTerminated || isMaxBuffer) {
     const signal = result.signalDescription ?? result.signal;
-    let cause;
-    if (timedOut) {
-      cause = `${command} timed out after ${timeout} seconds.`;
-    } else if (isCanceled) {
-      cause = `${command} was canceled.`;
-    } else if (isMaxBuffer) {
-      cause = `${command} output exceeded the buffer limit and was cut.`;
-    } else if (isTerminated) {
-      // POSIX-only: execa cannot detect signal termination on Windows.
-      cause = `${command} was killed by ${signal ?? "a signal"}.`;
-    } else if (result.exitCode === undefined) {
-      // POSIX-only: execa leaves exitCode undefined when the subprocess
-      // could not be spawned (Windows reports exit code 1 instead).
-      cause = `${command} failed to start.`;
-    } else {
-      cause = `${command} exited with code ${result.exitCode}.`;
-    }
+    const cause =
+      execFailureCause(
+        command,
+        { timedOut, isCanceled, isMaxBuffer, isTerminated, exitCode: result.exitCode, signal },
+        timeout,
+      ) || `${command} exited with code ${result.exitCode}.`;
 
     // An overflow cuts a stream at an arbitrary character, so it can end inside a secret value
     // that exact-value redaction no longer matches. The error therefore keeps none of the output.

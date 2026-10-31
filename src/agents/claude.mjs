@@ -17,6 +17,7 @@ import {
   readSessionHead,
   requireHeldUnconfirmedSession,
   setUsageOrDelete,
+  turnExecOptions,
 } from "./shared.mjs";
 
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
@@ -91,17 +92,9 @@ async function ownsSession(id, cwd, role) {
  * `sessionMissing` error before any CLI starts, so the runtime reruns the turn as a first turn.
  */
 export async function runClaude(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role, onSessionAssigned, env, onTurnChild } = options;
+  const { cwd, readOnly, role, onSessionAssigned, env } = options;
   const args = ["-p"];
-  const execOptions = {
-    cwd,
-    input: prompt,
-    timeout,
-    signal,
-    role,
-    ...(env && { env }),
-    ...(onTurnChild && { onSpawn: onTurnChild }),
-  };
+  const execOptions = turnExecOptions(options, prompt);
   const requestedSessionId = state.sessionId;
   await requireHeldUnconfirmedSession(
     state,

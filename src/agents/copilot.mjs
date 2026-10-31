@@ -15,6 +15,7 @@ import {
   readSessionHead,
   requireHeldUnconfirmedSession,
   setMainLoopUsage,
+  turnExecOptions,
 } from "./shared.mjs";
 
 // Text Copilot returns for a tool call that `--no-ask-user` leaves without an approval (issue #713).
@@ -74,7 +75,7 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
  * the text does not repeat is not flagged, because no recorded event stream shows the denial.
  */
 export async function runCopilot(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role, env, onTurnChild } = options;
+  const { cwd, readOnly } = options;
   const requestedSessionId = state.sessionId;
   await requireHeldUnconfirmedSession(
     state,
@@ -100,15 +101,7 @@ export async function runCopilot(state, prompt, options = {}) {
 
   let stdout;
   try {
-    ({ stdout } = await exec("copilot", args, {
-      cwd,
-      input: prompt,
-      timeout,
-      signal,
-      role,
-      ...(env && { env }),
-      ...(onTurnChild && { onSpawn: onTurnChild }),
-    }));
+    ({ stdout } = await exec("copilot", args, turnExecOptions(options, prompt)));
   } catch (error) {
     const failedEvents = parseJsonLines(error?.stdout ?? "");
     const failedResult = findResultEvent(failedEvents);

@@ -9,6 +9,22 @@ const MODEL_ID = /^[^\s\p{Cc}]+$/u;
 const SESSION_HEAD_BYTES = 256 * 1024;
 
 /**
+ * Builds the `exec` options of one adapter turn from the turn `options`. An absent `env` or
+ * `onTurnChild` is omitted, so `exec` sees no key; `onTurnChild` becomes `onSpawn`.
+ */
+export function turnExecOptions({ cwd, timeout, signal, role, env, onTurnChild }, prompt) {
+  return {
+    cwd,
+    input: prompt,
+    timeout,
+    signal,
+    role,
+    ...(env && { env }),
+    ...(onTurnChild && { onSpawn: onTurnChild }),
+  };
+}
+
+/**
  * Reads the first 256 KiB of a regular file in a real directory, or returns null for anything
  * else. Neither the directory nor the file is followed through a link, and a read error returns
  * null.

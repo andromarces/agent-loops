@@ -17,8 +17,8 @@ const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unide
 // Upper bound, in UTF-16 code units, on the joined text of a stream error (issues #510 and #529).
 const ERROR_TEXT_LIMIT = 4000;
 
-/** Returns whether a stream message id is a valid, non-empty string. */
-export const isMessageId = (value) => typeof value === "string" && value !== "";
+/** Returns whether a stream id or model field is a non-empty string. */
+export const isNonEmptyString = (value) => typeof value === "string" && value !== "";
 
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
@@ -37,7 +37,7 @@ export const isMessageId = (value) => typeof value === "string" && value !== "";
 export function joinTextParts(events) {
   const groups = new Map();
   events.forEach(({ part }, position) => {
-    const key = isMessageId(part.messageID) ? part.messageID : null;
+    const key = isNonEmptyString(part.messageID) ? part.messageID : null;
     const group = groups.get(key) ?? { first: position, parts: [] };
     group.last = position;
     group.parts.push(part.text);

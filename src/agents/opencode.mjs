@@ -1,7 +1,6 @@
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
-import { readProp } from "../lib/error-message.mjs";
 import { redactEnvSecrets } from "../lib/redact.mjs";
-import { exec } from "../lib/exec.mjs";
+import { exec, execFailureCause } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import {
   asSessionId,
@@ -12,8 +11,9 @@ import {
   setResolvedModel,
   setUsageOrDelete,
   throwIfCanceled,
+  turnExecOptions,
 } from "./shared.mjs";
-import { isMessageId, joinTextParts } from "./opencode-text.mjs";
+import { isNonEmptyString, joinTextParts } from "./opencode-text.mjs";
 
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
@@ -31,17 +31,9 @@ const READONLY_CONFIG =
   '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"},{"action":"edit","resource":"*","effect":"deny"}]}';
 
 export async function runOpenCode(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role, env, onTurnChild } = options;
+  const { readOnly, timeout, signal, role, env } = options;
   const args = ["run", "--standalone", "--format", "json"];
-  const execOptions = {
-    cwd,
-    input: prompt,
-    timeout,
-    signal,
-    role,
-    ...(env && { env }),
-    ...(onTurnChild && { onSpawn: onTurnChild }),
-  };
+  const execOptions = turnExecOptions(options, prompt);
 
   if (state.sessionId) {
     args.push("--session", state.sessionId);
@@ -207,7 +199,7 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
   const ids = new Set();
   for (const { part } of events) {
     if (part === undefined) continue;
-    if (!isJsonObject(part) || !isMessageId(part.messageID)) return [];
+    if (!isJsonObject(part) || !isNonEmptyString(part.messageID)) return [];
     ids.add(part.messageID);
   }
   if (ids.size === 0) return [];
@@ -228,15 +220,19 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
     return [];
   }
   if (!Array.isArray(messages)) return [];
-  const known = new Set();
+  const byId = new Map();
   for (const message of messages) {
-    if (!isJsonObject(message) || !isMessageId(message.id) || known.has(message.id)) return [];
-    known.add(message.id);
+    if (!isJsonObject(message) || !isNonEmptyString(message.id) || byId.has(message.id)) return [];
+    byId.set(message.id, message);
   }
   return [...ids].map((id) => {
-    const message = messages.find((m) => m.type === "assistant" && m.id === id);
-    const model = message?.model;
-    if (!isJsonObject(model) || !isMessageId(model.providerID) || !isMessageId(model.id)) {
+    const message = byId.get(id);
+    const model = message?.type === "assistant" ? message.model : undefined;
+    if (
+      !isJsonObject(model) ||
+      !isNonEmptyString(model.providerID) ||
+      !isNonEmptyString(model.id)
+    ) {
       return undefined;
     }
     const value = `${model.providerID}/${model.id}`;
@@ -304,44 +300,13 @@ function setUsage(state, events) {
  * left behind names a provider error that is not why the turn died (#326).
  */
 function failureMessage(err, events, timeout) {
-  const cause = failureCause(err, timeout);
+  const cause = execFailureCause("opencode", err, timeout);
 
   if (cause) {
     return cause;
   }
 
   return `opencode exited with code ${err.exitCode}: ${lastErrorDetail(events) || NO_DETAIL}`;
-}
-
-/**
- * Returns the cause `exec` names for a timeout, a cancel, a buffer overflow, a signal, or a spawn failure, or an empty
- * string for an ordinary non-zero exit. The wording matches the message `exec` itself builds, so a
- * caller reads the same cause as it read before the adapter took the message over.
- */
-function failureCause(err, timeout) {
-  if (readProp(err, "timedOut")) {
-    return typeof timeout === "number"
-      ? `opencode timed out after ${timeout} seconds.`
-      : "opencode timed out.";
-  }
-
-  if (err?.isCanceled) {
-    return "opencode was canceled.";
-  }
-
-  if (err?.isMaxBuffer) {
-    return "opencode output exceeded the buffer limit and was cut.";
-  }
-
-  if (err?.isTerminated) {
-    return `opencode was killed by ${err.signal ?? "a signal"}.`;
-  }
-
-  if (err?.exitCode == null) {
-    return "opencode failed to start.";
-  }
-
-  return "";
 }
 
 /** Returns whether a stream value is a token count or a cost: a finite, non-negative number. */
