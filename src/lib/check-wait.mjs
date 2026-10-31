@@ -545,10 +545,14 @@ export async function waitChecks({
     }
     return err;
   };
+  // The ruleset and protection results of the base branch, read once per wait. A rules change during
+  // the wait is not seen by this wait. The `--require-ci` finish gate reads both sources again, so the
+  // finish judges the current rules (#1267).
+  const sourceCache = new Map();
   // The contexts the required wait judges: every source of the gate, so an app-qualified
   // context keeps its app, plus the names `gh pr checks --required` listed.
   const contextsOf = async (base, listed, names) => {
-    const required = await requiredContexts(bounded, slug, base, pr, cwd, { names });
+    const required = await requiredContexts(bounded, slug, base, pr, cwd, { names, sourceCache });
     // The gate's own refusals, and any source that settled nothing: such a source may hold a
     // required check or an app qualifier that this read never saw, so no pass can follow.
     const refusal = requiredResolutionRefusal(required, pr, namesCause(required));
@@ -586,6 +590,7 @@ export async function waitChecks({
     const required = await requiredContexts(bounded, slug, base, pr, cwd, {
       retryable: noChecksYet,
       names,
+      sourceCache,
     });
     // A no-checks-reported poll accepts its names read, which is the `no checks reported` reply
     // itself. Any other refusal stands, and only a clean server error is retried (#1121).
