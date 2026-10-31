@@ -3,6 +3,7 @@ import {
   lastClosingMessage,
   setMainLoopUsage,
   setUsageOrDelete,
+  turnExecOptions,
 } from "../../src/agents/shared.mjs";
 
 // Usefulness: pins the presence rules every adapter relies on, so a refactor of the shared setter cannot change what a turn records.
@@ -49,4 +50,31 @@ test("lastClosingMessage picks the last message with a closing block attempt, el
   expect(lastClosingMessage([first, "**Verdict**: reject"])).toBe("**Verdict**: reject");
   expect(lastClosingMessage([first, "The conclusion is none yet."])).toBe(first);
   expect(lastClosingMessage(["x", "y"])).toBe("y");
+});
+
+// Usefulness: pins the exec options every adapter passes for a turn, so an absent env or spawn hook never reaches `exec` as an explicit undefined that changes its behavior.
+test("turnExecOptions maps turn options to exec options and omits an absent env and spawn hook", () => {
+  const onTurnChild = () => {};
+  const signal = new AbortController().signal;
+  const env = { A: "1" };
+
+  expect(
+    turnExecOptions(
+      { cwd: "/dir", timeout: 5, signal, role: "worker", env, onTurnChild },
+      "prompt",
+    ),
+  ).toEqual({
+    cwd: "/dir",
+    input: "prompt",
+    timeout: 5,
+    signal,
+    role: "worker",
+    env,
+    onSpawn: onTurnChild,
+  });
+
+  const bare = turnExecOptions({ cwd: "/dir" }, "prompt");
+  expect("env" in bare).toBe(false);
+  expect("onSpawn" in bare).toBe(false);
+  expect(bare.input).toBe("prompt");
 });

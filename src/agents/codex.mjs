@@ -8,6 +8,7 @@ import {
   flagMissingSession,
   keepFailedSessionId,
   setMainLoopUsage,
+  turnExecOptions,
 } from "./shared.mjs";
 
 // Codex prints exactly this on stderr, exit 1, when `exec resume` names a thread it has no rollout for.
@@ -38,7 +39,7 @@ function flagCapacityFailure(err, events) {
 }
 
 export async function runCodex(state, prompt, options = {}) {
-  const { cwd, readOnly, sandbox, timeout, signal, role, onTurnTmpdir, onTurnChild } = options;
+  const { readOnly, sandbox, onTurnTmpdir } = options;
   const configArgs = [];
 
   // `sandbox` is the reviewer-only mode input (ADR 0038): `none`, `read-only`, or `workspace-write`.
@@ -81,16 +82,7 @@ export async function runCodex(state, prompt, options = {}) {
     // The CLI creates two empty `.tmp*` directories in its temporary directory on every turn, so it
     // gets a private one that the runtime removes (issue #955).
     ({ stdout } = await withTurnTmpdir(
-      (env) =>
-        exec("codex", args, {
-          cwd,
-          input: prompt,
-          timeout,
-          signal,
-          role,
-          ...(env && { env }),
-          ...(onTurnChild && { onSpawn: onTurnChild }),
-        }),
+      (env) => exec("codex", args, turnExecOptions({ ...options, env }, prompt)),
       { onCreated: onTurnTmpdir },
     ));
   } catch (err) {

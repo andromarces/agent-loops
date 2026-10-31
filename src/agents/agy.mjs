@@ -1,10 +1,10 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
-import { asSessionId, keepFailedSessionId, setMainLoopUsage } from "./shared.mjs";
+import { asSessionId, keepFailedSessionId, setMainLoopUsage, turnExecOptions } from "./shared.mjs";
 
 export async function runAgy(state, prompt, options = {}) {
-  const { cwd, readOnly, timeout, signal, role, env, onTurnChild } = options;
+  const { readOnly } = options;
   // --input-format text reads the prompt from stdin; -p is omitted because it consumes the next arg as the prompt value.
   const args = ["--input-format", "text", "--output-format", "json"];
 
@@ -28,15 +28,7 @@ export async function runAgy(state, prompt, options = {}) {
   delete state.conversationReplaced;
   let stdout;
   try {
-    ({ stdout } = await exec("agy", args, {
-      cwd,
-      input: prompt,
-      timeout,
-      signal,
-      role,
-      ...(env && { env }),
-      ...(onTurnChild && { onSpawn: onTurnChild }),
-    }));
+    ({ stdout } = await exec("agy", args, turnExecOptions(options, prompt)));
   } catch (err) {
     // A failed turn can print a result object with an empty `conversation_id`. Keep a non-empty one on a
     // first turn; keepFailedSessionId never replaces an id already on the state.
