@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
@@ -256,6 +256,42 @@ test("dispatch records the turn when reading the fatal error message throws", as
   expect(state.lifecycle).toBe("halted");
   expect(state.turns).toMatchObject([{ role: "worker", status: "error" }]);
   expect(state.lastResult).toMatchObject({ status: "error" });
+});
+
+// Usefulness: verifies requirement "a fatal turn records one result with the state and the
+// event" (#1269): the ok path has a transcript test, and no other test reads the error path's event.
+test("a fatal turn emits one result event that matches the recorded state", async () => {
+  const repo = await newRunRepo();
+  const transcriptPath = join(repo, "fatal-transcript.jsonl");
+  const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+  const agents = {
+    fake1: {
+      async run() {
+        throw fatal;
+      },
+    },
+    fake2: recordingAdapter([]),
+  };
+
+  const result = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--transcript", transcriptPath]), repo),
+    { agents, stdin: stdinPrompt },
+  );
+
+  expect(result.exitCode).toBe(1);
+  const events = (await readFile(transcriptPath, "utf8"))
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line));
+  const results = events.filter((event) => event.type === "result");
+  expect(results).toHaveLength(1);
+  const state = await readRepoState(repo);
+  expect(results[0]).toMatchObject({ role: "worker", stepsUsed: state.stepsUsed });
+  expect(results[0].result).toMatchObject({ role: "worker", status: "error" });
+  expect(state.lifecycle).toBe("halted");
+  expect(state.turns).toHaveLength(1);
+  expect(state.lastResult.at).toBe(state.turns[0].at);
+  expect(state.lastResult).toMatchObject({ role: "worker", status: "error" });
 });
 
 // Usefulness: verifies a fatal child error whose testRun getter throws still ends the turn with a

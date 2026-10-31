@@ -20,45 +20,16 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
-import { failedTurnEvidence, invoke, pickTurnEvidence, runChild } from "./child-turn.mjs";
+import {
+  failedTurnEvidence,
+  invoke,
+  pickTurnEvidence,
+  runChild,
+  TURN_EVIDENCE_EVENTS,
+} from "./child-turn.mjs";
 import { decide } from "./orchestrator.mjs";
 import { testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
-
-/**
- * Runs one read-only probe turn in a new session and reads `state.resolvedModel` from it (#394). The
- * probe is a child turn, so it runs under the same mutation check as a reviewer turn: a probe that
- * changes the work tree throws `MutationError`, a failed snapshot throws `SnapshotError`, and
- * `signal` cancels the CLI call. Every error is thrown, never returned as a result, because the
- * caller refuses the continuation on any failure.
- * @param {{ agents?: object, state: object, roleName: string, cwd: string, timeout?: number | null, signal?: AbortSignal }} options
- */
-export async function runProbeTurn({
-  agents = defaultAgents,
-  state,
-  roleName,
-  cwd,
-  timeout,
-  signal,
-}) {
-  await withMutationCheck(
-    cwd,
-    roleName,
-    () =>
-      invoke({
-        agents,
-        state,
-        roleName,
-        prompt: "Reply with the single word OK.",
-        opts: { cwd, readOnly: true, timeout, signal },
-        onEvent: () => {},
-        stepsUsed: 0,
-      }),
-    { signal },
-  );
-  // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
-  throwIfCanceled(signal, roleName);
-}
 
 /**
  * Process exit code for a recorded finish that carries `unresolvedCompare`. The
@@ -386,51 +357,11 @@ export async function runLoop(options) {
       // A fatal error ends the run with no result event, so the command result and the
       // work tree compare the runtime already read are emitted here, and the transcript
       // keeps them (ADR 0017).
-      const {
-        testRun,
-        sharedGitChanged,
-        lockfileChanged,
-        inheritedTmpdirEntries,
-        packageStoreEntries,
-      } = pickTurnEvidence(failedTurnEvidence(err));
-      if (testRun) {
-        onEvent({ type: "test-run", role: roleName, testRun, fatal: true, stepsUsed });
-      }
-      if (sharedGitChanged) {
-        onEvent({
-          type: "shared-git",
-          role: roleName,
-          items: sharedGitChanged,
-          fatal: true,
-          stepsUsed,
-        });
-      }
-      if (lockfileChanged) {
-        onEvent({
-          type: "lockfile",
-          role: roleName,
-          paths: lockfileChanged,
-          fatal: true,
-          stepsUsed,
-        });
-      }
-      if (inheritedTmpdirEntries) {
-        onEvent({
-          type: "inherited-tmpdir",
-          role: roleName,
-          entries: inheritedTmpdirEntries,
-          fatal: true,
-          stepsUsed,
-        });
-      }
-      if (packageStoreEntries) {
-        onEvent({
-          type: "package-store",
-          role: roleName,
-          entries: packageStoreEntries,
-          fatal: true,
-          stepsUsed,
-        });
+      const evidence = pickTurnEvidence(failedTurnEvidence(err));
+      for (const { field, type, key } of TURN_EVIDENCE_EVENTS) {
+        if (evidence[field]) {
+          onEvent({ type, role: roleName, [key]: evidence[field], fatal: true, stepsUsed });
+        }
       }
       throw err;
     }

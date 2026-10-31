@@ -369,27 +369,22 @@ async function dispatchLocked(
     });
     // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
     // keep the id for the resume that follows. A null id records a session the fallback cleared.
-    recordRoleSession(state.roles[roleName], role);
-    state.lifecycle = canceled ? "interrupted" : "halted";
-    const at = new Date().toISOString();
-    state.lastResult = { ...payload, at };
-    recordTurn(state, roleName, payload, at);
-    await writeState(paths.stateFile, state);
-    onEvent({ type: "result", role: roleName, result: payload, stepsUsed: state.stepsUsed });
+    await recordResult(state, roleName, role, payload, {
+      lifecycle: canceled ? "interrupted" : "halted",
+      stateFile: paths.stateFile,
+      onEvent,
+    });
     return {
       exitCode: canceled ? 130 : 1,
       payload: withLocalFiles(payload, localFiles, localFilesDiffer),
     };
   }
 
-  state.lifecycle = "active";
-  const at = new Date().toISOString();
-  state.lastResult = { ...result, at };
-  recordTurn(state, roleName, result, at);
-  recordRoleSession(state.roles[roleName], role);
-  await writeState(paths.stateFile, state);
-
-  onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
+  await recordResult(state, roleName, role, result, {
+    lifecycle: "active",
+    stateFile: paths.stateFile,
+    onEvent,
+  });
 
   // The dispatch itself succeeded, but a child error result is still a
   // non-zero command outcome for the calling parent.
@@ -397,6 +392,20 @@ async function dispatchLocked(
     exitCode: result.status === "ok" ? 0 : 1,
     payload: withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
   };
+}
+
+/**
+ * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, and the
+ * role session, then writes the state and emits the `result` event.
+ */
+async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
+  state.lifecycle = lifecycle;
+  const at = new Date().toISOString();
+  state.lastResult = { ...result, at };
+  recordTurn(state, roleName, result, at);
+  recordRoleSession(state.roles[roleName], role);
+  await writeState(stateFile, state);
+  onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
 }
 
 /**

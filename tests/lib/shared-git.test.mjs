@@ -48,12 +48,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
-const configExit = vi.hoisted(() => ({ code: null }));
+const configExit = vi.hoisted(() => ({ code: null, signals: [] }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) => {
+      if (options?.cancelSignal) configExit.signals.push(options.cancelSignal);
       return configExit.code !== null && args[0] === "config"
         ? { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" }
         : real.execa(command, args, options);
@@ -69,6 +70,7 @@ const dirs = [];
 
 afterEach(async () => {
   configExit.code = null;
+  configExit.signals.length = 0;
   fsFailure.operation = null;
   fsFailure.stallReaddir = false;
   fsFailure.lstatDelayMs = 0;
@@ -203,6 +205,22 @@ test("a stalled hooks directory read rejects at the deadline", async () => {
   const started = Date.now();
   await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
   expect(Date.now() - started).toBeLessThan(5_000);
+});
+
+// Usefulness: verifies requirement "the deadline aborts with the default abort reason" (#1269): the
+// helper shared by three reads must not give the shared Git read a named error as its reason.
+test("the deadline aborts the git calls with the default abort reason", async () => {
+  const { linked } = await createLinkedWorkTree();
+  fsFailure.stallReaddir = true;
+  await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
+  expect(configExit.signals.length).toBeGreaterThan(0);
+  for (const signal of configExit.signals) {
+    expect(signal.aborted).toBe(true);
+    expect(signal.reason).toMatchObject({
+      name: "AbortError",
+      message: "This operation was aborted",
+    });
+  }
 });
 
 // Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
