@@ -899,11 +899,24 @@ export async function shimCallRecords(shimDir) {
 }
 
 /**
+ * Reads the pids that the `withGitHangingAfter` shim marked in `shimDir` as started, one
+ * `start-<pid>` file per call that began running the shim, before it claimed a number. Rejects
+ * when `shimDir` cannot be read.
+ */
+export async function shimStartPids(shimDir) {
+  return (await readdir(shimDir))
+    .map((name) => /^start-(\d+)$/.exec(name))
+    .filter((match) => match !== null)
+    .map((match) => Number(match[1]));
+}
+
+/**
  * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also
  * when calls start at once, and then hangs, so a test can let the before snapshot finish and stall
  * the read that follows. `run` gets `hungPid()`, which resolves with the pid of the hung `git` once
  * it started, and `shimDir`, the shim directory that holds one `call-<n>` directory per call, each
- * with a `record` file of the claimed number and the pid (read it with `shimCallRecords`). The
+ * with a `record` file of the claimed number and the pid (read it with `shimCallRecords`), and one
+ * `start-<pid>` file per call (read it with `shimStartPids`). The
  * hung process carries the unique shim directory in its command line. The helper ends it through
  * `endOwnedProcess` if the test left it alive, and removes the shim directory.
  */
@@ -915,6 +928,8 @@ export async function withGitHangingAfter(passes, run) {
     join(dir, "git"),
     [
       "#!/bin/sh",
+      // The marker tells a call that ran the shim from a call that ran another `git`.
+      `: > '${dir}/start-'$$`,
       // Calls can start at once, as the reads of one snapshot do. `mkdir` is atomic, so each call
       // claims the first free number. A counter file loses updates and can be read half written.
       "n=0",

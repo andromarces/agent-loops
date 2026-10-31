@@ -17,6 +17,7 @@ import {
   expectBoundKillsShim,
   pollUntil,
   shimCallRecords,
+  shimStartPids,
   untrackedFilesGit,
   withGitHangingAfter,
   within,
@@ -586,6 +587,22 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
+// Usefulness: verifies the shim marks its start with the pid of the call before it claims a number,
+// so a call that left no record can be told apart from a call that never reached the shim (issue
+// #1258); the record test cannot, because a call that started and left no record is absent there.
+test.skipIf(process.platform === "win32")(
+  "withGitHangingAfter marks the start of each shim call with the pid of the call",
+  async () => {
+    await withGitHangingAfter(1, async ({ shimDir }) => {
+      const call = execa("git", ["--version"]);
+      const { pid } = call;
+      await call;
+      expect(await shimStartPids(shimDir)).toEqual([pid]);
+    });
+  },
+  30_000,
+);
+
 // Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
 // calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
 // atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
@@ -595,25 +612,39 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const passes = 30;
     await withGitHangingAfter(passes, async ({ shimDir }) => {
-      const calls = await Promise.all(
-        Array.from({ length: 2 * passes }, () =>
-          execa("git", ["--version"], { reject: false, timeout: 5000 }),
-        ),
+      const running = Array.from({ length: 2 * passes }, () =>
+        execa("git", ["--version"], { reject: false, timeout: 5000 }),
       );
+      const pids = running.map((call) => call.pid);
+      const calls = await Promise.all(running);
       // The message names the call-* count and each exit code, so a CI recurrence records them.
-      // The count read never throws, so the assertion below always runs. A call that timed out has
-      // no exit code and shows as "timeout".
+      // The reads never throw, so the assertion below always runs. A call that timed out has no
+      // exit code and shows as "timeout".
       const claimed = await readdir(shimDir).then(
         (names) => String(names.filter((name) => name.startsWith("call-")).length),
         (error) => `unreadable (${error.message})`,
       );
-      const records = await shimCallRecords(shimDir).then(
-        (found) => found.length,
+      const records = await shimCallRecords(shimDir).catch(
         (error) => `unreadable (${error.message})`,
       );
-      const unrecorded = typeof records === "number" ? calls.length - records : records;
+      const started = await shimStartPids(shimDir).catch(() => undefined);
       const codes = calls.map((call) => call.exitCode ?? (call.timedOut ? "timeout" : "undefined"));
-      const message = `call-* directories: ${claimed}; calls without a shim record: ${unrecorded}; exit codes: ${codes.join(",")}`;
+      // An unrecorded call shows as index:pid:exit code:whether the shim started. "shim not
+      // started" means the call ran no shim; "shim started" means it ran the shim and claimed no number.
+      const unrecorded =
+        typeof records === "string"
+          ? records
+          : calls
+              .map((call, index) => ({ index, pid: pids[index], code: codes[index] }))
+              .filter(({ pid }) => !records.some((record) => record.pid === pid))
+              .map(
+                ({ index, pid, code }) =>
+                  `${index}:${pid}:exit ${code}:${started === undefined ? "start unreadable" : started.includes(pid) ? "shim started" : "shim not started"}`,
+              );
+      const unrecordedText = Array.isArray(unrecorded)
+        ? `${unrecorded.length} [${unrecorded.join(" ")}]`
+        : unrecorded;
+      const message = `call-* directories: ${claimed}; calls without a shim record: ${unrecordedText}; exit codes: ${codes.join(",")}`;
       expect(
         calls.filter((call) => call.exitCode === 0),
         message,
