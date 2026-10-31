@@ -1,6 +1,6 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect } from "vite-plus/test";
 import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
@@ -21,6 +21,10 @@ import {
 } from "./role-helpers.mjs";
 import { createTempRepo } from "./runtime-helpers.mjs";
 import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 afterEach(cleanup);
 
