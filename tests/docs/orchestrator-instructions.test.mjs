@@ -1484,9 +1484,8 @@ test("a sentence that the headless prompt shares with the instructions is in the
   ).toEqual([]);
 });
 
-// Usefulness: verifies the instructions give the parent one worker turn for a required check that fails
-// on a known flaky test (#1303). The parent writes nothing to GitHub, so the read, the #1067 record, the
-// bounded wait, and the failed-job rerun belong to that turn, and the parent then waits again on the same head.
+// Usefulness: verifies the instructions send a flaky required-check failure to one worker turn (#1303),
+// because the parent writes nothing to GitHub, and then wait again on the same head.
 test("the instructions state the one-turn flaky-check procedure", async () => {
   const text = await readInstructions();
   expectRule(text, /one worker turn/i, /required check/i, /flaky/i);
@@ -1505,8 +1504,8 @@ test("the instructions state the one-turn flaky-check procedure", async () => {
   expectRule(text, /parent/i, /never/i, /rerun/i);
 });
 
-// Usefulness: verifies the headless prompt tells a wait-class or reviewer-class orchestrator to send a failing
-// flaky required check to one run_worker turn, because that orchestrator writes nothing to GitHub (#1303).
+// Usefulness: verifies the headless prompt sends a flaky required-check failure to one run_worker turn,
+// because that orchestrator writes nothing to GitHub (#1303).
 test("the headless prompt sends a flaky required-check failure to one worker turn", () => {
   for (const orchestratorKind of ["claude", "codex"]) {
     const prompt = initialPrompt({
