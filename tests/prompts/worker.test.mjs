@@ -323,3 +323,15 @@ test("worker turns push only with a named refspec and never a plain git push", (
     expect(prompt).toContain("`push.default=matching`");
   }
 });
+
+// Usefulness: verifies requirement "a worker keeps closing keywords out of commit messages" (issue
+// #1296): a commit message with `Closes #N` closes the issue at merge even after the PR body changes
+// to `Refs`. Every turn that can commit carries the rule.
+test("worker turns link issues only in the PR body and never with a closing keyword in a commit", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Link an issue only in the pull request body or the Development panel. Never put a closing keyword, such as `Closes`, `Fixes`, or `Resolves`, in a commit message.",
+    );
+  }
+});

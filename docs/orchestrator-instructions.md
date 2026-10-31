@@ -208,6 +208,9 @@ Apply these parent rules:
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the
   PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
+- When a PR resolves its issue only in part, read the commit messages of the PR branch before
+  finish. A closing keyword in one, such as `Closes #N`, closes the issue at merge, even after the
+  PR body says `Refs`. Dispatch a worker to remove it.
 - A worker envelope carries `workTree`, the runtime-owned `head` and `clean` state read after
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.
