@@ -1484,8 +1484,8 @@ test("a sentence that the headless prompt shares with the instructions is in the
   ).toEqual([]);
 });
 
-// Usefulness: verifies the instructions send a flaky required-check failure to one worker turn (#1303),
-// because the parent writes nothing to GitHub, and then wait again on the same head.
+// Usefulness: verifies the instructions send a flaky required-check failure to one worker turn (#1303).
+// The parent writes nothing to GitHub. It then waits again on the same head.
 test("the instructions state the one-turn flaky-check procedure", async () => {
   const text = await readInstructions();
   expectRule(text, /one worker turn/i, /required check/i, /flaky/i);
