@@ -16,6 +16,7 @@ import {
   endOwnedProcess,
   expectBoundKillsShim,
   pollUntil,
+  shimCallRecords,
   untrackedFilesGit,
   withGitHangingAfter,
   within,
@@ -568,6 +569,23 @@ test("the scripted gh gives no reply to a merged-argument call", async () => {
   expect((await scriptedGh([{ checks: [] }])(unfiltered, ".")).status).toBe(1);
 });
 
+// Usefulness: verifies each shim call leaves a record with its claimed number and pid, so a
+// failed run can say how many calls never reached the shim (issue #1258); no other test reads it.
+test.skipIf(process.platform === "win32")(
+  "withGitHangingAfter records the claimed number and pid of each call",
+  async () => {
+    await withGitHangingAfter(2, async ({ shimDir }) => {
+      for (let call = 0; call < 2; call += 1) {
+        await execa("git", ["--version"]);
+      }
+      const found = await shimCallRecords(shimDir);
+      expect(found.map((record) => record.number).sort((a, b) => a - b)).toEqual([0, 1]);
+      expect(found.every((record) => Number.isInteger(record.pid) && record.pid > 0)).toBe(true);
+    });
+  },
+  30_000,
+);
+
 // Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
 // calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
 // atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
@@ -589,8 +607,13 @@ test.skipIf(process.platform === "win32")(
         (names) => String(names.filter((name) => name.startsWith("call-")).length),
         (error) => `unreadable (${error.message})`,
       );
+      const records = await shimCallRecords(shimDir).then(
+        (found) => found.length,
+        (error) => `unreadable (${error.message})`,
+      );
+      const unrecorded = typeof records === "number" ? calls.length - records : records;
       const codes = calls.map((call) => call.exitCode ?? (call.timedOut ? "timeout" : "undefined"));
-      const message = `call-* directories: ${claimed}; exit codes: ${codes.join(",")}`;
+      const message = `call-* directories: ${claimed}; calls without a shim record: ${unrecorded}; exit codes: ${codes.join(",")}`;
       expect(
         calls.filter((call) => call.exitCode === 0),
         message,
