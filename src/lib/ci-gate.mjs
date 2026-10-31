@@ -360,11 +360,9 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
  * rule) fails closed.
  *
  * An unknown repository-rulesets read refuses the finish whatever the rest of the
- * union holds, because that reply may carry a required-status rule this caller
- * never saw, so a non-empty union from another source must not let the per-check
- * pass judge only the names it saw. The gate once treated a failed ruleset read as an
- * empty source and refused only on an unrecognized message. This rule is stricter
- * (issue #336 review).
+ * union holds. That reply can carry a required-status rule this caller
+ * never saw. A non-empty union from another source must not let the per-check
+ * pass judge only the names it saw (issue #336).
  *
  * An empty union of required checks refuses when the classic-protection source
  * settled nothing, so a source this caller cannot read fails closed and the reason
@@ -524,8 +522,7 @@ async function readCiPreamble({
   }
 }
 
-// Judges each required context on the commit GitHub evaluates. `strict` is
-// passed to `evaluatedState`.
+// Judges each required context on the commit GitHub evaluates.
 async function evaluateRequired(gh, slug, info, cwd, contexts, strict) {
   const { commit, runs, statuses } = await evaluatedState(gh, slug, info, cwd, strict);
   const findings = contexts.map((context) => ({
@@ -558,11 +555,9 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
     // (issue #336 review).
     //
     // A successful read that found no rule is not in this branch. It contributes no
-    // contexts, and the per-check pass runs on the other sources. Before the gate
-    // classified the read, it did the same for every unreadable ruleset reply. A
-    // classic-only repository whose required checks passed therefore still
-    // finishes. The read is still not a positive absence, so the empty-union
-    // refusal below names it.
+    // contexts, and the per-check pass runs on the other sources. A classic-only
+    // repository whose required checks passed therefore still finishes. The read
+    // is still not a positive absence, so the empty-union refusal below names it.
     refuseUnknownRuleset: () => fail(RULESETS_UNREADABLE),
   });
   if (preamble.stop) {
@@ -849,8 +844,8 @@ async function readStatus({
         }
         return null;
       },
-      // The same refusals the gate makes: a ruleset read that settled nothing may
-      // hide a required check, and an empty union is no status to report.
+      // The same refusal the gate makes: a ruleset read that settled nothing can
+      // hide a required check. `requiredResolutionRefusal` refuses an empty union.
       refuseUnknownRuleset: () =>
         unresolved(
           `unread: the repository rulesets could not be read for PR ${pr} on PR head ${head}`,

@@ -1,7 +1,6 @@
 // Install targets per harness (#139). `buildTargets` declares the files each harness
 // creates and the one settings entry it owns, resolved against the installed
-// package. `src/install/templates/` holds the entry point and guard files.
-// `claudeEntry` and `codexEntry` build the Claude and Codex settings entries. The
+// package. `src/install/templates/` holds the entry point and guard files. The
 // Antigravity entry comes from `templates/antigravity/hooks.json`.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

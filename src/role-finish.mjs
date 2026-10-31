@@ -155,9 +155,8 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     refusals.push(missingGate.reason);
   }
   if (refusals.length > 0) {
-    // The marker contradiction against a gate was its own error text before
-    // collect-then-report, and a run that declares no PR still returns that text
-    // on its own, because it has the same single refusal it always had (#302).
+    // A run that declares no PR and has only the marker refusal throws that
+    // refusal's own text, without the `Finish refused:` prefix (#302).
     if (refusals.length === 1 && markerRefused && declaredPr === null) {
       throw new RoleError(`${markerReason}.`);
     }
