@@ -152,27 +152,14 @@ export function failedTurnEvidence(err) {
  * errors: detected mutation, snapshot failure, or cancel.
  * A reviewer result also carries `reviewed`, the runtime-owned identity of the
  * work tree the reviewer saw, and `prChecks`, the required-check status the
- * runtime read for a declared PR (#320), and `testRun`, the result of the
- * operator's `--test-cmd` that the runtime ran before the turn (ADR 0017). A
- * handled error result keeps `testRun`, and a fatal error carries it as
- * `err.testRun`, so a turn that fails after the command ran loses no evidence.
- * `failedTestRun` reads that result from a fatal error. It falls back to a
- * `WeakMap` when the error cannot take the `testRun` property.
+ * runtime read for a declared PR (#320). The evidence fields of
+ * `TURN_EVIDENCE_FIELDS` join a result, and a fatal error carries them through
+ * `carryTurnEvidence` and `failedTurnEvidence`.
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
  * A reviewer turn gets one scratch folder, named in its prompt, that the runtime removes after the
  * post-turn snapshot on every outcome. A failed removal only warns (issue #920).
- * A reviewer result carries `inheritedTmpdirEntries`, the names that appeared directly in the inherited
- * temporary directory during the turn, only when some did. A fatal error carries the list as
- * `err.inheritedTmpdirEntries`, read through `failedInheritedTmpdirEntries`. The list is advisory:
- * the directory is shared with other processes, so the runtime cannot attribute an entry to the turn
- * and deletes none (issue #1024).
- * A reviewer result carries `packageStoreEntries` the same way, the names that appeared, changed, or
- * vanished in the pnpm package store during the turn, and a fatal error carries it as
- * `err.packageStoreEntries`, read through `failedPackageStoreEntries`. The list is advisory for the
- * same reason, and the read is bounded in time and size and never reads file content (issue #1045).
- * Each list is scanned once per turn, both lists together, and a cancel after that scan reuses them.
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
  * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement

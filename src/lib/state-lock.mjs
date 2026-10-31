@@ -189,56 +189,16 @@ function claimFileFor(rootLockFile, file, staleText) {
 // owner is dead, nobody else removes it, and nobody creates a file at a path
 // that exists. Every acquisition writes unique content (a nonce), so a file that
 // reads as the stale content under the claim is the file that was read as stale,
-// and removing it cannot delete a new owner's file (#363). Nothing is renamed, and no path is bare-removed unclaimed. A loser
-// finds a live claim and exits as busy; a file that reads differently or cannot
-// be read is kept, and the caller's retry reports it as busy.
-// A claim left by a crashed process is removed in two ways, both through this
-// claimed removal: a contender that meets its stale file, and the scan that each
-// lock acquisition runs (`pruneOrphanClaims`, #452). Both key the guard by the
-// claim's name and content, so exactly one process acts on a claim. A file counts
-// as dead only when `ownerAlive` reads its parsed owner as dead (its pid is dead, or
-// its pid is alive but now belongs to another process, a reused pid; a valid
-// `linux-proc` stamp of another PID namespace, or any valid `linux-proc` stamp while
-// the reader namespace cannot be read, keeps the owner alive instead), or when it is
-// unparseable and `ownerless` finds no live marker and an age past the grace window
-// (ADR 0020).
-// When each orphan is removed (ADR 0020), by the first lock acquisition that
-// finds it, or by a contender that meets its stale file:
-// - a parsed claim whose owner reads as dead (`ownerAlive`: a dead pid, or a reused
-//   pid): at once. A claim with a valid `linux-proc` stamp of another PID namespace,
-//   or with any valid `linux-proc` stamp while the reader cannot read its own PID
-//   namespace, stays even when its pid is dead here.
-// - an unparseable claim with no live marker: once it is older than
-//   STALE_LOCK_GRACE_MS, so a fresh one stays until it has aged.
-// - an unparseable claim with a live marker, a claim whose owner reads as alive (see
-//   `ownerAlive`), and a file that cannot be read: never, while that stays true.
-// known-limit: a lock or claim records a start-time stamp of the owner with its pid
-// (`processStartTime`), and a live pid whose current stamp is valid, of the same kind
-// (and Linux PID namespace), and differs reads as dead (a reused pid). Any other live
-// pid reads as alive, so a reused pid keeps the file until that process exits: no
-// recorded stamp (an older version, or an owner that could not read its own), a
-// platform with no source, an invalid stamp (`parseStamp`), a kind mismatch, and a
-// current read that failed, timed out (5 s), or did not parse. A valid `linux-proc`
-// stamp of another PID namespace, or any valid `linux-proc` stamp while the reader
-// cannot read its own PID namespace, reads as alive whatever its pid is here. The Linux stamp is
-// clock independent. The macOS and Windows stamps are fixed at process
-// creation and compared with a 2 s tolerance that covers only their one-second
-// resolution, so a reuse within it reads as the owner. A marker file name carries only
-// a pid, so `hasLiveWriter` stays pid-only. A chain of more than
-// two crashed claims fails closed (MAX_CLAIM_DEPTH). A lock written without a nonce by an
-// older version is matched by content alone, so an older-version owner with the
-// same pid and start time in the same millisecond would be taken for it.
+// and removing it cannot delete a new owner's file (#363). Nothing is renamed, and
+// no path is bare-removed unclaimed. A loser finds a live claim and exits as busy;
+// a file that reads differently or cannot be read is kept, and the caller's retry
+// reports it as busy. A dead claim is removed through this same claimed removal,
+// by a contender that meets its stale file or by `pruneOrphanClaims` (#452).
+// Owner liveness: `ownerAlive`. Older-version contenders: `withStateLock`.
 // known-limit: a writer of an older version that runs the exclusive-create
 // fallback leaves no marker, so its unwritten file is kept only while it is
 // younger than STALE_LOCK_GRACE_MS. A marker-less writer that stalls past the
 // window loses the file; upgrading every agent-loop process removes the case.
-// The `<pid>.<n>.tmp` marker of an older version is honored for liveness but
-// never removed (see pruneStaleLockTemps), so one that a crashed older version
-// left stays on disk.
-// Mixed versions: a contender that runs an older version removes a stale lock
-// with a bare rm, or takes an unwritten file over after its grace window, so it
-// can still remove a new live lock exactly as before this fix. The guarantee
-// holds only when every contender runs this version or later.
 async function removeStaleFile(file, staleText, { label, depth, rootLockFile }) {
   const claimFile = claimFileFor(rootLockFile, file, staleText);
   await acquireLock(claimFile, {

@@ -30,6 +30,13 @@ const UNKNOWN_ERROR = "unknown error";
 const READONLY_CONFIG =
   '{"permissions":[{"action":"subagent","resource":"*","effect":"deny"},{"action":"edit","resource":"*","effect":"deny"}]}';
 
+/**
+ * Runs one opencode turn and returns the response text. Logs the effective model, or a line that
+ * OpenCode selects its default when `state.model` is unset. A successful turn whose stream names
+ * one session, the requested one on a resume, starts a second process, `opencode session export <id>`,
+ * to read the model that ran (`exportedModels`). Throws for a missing session id, an error event,
+ * or no response text, and with the cancel error when `options.signal` aborts.
+ */
 export async function runOpenCode(state, prompt, options = {}) {
   const { readOnly, timeout, signal, role, env } = options;
   const args = ["run", "--standalone", "--format", "json"];

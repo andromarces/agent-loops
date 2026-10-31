@@ -197,7 +197,6 @@ export async function runClaude(state, prompt, options = {}) {
     throw new Error("Claude Code did not return a session_id.");
   }
 
-  // A resumed id must come back unchanged, as in the Codex, Copilot, and opencode adapters.
   assertResumedSession("Claude Code", "session", requestedSessionId, sessionId);
 
   if (preassignedId && sessionId !== preassignedId) {

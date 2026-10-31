@@ -140,6 +140,14 @@ export function execFailureCause(command, failure, timeout) {
 }
 
 /**
+ * Runs `command` and returns `{ stdout, stderr, durationMs }` after an exit with code 0. Throws
+ * `ExecError` for a non-zero exit, a timeout, a cancel, a signal kill, a spawn failure, or output
+ * past `maxBuffer`. An overflow leaves no output on the error.
+ * `options.role` labels the log lines. The roles `worker` and `reviewer` also rebuild the child
+ * environment: `env` over the process environment, the run marker `SPAWNED_RUN_ENV`, the root pins
+ * from `rootPins`, the npm log settings from `withNpmLogSettings`, and `extendEnv: false`. A
+ * reviewer also gets the pnpm deps check set to `warn`. Any other role keeps the inherited
+ * environment, with `env` over it.
  * `options.onSpawn(pid)` is called once, right after the child starts and only when it has a pid.
  * It runs beside the child and is awaited before `exec` returns or throws. A rejection warns and
  * never changes the outcome of the child.

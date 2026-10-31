@@ -508,7 +508,7 @@ async function absenceOf(
  * which holds only states read for `head`, and it survives the bound. A required context that
  * cannot be resolved (a source that cannot be read or parsed, or a failed read of the names) is
  * an error, because no pass can follow it. A check that is required but that no read of the PR
- * lists yet is absent, as before. With `head`, a poll whose PR head is another commit reads no
+ * lists yet is absent. With `head`, a poll whose PR head is another commit reads no
  * checks and the wait continues. The
  * PR head is the one read at the start of the poll, so the PR can have moved on by the time
  * the wait returns. `head` is null when no read completed, such as a wait that reached the
