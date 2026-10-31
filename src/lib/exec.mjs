@@ -1,3 +1,4 @@
+import { Socket } from "node:net";
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { firstErrorLine, readProp, readableErrorText } from "./error-message.mjs";
@@ -79,6 +80,107 @@ function withPnpmDepsCheckWarn(env) {
   );
   out.pnpm_config_verify_deps_before_run = "warn";
   return out;
+}
+
+// Idle bound on the pipes of an exited child: no byte read for this long, and no read held back by
+// a slow consumer. A descendant that inherited a pipe and outlived the child keeps the pipe open.
+// The exit event of the child is then the last event that execa sees (issue #1302).
+const STDIO_DRAIN_GRACE_MS = 3000;
+// Bound on the wait for a child to exit after the timeout or the cancel killed it. It exceeds the
+// force-kill delays of `exec` (5 s) and `execBounded` (1 s). A child that no kill ends, for example
+// one stuck in a kernel I/O request, never emits `exit` (issue #1302).
+const KILL_GRACE_MS = 10_000;
+
+/**
+ * Waits for `subprocess` like `await subprocess`, with two added bounds that never change a run
+ * that ends on its own.
+ * - `STDIO_DRAIN_GRACE_MS` after the child exits, and after each later read, the call checks the
+ *   pipes of the child. An open, idle pipe that no slow consumer holds back is held by another
+ *   process. The call then sends SIGKILL to the process group it owns (POSIX) and ends the read
+ *   of that pipe. The descendant no longer holds the call. Output that the child wrote stays in
+ *   the result. A transform or reader downstream of the pipe still receives every byte read.
+ * - `KILL_GRACE_MS` after `timeoutMs` passes or `signal` aborts, a child that did not exit gives
+ *   its result up. The call settles as timed out or canceled with empty output. The parent ends
+ *   its own pipe ends.
+ *
+ * A descendant that left the process group survives both bounds. A Windows descendant of an
+ * exited child survives them too. Neither Node nor execa can reach them (ADR 0017).
+ */
+function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
+  const child = subprocess.nodeChildProcess ?? subprocess;
+  const timers = new Set();
+  let stopWaiting;
+  const gaveUp = new Promise((resolve) => {
+    stopWaiting = resolve;
+  });
+  const after = (ms, action) => timers.add(setTimeout(action, ms));
+  // The OS pipes of the child. With a transform, the stream is the output of the transform. Execa
+  // ends that stream with its input, so the bound leaves it alone.
+  const pipes = [child.stdout, child.stderr].filter((stream) => stream instanceof Socket);
+  let exited = false;
+  let drainTimer;
+  const armDrain = () => {
+    clearTimeout(drainTimer);
+    drainTimer = setTimeout(onDrainIdle, STDIO_DRAIN_GRACE_MS);
+  };
+  const onRead = () => exited && armDrain();
+  const endPipes = () => {
+    for (const stream of pipes) stream.push(null);
+  };
+  const giveUp = (reason) => {
+    logWarn(`${label}: the child did not exit ${KILL_GRACE_MS}ms after ${reason}; not waiting`);
+    endPipes();
+    for (const stream of pipes) stream.destroy();
+    child.unref?.();
+    stopWaiting({
+      exitCode: undefined,
+      timedOut: reason === "the timeout",
+      isCanceled: reason === "the cancel",
+      isTerminated: false,
+      isMaxBuffer: false,
+      stdout: "",
+      stderr: "",
+    });
+  };
+  // A pipe that ended is not held. One that is paused or holds unread bytes waits for the consumer
+  // of this process, which ends on its own.
+  function onDrainIdle() {
+    const held = pipes.filter((stream) => !stream.readableEnded && !stream.destroyed);
+    if (held.length === 0) return;
+    if (held.some((stream) => stream.isPaused() || stream.readableLength > 0)) return armDrain();
+    logWarn(
+      `${label}: a process holds the output open ${STDIO_DRAIN_GRACE_MS}ms after the child exit; ending the process group and the read`,
+    );
+    // Reaches the process group on POSIX. Nothing reaches a descendant of an exited child on Windows.
+    subprocess.kill?.("SIGKILL");
+    endPipes();
+  }
+  const onExit = () => {
+    exited = true;
+    armDrain();
+  };
+  const onAbort = () => after(KILL_GRACE_MS, () => giveUp("the cancel"));
+
+  for (const stream of pipes) stream.on("data", onRead);
+  if (child.exitCode != null || child.signalCode != null) onExit();
+  else child.once?.("exit", onExit);
+  if (timeoutMs > 0) after(timeoutMs + KILL_GRACE_MS, () => giveUp("the timeout"));
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+
+  // Read now: `execBounded` replaces `then` on the subprocess with this result.
+  // A spawn double in a test can return a plain result, which `await` passes through.
+  const finished =
+    typeof subprocess.then === "function"
+      ? new Promise((resolve, reject) => subprocess.then(resolve, reject))
+      : Promise.resolve(subprocess);
+  return Promise.race([finished, gaveUp]).finally(() => {
+    timers.forEach(clearTimeout);
+    clearTimeout(drainTimer);
+    for (const stream of pipes) stream.off("data", onRead);
+    child.off?.("exit", onExit);
+    signal?.removeEventListener("abort", onAbort);
+  });
 }
 
 export class ExecError extends Error {
@@ -209,7 +311,11 @@ export async function exec(command, args = [], options = {}) {
             logWarn(`${label}: the spawn hook failed: ${firstErrorLine(readableErrorText(err))}`),
           )
       : undefined;
-  const result = await subprocess;
+  const result = await settleWithin(subprocess, {
+    timeoutMs: execaOptions.timeout,
+    signal,
+    label,
+  });
   await hook;
 
   const timedOut = Boolean(result.timedOut);
@@ -283,5 +389,16 @@ export function execBounded(
   if (signal) {
     options.cancelSignal = signal;
   }
-  return killTreeOnExit(execa(command, args, options));
+  const subprocess = killTreeOnExit(execa(command, args, options));
+  if (typeof subprocess?.then !== "function") return subprocess;
+  // The bounds apply to `await` and to `.then`, while `kill`, `pid`, and the streams stay execa's.
+  const settled = settleWithin(subprocess, {
+    timeoutMs,
+    signal,
+    label: `${command} (bounded)`,
+  });
+  for (const method of ["then", "catch", "finally"]) {
+    subprocess[method] = (...callbacks) => settled[method](...callbacks);
+  }
+  return subprocess;
 }
