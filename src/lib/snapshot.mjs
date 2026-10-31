@@ -372,7 +372,7 @@ export async function withMutationCheck(
   cwd,
   role,
   fn,
-  { signal, forceSignal = forceCancelSignal(signal), rootOf } = {},
+  { signal, forceSignal = forceCancelSignal(signal), rootOf = cachedWorkTreeRoot(cwd) } = {},
 ) {
   const before = await snapshot(cwd, { signal, rootOf });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
