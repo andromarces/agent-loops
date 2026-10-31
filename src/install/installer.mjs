@@ -319,12 +319,12 @@ async function planHarness(harness, previous, { home, packageRoot, copilotHome }
   };
   for (const file of targets.files) {
     const prior = previous?.files?.find((record) => record.path === file.path) ?? null;
-    entry.files.push({ path: file.path, plan: await planFileWrite(file, prior) });
+    entry.files.push({ path: file.path, prior, plan: await planFileWrite(file, prior) });
   }
   for (const target of targets.settings) {
     const prior = previous?.settings?.find((record) => record.path === target.path) ?? null;
     const plan = await planSettingsWrite(target, prior);
-    entry.settings.push({ path: target.path, plan });
+    entry.settings.push({ path: target.path, prior, plan });
   }
 
   // No harness installs an entry point without its guard. When a settings
@@ -334,19 +334,17 @@ async function planHarness(harness, previous, { home, packageRoot, copilotHome }
     ({ plan }) => plan.action === "skip" || plan.action === "refuse",
   );
   if (guardBlocked) {
-    entry.files = entry.files.map(({ path }) => {
-      const prior = previous?.files?.find((record) => record.path === path) ?? null;
-      return {
+    entry.files = entry.files.map(({ path, prior }) => ({
+      path,
+      prior,
+      plan: {
+        kind: "file",
+        action: "skip",
         path,
-        plan: {
-          kind: "file",
-          action: "skip",
-          path,
-          detail: "guard settings were not installed; entry point left unchanged",
-          record: prior ?? undefined,
-        },
-      };
-    });
+        detail: "guard settings were not installed; entry point left unchanged",
+        record: prior ?? undefined,
+      },
+    }));
   }
   return entry;
 }
@@ -422,19 +420,14 @@ async function runInstall({
       }
       // Guard settings first: an entry point never lands without its guard,
       // even when a later write fails.
-      for (const { plan } of entry.settings) {
-        await applyWrite(plan, { dryRun, dirs: entry.dirs, write });
-        if (plan.record) {
-          record.settings.push(plan.record);
+      for (const kind of ["settings", "files"]) {
+        for (const { plan } of entry[kind]) {
+          await applyWrite(plan, { dryRun, dirs: entry.dirs, write });
+          if (plan.record) {
+            record[kind].push(plan.record);
+          }
+          reports.push(report(entry.harness, plan));
         }
-        reports.push(report(entry.harness, plan));
-      }
-      for (const { plan } of entry.files) {
-        await applyWrite(plan, { dryRun, dirs: entry.dirs, write });
-        if (plan.record) {
-          record.files.push(plan.record);
-        }
-        reports.push(report(entry.harness, plan));
       }
       record.dirs = [...entry.dirs];
       active = null;

@@ -6,6 +6,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { ANTIGRAVITY_GUARDED_TOOLS } from "../hook/antigravity-guarded-tools.mjs";
 import { HARNESS_META } from "../lib/harnesses.mjs";
 
 function forwardSlashes(path) {
@@ -221,6 +222,11 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       ),
     });
     const group = JSON.parse(await template(templateDir, "antigravity", "hooks.json"));
+    const [rule] = group["agent-loop-parent-guard"].PreToolUse;
+    group["agent-loop-parent-guard"].PreToolUse[0] = {
+      matcher: [...ANTIGRAVITY_GUARDED_TOOLS].join("|"),
+      ...rule,
+    };
     settings.push({
       path: join(home, ".gemini", "config", "hooks.json"),
       locator: { kind: "key", key: "agent-loop-parent-guard" },

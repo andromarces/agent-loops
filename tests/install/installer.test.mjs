@@ -3,9 +3,9 @@ import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
-import { deepEqual } from "../../src/install/settings.mjs";
 import { sha256 } from "../../src/lib/hash.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
@@ -126,7 +126,9 @@ test("upgrade replaces the recorded entry and uninstall restores the original", 
     hooks: [{ type: "command", command: 'node "/old/location/parent-guard.mjs"', timeout: 10 }],
   };
   const settings = JSON.parse(await readText(settingsPath));
-  const index = settings.hooks.PreToolUse.findIndex((entry) => deepEqual(entry, record.entry));
+  const index = settings.hooks.PreToolUse.findIndex((entry) =>
+    isDeepStrictEqual(entry, record.entry),
+  );
   settings.hooks.PreToolUse[index] = oldEntry;
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   record.entry = oldEntry;
@@ -137,7 +139,7 @@ test("upgrade replaces the recorded entry and uninstall restores the original", 
   const upgraded = JSON.parse(await readText(settingsPath));
   const matching = upgraded.hooks.PreToolUse.filter((entry) => entry.matcher === newEntry.matcher);
   expect(matching).toHaveLength(1);
-  expect(deepEqual(matching[0], newEntry)).toBe(true);
+  expect(isDeepStrictEqual(matching[0], newEntry)).toBe(true);
 
   await uninstall({ home });
   expect(await readText(settingsPath)).toBe(original);

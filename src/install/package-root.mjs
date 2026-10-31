@@ -361,8 +361,14 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
       ? EPHEMERAL
       : { kind: "unreadable", folder: failures.unreadable };
   };
-  const bunx = tempRoots.bunx.map((root) => spellings(root, platform, failures));
-  const yarn = tempRoots.yarn.map((root) => spellings(root, platform, failures));
+  // bunx roots are the yarn roots plus extras (`/tmp`), so each yarn root is resolved once.
+  const spellingsOf = new Map();
+  const spellingsOfRoot = (root) => {
+    if (!spellingsOf.has(root)) spellingsOf.set(root, spellings(root, platform, failures));
+    return spellingsOf.get(root);
+  };
+  const bunx = tempRoots.bunx.map(spellingsOfRoot);
+  const yarn = tempRoots.yarn.map(spellingsOfRoot);
   if (bunx.includes(null) || yarn.includes(null)) return unresolved();
   const rootSegments = [...bunx.flat(), ...yarn.flat()].map((root) =>
     splitPath(root.toLowerCase()),
