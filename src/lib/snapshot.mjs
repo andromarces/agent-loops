@@ -193,6 +193,18 @@ export async function workTreeRoot(cwd, bound) {
   return rootResult.stdout.trim();
 }
 
+/**
+ * Returns a resolver of the work tree root of `cwd` that reads it once. Only a root that was read is
+ * kept, so a failed or canceled read is tried again by the next call. Calls that overlap each read
+ * their own. A caller that takes it holds one root for one turn, so a work tree that vanishes later
+ * fails at the next `git` read instead of at the root read.
+ * @returns {(bound?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<string>}
+ */
+export function cachedWorkTreeRoot(cwd) {
+  let root = null;
+  return async (bound) => (root ??= await workTreeRoot(cwd, bound));
+}
+
 // Files that one snapshot hashes at a time, so a large work tree never opens every file at once.
 const HASH_BATCH_SIZE = 32;
 
@@ -237,10 +249,11 @@ const hashEntries = (root, entries) =>
  * (default 120 s), and ends on `signal`. A timeout or a cancel throws a `SnapshotError`, and a cancel
  * sets its `isCanceled`. The status, index, and HEAD reads run together with the file hashes. The
  * first failure in the order status, hashes, index, HEAD throws, and the other reads end first.
+ * `bound.rootOf(bound)` replaces the root read, so a caller that holds one root shares it.
  */
-export async function snapshot(cwd, bound) {
+export async function snapshot(cwd, { rootOf, ...bound } = {}) {
   // git status/ls-files emit repository-root-relative paths, so run them at the root.
-  const root = await workTreeRoot(cwd, bound);
+  const root = await (rootOf ?? ((b) => workTreeRoot(cwd, b)))(bound);
 
   const group = new AbortController();
   const signal = bound?.signal ? AbortSignal.any([bound.signal, group.signal]) : group.signal;
@@ -359,9 +372,9 @@ export async function withMutationCheck(
   cwd,
   role,
   fn,
-  { signal, forceSignal = forceCancelSignal(signal) } = {},
+  { signal, forceSignal = forceCancelSignal(signal), rootOf } = {},
 ) {
-  const before = await snapshot(cwd, { signal });
+  const before = await snapshot(cwd, { signal, rootOf });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
   let actionError;
@@ -377,7 +390,7 @@ export async function withMutationCheck(
   let after;
   const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    after = await snapshot(cwd, { signal: forceSignal });
+    after = await snapshot(cwd, { signal: forceSignal, rootOf });
   } catch (snapErr) {
     if (snapErr?.isCanceled) {
       throw new SnapshotError(

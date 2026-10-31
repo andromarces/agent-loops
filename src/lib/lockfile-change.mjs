@@ -33,10 +33,11 @@ const UNREADABLE = "unreadable";
  * signal only between requests, so a stalled `lstat`, `readlink`, or content read stays pending after
  * the bound, can keep its file handle, and can keep the process alive. No test shows bounded handle
  * release, because a stalled request cannot be produced portably.
- * @param {{ boundMs?: number }} [options]
+ * `rootOf(bound)` replaces the root read, so a turn that holds one root shares it.
+ * @param {{ boundMs?: number, rootOf?: (bound: object) => Promise<string> }} [options]
  * @returns {Promise<Record<string, string | null>>}
  */
-export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
+export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS, rootOf } = {}) {
   const bound = new AbortController();
   const timer = setTimeout(
     () => bound.abort(new Error(`lockfile read took over ${boundMs} ms`)),
@@ -60,7 +61,7 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
   };
   try {
     const root = await Promise.race([
-      workTreeRoot(cwd, { signal: bound.signal, timeoutMs: boundMs }),
+      (rootOf ?? ((b) => workTreeRoot(cwd, b)))({ signal: bound.signal, timeoutMs: boundMs }),
       stopped,
     ]);
     const hashes = await Promise.all(LOCKFILES.map((name) => hash(root, name)));

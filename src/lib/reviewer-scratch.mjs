@@ -15,9 +15,9 @@ const SCRATCH_PARENT = join(".agent-loop", "rev");
  * rule in the target repository and holds in a linked work tree, where `.git` is a file. Git lists
  * no directory whose files are all ignored, so the mutation check sees none of it.
  */
-export async function createReviewerScratch(cwd, { signal } = {}) {
+export async function createReviewerScratch(cwd, { signal, rootOf } = {}) {
   try {
-    const root = await workTreeRoot(cwd, { signal });
+    const root = await (rootOf ?? ((b) => workTreeRoot(cwd, b)))({ signal });
     const dir = join(root, SCRATCH_PARENT, randomBytes(4).toString("hex"));
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, ".gitignore"), "*\n");
