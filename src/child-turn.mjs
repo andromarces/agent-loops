@@ -28,7 +28,7 @@ import {
   failedSharedGitChanged,
   readSharedGit,
 } from "./lib/shared-git.mjs";
-import { cachedWorkTreeRoot, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
+import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import {
   carryTestRun,
   failedTestRun,
@@ -367,10 +367,6 @@ export async function runChild(options) {
     }
   };
 
-  // A reviewer turn reads the work tree root once for its scratch folder and its before snapshot,
-  // which no turn separates (issue #1268). Every read after the turn resolves its own root.
-  const rootBefore = cachedWorkTreeRoot(cwd);
-
   // The worker prompt needs no runtime read, so its builder is fixed here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
   // snapshot gives the local head the status read compares against (#320).
@@ -521,9 +517,7 @@ export async function runChild(options) {
     // snapshot, whatever the turn returned. It is ignored, so neither snapshot lists it, and the
     // removal can neither read as a mutation nor hide one (issue #920).
     const scratchDir =
-      roleName === "reviewer"
-        ? await createReviewerScratch(cwd, { signal, rootOf: rootBefore })
-        : null;
+      roleName === "reviewer" ? await createReviewerScratch(cwd, { signal }) : null;
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     // The parent installs once before the first dispatch, so a worker turn that changes a lockfile
@@ -552,7 +546,7 @@ export async function runChild(options) {
                 reviewerPrompt(prompt, prChecks, testRun, sandbox, turnTask, scratchDir),
               );
             },
-            { signal, rootOf: rootBefore },
+            { signal },
           )
         : await runFn(buildWorkerPrompt);
     } finally {

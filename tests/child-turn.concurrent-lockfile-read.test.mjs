@@ -58,17 +58,6 @@ const runTurn = (roleName, act = async () => {}) =>
     cwd: repo,
   });
 
-const rootReads = () => reads.events.filter((event) => event === "root read").length;
-
-// Usefulness: verifies requirement "a reviewer turn resolves the work tree root once before and once
-// after the turn" (issue #1268): the scratch folder and the before snapshot share one read, and the
-// after snapshot reads again.
-test("a reviewer turn resolves the work tree root before and after the turn", async () => {
-  const result = await runTurn("reviewer");
-  expect(result.status).toBe("ok");
-  expect(rootReads()).toBe(2);
-});
-
 // Usefulness: verifies requirement "the pre-turn shared Git and lockfile reads run together"
 // (issue #1268), since neither depends on the other; the result of the turn is unchanged.
 test("a worker turn starts the lockfile read before the shared Git read ends", async () => {
@@ -80,8 +69,8 @@ test("a worker turn starts the lockfile read before the shared Git read ends", a
 });
 
 // Usefulness: verifies requirement "a work tree that vanishes during a turn still fails the turn"
-// (issue #1268): with the root resolved once, the failure moves to the later `git` read and must
-// still end the reviewer turn with a snapshot error.
+// (issue #1268): the reads that follow the turn must still end the reviewer turn with a snapshot
+// error.
 test("a reviewer turn whose work tree vanishes during the turn fails with a snapshot error", async () => {
   const error = await runTurn("reviewer", async () => {
     await rm(repo, { recursive: true, force: true });

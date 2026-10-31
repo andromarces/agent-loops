@@ -193,20 +193,6 @@ export async function workTreeRoot(cwd, bound) {
   return rootResult.stdout.trim();
 }
 
-/**
- * Returns a resolver of the work tree root of `cwd` that asks `git` on its first call and returns that
- * root on every later call. The root is not checked again, so a caller must use one resolver only for
- * reads that no snapshot boundary separates: a `cwd` that is removed, or an ancestor of it that is
- * replaced by a link, between the first read and a later one is not seen. A read after a turn or after
- * a snapshot must resolve its own root. Only a root that was read is kept, so a failed or canceled
- * read is tried again. Calls that overlap each read their own.
- * @returns {(bound?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<string>}
- */
-export function cachedWorkTreeRoot(cwd) {
-  let root = null;
-  return async (bound) => (root ??= await workTreeRoot(cwd, bound));
-}
-
 // Files that one snapshot hashes at a time, so a large work tree never opens every file at once.
 const HASH_BATCH_SIZE = 32;
 
@@ -251,11 +237,10 @@ const hashEntries = (root, entries) =>
  * (default 120 s), and ends on `signal`. A timeout or a cancel throws a `SnapshotError`, and a cancel
  * sets its `isCanceled`. The status, index, and HEAD reads run together with the file hashes. The
  * first failure in the order status, hashes, index, HEAD throws, and the other reads end first.
- * `bound.rootOf(bound)` replaces the root read, so a caller that holds one root shares it.
  */
-export async function snapshot(cwd, { rootOf, ...bound } = {}) {
+export async function snapshot(cwd, bound) {
   // git status/ls-files emit repository-root-relative paths, so run them at the root.
-  const root = await (rootOf ?? ((b) => workTreeRoot(cwd, b)))(bound);
+  const root = await workTreeRoot(cwd, bound);
 
   const group = new AbortController();
   const signal = bound?.signal ? AbortSignal.any([bound.signal, group.signal]) : group.signal;
@@ -363,22 +348,20 @@ export function diffSnapshots(before, after) {
  * ignores it, so a canceled turn still reports the paths it changed. The after snapshot ends on
  * `forceSignal` instead (default: the second-SIGINT signal of `signal`). It then throws a canceled
  * `SnapshotError` that says the evidence was not captured, and never reports the tree as unchanged.
- * `rootOf` serves the before snapshot only. The after snapshot always reads the root again, so a
- * `cwd` that left its work tree during the turn is refused.
  * @template T
  * @param {string} cwd
  * @param {string} role
  * @param {(before: Awaited<ReturnType<typeof snapshot>>) => Promise<T>} fn
- * @param {{ signal?: AbortSignal, forceSignal?: AbortSignal, rootOf?: (bound: object) => Promise<string> }} [options]
+ * @param {{ signal?: AbortSignal, forceSignal?: AbortSignal }} [options]
  * @returns {Promise<T>}
  */
 export async function withMutationCheck(
   cwd,
   role,
   fn,
-  { signal, forceSignal = forceCancelSignal(signal), rootOf } = {},
+  { signal, forceSignal = forceCancelSignal(signal) } = {},
 ) {
-  const before = await snapshot(cwd, { signal, rootOf });
+  const before = await snapshot(cwd, { signal });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
   let actionError;
