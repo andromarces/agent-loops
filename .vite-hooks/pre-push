@@ -9,6 +9,9 @@ pnpm exec vp fmt --check || exit 1
 
 zero='0000000000000000000000000000000000000000'
 
+# The JS/TS globs, set once as the positional parameters.
+set -- '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx'
+
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   # Branch deletion carries no content to lint.
   if [ "$local_sha" = "$zero" ]; then
@@ -22,24 +25,16 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     base="$remote_sha"
   fi
 
-  # NUL streams never touch a variable (command substitution cannot hold
-  # null bytes). The newline listing only tests for emptiness, so the NUL
-  # stream below is guaranteed non-empty and plain xargs -0 suffices.
-  # (xargs -0 -r would work too: BSD xargs accepts -r as a GNU-compat
-  # no-op and natively skips empty input.)
-  if [ -n "$base" ]; then
-    if [ -n "$(git diff --name-only --diff-filter=ACMR "$base" "$local_sha" -- \
-      '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx')" ]; then
-      git diff -z --name-only --diff-filter=ACMR "$base" "$local_sha" -- \
-        '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx' \
-        | xargs -0 pnpm exec vp lint || exit 1
+  # A NUL stream cannot sit in a variable, so xargs -0 reads it from the pipe.
+  # GNU xargs runs the command once on empty input and BSD xargs does not, so
+  # the inner shell skips the lint when it gets no file. xargs -r is not used,
+  # because a minimum macOS version that supports it is not established.
+  # The inner "$@" is the file list of xargs, not the globs above.
+  {
+    if [ -n "$base" ]; then
+      git diff -z --name-only --diff-filter=ACMR "$base" "$local_sha" -- "$@"
+    else
+      git ls-files -z -- "$@"
     fi
-  else
-    if [ -n "$(git ls-files -- \
-      '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx')" ]; then
-      git ls-files -z -- \
-        '*.js' '*.mjs' '*.cjs' '*.ts' '*.mts' '*.cts' '*.jsx' '*.tsx' \
-        | xargs -0 pnpm exec vp lint || exit 1
-    fi
-  fi
+  } | xargs -0 sh -c '[ "$#" -eq 0 ] || exec pnpm exec vp lint "$@"' sh || exit 1
 done

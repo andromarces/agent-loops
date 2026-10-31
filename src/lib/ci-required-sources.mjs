@@ -490,7 +490,7 @@ function addContext(contexts, name, appId = null) {
 // branch that requires one. Every page is fetched by page number, never by a reply-supplied `Link`
 // URL, and a body the gate cannot account for every page of is unknown or an error (issue #336
 // review, #1033).
-export function readRulesets(gh, slug, base, cwd) {
+function readRulesets(gh, slug, base, cwd) {
   return readRequiredSource(pagedRead(gh), [`repos/${slug}/rules/branches/${base}`], cwd, {
     absentOnError: () => false,
     classify: classifyRulesets,

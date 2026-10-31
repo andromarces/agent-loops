@@ -84,13 +84,7 @@ export function ghApiFailure(endpoint, { status, stdout, stderr, transient, incl
 export async function ghApi(gh, args, cwd) {
   const { status, stdout, stderr, transient, include } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    throw ghApiFailure(args[0], {
-      status,
-      stdout,
-      stderr,
-      transient,
-      include: include || args.includes("--include"),
-    });
+    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include });
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
@@ -106,7 +100,7 @@ const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
  * `HTTP <status>: <message> (<url>)` and the status opens the text, so only that opening counts: a
  * status in later text or inside a 4xx message never makes a retry (#1121).
  */
-export function isServerErrorText(stderr) {
+function isServerErrorText(stderr) {
   const status = /^HTTP (\d{3})\b/.exec(stderr.trimStart());
   return status !== null && RETRYABLE_STATUSES.has(Number(status[1]));
 }
@@ -251,11 +245,6 @@ function foreignTarget(targets, hosts) {
     }
   }
   return null;
-}
-
-/** Whether `body` is exactly one JSON value, an empty body not included. */
-function isJsonBody(body) {
-  return body.trim() !== "" && isEmptyOrJson(body);
 }
 
 /** Whether `body` is empty or exactly one JSON value. */
@@ -429,7 +418,8 @@ export async function readOne(read, endpoint, cwd) {
       reply?.status === 404 &&
       end.stderr.trim() === "gh: Not Found (HTTP 404)" &&
       targets.length === 0 &&
-      isJsonBody(reply.body);
+      reply.body.trim() !== "" &&
+      isEmptyOrJson(reply.body);
     return { ...end, ...(exact ? { notFound: true } : {}) };
   }
   if (targets.length > 0) {

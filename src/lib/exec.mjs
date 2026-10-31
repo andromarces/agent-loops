@@ -73,7 +73,7 @@ const PNPM_DEPS_CHECK_NAME = /^pnpm_config_verify_deps_before_run$/i;
  * a `verifyDepsBeforeRun` workspace setting. An inherited value of any case is dropped, and `warn`
  * wins over a user value.
  */
-export function withPnpmDepsCheckWarn(env) {
+function withPnpmDepsCheckWarn(env) {
   const out = Object.fromEntries(
     Object.entries(env).filter(([name]) => !PNPM_DEPS_CHECK_NAME.test(name)),
   );
