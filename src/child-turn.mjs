@@ -115,12 +115,11 @@ export async function runProbeTurn({
 }
 
 // The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
-// and the fatal-path events. The consumers of this list pick up a new field with no change. The field
-// still needs these edits:
+// and the fatal-path events. The consumers of `TURN_EVIDENCE` pick up a new field with no change. The
+// field still needs these edits:
 // - The producer in `runChild` sets its value, in the ok result and in the error result.
 // - The `TurnEvidence` typedef below names it.
 // - A field that must survive a fatal error also joins `carryTurnEvidence` and `failedTurnEvidence`.
-//   `TURN_EVIDENCE_EVENTS` also names it.
 // - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
 //   (issue #984).
 // - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
@@ -132,24 +131,23 @@ export async function runProbeTurn({
 // - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the
 //   comparison with the Checks line. The state file keeps it beside the response in `lastResult`,
 //   and the turn history keeps its fixed shape.
-const TURN_EVIDENCE_FIELDS = [
-  "sharedGitChanged",
-  "lockfileChanged",
-  "inheritedTmpdirEntries",
-  "packageStoreEntries",
-  "testRun",
-];
-
-/**
- * The event that the fatal path of `runLoop` emits for each evidence field, in emit order, with the
- * event property that carries the value.
- */
-export const TURN_EVIDENCE_EVENTS = [
-  { field: "testRun", type: "test-run", key: "testRun" },
+// Each entry also names the type and the value property of the fatal-path event of its field.
+const TURN_EVIDENCE = [
   { field: "sharedGitChanged", type: "shared-git", key: "items" },
   { field: "lockfileChanged", type: "lockfile", key: "paths" },
   { field: "inheritedTmpdirEntries", type: "inherited-tmpdir", key: "entries" },
   { field: "packageStoreEntries", type: "package-store", key: "entries" },
+  { field: "testRun", type: "test-run", key: "testRun", emitFirst: true },
+];
+const TURN_EVIDENCE_FIELDS = TURN_EVIDENCE.map(({ field }) => field);
+
+/**
+ * The event that the fatal path of `runLoop` emits for each evidence field, with the event
+ * property that carries the value. The `testRun` event comes first, then the others in field order.
+ */
+export const TURN_EVIDENCE_EVENTS = [
+  ...TURN_EVIDENCE.filter((entry) => entry.emitFirst),
+  ...TURN_EVIDENCE.filter((entry) => !entry.emitFirst),
 ];
 
 /** Picks the evidence fields of `source` that carry a value. A falsy field and an empty list are dropped. */

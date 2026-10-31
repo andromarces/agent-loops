@@ -29,15 +29,16 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
   if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
-  const message = `the shared Git read took over ${deadlineMs} ms`;
-  return withTimeBound(deadlineMs, message, async ({ signal: deadline }) => {
+  return withTimeBound(deadlineMs, undefined, async ({ signal: deadline }) => {
     try {
       return await readWithin(cwd, {
         ...bound,
         signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
       });
     } catch (err) {
-      if (deadline.aborted) throw new SnapshotError(message);
+      if (deadline.aborted) {
+        throw new SnapshotError(`the shared Git read took over ${deadlineMs} ms`);
+      }
       throw err;
     }
   });
