@@ -197,10 +197,9 @@ export async function workTreeRoot(cwd, bound) {
  * Returns a resolver of the work tree root of `cwd` that asks `git` on its first call and returns that
  * root on every later call. The root is not checked again, so a caller must use one resolver only for
  * reads that no snapshot boundary separates: a `cwd` that is removed, or an ancestor of it that is
- * replaced by a link, between the first read and a later one is not seen. Reads after a turn take a
- * new resolver, so each snapshot of a mutation check and each post-turn read still sees the work tree
- * that `cwd` resolves to then. Only a root that was read is kept, so a failed or canceled read is
- * tried again. Calls that overlap each read their own.
+ * replaced by a link, between the first read and a later one is not seen. A read after a turn or after
+ * a snapshot must resolve its own root. Only a root that was read is kept, so a failed or canceled
+ * read is tried again. Calls that overlap each read their own.
  * @returns {(bound?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<string>}
  */
 export function cachedWorkTreeRoot(cwd) {

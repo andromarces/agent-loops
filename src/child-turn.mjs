@@ -367,11 +367,9 @@ export async function runChild(options) {
     }
   };
 
-  // One root read serves the reads before the turn, and one serves the reads after it (issue
-  // #1268). No root crosses the turn, so a `cwd` that left its work tree during the turn is refused
-  // by the post-turn reads, as before.
+  // A reviewer turn reads the work tree root once for its scratch folder and its before snapshot,
+  // which no turn separates (issue #1268). Every read after the turn resolves its own root.
   const rootBefore = cachedWorkTreeRoot(cwd);
-  const rootAfter = cachedWorkTreeRoot(cwd);
 
   // The worker prompt needs no runtime read, so its builder is fixed here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
@@ -412,7 +410,7 @@ export async function runChild(options) {
    */
   const readWorkTree = async () => {
     try {
-      const { head, clean } = reviewedState(await snapshot(cwd, { signal, rootOf: rootAfter }));
+      const { head, clean } = reviewedState(await snapshot(cwd, { signal }));
       return { head, clean };
     } catch (err) {
       if (readProp(err, "isCanceled")) throw err;
@@ -473,7 +471,7 @@ export async function runChild(options) {
   /** Paths of the lockfiles that differ from the pre-turn read, or [] when none or unread. */
   const readLockfileChanged = async () => {
     if (lockfilePaths === null) {
-      const after = lockfilesBefore ? await readLockfiles(cwd, { rootOf: rootAfter }) : null;
+      const after = lockfilesBefore ? await readLockfiles(cwd) : null;
       lockfilePaths = diffLockfiles(lockfilesBefore, after);
       if (lockfilePaths.length > 0) {
         logWarn(`worker: lockfile changed: ${lockfilePaths.join(", ")}`);
@@ -531,9 +529,7 @@ export async function runChild(options) {
     // The parent installs once before the first dispatch, so a worker turn that changes a lockfile
     // leaves the next reviewer on stale dependencies (issue #1180). The two reads are independent.
     [sharedBefore, lockfilesBefore] =
-      roleName === "worker"
-        ? await Promise.all([readShared(), readLockfiles(cwd, { rootOf: rootBefore })])
-        : [null, null];
+      roleName === "worker" ? await Promise.all([readShared(), readLockfiles(cwd)]) : [null, null];
     if (roleName === "reviewer") {
       [tmpdirBefore, storeBefore] = await Promise.all([
         snapshotInheritedTmpdir(),
@@ -567,10 +563,6 @@ export async function runChild(options) {
     // The three reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read leaves the shared Git items and the lockfile paths read once and
     // kept for the catch path.
-    // A worker reads its root once for the work tree read and the lockfile read, which would each
-    // start their own read when they overlap. A failed read is not kept, so each read then fails or
-    // is canceled on its own, as it did without this read.
-    if (roleName === "worker") await rootAfter({ signal }).catch(() => {});
     const [workTreeRead, sharedRead, lockfileRead] = await Promise.allSettled([
       roleName === "worker" ? readWorkTree() : null,
       readSharedGitChanged(),

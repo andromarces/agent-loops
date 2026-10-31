@@ -1,11 +1,18 @@
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
 
 // The order in which the `git` reads start and end. `slowShared` delays the end of the shared Git
-// read, as a slow remote read does.
-const reads = vi.hoisted(() => ({ events: [], slowShared: false }));
+// read, as a slow remote read does. `beforeLockfileRoot` runs before the second lockfile root read
+// (the one after the turn), which the lockfile read marks by its 10 s bound.
+const reads = vi.hoisted(() => ({
+  events: [],
+  slowShared: false,
+  lockfileRoots: 0,
+  beforeLockfileRoot: null,
+}));
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
@@ -13,7 +20,12 @@ vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
     execBounded: async (command, args, ...rest) => {
       if (command !== "git") return real.execBounded(command, args, ...rest);
       const shared = args.includes("--git-common-dir");
-      if (args.includes("--show-toplevel")) reads.events.push("root read");
+      if (args.includes("--show-toplevel")) {
+        reads.events.push("root read");
+        if (rest[0]?.timeoutMs === 10_000 && ++reads.lockfileRoots === 2) {
+          await reads.beforeLockfileRoot?.();
+        }
+      }
       if (shared) reads.events.push("shared read started");
       const result = await real.execBounded(command, args, ...rest);
       if (shared && reads.slowShared) {
@@ -32,6 +44,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   reads.slowShared = false;
+  reads.lockfileRoots = 0;
+  reads.beforeLockfileRoot = null;
   await removePath(repo);
 });
 
@@ -45,16 +59,6 @@ const runTurn = (roleName, act = async () => {}) =>
   });
 
 const rootReads = () => reads.events.filter((event) => event === "root read").length;
-
-// Usefulness: verifies requirement "a worker turn resolves the work tree root once before and once
-// after the turn" (issue #1268): the pre-turn lockfile read has one read, and the post-turn work
-// tree and lockfile reads share one. No root crosses the turn, so a cwd that left its work tree is
-// refused after the turn.
-test("a worker turn resolves the work tree root before and after the turn", async () => {
-  const result = await runTurn("worker");
-  expect(result.workTree).toMatchObject({ clean: true });
-  expect(rootReads()).toBe(2);
-});
 
 // Usefulness: verifies requirement "a reviewer turn resolves the work tree root once before and once
 // after the turn" (issue #1268): the scratch folder and the before snapshot share one read, and the
@@ -84,4 +88,30 @@ test("a reviewer turn whose work tree vanishes during the turn fails with a snap
     return "done";
   }).catch((err) => err);
   expect(error).toMatchObject({ name: "SnapshotError" });
+});
+
+// Usefulness: verifies requirement "a subdirectory cwd that is removed before the post-turn
+// lockfile read reports every lockfile as changed" (issue #1268, #1225): the post-turn lockfile
+// read resolves its own root, so an unreadable root names every lockfile, as the parent needs to
+// reinstall. The removal runs just before that root read, so no timing decides the outcome.
+test("a worker turn whose subdirectory cwd is removed before the post-turn lockfile read reports every lockfile", async () => {
+  const sub = join(repo, "sub");
+  await mkdir(sub);
+  await writeFile(join(sub, "a.txt"), "a\n");
+  reads.beforeLockfileRoot = () => rm(sub, { recursive: true, force: true });
+  const result = await runChild({
+    agents: { fake: scripted([async () => {}]) },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: sub,
+  });
+  expect(result.lockfileChanged).toEqual([
+    "bun.lock",
+    "bun.lockb",
+    "npm-shrinkwrap.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+  ]);
 });

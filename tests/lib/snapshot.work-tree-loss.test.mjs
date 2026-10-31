@@ -182,14 +182,14 @@ test("withMutationCheck refuses a cwd whose ancestor became a link into another 
       return true;
     };
     let linked = true;
-    const check = withMutationCheck(join(repo, "pivot", "sub"), "reviewer", async () => {
+    const outcome = await withMutationCheck(join(repo, "pivot", "sub"), "reviewer", async () => {
       linked = await swap();
-    });
-    if (!linked) {
-      await check.catch(() => {});
-      ctx.skip();
-    }
-    await expect(check).rejects.toMatchObject({ name: "MutationError" });
+    }).then(
+      () => null,
+      (err) => err,
+    );
+    if (!linked) ctx.skip();
+    expect(outcome).toMatchObject({ name: "MutationError" });
   } finally {
     await removePath(repo);
     await removePath(other);
