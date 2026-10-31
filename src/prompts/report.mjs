@@ -140,3 +140,22 @@ export function testSlotRule(options) {
 export function initTaskBlock(task) {
   return task === null || task === undefined ? "" : `Init task:\n${task}\n\n`;
 }
+
+/**
+ * The temporary-path rule of the worker and reviewer prompts. `place` names the tree that the
+ * temporary path lies outside of, and `literalExample` optionally extends the bar on a literal path.
+ */
+export const tempPathRule = (place, literalExample = "") =>
+  `When a temporary path outside the ${place} is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory${literalExample}, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.`;
+
+/** What a pull request body describes. The worker and orchestrator prompts share it. */
+export const PR_BODY_SCOPE =
+  "The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";
+
+/** The finish gate sentence that the reviewer and orchestrator prompts share. */
+export const REQUIRE_CI_GATE_SENTENCE =
+  "The --require-ci finish gate re-reads GitHub and enforces the condition.";
+
+/** The two sentences that a PR-head compare finish states after its condition. */
+export const NO_CHECK_CLAIM =
+  "It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed.";

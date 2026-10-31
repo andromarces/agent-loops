@@ -7,6 +7,7 @@ import {
   requiredCheckWait,
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
+import { SUMMARY_KEYS } from "../../src/contracts/orchestrator-action.mjs";
 import {
   clauses,
   expectRule,
@@ -34,6 +35,15 @@ test("initialPrompt produces expected orchestrator prompt", () => {
   expectRule(prompt, /step budget/i, /\b10 steps\b/i);
   expect(prompt).toContain("Implement feature X");
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
+});
+
+// Usefulness: verifies requirement "the finish prompt lists every summary key as required" (issue
+// #1273), so a key added to SUMMARY_KEYS reaches the prompt with no count to update beside it.
+test("initialPrompt lists every summary key as a required non-empty string", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  const required = prompt.split("\n").find((line) => /requires non-empty strings/i.test(line));
+  expect(required, "no line states the required summary keys").toBeDefined();
+  for (const key of SUMMARY_KEYS) expect(required).toContain(key);
 });
 
 // Usefulness: verifies requirement "the headless prompt states the unknown-key refusal and its

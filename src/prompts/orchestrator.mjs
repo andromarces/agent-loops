@@ -3,6 +3,9 @@ import { escapeLineSeparators } from "./escape.mjs";
 import {
   REMOTE_WRITE_ACTIONS,
   SHELL_EXCEPTION,
+  NO_CHECK_CLAIM,
+  PR_BODY_SCOPE,
+  REQUIRE_CI_GATE_SENTENCE,
   SHELL_ONLY_LIMIT_SENTENCE,
   cliCommandForms,
 } from "./report.mjs";
@@ -244,7 +247,7 @@ const ADVISORY_QUALIFIER =
  * @returns {string}
  */
 function suppliedRead(pr) {
-  return ` This run names PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
+  return ` This run names PR #${pr}, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. ${REQUIRE_CI_GATE_SENTENCE} The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.`;
 }
 
 /**
@@ -290,7 +293,7 @@ const PR_HEAD_COMPARE =
 function compareHeadBlock(compareHead) {
   if (compareHead === null) return "";
   return `
-- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
+- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. ${NO_CHECK_CLAIM} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
 }
 
 /**
@@ -456,7 +459,7 @@ ${INITIAL_FORMATS.finishUnresolved}
 4. Abort if the task cannot proceed:
 ${INITIAL_FORMATS.abort}
 
-The finish summary requires non-empty strings for all five keys: ${SUMMARY_KEYS.join(", ")}.
+The finish summary requires non-empty strings for these keys: ${SUMMARY_KEYS.join(", ")}.
 The finish action object allows only action, summary, and an optional boolean unresolvedCompare. The nested summary object allows only the five summary keys. A finish that holds any other key in either object is refused. The refusal names each unknown key. Resend the finish with only the allowed keys.
 The run_worker and run_reviewer actions allow only action and prompt. The abort action allows only action and reason. An action that holds any other key is refused, and the refusal names each unknown key. A refused action dispatches no child and charges no step. Resend it with only the allowed keys.
 
@@ -470,7 +473,7 @@ Each child turn ends with a closing report block. In the block, conclusion, why,
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
 
-A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. A task is PR work when its change is delivered on a pull request. For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head. The worker pushes only with \`git push -u origin <branch>\`, which names the refspec, and never with a plain \`git push\`. Under \`push.default=matching\`, a plain \`git push\` also pushes every other local branch that has a remote branch of the same name, such as the default branch. The run supplies the PR number, and the head commit comes from that PR. In a headless run, the task names the PR number. After each push, when the branch has an open PR, the worker updates the PR body in place so that it describes the pushed head. It adds no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path. Apply these parent rules:
+A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. A task is PR work when its change is delivered on a pull request. For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head. The worker pushes only with \`git push -u origin <branch>\`, which names the refspec, and never with a plain \`git push\`. Under \`push.default=matching\`, a plain \`git push\` also pushes every other local branch that has a remote branch of the same name, such as the default branch. The run supplies the PR number, and the head commit comes from that PR. In a headless run, the task names the PR number. After each push, when the branch has an open PR, the worker updates the PR body in place so that it describes the pushed head. It adds no revision log to the body or to a comment. ${PR_BODY_SCOPE} Apply these parent rules:
 - Compare reviewed.head with the PR head before finish; for PR work, resolve the PR head from the run's PR number.
 - Require reviewed.clean: true for PR work.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
@@ -524,7 +527,7 @@ function declaredPrNote(pr) {
  * the head of that PR at finish instead (ADR 0052, #1111).
  */
 function undeclaredPrNote(pr) {
-  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until ${PR_HEAD_COMPARE}; a closed or merged PR refuses it. It reads no required-check source and claims no check result, so the finish summary still states in verified what the checks showed. You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
+  return `The worker turn opened PR #${pr}, and the runtime did not declare it, because it could not read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish: it refuses the finish until ${PR_HEAD_COMPARE}; a closed or merged PR refuses it. ${NO_CHECK_CLAIM} You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused, because the compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
 }
 
 export function resultPrompt({

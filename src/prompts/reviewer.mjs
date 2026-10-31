@@ -6,7 +6,9 @@ import {
   initTaskBlock,
   processRule,
   reportBlock,
+  REQUIRE_CI_GATE_SENTENCE,
   secretFileRule,
+  tempPathRule,
   testSlotRule,
 } from "./report.mjs";
 
@@ -44,7 +46,7 @@ const reviewerRules = `Review scope, in addition to the task below:
 // not-read at once (issue #320).
 function runtimeReadLines(prChecks) {
   return [
-    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}. That status is advisory evidence for this turn, in place of the read above: report it, and treat it as a report rather than a verdict. The --require-ci finish gate re-reads GitHub and enforces the condition.`,
+    `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}. That status is advisory evidence for this turn, in place of the read above: report it, and treat it as a report rather than a verdict. ${REQUIRE_CI_GATE_SENTENCE}`,
     "  - Your own read is the fallback. Read the required checks yourself when the supplied status is unresolved, or when the reviewed head is not the head the supplied status names. Report any difference between your read and the supplied status in Checks.",
   ];
 }
@@ -150,32 +152,28 @@ const toolCacheRule = (scratchDir) =>
   `A cache that a tool writes to its own default location is not output of this turn, even when it sits under an ignored path inside the repository or in a temporary directory: leave it in place and do not report it in Notes. ${chosenPathOutput(scratchDir)} Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.`;
 
 const scratchWriteRule = (scratchDir) =>
-  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. When a temporary path outside the repository is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports. Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes. ${toolCacheRule(scratchDir)}`;
+  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. ${tempPathRule("repository")} Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes. ${toolCacheRule(scratchDir)}`;
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
 // repository: it names no tool or path, only what the mode allows.
 const noEditLine =
   "- The rule against file changes holds with the same scope in this mode. The runtime compares the work tree before and after this turn, and a change to a tracked file or to an untracked file that Git does not ignore halts the run.";
+const sandboxHeader = "Sandbox note, supplied by the runtime:";
+const shellExceptionLine = `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`;
 const sandboxNotes = {
   none: [
-    "Sandbox note, supplied by the runtime:",
     "- This turn runs with no sandbox. The shell commands that you run can write anywhere that the user account can write, and can reach the network, so you can run the project's tests, within the file-change rule, and read the required checks with gh pr checks.",
     "- Nothing contains a shell command in this turn. The rule against file changes and the rule against remote writes above are the only limits. The runtime does not see a write outside the repository, a write to an ignored file, or a remote write.",
-    noEditLine,
   ],
   "read-only": [
-    "Sandbox note, supplied by the runtime:",
     `- This turn runs in a read-only sandbox. The shell commands that you run have no network access, and a child process spawn or a test run can fail here. ${SHELL_ONLY_LIMIT_SENTENCE}`,
-    `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
-    noEditLine,
+    shellExceptionLine,
   ],
   "workspace-write": [
-    "Sandbox note, supplied by the runtime:",
     `- This turn runs in a workspace-write sandbox. The shell commands that you run have no network access, so you can run a targeted test or a probe in the work tree. ${SHELL_ONLY_LIMIT_SENTENCE}`,
-    `- ${SHELL_EXCEPTION} A shell network result is therefore possible.`,
+    shellExceptionLine,
     "- A package manager that writes to a store or cache outside the work tree fails here: call the project's local binary directly instead.",
-    noEditLine,
   ],
 };
 
@@ -189,7 +187,10 @@ export function reviewerPrompt(
 ) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
-  const sandbox = sandboxMode === null ? "" : `\n\n${sandboxNotes[sandboxMode].join("\n")}`;
+  const sandbox =
+    sandboxMode === null
+      ? ""
+      : `\n\n${[sandboxHeader, ...sandboxNotes[sandboxMode], noEditLine].join("\n")}`;
   return escapeLineSeparators(
     `
 Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule(scratchDir)} Live probes and read-only queries are authorized.
