@@ -1,14 +1,15 @@
 import { escapeLineSeparators } from "./escape.mjs";
 import {
   initTaskBlock,
+  PR_BODY_SCOPE,
   processRule,
   reportBlock,
   secretFileRule,
+  tempPathRule,
   testSlotRule,
 } from "./report.mjs";
 
-const prBodyRule =
-  "After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";
+const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
 // Under `push.default=matching`, a plain `git push` also pushes other local branches. Those are the
 // branches that have a remote branch of the same name. A linked work tree shares such a default
@@ -33,8 +34,7 @@ const ownNodeModulesRule =
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
-const tmpdirRule =
-  "When a temporary path outside the work tree is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.";
+const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
 
 // A Claude worker opened later turns with a prose sentence and put requested values on lines of
 // their own, so the response had no `Conclusion:` line and the report parsed to null (issue #1179).
