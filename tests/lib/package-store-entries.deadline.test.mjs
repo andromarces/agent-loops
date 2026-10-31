@@ -84,6 +84,17 @@ test("the traversal starts no file system call after the time bound", async () =
   expect(calls.count).toBe(atReturn);
 });
 
+// Usefulness: verifies requirement "the bound ends the read with its named reason" (#1269): the
+// warning carries the abort reason, so the helper shared by three reads must not change its text.
+test("the bound ends the read with the package store read reason", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  expect(await snapshotPackageStore({ cwd, boundMs: 0 })).toBeNull();
+  expect(warn).toHaveBeenCalledWith(
+    "[agent-loop] warn: package store not read: read took over 0 ms",
+  );
+  warn.mockRestore();
+});
+
 // Usefulness: verifies the unbounded read reaches every version directory, so the test above
 // proves a stop and not a store that is too small to read in time.
 test("a read inside the bound lists every version directory", async () => {

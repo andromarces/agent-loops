@@ -23,7 +23,6 @@ import {
   parseRoleArgs,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
-  requireParentSessionFlag,
 } from "./role-args.mjs";
 import { dispatch, readStdin, refuseUnreadableGate, requireState } from "./role-dispatch.mjs";
 import { RoleError, printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
@@ -38,14 +37,17 @@ const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend", "declare-pr"
 /**
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
  * Rejects init-flag changes and a terminal lifecycle first. `requireOptions`
- * goes to `requireState`, and `allowed` to `rejectInitFlagChanges`. `checkState`
- * runs on the state between those two, so its refusal wins over both.
+ * goes to `requireState`, and `allowed` to `rejectInitFlagChanges`. A set
+ * `parentOperation` names a parent-edit operation: a missing `--parent-session` is refused
+ * before the lock, and one that differs from the stored id is refused on the state between
+ * `requireState` and the init-flag check, so that refusal wins over both.
  */
-function withOpenRun(args, requireOptions, fn, allowed = [], checkState = () => {}) {
+function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = null) {
+  if (parentOperation !== null) requireParentSessionFlag(args, parentOperation);
   const paths = statePaths({ cwd: args.cwd });
   return withStateLock(paths.lockFile, async () => {
     const state = requireState(await readState(paths.stateFile), args.cwd, requireOptions);
-    checkState(state);
+    if (parentOperation !== null) requireStoredParentSession(args, state);
     rejectInitFlagChanges(args, state, allowed);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
@@ -98,7 +100,6 @@ async function extend(args) {
   if (args.maxSteps === null) {
     throw new RoleError("extend requires --max-steps <count>.");
   }
-  requireParentSessionFlag(args, "extend");
 
   return withOpenRun(
     args,
@@ -137,7 +138,7 @@ async function extend(args) {
       };
     },
     ["maxSteps"],
-    (state) => requireStoredParentSession(args, state),
+    "extend",
   );
 }
 
@@ -153,7 +154,6 @@ async function declarePr(args, { gh, signal } = {}) {
   if (args.pr === null) {
     throw new RoleError("declare-pr requires --pr <pr>.");
   }
-  requireParentSessionFlag(args, "declare-pr");
 
   return withOpenRun(
     args,
@@ -177,7 +177,7 @@ async function declarePr(args, { gh, signal } = {}) {
       };
     },
     ["pr"],
-    (state) => requireStoredParentSession(args, state),
+    "declare-pr",
   );
 }
 
@@ -198,7 +198,6 @@ async function setModel(args) {
   }
   const [roleName] = named;
   const model = args[`${roleName}Model`];
-  requireParentSessionFlag(args, "set-model");
 
   return withOpenRun(
     args,
@@ -257,8 +256,16 @@ async function setModel(args) {
       };
     },
     ["roleModel"],
-    (state) => requireStoredParentSession(args, state),
+    "set-model",
   );
+}
+
+function requireParentSessionFlag(args, operation) {
+  if (args.parentSession === null) {
+    throw new RoleError(
+      `${operation} requires --parent-session (the harness session id the run was started with).`,
+    );
+  }
 }
 
 /**

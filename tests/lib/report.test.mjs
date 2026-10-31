@@ -668,6 +668,13 @@ test("parseReportBlock returns null when a required label is missing", () => {
   expect(parseReportBlock("Conclusion: done\nBlockers: none")).toBeNull();
 });
 
+// Usefulness: verifies an empty required label yields null, where an empty optional label yields a
+// null field (#1269); the empty-optional test above does not cover the required branch.
+test("parseReportBlock returns null when a required label has an empty value", () => {
+  expect(parseReportBlock("Conclusion: done\nWhy:\nBlockers: none")).toBeNull();
+  expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers:")).toBeNull();
+});
+
 // Usefulness: verifies a response without a Conclusion line yields null.
 test("parseReportBlock returns null without a Conclusion line", () => {
   expect(parseReportBlock("Why: tests pass\nBlockers: none")).toBeNull();

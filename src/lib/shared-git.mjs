@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { entryCarrier } from "./entry-report.mjs";
 import { sha256 } from "./hash.mjs";
 import { gitRead, SnapshotError } from "./snapshot.mjs";
+import { withTimeBound } from "./time-bound.mjs";
 
 // Item name of the hooks path setting in a shared Git state diff.
 const HOOKS_PATH_ITEM = "core.hooksPath";
@@ -28,20 +29,19 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
   if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
-  const deadline = new AbortController();
-  const timer = setTimeout(() => deadline.abort(), deadlineMs);
-  timer.unref();
-  try {
-    const stop = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
-    return await readWithin(cwd, { ...bound, signal: stop });
-  } catch (err) {
-    if (deadline.signal.aborted) {
-      throw new SnapshotError(`the shared Git read took over ${deadlineMs} ms`);
+  return withTimeBound(deadlineMs, undefined, async ({ signal: deadline }) => {
+    try {
+      return await readWithin(cwd, {
+        ...bound,
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+      });
+    } catch (err) {
+      if (deadline.aborted) {
+        throw new SnapshotError(`the shared Git read took over ${deadlineMs} ms`);
+      }
+      throw err;
     }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 async function readWithin(cwd, bound) {

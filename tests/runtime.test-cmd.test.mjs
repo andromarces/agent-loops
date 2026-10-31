@@ -504,6 +504,98 @@ test("a fatal reviewer error emits the inherited temporary directory entries", a
   }
 });
 
+// Usefulness: verifies the order and the exact fields of the fatal-path evidence events (#1269):
+// the per-event tests above match a subset, so a reordered or renamed field would pass them.
+test("a fatal reviewer error emits every evidence event in a fixed order with exact fields", async () => {
+  const repo = await createTempRepo();
+  const temp = await mkdtemp(join(tmpdir(), "runtime-fatal-order-"));
+  const store = await mkdtemp(join(tmpdir(), "runtime-fatal-store-"));
+  try {
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+    for (const dir of ["links", "projects", "files"]) {
+      await mkdir(join(store, "v11", dir), { recursive: true });
+    }
+    await writeFile(join(store, "v11", "index.db"), "index");
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeFile(
+      join(repo, "node_modules", ".modules.yaml"),
+      JSON.stringify({ storeDir: join(store, "v11") }),
+    );
+    const events = [];
+    const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+    const error = await runLoop({
+      task: "Review the change.",
+      cwd: repo,
+      maxSteps: 5,
+      testCmd: node("console.log('1 passed')"),
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "review" })]),
+        work: scripted([]),
+        rev: scripted([
+          async () => {
+            await mkdir(join(temp, "m54-order"));
+            await mkdir(join(store, "v11", "projects", "hash1"));
+            throw fatal;
+          },
+        ]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBe(fatal);
+    const evidence = events.filter((e) => e.fatal === true);
+    expect(evidence.map((e) => e.type)).toEqual(["test-run", "inherited-tmpdir", "package-store"]);
+    expect(evidence.map((e) => Object.keys(e))).toEqual([
+      ["type", "role", "testRun", "fatal", "stepsUsed"],
+      ["type", "role", "entries", "fatal", "stepsUsed"],
+      ["type", "role", "entries", "fatal", "stepsUsed"],
+    ]);
+    expect(evidence[2]).toMatchObject({ role: "reviewer", entries: ["v11/projects/hash1"] });
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(store);
+    await removePath(temp);
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the shared Git event precedes the lockfile event on a fatal worker error,
+// with the exact property names (#1269).
+test("a fatal worker error emits the shared Git event before the lockfile event", async () => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const fatal = Object.assign(new Error("canceled"), { isCanceled: true });
+    const error = await runLoop({
+      task: "Update the dependencies.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: roles(),
+      agents: {
+        orch: scripted([JSON.stringify({ action: "run_worker", prompt: "work" })]),
+        work: scripted([
+          async () => {
+            await writeFile(join(repo, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+            await execa("git", ["remote", "add", "origin", "https://example.test/a.git"], {
+              cwd: repo,
+            });
+            throw fatal;
+          },
+        ]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    }).catch((err) => err);
+    expect(error).toBe(fatal);
+    expect(events.filter((e) => e.fatal === true)).toEqual([
+      { type: "shared-git", role: "worker", items: ["remote.origin"], fatal: true, stepsUsed: 1 },
+      { type: "lockfile", role: "worker", paths: ["pnpm-lock.yaml"], fatal: true, stepsUsed: 1 },
+    ]);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies requirement "a fatal worker error emits the lockfile paths" (issue #1180): a
 // canceled worker ends the run with no result event, so the transcript would otherwise lose the
 // reinstall signal before `--continue-from`.

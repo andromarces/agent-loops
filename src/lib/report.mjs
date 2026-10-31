@@ -174,14 +174,7 @@ export function parseReportBlock(response) {
   const report = {};
   for (const [key, label, optional] of REPORT_LABELS) {
     const found = lastLabeled(lines, label);
-    if (!found) {
-      if (optional) {
-        report[key] = null;
-        continue;
-      }
-      return null;
-    }
-    if (found.value === "") {
+    if (!found?.value) {
       if (optional) {
         report[key] = null;
         continue;

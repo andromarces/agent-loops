@@ -68,6 +68,17 @@ test("a hash read still pending at the bound receives an aborted signal", async 
   expect(hashing.signals.every((signal) => signal?.aborted === true)).toBe(true);
 });
 
+// Usefulness: verifies requirement "the bound aborts with its named reason" (#1269): the helper
+// shared by three reads must not change the lockfile read's abort reason.
+test("the bound aborts a pending hash read with the lockfile read reason", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  hashing.captureSignal = true;
+  await readLockfiles(repo, { boundMs: 200 });
+  const reason = hashing.signals[0].reason;
+  expect(reason).toBeInstanceOf(Error);
+  expect(reason.message).toBe("lockfile read took over 200 ms");
+});
+
 // Usefulness: verifies requirement "an unread work tree root reaches the parent" (issue #1225): the
 // parent reads only the envelope, so a null read would look like "no change". An unread root counts
 // as changed for every lockfile, like an unreadable lockfile.

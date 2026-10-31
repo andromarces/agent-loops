@@ -46,7 +46,8 @@ import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runTestSlot } from "./lib/test-slot.mjs";
 import { createTranscriptWriter } from "./lib/transcript.mjs";
 import { printHelp } from "./help.mjs";
-import { runLoop, runProbeTurn, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
+import { runProbeTurn } from "./child-turn.mjs";
+import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);

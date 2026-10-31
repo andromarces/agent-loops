@@ -17,7 +17,8 @@ vi.mock("execa", async (importOriginal) => {
 });
 import { execa } from "execa";
 import { MutationError } from "../src/lib/snapshot.mjs";
-import { runLoop, runProbeTurn } from "../src/runtime.mjs";
+import { runProbeTurn } from "../src/child-turn.mjs";
+import { runLoop } from "../src/runtime.mjs";
 import { createTempRepo, gitAbortingPostTurn, removePath, scripted } from "./runtime-helpers.mjs";
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.

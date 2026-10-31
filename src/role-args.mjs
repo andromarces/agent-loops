@@ -376,11 +376,3 @@ export function rejectMisplacedFlags(args, operation) {
     );
   }
 }
-
-export function requireParentSessionFlag(args, operation) {
-  if (args.parentSession === null) {
-    throw new RoleError(
-      `${operation} requires --parent-session (the harness session id the run was started with).`,
-    );
-  }
-}
