@@ -9,6 +9,11 @@ import {
   testSlotRule,
 } from "./report.mjs";
 
+// A closing keyword in a commit message closes the issue at merge, even after the PR body changes
+// to `Refs` (issue #1296).
+const commitLinkRule =
+  "Link an issue only in the pull request body or the Development panel. Never put a closing keyword, such as `Closes`, `Fixes`, or `Resolves`, in a commit message.";
+
 const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
 // Under `push.default=matching`, a plain `git push` also pushes other local branches. Those are the
@@ -55,6 +60,8 @@ ${matchingPushNote}
 
 ${prBodyRule}
 
+${commitLinkRule}
+
 ${conclusionFirstRule}
 
 ${reportBlock}`);
@@ -77,6 +84,7 @@ Your role:
 - ${namedPushRule}
 - ${matchingPushNote}
 - ${prBodyRule}
+- ${commitLinkRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of
