@@ -137,6 +137,13 @@ const COPILOT_LIMIT =
 const GATE_CONDITIONS =
   "the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed";
 
+// Flaky required check: the parent cannot rerun a job, so one run_worker turn does every step (#1303).
+const FLAKY_CHECK_RULE = [
+  "- A required check can fail on a known flaky test that the diff does not reach. You cannot rerun a job, because you write nothing to GitHub, so dispatch one run_worker turn for it.",
+  "  - That turn waits, with a bound, until the run completes, then reads the failure and decides whether the diff reaches it. It records a known flaky recurrence in issue #1067 and reruns only the failed jobs.",
+  "  - If the diff reaches the failure, or no #1067 section matches it, that turn reruns nothing and reports the failure. If the run is still in progress at the bound, it reruns nothing and reports that. If this run bars the worker, rerun nothing and record the failure in open.",
+].join("\n");
+
 // What a gated run does with a required check that is still pending at finish.
 const PENDING_CHECK_RULE =
   "A required check still pending is not a finish condition: the gate refuses the finish, a refusal itself charges no step, and the reviewer dispatch that corrects it charges one step, so the step budget has to cover those dispatches. Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason.";
@@ -175,6 +182,8 @@ function prGateLines({
     return [
       gate,
       "- This run excepts one read from the role rule above: you may read the pull request check status yourself. A status read is not a review, not a test, not an edit, and not a remote write, and agent-loop role wait-checks is the only command it covers.",
+      FLAKY_CHECK_RULE,
+      "  - After that turn, run the wait command again for the same head before you dispatch the reviewer. Never use it to wait for the rest of the run, because it settles on the first failing check.",
       "- Wait for the required checks at two points:",
       "  - Before you dispatch the reviewer on a new PR head, wait for the required checks on that head to complete.",
       "  - When a reviewer turn reports a pending required check, wait for that check to complete before you finish. A check still pending after a wait is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check, so dispatch the reviewer again, or wait again on a later turn, or abort with the pending check named in the reason.",
@@ -198,6 +207,8 @@ function prGateLines({
             "- Do not run gh pr checks.",
           ]),
       `- The reviewer of this run is ${reviewerKind}, whose ${reviewerSandbox === "none" ? "turn runs with no sandbox and keeps" : "read-only turn keeps"} shell network, so every reviewer turn reads the required checks, as the reviewer scope states. The reviewer turn is where the wait happens: before you dispatch the reviewer on a new PR head, name the required checks in the reviewer prompt so that turn reads and reports them.`,
+      FLAKY_CHECK_RULE,
+      "  - After that turn, dispatch the reviewer on the same head, whose turn reads the required checks again.",
       "- When a reviewer turn reports a pending required check, wait for it through another reviewer turn: dispatch the reviewer again until it reports the check complete, or abort with the pending check named in the reason. A required check still pending after a reviewer turn is not a finish condition: the gate refuses a finish while a required check is pending, and a finish summary cannot hold a pending check. Each of those reviewer dispatches costs a step, so the step budget has to cover them.",
     ];
   }
