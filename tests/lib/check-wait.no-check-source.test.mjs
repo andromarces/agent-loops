@@ -1,7 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { pageStdout } from "../gh-doubles.mjs";
-import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./check-wait-helpers.mjs";
+import { fakeClock, fileReply, HEAD_A, HEAD_B, readOk, scriptedGh } from "./check-wait-helpers.mjs";
 
 // The `--all` wait's no-check-source early return (issue #1054). After the PR head itself showed no
 // check run and no commit status, the probe pins the base SHA, then reads the files of the PR, the
@@ -16,7 +15,6 @@ const NO_CHECKS_YET = {
   checks: [],
   stderr: "no checks reported on the 'main' branch",
 };
-const readOk = (body) => ({ status: 0, stdout: pageStdout(body), stderr: "", timedOut: false });
 const PROBE_NOT_FOUND = {
   status: 1,
   stdout: 'HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n{"message":"Not Found"}',
@@ -49,18 +47,6 @@ const MERGED_PR = {
   base: { ref: "main" },
   head: { sha: MERGED_HEAD },
 };
-
-/** A workflow file reply as the contents API sends it: base64 with a line break every 60 characters. */
-function fileReply(text, over = {}) {
-  const bytes = Buffer.from(text);
-  return {
-    type: "file",
-    encoding: "base64",
-    size: bytes.length,
-    content: bytes.toString("base64").replace(/(.{60})/g, "$1\n"),
-    ...over,
-  };
-}
 
 const http = (status, body, headers = "") =>
   `HTTP/2.0 ${status} X\r\nContent-Type: application/json\r\n${headers}\r\n${typeof body === "string" ? body : JSON.stringify(body)}`;

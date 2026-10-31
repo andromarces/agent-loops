@@ -167,7 +167,7 @@ test(
   NESTED_RUN_TIMEOUT_MS + 30000,
 );
 
-// Usefulness: acceptance (#1022) — a suite that starts with the three machine-wide roots pinned to real paths (as inside an agent-loop turn) writes nothing under them. CI sets no pins, so this nested run supplies them. `default-roots.test.mjs` writes a default run state, session record, and test slot, and fails when any of them lands outside the per-file directory.
+// Usefulness: acceptance (#1022) — a suite that starts with the three machine-wide roots pinned to real paths (as inside an agent-loop turn) writes nothing under them. CI sets no pins, so this nested run supplies them. `tmp-root.default-roots.test.mjs` writes a default run state, session record, and test slot, and fails when any of them lands outside the per-file directory.
 test(
   "a test run that inherits the three root pins writes nothing under them",
   async () => {
@@ -180,7 +180,7 @@ test(
     try {
       for (const dir of Object.values(pins)) await mkdir(dir);
       await killTreeOnExit(
-        execa("pnpm", ["exec", "vp", "test", "run", "tests/lib/default-roots.test.mjs"], {
+        execa("pnpm", ["exec", "vp", "test", "run", "tests/lib/tmp-root.default-roots.test.mjs"], {
           env: {
             ...pins,
             AGENT_LOOP_TEST_SLOT_HELD: undefined,

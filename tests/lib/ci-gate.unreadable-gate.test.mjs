@@ -2,21 +2,18 @@
 // their own deadline, and the caller sees a cancel, not the warning-and-null of a failed read.
 import { expect, it, vi } from "vite-plus/test";
 import { unreadableGateReason } from "../../src/lib/ci-gate.mjs";
-import { fakeGh, PR_VIEW, prInfo, REPO_VIEW, routes, RULES_PAGE } from "./ci-gate-helpers.mjs";
+import {
+  fakeGh,
+  hungGh,
+  PR_VIEW,
+  prInfo,
+  REPO_VIEW,
+  routes,
+  RULES_PAGE,
+} from "./ci-gate-helpers.mjs";
 
 const FREE_PLAN_403 =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";
-
-/** A `gh` that never answers until its signal aborts, then fails the way a killed child does. */
-function hungGh(started) {
-  return (args, cwd, { signal } = {}) =>
-    new Promise((resolve) => {
-      started();
-      const settle = () => resolve({ status: 1, stdout: "", stderr: "gh was canceled" });
-      if (signal?.aborted) return settle();
-      signal?.addEventListener("abort", settle, { once: true });
-    });
-}
 
 // Usefulness: verifies acceptance of #1124 — an aborted caller signal ends a hung read long before
 // the 60 s deadline, and the rejection is a cancel that the CLI maps to exit 130, not a null reason.
@@ -28,7 +25,7 @@ it("a canceled caller signal ends a hung preflight read as a cancel before the d
     unreadableGateReason({
       pr: 42,
       cwd: ".",
-      gh: hungGh(started),
+      gh: hungGh(started, "gh was canceled"),
       timeoutMs: 60_000,
       signal: controller.signal,
     }),
@@ -42,7 +39,7 @@ it("a hung preflight read with no cancel still ends at the deadline with a null 
   const reason = await unreadableGateReason({
     pr: 42,
     cwd: ".",
-    gh: hungGh(() => {}),
+    gh: hungGh(() => {}, "gh was canceled"),
     timeoutMs: 50,
     signal: new AbortController().signal,
   });
@@ -89,7 +86,7 @@ it("an unreadable ruleset source beside a failed protection read is no refusal",
 const RULESETS = "api repos/andromarces/agent-loops/rules";
 
 /** A `gh` over `table` whose replies to `routes` wait until every one of those reads has started, or until the call is canceled. */
-function barrierGh(table, routes) {
+function bothStartedGh(table, routes) {
   const gh = fakeGh(table);
   let started = 0;
   let allStarted;
@@ -112,7 +109,7 @@ function barrierGh(table, routes) {
 // reads run together. Each reply settles only once both reads have started, so reads that run one after
 // the other never settle, with no reliance on a wall-clock margin.
 it("an unreadable ruleset source beside a slow protection read is refused within the deadline", async () => {
-  const gh = barrierGh([...UNREADABLE_RULESETS, [PROTECTION, null]], [RULESETS, PROTECTION]);
+  const gh = bothStartedGh([...UNREADABLE_RULESETS, [PROTECTION, null]], [RULESETS, PROTECTION]);
   expect(await unreadableGateReason({ pr: 42, cwd: ".", gh, timeoutMs: 5_000 })).toMatch(
     /repository rulesets/,
   );
@@ -121,7 +118,7 @@ it("an unreadable ruleset source beside a slow protection read is refused within
 // Usefulness: verifies #1182 — a ruleset read that settles something ends the preflight at once, so a
 // protection read that does not answer is canceled and never holds the declaration open.
 it("a settled ruleset read cancels a protection read that does not answer", async () => {
-  const hung = hungGh(() => {});
+  const hung = hungGh(() => {}, "gh was canceled");
   const gh = (args, cwd, options) =>
     args.join(" ") === PROTECTION ? hung(args, cwd, options) : fakeGh(routes())(args, cwd, options);
   const begun = Date.now();

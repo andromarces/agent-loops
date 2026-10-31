@@ -374,3 +374,23 @@ export const FORBIDDEN = {
 };
 
 export const NOT_FOUND = { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
+
+/** A `gh` reply that read one page of `body`. */
+export const readOk = (body) => ({
+  status: 0,
+  stdout: pageStdout(body),
+  stderr: "",
+  timedOut: false,
+});
+
+/** A workflow file reply as the contents API sends it: base64 with a line break every 60 characters. */
+export function fileReply(text, over = {}) {
+  const bytes = Buffer.from(text);
+  return {
+    type: "file",
+    encoding: "base64",
+    size: bytes.length,
+    content: bytes.toString("base64").replace(/(.{60})/g, "$1\n"),
+    ...over,
+  };
+}

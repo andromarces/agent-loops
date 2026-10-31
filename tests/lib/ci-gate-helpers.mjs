@@ -284,3 +284,14 @@ export function stallingGh(inner, stalled, abortDelayMs = 0) {
   };
   return { gh, live };
 }
+
+/** A `gh` that never answers until its signal aborts, then fails the way a killed child does with `stderr`. */
+export function hungGh(started, stderr = "gh was killed") {
+  return (args, cwd, { signal } = {}) =>
+    new Promise((resolve) => {
+      started();
+      const settle = () => resolve({ status: 1, stdout: "", stderr });
+      if (signal?.aborted) return settle();
+      signal?.addEventListener("abort", settle, { once: true });
+    });
+}
