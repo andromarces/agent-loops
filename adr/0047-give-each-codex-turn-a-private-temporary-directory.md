@@ -61,6 +61,6 @@ Andro Marces
 - [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Implementation:
   - Source: `src/lib/turn-tmpdir.mjs`, `src/lib/turn-tmpdir-remove.mjs`, `src/lib/inherited-tmpdir.mjs`, `runCodex` in `src/agents/codex.mjs`, `temporaryRoots` in `src/install/package-root.mjs`
-  - Tests: `tests/agents/codex.test.mjs`, `tests/lib/turn-tmpdir.test.mjs`, `tests/lib/turn-tmpdir.race.test.mjs`, `tests/lib/turn-tmpdir.helper-bound.test.mjs`
+  - Tests: `tests/agents/codex.test.mjs`, `tests/agents/codex.private-tmpdir.test.mjs`, `tests/agents/codex.inherited-layout.test.mjs`, `tests/lib/turn-tmpdir.test.mjs`, `tests/lib/turn-tmpdir.race.test.mjs`, `tests/lib/turn-tmpdir.helper-bound.test.mjs`
   - Docs: `docs/reference/architecture.md`, `docs/orchestrator-instructions.md`, `docs/reference/install.md`
 - [ADR Index](README.md)
