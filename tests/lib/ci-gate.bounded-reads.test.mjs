@@ -2,18 +2,7 @@
 // deadline and canceled by the caller signal, so an aborted caller starts no read and a hung `gh` cannot stall them.
 import { expect, it, vi } from "vite-plus/test";
 import { checkCi, checkPrHead, readRequiredChecks } from "../../src/lib/ci-gate.mjs";
-import { fakeGh, HEAD, MERGE, prInfo, REVIEWED, routes, run } from "./ci-gate-helpers.mjs";
-
-/** A `gh` that never answers until its signal aborts, then fails the way a killed child does. */
-function hungGh(started) {
-  return (args, cwd, { signal } = {}) =>
-    new Promise((resolve) => {
-      started();
-      const settle = () => resolve({ status: 1, stdout: "", stderr: "gh was killed" });
-      if (signal?.aborted) return settle();
-      signal?.addEventListener("abort", settle, { once: true });
-    });
-}
+import { fakeGh, HEAD, hungGh, MERGE, prInfo, REVIEWED, routes, run } from "./ci-gate-helpers.mjs";
 
 const aborted = () => {
   const controller = new AbortController();

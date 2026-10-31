@@ -1,14 +1,12 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { pageStdout } from "../gh-doubles.mjs";
-import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./check-wait-helpers.mjs";
+import { fakeClock, fileReply, HEAD_A, HEAD_B, readOk, scriptedGh } from "./check-wait-helpers.mjs";
 
 // The `--all` wait holds a pass while a `pull_request` workflow of the base branch can run for the PR
 // and the head has no check run from GitHub Actions (issue #1228). The scripted `gh` answers the
 // workflow reads of the base branch and the check runs of the head by poll, so a check run can appear
 // only after another app's check passed.
 const BASE_HEAD = "c".repeat(40);
-const readOk = (body) => ({ status: 0, stdout: pageStdout(body), stderr: "", timedOut: false });
 const PR_WORKFLOW = "name: checks\non:\n  pull_request:\n";
 const INERT_WORKFLOW = "name: nightly\non:\n  workflow_dispatch:\n";
 const WORKERS = {
@@ -26,16 +24,6 @@ const ACTIONS = {
   name: "checks",
   app: { id: 15368, slug: "github-actions" },
 };
-
-function fileReply(text) {
-  const bytes = Buffer.from(text);
-  return {
-    type: "file",
-    encoding: "base64",
-    size: bytes.length,
-    content: bytes.toString("base64"),
-  };
-}
 
 /** A scripted `gh` whose head check runs are `runsByPoll[n]` on poll `n`, the last entry repeating. */
 function holdGh({

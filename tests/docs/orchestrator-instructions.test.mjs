@@ -1385,7 +1385,6 @@ test("the shared-artifact rule covers a sequential identifier that concurrent ru
 /** Sentences of at least 30 characters, with code spans and whitespace flattened. */
 function flatSentences(text) {
   return text
-    .replaceAll("\`", "")
     .replaceAll("`", "")
     .replace(/\s+/g, " ")
     .trim()
