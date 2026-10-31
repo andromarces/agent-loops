@@ -155,6 +155,10 @@ const SHARED_PARENT_RULES = [
       /local probe/i,
       /machine-specific path/i,
     ),
+  // Issue #1296: for a partial PR, the parent reads the branch commit messages for a closing keyword.
+  (text) => expectRule(text, /only in part/i, /commit messages/i, /before finish/i),
+  (text) => expectRule(text, /closing keyword/i, /closes the issue at merge/i),
+  (text) => expectRule(text, /dispatch a worker/i, /remove it/i),
   // Issue #1162: a task whose change is outside the work tree has an accept that is a reviewer
   // report, a reviewer prompt that names the read-only limits, and a `verified` that says
   // `reviewed` identifies no change.
