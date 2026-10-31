@@ -882,10 +882,28 @@ export async function endOwnedProcess(pid, marker, { timeoutMs = 3000 } = {}) {
 }
 
 /**
+ * Reads the records that the `withGitHangingAfter` shim wrote into `shimDir`, one `{ number, pid }`
+ * per `call-<n>/record` file that holds a whole record. A call that left no record, or a half
+ * written one, is absent. Rejects when `shimDir` cannot be read.
+ */
+export async function shimCallRecords(shimDir) {
+  const names = (await readdir(shimDir)).filter((name) => name.startsWith("call-"));
+  const found = await Promise.all(
+    names.map(async (name) => {
+      const text = await readFile(join(shimDir, name, "record"), "utf8").catch(() => "");
+      const match = /^(\d+) (\d+)\n$/.exec(text);
+      return match ? { number: Number(match[1]), pid: Number(match[2]) } : undefined;
+    }),
+  );
+  return found.filter((record) => record !== undefined);
+}
+
+/**
  * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also
  * when calls start at once, and then hangs, so a test can let the before snapshot finish and stall
  * the read that follows. `run` gets `hungPid()`, which resolves with the pid of the hung `git` once
- * it started, and `shimDir`, the shim directory that holds one `call-<n>` directory per call. The
+ * it started, and `shimDir`, the shim directory that holds one `call-<n>` directory per call, each
+ * with a `record` file of the claimed number and the pid (read it with `shimCallRecords`). The
  * hung process carries the unique shim directory in its command line. The helper ends it through
  * `endOwnedProcess` if the test left it alive, and removes the shim directory.
  */
@@ -901,6 +919,8 @@ export async function withGitHangingAfter(passes, run) {
       // claims the first free number. A counter file loses updates and can be read half written.
       "n=0",
       `while ! mkdir '${dir}/call-'$n 2>/dev/null; do n=$((n + 1)); done`,
+      // The record holds the claimed number and the pid, which `exec` keeps.
+      `echo "$n $$" > '${dir}/call-'$n/record`,
       `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
       `echo $$ > '${pidFile}'`,
       `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,
