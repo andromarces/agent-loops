@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, open, readlink, realpath } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { lstat, open, readlink } from "node:fs/promises";
+import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
@@ -193,47 +193,19 @@ export async function workTreeRoot(cwd, bound) {
   return rootResult.stdout.trim();
 }
 
-// True when `cwd` is still a directory whose nearest `.git` entry sits in `root`. It reads the file
-// system only, so a cached root is checked without a `git` child. A false answer sends the caller
-// to the `git` read, which then refuses a `cwd` that is gone or is no longer in that work tree.
-async function stillInWorkTree(cwd, root) {
-  try {
-    if (!(await lstat(cwd)).isDirectory()) return false;
-    let dir = resolve(cwd);
-    for (;;) {
-      try {
-        await lstat(join(dir, ".git"));
-        break;
-      } catch (err) {
-        if (err.code !== "ENOENT") return false;
-      }
-      const parent = dirname(dir);
-      if (parent === dir) return false;
-      dir = parent;
-    }
-    return (await realpath(dir)) === (await realpath(root));
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Returns a resolver of the work tree root of `cwd` that asks `git` once while `cwd` stays in that
- * work tree. A later call checks the file system first (`stillInWorkTree`) and asks `git` again when
- * `cwd` was removed, replaced, or moved into another work tree, so a turn never reuses a root for a
- * `cwd` that no longer resolves to it. Only a root that was read is kept, so a failed or canceled
- * read is tried again. Calls that overlap each read their own.
- * known-limit: the check finds the nearest `.git` entry and not a `GIT_DIR` override or a ceiling
- * directory, and a work tree that loses its `.git` fails at the next `git` read of the turn.
+ * Returns a resolver of the work tree root of `cwd` that asks `git` on its first call and returns that
+ * root on every later call. The root is not checked again, so a caller must use one resolver only for
+ * reads that no snapshot boundary separates: a `cwd` that is removed, or an ancestor of it that is
+ * replaced by a link, between the first read and a later one is not seen. Reads after a turn take a
+ * new resolver, so each snapshot of a mutation check and each post-turn read still sees the work tree
+ * that `cwd` resolves to then. Only a root that was read is kept, so a failed or canceled read is
+ * tried again. Calls that overlap each read their own.
  * @returns {(bound?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<string>}
  */
 export function cachedWorkTreeRoot(cwd) {
   let root = null;
-  return async (bound) => {
-    if (root !== null && (await stillInWorkTree(cwd, root))) return root;
-    root = null;
-    return (root = await workTreeRoot(cwd, bound));
-  };
+  return async (bound) => (root ??= await workTreeRoot(cwd, bound));
 }
 
 // Files that one snapshot hashes at a time, so a large work tree never opens every file at once.
@@ -392,18 +364,20 @@ export function diffSnapshots(before, after) {
  * ignores it, so a canceled turn still reports the paths it changed. The after snapshot ends on
  * `forceSignal` instead (default: the second-SIGINT signal of `signal`). It then throws a canceled
  * `SnapshotError` that says the evidence was not captured, and never reports the tree as unchanged.
+ * `rootOf` serves the before snapshot only. The after snapshot always reads the root again, so a
+ * `cwd` that left its work tree during the turn is refused.
  * @template T
  * @param {string} cwd
  * @param {string} role
  * @param {(before: Awaited<ReturnType<typeof snapshot>>) => Promise<T>} fn
- * @param {{ signal?: AbortSignal, forceSignal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, forceSignal?: AbortSignal, rootOf?: (bound: object) => Promise<string> }} [options]
  * @returns {Promise<T>}
  */
 export async function withMutationCheck(
   cwd,
   role,
   fn,
-  { signal, forceSignal = forceCancelSignal(signal), rootOf = cachedWorkTreeRoot(cwd) } = {},
+  { signal, forceSignal = forceCancelSignal(signal), rootOf } = {},
 ) {
   const before = await snapshot(cwd, { signal, rootOf });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
@@ -421,7 +395,7 @@ export async function withMutationCheck(
   let after;
   const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    after = await snapshot(cwd, { signal: forceSignal, rootOf });
+    after = await snapshot(cwd, { signal: forceSignal });
   } catch (snapErr) {
     if (snapErr?.isCanceled) {
       throw new SnapshotError(

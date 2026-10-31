@@ -46,20 +46,23 @@ const runTurn = (roleName, act = async () => {}) =>
 
 const rootReads = () => reads.events.filter((event) => event === "root read").length;
 
-// Usefulness: verifies requirement "a worker turn resolves the work tree root once" (issue #1268):
-// the pre-turn lockfile read, the post-turn work tree read, and the post-turn lockfile read share it.
-test("a worker turn resolves the work tree root once", async () => {
+// Usefulness: verifies requirement "a worker turn resolves the work tree root once before and once
+// after the turn" (issue #1268): the pre-turn lockfile read has one read, and the post-turn work
+// tree and lockfile reads share one. No root crosses the turn, so a cwd that left its work tree is
+// refused after the turn.
+test("a worker turn resolves the work tree root before and after the turn", async () => {
   const result = await runTurn("worker");
   expect(result.workTree).toMatchObject({ clean: true });
-  expect(rootReads()).toBe(1);
+  expect(rootReads()).toBe(2);
 });
 
-// Usefulness: verifies requirement "a reviewer turn resolves the work tree root once" (issue #1268):
-// the scratch folder and both mutation-check snapshots share it.
-test("a reviewer turn resolves the work tree root once", async () => {
+// Usefulness: verifies requirement "a reviewer turn resolves the work tree root once before and once
+// after the turn" (issue #1268): the scratch folder and the before snapshot share one read, and the
+// after snapshot reads again.
+test("a reviewer turn resolves the work tree root before and after the turn", async () => {
   const result = await runTurn("reviewer");
   expect(result.status).toBe("ok");
-  expect(rootReads()).toBe(1);
+  expect(rootReads()).toBe(2);
 });
 
 // Usefulness: verifies requirement "the pre-turn shared Git and lockfile reads run together"
