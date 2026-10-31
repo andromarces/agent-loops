@@ -310,7 +310,7 @@ test("a headless reviewer cancel in the evidence snapshot reports the evidence a
     let armed = false;
     let fired = false;
     gitDouble.answer = (command, args, options) => {
-      if (armed && !fired && args[1] === "--show-toplevel") {
+      if (armed && !fired && args[0] === "status") {
         fired = true;
         process.emit("SIGINT");
         process.emit("SIGINT");
