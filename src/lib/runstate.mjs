@@ -114,8 +114,8 @@ function assertSessionId(sessionId) {
 export async function readStatesForSession(parentSession) {
   const { sessionRunsDir, legacyIndexFile } = statePaths({ parentSession });
   const stateFiles = await readSessionEntryPaths(sessionRunsDir, legacyIndexFile);
-  const states = await Promise.all(
-    stateFiles.map((stateFile) => readState(stateFile).catch(() => null)),
+  const states = await mapInBatches(stateFiles, READ_BATCH_SIZE, (stateFile) =>
+    readState(stateFile).catch(() => null),
   );
   // An absent, unreadable, corrupt, or non-object state file reads as null and never denies on its own.
   return states.filter((state) => state !== null);
@@ -128,8 +128,8 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
   const stateFiles = [];
   try {
     const names = (await readdir(sessionRunsDir)).filter((name) => !name.endsWith(".tmp"));
-    const texts = await Promise.all(
-      names.map((name) => readFile(join(sessionRunsDir, name), "utf8").catch(() => null)),
+    const texts = await mapInBatches(names, READ_BATCH_SIZE, (name) =>
+      readFile(join(sessionRunsDir, name), "utf8").catch(() => null),
     );
     // An unreadable entry reads as null and is skipped.
     stateFiles.push(...texts.filter((text) => text !== null).map((text) => text.trim()));
