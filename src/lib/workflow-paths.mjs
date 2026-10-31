@@ -94,7 +94,7 @@ function pathsOf(event) {
   if (!isJsonObject(event) || "paths-ignore" in event || !Array.isArray(event.paths)) {
     return null;
   }
-  return event.paths.length > 0 && event.paths.every(isSettledPattern) ? event.paths : null;
+  return filterOf(event, "paths");
 }
 
 /** Whether `files` holds only strings that the matcher settles. */
@@ -119,13 +119,11 @@ function eventExcludes(event, files, base) {
   const pathsIgnore = filterOf(event, "paths-ignore");
   const branches = filterOf(event, "branches");
   const branchesIgnore = filterOf(event, "branches-ignore");
+  const pathsRe = paths?.map((pattern) => patternRegExp(pattern));
+  const pathsIgnoreRe = pathsIgnore?.map((pattern) => patternRegExp(pattern, true));
   return (
-    (paths !== null &&
-      !paths.some((pattern) => files.some((file) => patternRegExp(pattern).test(file)))) ||
-    (pathsIgnore !== null &&
-      files.every((file) =>
-        pathsIgnore.some((pattern) => patternRegExp(pattern, true).test(file)),
-      )) ||
+    (paths !== null && !pathsRe.some((re) => files.some((file) => re.test(file)))) ||
+    (pathsIgnore !== null && files.every((file) => pathsIgnoreRe.some((re) => re.test(file)))) ||
     (branches !== null && !branches.some((pattern) => patternRegExp(pattern).test(base))) ||
     (branchesIgnore !== null &&
       branchesIgnore.some((pattern) => patternRegExp(pattern, true).test(base)))

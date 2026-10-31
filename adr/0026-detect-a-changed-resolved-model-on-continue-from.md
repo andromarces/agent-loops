@@ -143,7 +143,7 @@ Andro Marces
 - [Pull Request #586: Record the opencode resolved model from session export](https://github.com/andromarces/agent-loops/pull/586)
 - Implementation:
   - Source: `gateFromTranscript` and `matchingGate` in `src/lib/gate.mjs`, and `verifyResolvedModels` and `restoreSessions` in `src/lib/continuation.mjs`
-  - Source: `runProbeTurn` in `src/runtime.mjs`
+  - Source: `runProbeTurn` in `src/child-turn.mjs`
   - Source: `setResolvedModel` in `src/agents/shared.mjs`
   - Source: The adapters `src/agents/claude.mjs`, `src/agents/copilot.mjs`, and `src/agents/opencode.mjs` (`exportedModels`)
   - Source: `--continue-from` in `src/cli.mjs`

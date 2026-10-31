@@ -3,6 +3,7 @@ import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { entryCarrier } from "./entry-report.mjs";
 import { logWarn } from "./log.mjs";
 import { sha256File, workTreeRoot } from "./snapshot.mjs";
+import { withTimeBound } from "./time-bound.mjs";
 
 // Lockfiles of the common package managers, at the work tree root.
 const LOCKFILES = [
@@ -37,42 +38,35 @@ const UNREADABLE = "unreadable";
  * @returns {Promise<Record<string, string | null>>}
  */
 export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
-  const bound = new AbortController();
-  const timer = setTimeout(
-    () => bound.abort(new Error(`lockfile read took over ${boundMs} ms`)),
-    boundMs,
-  );
-  timer.unref();
-  const stopped = new Promise((_, reject) => {
-    bound.signal.addEventListener("abort", () => reject(bound.signal.reason), { once: true });
-  });
-  stopped.catch(() => {});
-  const hash = async (root, name) => {
+  return withTimeBound(boundMs, `lockfile read took over ${boundMs} ms`, async (bound) => {
+    const hash = async (root, name) => {
+      try {
+        return await Promise.race([
+          sha256File(join(root, name), { signal: bound.signal }),
+          bound.stopped,
+        ]);
+      } catch (err) {
+        // A file system error message carries the path, so the warning names the error code only.
+        const code = typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "";
+        const reason = bound.signal.aborted ? `over ${boundMs} ms` : code || "unknown error";
+        logWarn(`worker: the lockfile ${name} read failed (${reason}); reporting it as changed`);
+        return UNREADABLE;
+      }
+    };
     try {
-      return await Promise.race([sha256File(join(root, name), { signal: bound.signal }), stopped]);
+      const root = await Promise.race([
+        workTreeRoot(cwd, { signal: bound.signal, timeoutMs: boundMs }),
+        bound.stopped,
+      ]);
+      const hashes = await Promise.all(LOCKFILES.map((name) => hash(root, name)));
+      return Object.fromEntries(LOCKFILES.map((name, i) => [name, hashes[i]]));
     } catch (err) {
-      // A file system error message carries the path, so the warning names the error code only.
-      const code = typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "";
-      const reason = bound.signal.aborted ? `over ${boundMs} ms` : code || "unknown error";
-      logWarn(`worker: the lockfile ${name} read failed (${reason}); reporting it as changed`);
-      return UNREADABLE;
+      logWarn(
+        `worker: the lockfile read failed: ${firstErrorLine(readableErrorText(err))}; reporting every lockfile as changed`,
+      );
+      return Object.fromEntries(LOCKFILES.map((name) => [name, UNREADABLE]));
     }
-  };
-  try {
-    const root = await Promise.race([
-      workTreeRoot(cwd, { signal: bound.signal, timeoutMs: boundMs }),
-      stopped,
-    ]);
-    const hashes = await Promise.all(LOCKFILES.map((name) => hash(root, name)));
-    return Object.fromEntries(LOCKFILES.map((name, i) => [name, hashes[i]]));
-  } catch (err) {
-    logWarn(
-      `worker: the lockfile read failed: ${firstErrorLine(readableErrorText(err))}; reporting every lockfile as changed`,
-    );
-    return Object.fromEntries(LOCKFILES.map((name) => [name, UNREADABLE]));
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 /**

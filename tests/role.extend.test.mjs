@@ -183,6 +183,47 @@ test("extend reports a parent session mismatch before a terminal lifecycle", asy
   expect((await readRepoState(repo)).maxSteps).toBe(1);
 });
 
+// Usefulness: verifies requirement "extend, declare-pr, and set-model apply the parent session checks
+// in one order" (#1269): a missing flag is refused before any state read, and a mismatch is refused
+// before an init-flag change, with the same text for each operation. No other test fixes that order.
+test("the parent session checks run in the same order for extend, declare-pr, and set-model", async () => {
+  const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
+  const withRun = await startRun(1, agents);
+  const noRun = await createTempRepo();
+  repos.push(noRun);
+  const operations = [
+    ["extend", ["--max-steps", "9"]],
+    ["declare-pr", ["--pr", "42"]],
+    ["set-model", ["--reviewer-model", "b"]],
+  ];
+  for (const [operation, flags] of operations) {
+    const missing = await executeRoleCommand(
+      withRepo([operation, "--cwd", "<repo>", ...flags], noRun),
+    );
+    expect(missing.payload.error, operation).toBe(
+      `${operation} requires --parent-session (the harness session id the run was started with).`,
+    );
+    const mismatch = await executeRoleCommand(
+      withRepo(
+        [
+          operation,
+          "--cwd",
+          "<repo>",
+          "--parent-session",
+          "other",
+          "--task",
+          "Other task.",
+          ...flags,
+        ],
+        withRun,
+      ),
+    );
+    expect(mismatch.payload.error, operation).toBe(
+      "--parent-session does not match the run's parent session.",
+    );
+  }
+});
+
 // Usefulness: verifies extend keeps a recovery lifecycle as it is, so raising the
 // budget neither resumes nor clears an interrupted run (issue #361).
 test("extend leaves an interrupted lifecycle unchanged", async () => {

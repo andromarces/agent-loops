@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { logDebug, logWarn } from "./log.mjs";
+import { withTimeBound } from "./time-bound.mjs";
 
 // A directory with more entries than this is not read, so the read stays bounded in size. The
 // limit covers every directory read, the store root included.
@@ -144,31 +145,23 @@ export async function snapshotPackageStore({
   scanLimit = SCAN_LIMIT,
   boundMs = READ_BOUND_MS,
 } = {}) {
-  const bound = new AbortController();
-  const timer = setTimeout(() => bound.abort(new Error(`read took over ${boundMs} ms`)), boundMs);
-  timer.unref();
-  const stop = bound.signal;
-  // A call in flight cannot be canceled, so the wait ends at the bound too.
-  const stopped = new Promise((_, reject) => {
-    stop.addEventListener("abort", () => reject(stop.reason), { once: true });
-  });
-  stopped.catch(() => {});
   try {
-    const read = (async () => {
-      const root = await packageStoreRoot(cwd, stop);
-      if (root === null) {
-        logDebug("package store root not known");
-        return null;
-      }
-      return readStore(root, scanLimit, stop);
-    })();
-    read.catch(() => {});
-    return await Promise.race([read, stopped]);
+    return await withTimeBound(boundMs, `read took over ${boundMs} ms`, ({ signal, stopped }) => {
+      const read = (async () => {
+        const root = await packageStoreRoot(cwd, signal);
+        if (root === null) {
+          logDebug("package store root not known");
+          return null;
+        }
+        return readStore(root, scanLimit, signal);
+      })();
+      read.catch(() => {});
+      // A call in flight cannot be canceled, so the wait ends at the bound too.
+      return Promise.race([read, stopped]);
+    });
   } catch (err) {
     logWarn(`package store not read: ${firstErrorLine(readableErrorText(err))}`);
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

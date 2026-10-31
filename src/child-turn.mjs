@@ -79,13 +79,48 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
   return response;
 }
 
+/**
+ * Runs one read-only probe turn in a new session and reads `state.resolvedModel` from it (#394). The
+ * probe is a child turn, so it runs under the same mutation check as a reviewer turn: a probe that
+ * changes the work tree throws `MutationError`, a failed snapshot throws `SnapshotError`, and
+ * `signal` cancels the CLI call. Every error is thrown, never returned as a result, because the
+ * caller refuses the continuation on any failure.
+ * @param {{ agents?: object, state: object, roleName: string, cwd: string, timeout?: number | null, signal?: AbortSignal }} options
+ */
+export async function runProbeTurn({
+  agents = defaultAgents,
+  state,
+  roleName,
+  cwd,
+  timeout,
+  signal,
+}) {
+  await withMutationCheck(
+    cwd,
+    roleName,
+    () =>
+      invoke({
+        agents,
+        state,
+        roleName,
+        prompt: "Reply with the single word OK.",
+        opts: { cwd, readOnly: true, timeout, signal },
+        onEvent: () => {},
+        stepsUsed: 0,
+      }),
+    { signal },
+  );
+  // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
+  throwIfCanceled(signal, roleName);
+}
+
 // The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
 // and the fatal-path events. The consumers of this list pick up a new field with no change. The field
 // still needs these edits:
 // - The producer in `runChild` sets its value, in the ok result and in the error result.
 // - The `TurnEvidence` typedef below names it.
 // - A field that must survive a fatal error also joins `carryTurnEvidence` and `failedTurnEvidence`.
-//   The fatal-path events in `runtime.mjs` also name it.
+//   `TURN_EVIDENCE_EVENTS` also names it.
 // - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
 //   (issue #984).
 // - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
@@ -103,6 +138,18 @@ const TURN_EVIDENCE_FIELDS = [
   "inheritedTmpdirEntries",
   "packageStoreEntries",
   "testRun",
+];
+
+/**
+ * The event that the fatal path of `runLoop` emits for each evidence field, in emit order, with the
+ * event property that carries the value.
+ */
+export const TURN_EVIDENCE_EVENTS = [
+  { field: "testRun", type: "test-run", key: "testRun" },
+  { field: "sharedGitChanged", type: "shared-git", key: "items" },
+  { field: "lockfileChanged", type: "lockfile", key: "paths" },
+  { field: "inheritedTmpdirEntries", type: "inherited-tmpdir", key: "entries" },
+  { field: "packageStoreEntries", type: "package-store", key: "entries" },
 ];
 
 /** Picks the evidence fields of `source` that carry a value. A falsy field and an empty list are dropped. */
