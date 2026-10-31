@@ -657,7 +657,7 @@ test.skipIf(process.platform === "win32")(
         });
       const message = records
         ? `call-* directories: ${claimed}; call-* directories without a record: ${claimed - records.length}; calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]; exit codes: ${codes.join(",")}`
-        : `the shim records or directory could not be read; exit codes: ${codes.join(",")}`;
+        : `the shim records or directory were unreadable; exit codes: ${codes.join(",")}`;
       expect(
         calls.filter((call) => call.exitCode === 0),
         message,
