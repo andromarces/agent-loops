@@ -56,7 +56,7 @@ Andro Marces
 - Partially superseded by [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md)
 - Related issues: #286, #302, #320
 - Implementation:
-  - Source: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` in `src/runtime.mjs`, `declaredPrFromTranscript` in `src/lib/continuation.mjs`
+  - Source: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` in `src/runtime.mjs`, `declaredPrFromTranscript` in `src/lib/gate.mjs`
   - Tests: `tests/runtime.declare-pr.test.mjs`, `tests/cli.continue-from.declared-pr.test.mjs`, `tests/lib/continuation.test.mjs`
   - Docs: `docs/orchestrator-instructions.md` (A headless task whose worker opens the PR), `docs/reference/usage.md`
 - [ADR Index](README.md)

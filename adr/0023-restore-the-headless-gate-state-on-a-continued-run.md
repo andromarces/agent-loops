@@ -63,7 +63,7 @@ Andro Marces
 - [Issue #393: Restore the headless gate state on --continue-from when the tree is unchanged](https://github.com/andromarces/agent-loops/issues/393)
 - [Pull Request #536](https://github.com/andromarces/agent-loops/pull/536)
 - Implementation:
-  - Source: `gateFromTranscript` and `matchingGate` in `src/lib/continuation.mjs`
+  - Source: `gateFromTranscript` and `matchingGate` in `src/lib/gate.mjs`
   - Source: The `continued` and `earlierGate` inputs of `runLoop`
   - Source: `--continue-from` in `src/cli.mjs`
   - Test: `tests/lib/continuation.test.mjs`
