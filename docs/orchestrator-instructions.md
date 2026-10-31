@@ -224,23 +224,10 @@ Apply these parent rules:
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.
 - A worker envelope carries `sharedGitChanged` only when the turn changed shared Git state outside
-  the work tree: `core.hooksPath`, a file in the common `hooks/` directory, or a remote. The field
-  names the items, such as `core.hooksPath`, `hooks/pre-push`, and `remote.origin`, and never a
-  value or a URL. A change there affects the main work tree and every other linked work tree, and
-  `workTree` does not show it. Report it in the finish summary under `open`. A failed or canceled
-  worker turn carries the field too. A turn that changed none carries no field. A read of the
-  shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
-  the absent field then does not prove that no change happened. The runtime logs a warning for
-  such a read.
-- A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
-  tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
-  lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts
-  as changed. When the runtime could not read the work tree root, the field names every lockfile,
-  which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
-  never installs, so the installed dependencies no longer match
-  the lockfile. When the field appears, run the lockfile install in that work tree, for example
-  `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
-  turn carries the field too. A turn that changed none carries no field.
+  the work tree, and `lockfileChanged` only when the turn changed a lockfile at the work tree root.
+  Report `sharedGitChanged` in the finish summary under `open`. When `lockfileChanged` appears, run the
+  lockfile install in that work tree before the next reviewer dispatch. Field rules:
+  [Advisory fields of a worker envelope](orchestrator/worker-envelope-fields.md).
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
@@ -282,81 +269,16 @@ Without `--no-track`, the new branch gets the upstream `origin/<default>` when
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
 
-The no-upstream rule guards a plain `git push` only when `push.default` follows
-the upstream. With `push.default=matching`, a plain `git push` pushes every
-local branch that has a remote branch of the same name. A linked work tree
-shares its local branches with the main checkout. So a local default branch that
-is ahead of `origin/<default>` is pushed too.
-
 Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or
 `git push -u origin <pr branch>` for an existing PR branch. Never let the worker
 run a plain `git push`. Before the first dispatch, read
 `git -C "<work tree>" config push.default`. If it prints `matching`, state the
 named push in the task text.
 
-The named push closes the gap only when the worker follows it. A worker that
-runs a plain `git push` anyway can push the default branch under `matching`.
-With `extensions.worktreeConfig` on, `git config --worktree push.default matching`
-sets the value for one work tree only. That value overrides the repository
-value. The command above reads the effective value of the work tree, override
-included.
-
-A repository with no remote has no `origin/<default>`, so the command above
-fails. Use the local default branch as the base:
-
-```bash
-git worktree add --no-track -b <branch> <work tree> <default>
-```
-
-In that repository, a worker commits in the work tree and never pushes, because
-there is no remote for `git push -u origin <branch>`. After `finish`, the parent
-merges the branch or hands it to the user.
-
-That run is not PR work, because no pull request can exist. Finish it with a plain
-`role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks`
-line on the latest changed state. Add `--require-accept` where it applies. Compare
-`reviewed.head` with the `workTree.head` of the last worker envelope. Never pass
-`--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set
-`unresolvedCompare`: each one concerns a PR head, and this run has none, so the
-#286 gap does not apply to it.
-
 A run on an existing pull request, such as a review or a correction of PR #N, must
-run on the PR head branch. Then the worker pushes to that branch, and
-`reviewed.head` can equal the PR head. Create the work tree on that branch from the
-remote branch:
-
-```bash
-git fetch origin <pr branch>
-git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>
-```
-
-`-B` creates the branch, or moves an existing local branch of that name to
-`origin/<pr branch>`. If the local branch exists, run
-`git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. A left
-count above 0 means the local branch is ahead of or diverged from the PR head. Then
-`-B` drops its local-only commits from the branch, so do not run the command:
-report to the user. A left count of 0 means the local branch equals or is behind the
-PR head, and the command is safe. The command fails when another work tree has the
-branch checked out. Then report to the user, and never remove that work tree.
-
-`-B` keeps the upstream of an existing local branch. A plain `git push` of a worker
-follows that upstream, so the upstream must be `origin/<pr branch>` or none, and
-never the default branch. Before the first dispatch, read it with
-`git -C "<work tree>" for-each-ref --format='%(upstream:short)' "refs/heads/<pr branch>"`.
-If it prints another branch, such as `origin/<default>`, run
-`git -C "<work tree>" branch --unset-upstream`, or set the PR branch with
-`git -C "<work tree>" branch -u origin/<pr branch>`.
-
-The upstream `origin/<pr branch>` is acceptable, because the PR branch is the branch
-that the worker must push. The `--no-track` rule guards a new branch that tracks
-`origin/<default>`. The worker pushes with `git push -u origin <pr branch>`.
-
-The work tree head must equal the PR head before the first dispatch: compare
-`git -C "<work tree>" rev-parse HEAD` with
-`gh pr view <pr> --json headRefOid --jq .headRefOid`. If they differ, the PR head
-moved after the fetch. Run `git fetch origin <pr branch>` and
-`git -C "<work tree>" merge --ff-only origin/<pr branch>`, then compare again. If
-the heads still differ, dispatch nothing and report to the user.
+run on the PR head branch. A repository with no remote has no `origin/<default>`.
+The setup for both, and the `matching` risk, are in
+[Work tree setup details](orchestrator/work-tree-setup.md).
 
 The parent installs the dependencies of the work tree, and no worker or reviewer
 does. After you create the work tree and before the first dispatch, run the
@@ -471,6 +393,13 @@ of this file.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
   dispatch several runs in one repository, so no two runs create the same tracking issue or take
   the same sequential identifier, such as an ADR number.
+- [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
+  tree for a repository with no remote or for a run on an existing PR, and when `push.default` is
+  `matching`.
+- [Advisory fields of a worker envelope](orchestrator/worker-envelope-fields.md): read it when a
+  worker envelope carries `sharedGitChanged` or `lockfileChanged`.
+- [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
+  `--compare-head <pr>`, and when that finish is refused.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
@@ -636,30 +565,14 @@ field absent, or set to `false`, is a verified finish. The marker cannot be
 combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
 for example one whose base branch requires a check this credential cannot read,
-finishes with `--compare-head <pr>` below, or records the marker when it cannot
+finishes with `--compare-head <pr>`, or records the marker when it cannot
 read the PR head. A base branch whose required-check sources each state that it
 holds no required check can use the gate, which verifies the PR head, the clean
 reviewed tree, and the merge state.
 
-`--compare-head <pr>` makes the PR-head half of the gate and nothing else, for a
-repository whose required-check sources are unreadable, for example a private
-repository on the GitHub Free plan (#301, #1098):
-
-```bash
-printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}'   | agent-loop role finish --cwd "<work tree>" --compare-head <pr>
-```
-
-The runtime reads the PR head and state and refuses the finish unless the PR is open,
-its head equals `reviewed.head`, and the reviewed tree is clean. A closed or merged PR
-refuses even when its head is unchanged. The one `gh pr view` also returns the
-merge state, which the runtime does not evaluate. It reads no required-check
-source or check result and claims none, so `verified` still states what
-the checks showed. The envelope then carries `"headCompare": "verified"` and the
-state file records the same field beside `summary`. That record differs from
-`unresolvedCompare`, which says no one resolved the head. The flag is refused
-together with `--require-ci` and with `unresolvedCompare`, and a run that
-declares its PR still needs its `--require-ci` gate. Dispatch the reviewer again
-when the PR head moved, then repeat the finish.
+A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, which compares the PR head
+with `reviewed.head` and nothing else (#301, #1098). Its rules are in
+[Finish with --compare-head](orchestrator/finish-compare-head.md).
 
 Without the gate or `--compare-head`, the runtime never resolves the PR head, so it cannot tell an
 absent field from a verified compare. A finish that records the compare under
