@@ -1,6 +1,6 @@
 # Waiting for required checks
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before a run that ends with `--require-ci` dispatches its reviewer, when a reviewer reports a pending required check, and when `wait-checks` returns an error, `noRequiredChecks`, or `noCheckSource`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before a run that ends with `--require-ci` dispatches its reviewer, when a reviewer reports a pending required check, when a required check fails, and when `wait-checks` returns an error, `noRequiredChecks`, or `noCheckSource`.
 
 ## Waiting for required checks
 
@@ -297,6 +297,24 @@ elapsed, is not a finish condition (issue #319). The `--require-ci` gate refuses
 while a required check is pending, so a finish summary cannot carry it. Wait
 again, dispatch the reviewer again, or `abort` with the pending check named in
 the reason.
+
+## A required check that fails on a known flaky test
+
+A required check can fail on a test that the diff does not reach. The parent never reruns a job, because the parent writes nothing to GitHub (issue #1303).
+
+Dispatch one worker turn for a required check that fails on a known flaky test. The turn does all of these steps in order:
+
+1. The worker turn must read the failure, with `gh run view --log-failed`, once the run completes.
+2. The worker turn must decide whether the diff reaches the failing test.
+3. The worker turn must record a known flaky recurrence in #1067, as the rules of that issue state.
+4. The worker turn must wait, with a bound, until the run completes.
+5. The worker turn must rerun only the failed jobs with `gh run rerun <run id> --failed`.
+
+If the diff reaches the failure, or no #1067 section matches it, the worker turn reruns nothing and reports the failure.
+
+The order follows two `gh` limits. `gh run rerun` refuses while another job of the run is in progress. `gh run view --log-failed` has no log until the run completes.
+
+After that worker turn, run `wait-checks` again for the same head before the reviewer turn. Never use `wait-checks` to wait for the rest of the run, because it settles on the first failing check.
 
 ## Headless loop waits
 

@@ -388,7 +388,8 @@ of this file.
   Codex reviewer, sets `--reviewer-sandbox`, or halts on a reviewer mutation.
 - [Waiting for required checks](orchestrator/waiting-for-checks.md): read it before a run that ends
   with `--require-ci` dispatches its reviewer, when a reviewer reports a pending required check,
-  and when `wait-checks` returns an error, `noRequiredChecks`, or `noCheckSource`.
+  when a required check fails on a known flaky test, and when `wait-checks` returns an error,
+  `noRequiredChecks`, or `noCheckSource`.
 - [Declaring the PR when a worker opens it](orchestrator/pr-declaration.md): read it when the PR
   does not exist at init, or when a headless run declares its PR itself.
 - [Finish gates](orchestrator/finish-gates.md): read it when a `finish` is refused, and before you

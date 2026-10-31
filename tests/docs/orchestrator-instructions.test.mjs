@@ -1483,3 +1483,19 @@ test("a sentence that the headless prompt shares with the instructions is in the
     "allowlist entries that match no reference sentence",
   ).toEqual([]);
 });
+
+// Usefulness: verifies the instructions give the parent one worker turn for a required check that fails
+// on a known flaky test (#1303). The parent writes nothing to GitHub, so the read, the #1067 record, the
+// bounded wait, and the failed-job rerun belong to that turn, and the parent then waits again on the same head.
+test("the instructions state the one-turn flaky-check procedure", async () => {
+  const text = await readInstructions();
+  expectRule(text, /one worker turn/i, /required check/i, /flaky/i);
+  expectRule(text, /worker turn/i, /read the failure/i);
+  expectRule(text, /worker turn/i, /(?:decide|decides) whether the diff reaches/i);
+  expectRule(text, /worker turn/i, /record/i, /#1067/);
+  expectRule(text, /worker turn/i, /wait/i, /run completes/i, /bound/i);
+  expectRule(text, /worker turn/i, /rerun/i, /only the failed jobs/i);
+  expectRule(text, /run `?wait-checks`? again/i, /same head/i, /before the reviewer/i);
+  expectRule(text, /never/i, /wait-checks/i, /rest of the run/i);
+  expectRule(text, /parent/i, /never/i, /rerun/i);
+});
