@@ -1,10 +1,10 @@
 import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { readTextOrNull } from "../../src/install/fsutil.mjs";
-import { deepEqual } from "../../src/install/settings.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { removePath } from "../runtime-helpers.mjs";
 
@@ -74,10 +74,10 @@ export async function guardIsInstalled(home, harness) {
   const target = (await targetPaths(harness, home)).settings[0];
   const settings = JSON.parse(await readTextOrNull(target.path));
   if (target.locator.kind === "key") {
-    return deepEqual(settings[target.locator.key], target.entry);
+    return isDeepStrictEqual(settings[target.locator.key], target.entry);
   }
   const list = target.locator.path.reduce((node, key) => node?.[key], settings);
-  return Array.isArray(list) && list.some((entry) => deepEqual(entry, target.entry));
+  return Array.isArray(list) && list.some((entry) => isDeepStrictEqual(entry, target.entry));
 }
 
 // The resolved CLI invocation an installed skill carries: the CLI by absolute

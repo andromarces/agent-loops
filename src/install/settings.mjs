@@ -8,30 +8,9 @@
 // The visible entry is the only ownership key: find and remove compare the
 // recorded entry by deep equality, so a package move or an upgrade that changes
 // a path still finds the old record.
+import { isDeepStrictEqual } from "node:util";
 import { readableErrorText } from "../lib/error-message.mjs";
 import { isJsonObject } from "../lib/json.mjs";
-
-/** Structural equality for JSON-shaped values. Object key order is irrelevant. */
-export function deepEqual(a, b) {
-  if (a === b) {
-    return true;
-  }
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
-      return false;
-    }
-    return a.every((value, index) => deepEqual(value, b[index]));
-  }
-  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
-    return false;
-  }
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) {
-    return false;
-  }
-  return keysA.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
-}
 
 export function parseSettings(text, path) {
   let value;
@@ -52,15 +31,31 @@ export function serializeSettings(value, originalText) {
   return `${JSON.stringify(value, null, 2)}${newline}`;
 }
 
-function existingArray(settings, locator) {
+/**
+ * Walks an array locator path and returns the chain of existing keys as
+ * `{ parent, key }` links. The chain is shorter than the path when a key is
+ * absent or its parent is not an object.
+ */
+function existingChain(settings, locator) {
+  const chain = [];
   let node = settings;
   for (const key of locator.path) {
     if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) {
-      return null;
+      break;
     }
+    chain.push({ parent: node, key });
     node = node[key];
   }
-  return Array.isArray(node) ? node : null;
+  return chain;
+}
+
+function existingArray(settings, locator) {
+  const chain = existingChain(settings, locator);
+  if (chain.length !== locator.path.length) {
+    return null;
+  }
+  const { parent, key } = chain[chain.length - 1];
+  return Array.isArray(parent[key]) ? parent[key] : null;
 }
 
 /** Returns the array a target writes into, creating missing objects. */
@@ -119,10 +114,12 @@ export function validateLocator(settings, locator) {
 
 export function findEntryIndex(settings, locator, entry) {
   if (locator.kind === "key") {
-    return Object.hasOwn(settings, locator.key) && deepEqual(settings[locator.key], entry) ? 0 : -1;
+    return Object.hasOwn(settings, locator.key) && isDeepStrictEqual(settings[locator.key], entry)
+      ? 0
+      : -1;
   }
   const array = existingArray(settings, locator);
-  return array ? array.findIndex((candidate) => deepEqual(candidate, entry)) : -1;
+  return array ? array.findIndex((candidate) => isDeepStrictEqual(candidate, entry)) : -1;
 }
 
 /**
@@ -135,7 +132,7 @@ export function findEntryIndex(settings, locator, entry) {
 export function insertEntry(settings, locator, entry) {
   if (locator.kind === "key") {
     if (Object.hasOwn(settings, locator.key)) {
-      return deepEqual(settings[locator.key], entry)
+      return isDeepStrictEqual(settings[locator.key], entry)
         ? { status: "duplicate" }
         : { status: "conflict" };
     }
@@ -188,14 +185,9 @@ export function pruneEmptyLocator(settings, locator, createdFrom = 0) {
   if (locator.kind === "key") {
     return;
   }
-  const chain = [];
-  let node = settings;
-  for (const key of locator.path) {
-    if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) {
-      return;
-    }
-    chain.push({ parent: node, key });
-    node = node[key];
+  const chain = existingChain(settings, locator);
+  if (chain.length !== locator.path.length) {
+    return;
   }
   for (let i = chain.length - 1; i >= createdFrom; i--) {
     const { parent, key } = chain[i];
@@ -219,15 +211,7 @@ export function missingLocatorIndex(settings, locator) {
   if (locator.kind === "key") {
     return Object.hasOwn(settings, locator.key) ? 1 : 0;
   }
-  let node = settings;
-  for (let index = 0; index < locator.path.length; index++) {
-    const key = locator.path[index];
-    if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) {
-      return index;
-    }
-    node = node[key];
-  }
-  return locator.path.length;
+  return existingChain(settings, locator).length;
 }
 
 /** The fragment a maintainer can paste by hand when the installer refuses to merge. */

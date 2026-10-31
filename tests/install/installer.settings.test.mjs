@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
-import { deepEqual } from "../../src/install/settings.mjs";
 import { sha256 } from "../../src/lib/hash.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { manifestPath, readManifest } from "../../src/install/manifest.mjs";
@@ -79,7 +79,9 @@ test("an upgrade over a user-edited settings file keeps the edit", async () => {
     hooks: [{ type: "command", command: "node /old/location/parent-guard.mjs", timeout: 10 }],
   };
   const settings = JSON.parse(await readText(settingsPath));
-  const index = settings.hooks.PreToolUse.findIndex((entry) => deepEqual(entry, record.entry));
+  const index = settings.hooks.PreToolUse.findIndex((entry) =>
+    isDeepStrictEqual(entry, record.entry),
+  );
   settings.hooks.PreToolUse[index] = oldEntry;
   settings.theme = "dark";
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
@@ -113,7 +115,7 @@ test("install appends the guard beside a same-matcher user entry", async () => {
   expect(reports.find((entry) => entry.kind === "settings").action).toBe("update");
   const after = JSON.parse(await readText(settingsPath));
   expect(after.hooks.PreToolUse).toHaveLength(2);
-  expect(deepEqual(after.hooks.PreToolUse[0], userEntry)).toBe(true);
+  expect(isDeepStrictEqual(after.hooks.PreToolUse[0], userEntry)).toBe(true);
   expect(existsSync(join(home, ".claude", "skills", "agent-loop", "SKILL.md"))).toBe(true);
 });
 
@@ -272,7 +274,7 @@ test("a hand-added identical guard entry does not block the entry point", async 
   expect(existsSync(skillPath)).toBe(false);
   const after = JSON.parse(await readText(settingsPath));
   expect(after.hooks.PreToolUse).toHaveLength(1);
-  expect(deepEqual(after.hooks.PreToolUse[0], guardEntry)).toBe(true);
+  expect(isDeepStrictEqual(after.hooks.PreToolUse[0], guardEntry)).toBe(true);
 });
 
 // Usefulness: verifies that a private settings file stays private through
@@ -337,7 +339,9 @@ test("an upgrade replaces the entry of a legacy matcher record", async () => {
     hooks: [{ type: "command", command: 'node "/old/location/parent-guard.mjs"', timeout: 10 }],
   };
   const settings = JSON.parse(await readText(settingsPath));
-  const index = settings.hooks.PreToolUse.findIndex((entry) => deepEqual(entry, legacy.entry));
+  const index = settings.hooks.PreToolUse.findIndex((entry) =>
+    isDeepStrictEqual(entry, legacy.entry),
+  );
   settings.hooks.PreToolUse[index] = oldEntry;
   await writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   legacy.entry = oldEntry;
@@ -346,8 +350,10 @@ test("an upgrade replaces the entry of a legacy matcher record", async () => {
 
   await install({ harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT });
   const upgraded = JSON.parse(await readText(settingsPath));
-  expect(upgraded.hooks.PreToolUse.some((entry) => deepEqual(entry, oldEntry))).toBe(false);
-  expect(upgraded.hooks.PreToolUse.filter((entry) => deepEqual(entry, newEntry))).toHaveLength(1);
+  expect(upgraded.hooks.PreToolUse.some((entry) => isDeepStrictEqual(entry, oldEntry))).toBe(false);
+  expect(
+    upgraded.hooks.PreToolUse.filter((entry) => isDeepStrictEqual(entry, newEntry)),
+  ).toHaveLength(1);
   expect(upgraded.hooks.PreToolUse).toHaveLength(settings.hooks.PreToolUse.length);
 
   await uninstall({ home });
@@ -372,6 +378,8 @@ test("uninstall removes the entry of a legacy matcher record by locator", async 
   expect(reports.find((entry) => entry.path === settingsPath).action).toBe("remove-entry");
   const after = JSON.parse(await readText(settingsPath));
   expect(after.theme).toBe("dark");
-  expect(after.hooks.PreToolUse.some((entry) => deepEqual(entry, record.entry))).toBe(false);
+  expect(after.hooks.PreToolUse.some((entry) => isDeepStrictEqual(entry, record.entry))).toBe(
+    false,
+  );
   expect(after.hooks.PreToolUse).toEqual(claudeSeed().hooks.PreToolUse);
 });

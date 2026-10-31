@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { afterEach, expect, test } from "vite-plus/test";
-import { deepEqual } from "../../src/install/settings.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath } from "../../src/install/manifest.mjs";
 import { removePath } from "../runtime-helpers.mjs";
@@ -110,7 +110,7 @@ test("uninstall keeps an empty container the user already had", async () => {
 
   await uninstall({ home });
   const after = JSON.parse(await readText(settingsPath));
-  expect(deepEqual(after.hooks, {})).toBe(true);
+  expect(isDeepStrictEqual(after.hooks, {})).toBe(true);
   expect(after.theme).toBe("dark");
 });
 
