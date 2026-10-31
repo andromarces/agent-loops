@@ -6,6 +6,7 @@ import { defaultAgents, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
+  COMPARE_HEAD_INPUT_REFUSAL,
   REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
   REVIEW_ONLY_GATE_REFUSAL,
   ROLE_KINDS as ROLES,
@@ -30,7 +31,6 @@ import {
   restoreSessions,
   verifyResolvedModels,
 } from "./lib/continuation.mjs";
-import { COMPARE_HEAD_INPUT_REFUSAL } from "./lib/ci-gate.mjs";
 import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";

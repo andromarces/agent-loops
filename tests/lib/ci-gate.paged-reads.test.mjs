@@ -5,13 +5,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { checkRuns, commitStatuses } from "../../src/lib/ci-gate.mjs";
-import {
-  ABSENT,
-  UNKNOWN,
-  failureOf,
-  requiredContexts,
-} from "../../src/lib/ci-required-sources.mjs";
-import { readOne } from "../../src/lib/gh-api.mjs";
+import { ABSENT, UNKNOWN, requiredContexts } from "../../src/lib/ci-required-sources.mjs";
+import { failureOf, readOne } from "../../src/lib/gh-api.mjs";
 import { SLUG } from "./ci-gate-helpers.mjs";
 
 const SHA = "1111111111111111111111111111111111111111";

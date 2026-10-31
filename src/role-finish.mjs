@@ -1,13 +1,13 @@
 // `agent-loop role finish`: the finish gate. Validates the summary, applies the `--require-accept`,
 // `--require-ci`, and `--compare-head` gates, and ends an active run as `finished`.
-import { REVIEW_ONLY_COMPARE_HEAD_REFUSAL, REVIEW_ONLY_GATE_REFUSAL } from "./lib/args.mjs";
 import {
-  checkCi,
-  checkPrHead,
   compareHeadConflict,
   missingGateRefusal,
+  REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
+  REVIEW_ONLY_GATE_REFUSAL,
   unresolvedCompareReason,
-} from "./lib/ci-gate.mjs";
+} from "./lib/args.mjs";
+import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { isJsonObject } from "./lib/json.mjs";
 import { logInfo } from "./lib/log.mjs";
 import { acceptanceFailure } from "./lib/report.mjs";
@@ -150,8 +150,9 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
       refusals.push(reason);
     }
   }
-  if (declaredPr !== null && args.requireCi !== declaredPr) {
-    refusals.push(missingGateRefusal(declaredPr, args.requireCi).reason);
+  const missingGate = missingGateRefusal(declaredPr, args.requireCi);
+  if (missingGate) {
+    refusals.push(missingGate.reason);
   }
   if (refusals.length > 0) {
     // The marker contradiction against a gate was its own error text before

@@ -1,17 +1,8 @@
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
-import {
-  checkCi,
-  checkPrHead,
-  compareHeadConflict,
-  missingGateRefusal,
-  unresolvedCompareReason,
-} from "./lib/ci-gate.mjs";
+import { compareHeadConflict, missingGateRefusal, unresolvedCompareReason } from "./lib/args.mjs";
+import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";
-
-// The review-only worker refusal, worded after the interactive `--role worker`
-// guard it mirrors, so a parent reads one rule on both paths.
-export const REVIEW_ONLY_WORKER_REFUSAL = "mode review-only rejects a run_worker action";
 
 /**
  * Reads one PR gate for a finish. A `gh` failure is a refusal, not a thrown error: the read throws
@@ -147,11 +138,11 @@ export async function evaluateFinish({
   // way such a run ends. A declaration with no gate, or with a gate for
   // another PR, refuses the finish: the flag cannot arrive mid-run, so no
   // child turn satisfies it and the run ends on the refusal (#302).
-  const declaredGateMissing = pr !== null && requireCi !== pr;
-  if (declaredGateMissing) {
-    refusals.push(missingGateRefusal(pr, requireCi));
+  const missingGate = missingGateRefusal(pr, requireCi);
+  if (missingGate) {
+    refusals.push(missingGate);
   }
-  if (requireCi !== null && !declaredGateMissing) {
+  if (requireCi !== null && !missingGate) {
     // The gate resolves the PR head in the runtime, which is what the parent
     // can no longer misreport. Its own failure is a refusal rather than a
     // thrown error, so a `gh` failure does not discard a run that a later
@@ -242,7 +233,7 @@ export async function evaluateFinish({
   // recovery states what satisfies its own condition (#293). The missing gate
   // needs its own ending, because a child turn cannot clear it and the
   // marker wording would name a condition the finish does not carry (#302).
-  const ending = declaredGateMissing
+  const ending = missingGate
     ? " No child turn clears the missing gate, so this refusal ends the run: a re-finish repeats it, and the run ends on exit 1. Abort with the missing gate named in the reason, or report to the caller that the run needs the gate."
     : needsChildTurn
       ? " Any child turn clears the prior-refusal flag, so a later refusal still gets a turn while step budget remains, and that turn costs a step. The run ends on a second refusal with no child turn in between, or when no step budget is left."

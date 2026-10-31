@@ -45,5 +45,5 @@ Andro Marces
 - [Pull request #1101](https://github.com/andromarces/agent-loops/pull/1101)
 - Partially superseded by [ADR 0052](0052-verify-the-pr-head-in-a-headless-run-without-the-required-check-gate.md), [pull request #1110](https://github.com/andromarces/agent-loops/pull/1110)
 - Related: #301, #281, #286, [ADR 0009](0009-declare-a-pr-input-on-every-run.md), [ADR 0012](0012-establish-the-absence-of-a-required-check.md), [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md)
-- Implementation: `checkPrHead` and `compareHeadConflict` in `src/lib/ci-gate.mjs`, the flag in `src/role.mjs`; documented in `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`, and `docs/reference/role.md`
+- Implementation: `checkPrHead` in `src/lib/ci-gate.mjs`, `compareHeadConflict` in `src/lib/args.mjs`, the flag in `src/role.mjs`; documented in `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`, and `docs/reference/role.md`
 - [ADR Index](README.md)

@@ -8,22 +8,26 @@
 import { readableErrorText } from "./error-message.mjs";
 import { isJsonObject } from "./json.mjs";
 import { logWarn } from "./log.mjs";
-import { ghApi, pagedRead, runGh } from "./gh-api.mjs";
+import {
+  boundedCall,
+  failureOf,
+  ghApi,
+  inOrder,
+  pagedRead,
+  ReadFailure,
+  readTimeout,
+  runGh,
+  withSignal,
+} from "./gh-api.mjs";
 import {
   ABSENT,
   UNKNOWN,
   EMPTY,
   RULESETS,
-  failureOf,
-  inOrder,
-  boundedCall,
-  readTimeout,
   prInfo,
   repoSlug,
   readRulesetState,
   requiredContexts,
-  ReadFailure,
-  withSignal,
 } from "./ci-required-sources.mjs";
 
 // A check run passes with one of these conclusions; every other conclusion and
@@ -383,25 +387,9 @@ export async function checkCi({
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
-  throwIfCanceled(signal);
-  const refused = reviewedRefusal(reviewed);
-  if (refused) {
-    return refused;
-  }
-  const call = boundedCall(gh, timeoutMs, signal);
-  let result;
-  try {
-    result = await judgeCi({ pr, reviewed, cwd, gh: call });
-  } catch (err) {
-    throwIfCanceled(signal);
-    if (readExpired(call, err)) {
-      throw readTimeout(timeoutMs);
-    }
-    throw failureOf(err);
-  }
-  // A cancel that arrived while the reads were cleaned up still wins over the result.
-  throwIfCanceled(signal);
-  return result;
+  return boundedGateRead({ reviewed, gh, timeoutMs, signal }, (call) =>
+    judgeCi({ pr, reviewed, cwd, gh: call }),
+  );
 }
 
 /**
@@ -425,34 +413,23 @@ export async function checkPrHead({
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
-  throwIfCanceled(signal);
-  const refused = reviewedRefusal(reviewed);
-  if (refused) {
-    return refused;
-  }
-  const call = boundedCall(gh, timeoutMs, signal);
-  let info;
-  try {
-    info = await prInfo(call, pr, cwd);
-  } catch (err) {
-    throwIfCanceled(signal);
-    if (readExpired(call, err)) {
-      throw readTimeout(timeoutMs);
-    }
-    throw failureOf(err);
-  }
-  throwIfCanceled(signal);
-  if (info.state !== "OPEN") {
-    return fail(
-      typeof info.state === "string"
-        ? `PR ${pr} is ${info.state.toLowerCase()}, not open`
-        : `PR ${pr} has no readable state, so it is not known to be open`,
-    );
-  }
-  if (info.headRefOid !== reviewed.head) {
-    return headDiffers();
-  }
-  return { ok: true, commit: info.headRefOid };
+  return boundedGateRead(
+    { reviewed, gh, timeoutMs, signal },
+    (call) => prInfo(call, pr, cwd),
+    (info) => {
+      if (info.state !== "OPEN") {
+        return fail(
+          typeof info.state === "string"
+            ? `PR ${pr} is ${info.state.toLowerCase()}, not open`
+            : `PR ${pr} has no readable state, so it is not known to be open`,
+        );
+      }
+      if (info.headRefOid !== reviewed.head) {
+        return headDiffers();
+      }
+      return { ok: true, commit: info.headRefOid };
+    },
+  );
 }
 
 /** The cancel error, as the rest of the role CLI reports it, so Ctrl+C exits 130. */
@@ -473,6 +450,34 @@ function throwIfCanceled(signal) {
  */
 function readExpired(call, err) {
   return call.deadline.aborted && !(err instanceof ReadFailure && !err.expired);
+}
+
+// The bounded read that `checkCi` and `checkPrHead` share. A cancel wins over every other outcome:
+// before the read, when the reviewed state refuses, and after the read. `read(call)` runs on the
+// bounded runner, and `judge(value)` runs on its value once the cancel check has passed.
+async function boundedGateRead(
+  { reviewed, gh, timeoutMs, signal },
+  read,
+  judge = (value) => value,
+) {
+  throwIfCanceled(signal);
+  const refused = reviewedRefusal(reviewed);
+  if (refused) {
+    return refused;
+  }
+  const call = boundedCall(gh, timeoutMs, signal);
+  let value;
+  try {
+    value = await read(call);
+  } catch (err) {
+    throwIfCanceled(signal);
+    if (readExpired(call, err)) {
+      throw readTimeout(timeoutMs);
+    }
+    throw failureOf(err);
+  }
+  throwIfCanceled(signal);
+  return judge(value);
 }
 
 // The reads that `judgeCi` and `readRequiredChecks` both start with: the PR, the
@@ -652,23 +657,6 @@ export async function unreadableGateReason({
     );
     return null;
   }
-}
-
-/**
- * The refusal of a declaration of a PR that the gate can never pass. `label` names the refused
- * input, for example `--pr 42`, and `reason` is the text of `unreadableGateReason`. `finish` is the
- * recovery clause that follows "omit --pr, then".
- * @param {string} label
- * @param {string} reason
- * @param {string} [finish]
- * @returns {string}
- */
-export function unreadableGateRefusal(
-  label,
-  reason,
-  finish = "finish with the unresolvedCompare marker after you compare the PR head with the reviewed commit yourself",
-) {
-  return `${label} is refused: ${reason}, so the --require-ci gate would refuse every finish of a declared run. Do not declare the PR: omit --pr, then ${finish}.`;
 }
 
 /**
@@ -929,74 +917,4 @@ async function readStatus({
       : oneLine(readableErrorText(failureOf(err)));
     return unresolved(`unread: ${detail}`, prHead);
   }
-}
-
-// The marker refusal a gated run gets, kept as a constant so the shared reason
-// function cannot drift apart on the wording.
-const UNRESOLVED_COMPARE_WITH_CI =
-  "unresolvedCompare cannot be combined with --require-ci: the gate resolves the PR head, so that compare is not unresolved";
-
-/**
- * The marker refusal for the run's PR input, or null when the run declares
- * neither a gate nor a PR, where the marker stays the only record. A declared
- * PR run needs the gate the same way a gated run does, so it refuses the marker
- * too and names the gate it must reach instead of a flag it never carried
- * (#302). The two paths share this function so the wording cannot drift.
- * @param {object} options
- * @returns {string | null}
- */
-export function unresolvedCompareReason({ pr = null, requireCi = null }) {
-  if (requireCi !== null) {
-    return UNRESOLVED_COMPARE_WITH_CI;
-  }
-  if (pr !== null) {
-    return `unresolvedCompare cannot be combined with a run that declares PR ${pr} (--pr): the run must end through the --require-ci ${pr} gate, which resolves that PR head, so that compare is not unresolved`;
-  }
-  return null;
-}
-
-/**
- * The refusal of the headless `--compare-head` beside `--pr` or `--require-ci`. Both declare or gate
- * a PR, so the run must end through the gate that reads the required checks and resolves the head.
- */
-export const COMPARE_HEAD_INPUT_REFUSAL =
-  "--compare-head cannot be combined with --pr or --require-ci: a run that declares or gates a PR ends through the --require-ci gate, which resolves the PR head and reads the required checks, so pass one of them";
-
-/**
- * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
- * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did, so
- * either one with this verified compare would record two outcomes for one head (#1098).
- * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared (#1111),
- * which no flag selected, so the refusal names the compare and not the flag.
- * @param {{ requireCi: number | null, unresolvedCompare: boolean, flag?: boolean }} options
- * @returns {string | null}
- */
-export function compareHeadConflict({ requireCi, unresolvedCompare, flag = true }) {
-  if (requireCi !== null) {
-    return "--compare-head cannot be combined with --require-ci: the gate resolves the PR head and reads the required checks, so pass one of them";
-  }
-  if (unresolvedCompare) {
-    return `${flag ? "--compare-head" : "the head compare of the undeclared PR"} cannot be combined with unresolvedCompare: the compare either resolved the PR head or did not`;
-  }
-  return null;
-}
-
-/**
- * The refusal a `--pr <pr>` declaration gives when the run carries no gate for
- * that PR, whether the gate is absent or names another pull request. A gate flag
- * is a run input, so no turn in the run can supply it and the refusal ends the
- * run; the recovery names `abort` as the only outcome the orchestrator owns.
- * @param {number} pr the declared PR
- * @param {number | null} requireCi the gate PR, or null when no gate was passed
- * @returns {{ reason: string, recovery: string }}
- */
-export function missingGateRefusal(pr, requireCi) {
-  const state =
-    requireCi === null
-      ? "this run carries no --require-ci gate"
-      : `this run gates PR ${requireCi} instead`;
-  return {
-    reason: `this run declares PR ${pr}, so a finish must end through the --require-ci ${pr} gate, and ${state}`,
-    recovery: `The gate flag is a run input, so no worker or reviewer turn can supply it, and a re-finish repeats this refusal. The only outcome you own is abort with the reason naming the missing --require-ci ${pr} gate, because this run cannot end through finish. A finish that records the unresolved compare is refused with this, because the gate resolves that PR head.`,
-  };
 }

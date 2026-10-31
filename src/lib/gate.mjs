@@ -200,10 +200,8 @@ export async function matchingGate(earlierGate, cwd, { signal } = {}) {
   const reviewed = earlierGate?.lastReviewed;
   if (
     GATE_FLAGS.some((flag) => typeof earlierGate?.[flag] !== "boolean") ||
-    typeof reviewed?.clean !== "boolean" ||
+    !isReviewedShape(reviewed) ||
     reviewed.exact !== true ||
-    typeof reviewed.head !== "string" ||
-    typeof reviewed.digest !== "string" ||
     !(isFullSha(reviewed.head) || reviewed.head === "unborn") ||
     !DIGEST_PATTERN.test(reviewed.digest)
   ) {

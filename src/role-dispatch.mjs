@@ -9,8 +9,9 @@ import {
   readStdinText,
   readTaskFile,
   roleState,
+  unreadableGateRefusal,
 } from "./lib/args.mjs";
-import { unreadableGateReason, unreadableGateRefusal } from "./lib/ci-gate.mjs";
+import { unreadableGateReason } from "./lib/ci-gate.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { sha256 } from "./lib/hash.mjs";
