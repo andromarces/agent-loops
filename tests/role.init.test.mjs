@@ -1,6 +1,6 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect } from "vite-plus/test";
 import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
@@ -21,6 +21,10 @@ import {
 } from "./role-helpers.mjs";
 import { createTempRepo } from "./runtime-helpers.mjs";
 import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
+import { createBarrierTest } from "./barrier-test.mjs";
+
+// Every test body runs through a body barrier (issue #943)
+const test = createBarrierTest();
 
 afterEach(cleanup);
 
@@ -765,4 +769,105 @@ test("dispatch init with an empty parentSession succeeds without a session entry
   });
   expect(result.exitCode).toBe(0);
   expect(result.payload).toMatchObject({ role: "worker", status: "ok" });
+});
+
+// Usefulness: verifies later calls read configuration from the state file —
+// an identical repeated flag passes through, a changed one is rejected with
+// the change message.
+test("later dispatch rejects changed init flags and accepts identical ones", async () => {
+  const repo = await newRunRepo();
+
+  await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "5"]), repo),
+    basicDeps(),
+  );
+
+  const identical = await executeRoleCommand(
+    withRepo(dispatchArgv(["--max-steps", "5"]), repo),
+    basicDeps(),
+  );
+  expect(identical.exitCode).toBe(0);
+
+  const changed = await executeRoleCommand(
+    withRepo(dispatchArgv(["--max-steps", "9"]), repo),
+    basicDeps(),
+  );
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--max-steps cannot be changed after init");
+
+  const changedTimeout = await executeRoleCommand(
+    withRepo(dispatchArgv(["--timeout", "5"]), repo),
+    basicDeps(),
+  );
+  expect(changedTimeout.exitCode).toBe(1);
+  expect(changedTimeout.payload.error).toContain("--timeout cannot be changed after init");
+});
+
+// Usefulness: verifies only the role kind is normalized in the change
+// comparison — model and effort are opaque pass-through strings, so repeating
+// an identical `--worker-model antigravity` passes and a changed one is
+// rejected (regression: normalizeAgent mangled the model string).
+test("identical model and effort flags pass comparison verbatim", async () => {
+  const repo = await newRunRepo();
+
+  await executeRoleCommand(
+    withRepo(
+      dispatchArgv([
+        ...INIT_OVERRIDES,
+        "--worker-model",
+        "antigravity",
+        "--worker-effort",
+        "high",
+        "--reviewer-model",
+        "gemini-2.5-pro",
+      ]),
+      repo,
+    ),
+    basicDeps(),
+  );
+  const state = await readRepoState(repo);
+  expect(state.roles.worker.model).toBe("antigravity");
+
+  const identical = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker-model", "antigravity", "--worker-effort", "high"]), repo),
+    basicDeps(),
+  );
+  expect(identical.exitCode).toBe(0);
+
+  const changed = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker-model", "antigravity", "--worker-effort", "low"]), repo),
+    basicDeps(),
+  );
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--worker-effort cannot be changed after init");
+});
+
+// Usefulness: verifies the `antigravity` kind alias passes the change
+// comparison through normalization while model strings stay verbatim.
+test("antigravity kind alias passes comparison, model strings do not normalize", async () => {
+  const repo = await newRunRepo();
+
+  await executeRoleCommand(
+    withRepo(
+      dispatchArgv([...INIT_OVERRIDES, "--worker", "antigravity", "--worker-model", "antigravity"]),
+      repo,
+    ),
+    { agents: { agy: recordingAdapter([]), fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  const state = await readRepoState(repo);
+  expect(state.roles.worker.kind).toBe("agy");
+  expect(state.roles.worker.model).toBe("antigravity");
+
+  const identical = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker", "antigravity", "--worker-model", "antigravity"]), repo),
+    { agents: { agy: recordingAdapter([]), fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  expect(identical.exitCode).toBe(0);
+
+  const changedModel = await executeRoleCommand(
+    withRepo(dispatchArgv(["--worker", "antigravity", "--worker-model", "gemini"]), repo),
+    { agents: { agy: recordingAdapter([]), fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  expect(changedModel.exitCode).toBe(1);
+  expect(changedModel.payload.error).toContain("--worker-model cannot be changed after init");
 });
