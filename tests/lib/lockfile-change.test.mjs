@@ -60,10 +60,11 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
 
 // Usefulness: verifies requirement "the bound aborts the signal of a hash read" (issue #1225), so a
 // read that has not started its request stops. It shows the signal, not release of an open handle.
+// The root is given, so the bound races the hash reads only and never the speed of a `git` child.
 test("a hash read still pending at the bound receives an aborted signal", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
-  await readLockfiles(repo, { boundMs: 200 });
+  await readLockfiles(repo, { boundMs: 200, rootOf: async () => repo });
   expect(hashing.signals.length).toBeGreaterThan(0);
   expect(hashing.signals.every((signal) => signal?.aborted === true)).toBe(true);
 });

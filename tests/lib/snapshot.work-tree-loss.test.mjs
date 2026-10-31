@@ -141,3 +141,19 @@ test("withMutationCheck reports the path that a turn changed", async () => {
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a --cwd subdirectory that is removed during a mutation-checked turn while
+// its repository survives is refused, so sharing one root between the two snapshots of a turn
+// never weakens the check of the original --cwd (#760, #1268).
+test("withMutationCheck refuses a subdirectory cwd that was removed during the turn", async () => {
+  const repo = await createRepo();
+  try {
+    await expect(
+      withMutationCheck(join(repo, "sub"), "reviewer", () =>
+        rm(join(repo, "sub"), { recursive: true }),
+      ),
+    ).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});

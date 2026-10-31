@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, open, readlink } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, open, readlink, realpath } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
@@ -193,16 +193,47 @@ export async function workTreeRoot(cwd, bound) {
   return rootResult.stdout.trim();
 }
 
+// True when `cwd` is still a directory whose nearest `.git` entry sits in `root`. It reads the file
+// system only, so a cached root is checked without a `git` child. A false answer sends the caller
+// to the `git` read, which then refuses a `cwd` that is gone or is no longer in that work tree.
+async function stillInWorkTree(cwd, root) {
+  try {
+    if (!(await lstat(cwd)).isDirectory()) return false;
+    let dir = resolve(cwd);
+    for (;;) {
+      try {
+        await lstat(join(dir, ".git"));
+        break;
+      } catch (err) {
+        if (err.code !== "ENOENT") return false;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) return false;
+      dir = parent;
+    }
+    return (await realpath(dir)) === (await realpath(root));
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Returns a resolver of the work tree root of `cwd` that reads it once. Only a root that was read is
- * kept, so a failed or canceled read is tried again by the next call. Calls that overlap each read
- * their own. A caller that takes it holds one root for one turn, so a work tree that vanishes later
- * fails at the next `git` read instead of at the root read.
+ * Returns a resolver of the work tree root of `cwd` that asks `git` once while `cwd` stays in that
+ * work tree. A later call checks the file system first (`stillInWorkTree`) and asks `git` again when
+ * `cwd` was removed, replaced, or moved into another work tree, so a turn never reuses a root for a
+ * `cwd` that no longer resolves to it. Only a root that was read is kept, so a failed or canceled
+ * read is tried again. Calls that overlap each read their own.
+ * known-limit: the check finds the nearest `.git` entry and not a `GIT_DIR` override or a ceiling
+ * directory, and a work tree that loses its `.git` fails at the next `git` read of the turn.
  * @returns {(bound?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<string>}
  */
 export function cachedWorkTreeRoot(cwd) {
   let root = null;
-  return async (bound) => (root ??= await workTreeRoot(cwd, bound));
+  return async (bound) => {
+    if (root !== null && (await stillInWorkTree(cwd, root))) return root;
+    root = null;
+    return (root = await workTreeRoot(cwd, bound));
+  };
 }
 
 // Files that one snapshot hashes at a time, so a large work tree never opens every file at once.
