@@ -185,13 +185,13 @@ function claimFileFor(rootLockFile, file, staleText) {
 // A claim guards the removal of one stale file, and a dead claim is itself
 // removed under a claim keyed by its own content. Each level's claim is created
 // with the exclusive link, so exactly one contender wins it, and it is removed
-// only by its winner. While a winner holds it, the stale file cannot change: its
+// only by its winner. While a winner holds it, the stale file cannot change. Its
 // owner is dead, nobody else removes it, and nobody creates a file at a path
-// that exists. Every acquisition writes unique content (a nonce), so a file that
-// reads as the stale content under the claim is the file that was read as stale,
-// and removing it cannot delete a new owner's file (#363). Nothing is renamed, and
-// no path is bare-removed unclaimed. A loser finds a live claim and exits as busy;
-// a file that reads differently or cannot be read is kept, and the caller's retry
+// that exists. Every acquisition writes unique content (a nonce). A file that
+// reads as the stale content under the claim is the file that was read as stale.
+// Removing it cannot delete a new owner's file (#363). Nothing is renamed, and no
+// path is bare-removed unclaimed. A loser finds a live claim and exits as busy.
+// A file that reads differently or cannot be read is kept, and the caller's retry
 // reports it as busy. A dead claim is removed through this same claimed removal,
 // by a contender that meets its stale file or by `pruneOrphanClaims` (#452).
 // Owner liveness: `ownerAlive`. Older-version contenders: `withStateLock`.

@@ -152,9 +152,9 @@ export function failedTurnEvidence(err) {
  * errors: detected mutation, snapshot failure, or cancel.
  * A reviewer result also carries `reviewed`, the runtime-owned identity of the
  * work tree the reviewer saw, and `prChecks`, the required-check status the
- * runtime read for a declared PR (#320). The evidence fields of
- * `TURN_EVIDENCE_FIELDS` join a result, and a fatal error carries them through
- * `carryTurnEvidence` and `failedTurnEvidence`.
+ * runtime read for a declared PR (#320).
+ * The evidence fields of `TURN_EVIDENCE_FIELDS` join a result. A fatal error carries them
+ * through `carryTurnEvidence` and `failedTurnEvidence`.
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).

@@ -360,8 +360,8 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
  * rule) fails closed.
  *
  * An unknown repository-rulesets read refuses the finish whatever the rest of the
- * union holds, because that reply may carry a required-status rule this caller
- * never saw, so a non-empty union from another source must not let the per-check
+ * union holds, because that reply can carry a required-status rule this caller
+ * never saw. A non-empty union from another source must not let the per-check
  * pass judge only the names it saw (issue #336).
  *
  * An empty union of required checks refuses when the classic-protection source
@@ -844,7 +844,7 @@ async function readStatus({
         }
         return null;
       },
-      // The same refusal the gate makes: a ruleset read that settled nothing may
+      // The same refusal the gate makes: a ruleset read that settled nothing can
       // hide a required check. `requiredResolutionRefusal` refuses an empty union.
       refuseUnknownRuleset: () =>
         unresolved(
