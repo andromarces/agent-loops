@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { Socket } from "node:net";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
 vi.mock("execa", () => ({ execa: vi.fn() }));
@@ -61,4 +62,26 @@ test("exec and execBounded pass a plain spawn result through", async () => {
   execa.mockReturnValue({ exitCode: 0, stdout: "out", stderr: "" });
   expect((await exec("git", [])).stdout).toBe("out");
   expect((await execBounded("git", [], { timeoutMs: 1000 })).stdout).toBe("out");
+});
+
+// Usefulness: a pipe that a paused reader has not drained is never cut, and an idle open pipe of an
+// exited child gets the group kill and the end of the read (review of PR #1306).
+test("exec cuts an idle open pipe of an exited child and spares a paused one", async () => {
+  vi.useFakeTimers();
+  const subprocess = stuckChild();
+  const pipe = new Socket();
+  subprocess.nodeChildProcess.stdout = pipe;
+  pipe.resume();
+  pipe.pause();
+  const outcome = exec("codex", []);
+  subprocess.nodeChildProcess.emit("exit", 0, null);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(subprocess.kill).not.toHaveBeenCalled();
+  pipe.resume();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(subprocess.kill).toHaveBeenCalledWith("SIGKILL");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pipe.readableEnded).toBe(true);
+  pipe.destroy();
+  outcome.catch(() => {});
 });

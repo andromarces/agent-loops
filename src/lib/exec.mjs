@@ -1,3 +1,4 @@
+import { Socket } from "node:net";
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
 import { firstErrorLine, readProp, readableErrorText } from "./error-message.mjs";
@@ -81,9 +82,9 @@ function withPnpmDepsCheckWarn(env) {
   return out;
 }
 
-// Bound on the wait for stdout and stderr to end after the child exited. A descendant that
-// inherited a pipe and outlived the child keeps the pipe open, and the child's own exit event is
-// then the last event execa sees (issue #1302).
+// Idle bound on the pipes of an exited child: no byte read for this long, and no read held back by
+// a slow consumer. A descendant that inherited a pipe and outlived the child keeps the pipe open,
+// and the child's own exit event is then the last event execa sees (issue #1302).
 const STDIO_DRAIN_GRACE_MS = 3000;
 // Bound on the wait for a child to exit after the timeout or the cancel killed it. It exceeds the
 // force-kill delays of `exec` (5 s) and `execBounded` (1 s). A child that no kill ends, for example
@@ -93,9 +94,11 @@ const KILL_GRACE_MS = 10_000;
 /**
  * Waits for `subprocess` like `await subprocess`, with two added bounds that never change a run
  * that ends on its own:
- * - `STDIO_DRAIN_GRACE_MS` after the child exits, the parent ends of its stdout, stderr, and `all`
- *   streams, so a descendant that holds the pipe open no longer holds the call. The output read up to
- *   then stays in the result.
+ * - `STDIO_DRAIN_GRACE_MS` after the child exits, and after each later read, a pipe of the child that
+ *   is still open, idle, and not held back by a slow consumer is held by another process. The call
+ *   then sends SIGKILL to the process group it owns (POSIX) and ends the read of that pipe, so the
+ *   descendant no longer holds the call. Output that the child wrote stays in the result: a
+ *   transform or reader downstream of the pipe still receives every byte that was read.
  * - `KILL_GRACE_MS` after `timeoutMs` passes or `signal` aborts, a child that did not exit gives its
  *   result up: the call settles as timed out or canceled with empty output, and the parent ends its
  *   own pipe ends.
@@ -110,14 +113,23 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
     stopWaiting = resolve;
   });
   const after = (ms, action) => timers.add(setTimeout(action, ms));
+  // The OS pipes of the child. With a transform, the stream is the output of the transform, not a pipe,
+  // and execa ends it with its input, so the bound leaves it alone.
+  const pipes = [child.stdout, child.stderr].filter((stream) => stream instanceof Socket);
+  let exited = false;
+  let drainTimer;
+  const armDrain = () => {
+    clearTimeout(drainTimer);
+    drainTimer = setTimeout(onDrainIdle, STDIO_DRAIN_GRACE_MS);
+  };
+  const onRead = () => exited && armDrain();
   const endPipes = () => {
-    for (const stream of [subprocess.stdout, subprocess.stderr, subprocess.all]) {
-      stream?.push(null);
-    }
+    for (const stream of pipes) stream.push(null);
   };
   const giveUp = (reason) => {
     logWarn(`${label}: the child did not exit ${KILL_GRACE_MS}ms after ${reason}; not waiting`);
     endPipes();
+    for (const stream of pipes) stream.destroy();
     child.unref?.();
     stopWaiting({
       exitCode: undefined,
@@ -129,15 +141,26 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
       stderr: "",
     });
   };
-  const onExit = () =>
-    after(STDIO_DRAIN_GRACE_MS, () => {
-      logWarn(
-        `${label}: a process holds the output open ${STDIO_DRAIN_GRACE_MS}ms after the child exit; output cut`,
-      );
-      endPipes();
-    });
+  // A pipe that ended is not held. One that is paused or holds unread bytes waits for the consumer
+  // of this process, which ends on its own.
+  function onDrainIdle() {
+    const held = pipes.filter((stream) => !stream.readableEnded && !stream.destroyed);
+    if (held.length === 0) return;
+    if (held.some((stream) => stream.isPaused() || stream.readableLength > 0)) return armDrain();
+    logWarn(
+      `${label}: a process holds the output open ${STDIO_DRAIN_GRACE_MS}ms after the child exit; ending the process group and the read`,
+    );
+    // Reaches the process group on POSIX. Nothing reaches a descendant of an exited child on Windows.
+    subprocess.kill?.("SIGKILL");
+    endPipes();
+  }
+  const onExit = () => {
+    exited = true;
+    armDrain();
+  };
   const onAbort = () => after(KILL_GRACE_MS, () => giveUp("the cancel"));
 
+  for (const stream of pipes) stream.on("data", onRead);
   if (child.exitCode != null || child.signalCode != null) onExit();
   else child.once?.("exit", onExit);
   if (timeoutMs > 0) after(timeoutMs + KILL_GRACE_MS, () => giveUp("the timeout"));
@@ -152,6 +175,8 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
       : Promise.resolve(subprocess);
   return Promise.race([finished, gaveUp]).finally(() => {
     timers.forEach(clearTimeout);
+    clearTimeout(drainTimer);
+    for (const stream of pipes) stream.off("data", onRead);
     child.off?.("exit", onExit);
     signal?.removeEventListener("abort", onAbort);
   });
