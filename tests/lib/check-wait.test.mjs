@@ -12,6 +12,7 @@ import {
   once,
   pinned,
   blockOf,
+  replyOf,
   FORBIDDEN,
   NOT_FOUND,
 } from "./check-wait-helpers.mjs";
@@ -590,4 +591,38 @@ test("waitChecks still judges the checks of each poll while the sources are cach
     { status: 0, checks: [PASSED_ITEM, check("lint", "pass", "SUCCESS")] },
   ]);
   expect(result.checks).toEqual([PASSED_ITEM, check("lint", "pass", "SUCCESS")]);
+});
+
+// Usefulness: verifies #1267 caches only a settled source — a protection read that was unreadable (403) on
+// a no-checks poll is read again on the next poll, so a recovered read settles the wait instead of the
+// stale unknown refusing it.
+test("waitChecks reads an unreadable protection source again and settles on its recovery", async () => {
+  const clock = fakeClock();
+  const inner = scriptedGh(
+    [
+      { status: 1, stdout: "", stderr: "no checks reported on the 'main' branch" },
+      { status: 0, checks: [PASSED_ITEM] },
+    ],
+    { required: [{ name: "ci", appId: null }] },
+  );
+  let protectionReads = 0;
+  const gh = async (args, cwd, options) => {
+    if (args[0] === "api" && args[1].endsWith("/protection")) {
+      protectionReads += 1;
+      if (protectionReads === 1) {
+        return replyOf(403, "gh: Resource not accessible by integration (HTTP 403)");
+      }
+    }
+    return inner(args, cwd, options);
+  };
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    gh,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+  expect(protectionReads).toBeGreaterThan(1);
 });

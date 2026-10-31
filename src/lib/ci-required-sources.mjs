@@ -649,8 +649,9 @@ export async function readRulesetState(gh, slug, base, cwd) {
 //
 // With `sourceCache`, a Map the caller owns, a ruleset or protection result that was read cleanly is
 // kept per base branch and reused by later calls with the same Map, so a repeated caller reads each
-// source once (#1267). A reply that could not be parsed is never kept, so the next call reads it
-// again. A change to the rules after the first read is not seen through the same Map.
+// source once (#1267). Only a result that settled a class other than `UNKNOWN` is kept: an unknown,
+// unreadable, unparsed, or failed read is read again by the next call. A change to the rules after
+// the first read is not seen through the same Map.
 export async function requiredContexts(
   gh,
   slug,
@@ -669,7 +670,7 @@ export async function requiredContexts(
       return sourceCache.get(key);
     }
     const source = await read();
-    if (sourceCache && !source.unparsed) {
+    if (sourceCache && source.state !== UNKNOWN && !source.unparsed) {
       sourceCache.set(key, source);
     }
     return source;
