@@ -1,14 +1,14 @@
 import { defaultAgents } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
-import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
-import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import {
   COMPARE_HEAD_INPUT_REFUSAL,
-  DEFAULT_READ_TIMEOUT_MS,
-  unreadableGateReason,
+  DEFAULT_MAX_STEPS,
+  REVIEW_ONLY_WORKER_REFUSAL,
   unreadableGateRefusal,
-} from "./lib/ci-gate.mjs";
-import { evaluateFinish, REVIEW_ONLY_WORKER_REFUSAL } from "./finish-gate.mjs";
+} from "./lib/args.mjs";
+import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, unreadableGateReason } from "./lib/ci-gate.mjs";
+import { evaluateFinish } from "./finish-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn, logWarnFull } from "./lib/log.mjs";
 import {

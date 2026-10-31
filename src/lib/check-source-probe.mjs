@@ -1,8 +1,7 @@
 // The probe of the `--all` check wait that decides whether any source can report a check for a PR
 // head. It reads only, through the bounded `gh` runner of the wait (#1054).
 import { commitEntries } from "./ci-gate.mjs";
-import { inOrder } from "./ci-required-sources.mjs";
-import { ghApi, pagedRead, readOne } from "./gh-api.mjs";
+import { ghApi, inOrder, pagedRead, readOne } from "./gh-api.mjs";
 import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject } from "./json.mjs";
 import { prEventsFilteredOut, prWorkflowMayRun, UNREADABLE_TEXT } from "./workflow-paths.mjs";
@@ -262,12 +261,10 @@ export async function noCheckSource(context, sha, base) {
   if (baseSha === null || changed === null) {
     return false;
   }
-  for (const file of changed) {
-    if (WORKFLOW_PATH.test(file.filename) || WORKFLOW_PATH.test(file.previous_filename ?? "")) {
-      return false;
-    }
-  }
   const changedPaths = changedPathsOf(changed);
+  if (changedPaths.some((path) => WORKFLOW_PATH.test(path))) {
+    return false;
+  }
   const texts = await workflowTextsOf(context, baseSha);
   if (texts === null) {
     return false;
@@ -334,14 +331,11 @@ export async function pullRequestWorkflowMayRun(context, sha, base) {
   if (changed === null) {
     return null;
   }
-  const changesWorkflow = changed.some(
-    (file) => WORKFLOW_PATH.test(file.filename) || WORKFLOW_PATH.test(file.previous_filename ?? ""),
-  );
-  if (changesWorkflow) {
+  const paths = changedPathsOf(changed);
+  if (paths.some((path) => WORKFLOW_PATH.test(path))) {
     return true;
   }
   const texts = await workflowTextsOf(context, baseSha);
-  const paths = changedPathsOf(changed);
   if (texts === null) {
     return null;
   }

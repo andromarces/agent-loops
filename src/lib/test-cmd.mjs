@@ -34,6 +34,9 @@ export const carryTestRun = testRunCarrier.carry;
  * fallback reads a result that `canceledError` sets directly, which `carry` never recorded.
  */
 export const failedTestRun = (err) => testRunCarrier.failed(err) ?? readProp(err, "testRun");
+// The clause of a canceled or timed-out summary that states what the kill reaches.
+const KILL_CLAUSE =
+  "the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive";
 const MAX_CHANGED_PATHS = 20;
 // The bound and the redaction that every reported path list gets, as the output text gets them.
 const boundedPaths = (paths) => paths.slice(0, MAX_CHANGED_PATHS).map(redactAndClean);
@@ -64,9 +67,10 @@ function canceledError(testRun) {
   return err;
 }
 
-// The advisory result of a command that the runtime did not start (ADR 0040).
-function notRunResult(command, status, summary, durationMs) {
-  const testRun = {
+// The advisory result of a command that never ran: every output field is empty. A run that ran
+// overrides the output fields.
+function baseTestRun(command, status, durationMs, summary) {
+  return {
     command: redactAndClean(command),
     status,
     exitCode: null,
@@ -81,6 +85,11 @@ function notRunResult(command, status, summary, durationMs) {
     changedCount: 0,
     advisory: true,
   };
+}
+
+// The advisory result of a command that the runtime did not start (ADR 0040).
+function notRunResult(command, status, summary, durationMs) {
+  const testRun = baseTestRun(command, status, durationMs, summary);
   notRun.add(testRun);
   return testRun;
 }
@@ -263,11 +272,10 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   let summary;
   if (canceled) {
     status = "canceled";
-    summary =
-      "canceled before the command finished; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive";
+    summary = `canceled before the command finished; ${KILL_CLAUSE}`;
   } else if (timedOut) {
     status = "timed-out";
-    summary = `timed out after ${timeoutSeconds} seconds; the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive; this is neither a pass nor a failure`;
+    summary = `timed out after ${timeoutSeconds} seconds; ${KILL_CLAUSE}; this is neither a pass nor a failure`;
   } else if (exitCode === null) {
     status = "error";
     summary = `did not run to an exit code${result.signal ? ` (signal ${result.signal})` : ""}`;
@@ -282,19 +290,15 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   logInfo(`test command finished in ${durationMs}ms: ${status}`);
 
   const testRun = {
-    command: redactAndClean(command),
-    status,
+    ...baseTestRun(command, status, durationMs, summary),
     exitCode,
     timedOut,
-    durationMs,
-    summary,
     outputBytes: total,
     truncated,
     tail,
     workTreeChanged: changed === null ? null : changed.length > 0,
     changedPaths: boundedPaths(changed ?? []),
     changedCount: changed?.length ?? null,
-    advisory: true,
   };
   if (finalSnapshot) {
     finalSnapshots.set(testRun, finalSnapshot);
