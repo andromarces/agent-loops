@@ -12,10 +12,12 @@ The named push closes the gap only when the worker follows it. A worker that
 runs a plain `git push` anyway can push the default branch under `matching`.
 With `extensions.worktreeConfig` on, `git config --worktree push.default matching`
 sets the value for one work tree only. That value overrides the repository
-value. The command above reads the effective value of the work tree, override
-included.
+value. The `git config push.default` read in
+[Work tree ownership](../orchestrator-instructions.md#work-tree-ownership) reads the
+effective value of the work tree, override included.
 
-A repository with no remote has no `origin/<default>`, so the command above
+A repository with no remote has no `origin/<default>`, so the creation
+command in [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership)
 fails. Use the local default branch as the base:
 
 ```bash

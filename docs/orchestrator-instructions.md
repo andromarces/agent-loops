@@ -224,10 +224,23 @@ Apply these parent rules:
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.
 - A worker envelope carries `sharedGitChanged` only when the turn changed shared Git state outside
-  the work tree, and `lockfileChanged` only when the turn changed a lockfile at the work tree root.
-  Report `sharedGitChanged` in the finish summary under `open`. When `lockfileChanged` appears, run the
-  lockfile install in that work tree before the next reviewer dispatch. Field rules:
-  [Advisory fields of a worker envelope](orchestrator/worker-envelope-fields.md).
+  the work tree: `core.hooksPath`, a file in the common `hooks/` directory, or a remote. The field
+  names the items, such as `core.hooksPath`, `hooks/pre-push`, and `remote.origin`, and never a
+  value or a URL. A change there affects the main work tree and every other linked work tree, and
+  `workTree` does not show it. Report it in the finish summary under `open`. A failed or canceled
+  worker turn carries the field too. A turn that changed none carries no field. A read of the
+  shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
+  the absent field then does not prove that no change happened. The runtime logs a warning for
+  such a read.
+- A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
+  tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
+  lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts
+  as changed. When the runtime could not read the work tree root, the field names every lockfile,
+  which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
+  never installs, so the installed dependencies no longer match
+  the lockfile. When the field appears, run the lockfile install in that work tree, for example
+  `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
+  turn carries the field too. A turn that changed none carries no field.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
@@ -396,10 +409,11 @@ of this file.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
   tree for a repository with no remote or for a run on an existing PR, and when `push.default` is
   `matching`.
-- [Advisory fields of a worker envelope](orchestrator/worker-envelope-fields.md): read it when a
-  worker envelope carries `sharedGitChanged` or `lockfileChanged`.
 - [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
   `--compare-head <pr>`, and when that finish is refused.
+- [Declared PR runs and unreadable required-check sources](orchestrator/declared-pr-gate-limits.md):
+  read it before init with `--pr`, and when an init with `--pr` is refused because a
+  required-check source settled nothing.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
@@ -616,28 +630,10 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   flag arrives on one command line, so `--mode review-only` with `--pr`,
   `--require-accept`, or `--require-ci` is a usage error before the run starts,
   with the same two wordings this section states.
-- A base branch with no required check does not refuse `--pr` when every
-  required-check source stated that it holds none. The gate passes on the PR head,
-  the clean reviewed tree, and the merge state, and the run records it, so a
-  declared run on such a branch ends and never keeps the #286 gap. A base branch
-  whose required checks this credential cannot read still refuses every finish,
-  because the gate cannot establish the absence, and the refusal names the source
-  it could not read.
-- Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
-  the gate, for example a private repository on the GitHub Free plan (#301), because
-  a declared run there refuses every finish and can end only through `abort`.
-  Init with `--pr`, `role declare-pr`, and the headless start read the required-check
-  sources of the PR base once. They refuse when the rulesets read settled nothing,
-  before any state file is written or child spawns. A read that fails for another
-  reason, such as a transport failure, warns and does not refuse. A `--continue-from`
-  run that restored its PR makes no start read, because the earlier run read at the
-  start of its own `--pr` run or before it declared a worker-opened PR, and its
-  prompt states none. After a refusal, omit
-  `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
-  `reviewed.head` in the runtime and requires the PR to be open. Use the `"unresolvedCompare": true` marker only
-  when the PR head itself cannot be read. The headless `--require-ci` with no
-  `--pr` declares nothing, so the start does not read it and its gate refuses at
-  finish.
+- A base branch with no required check, or one whose required-check sources this credential cannot
+  read, changes what `--pr` does at init and at finish. Those rules, and the `--compare-head` route
+  that follows a refused `--pr`, are in
+  [Declared PR runs and unreadable required-check sources](orchestrator/declared-pr-gate-limits.md).
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
