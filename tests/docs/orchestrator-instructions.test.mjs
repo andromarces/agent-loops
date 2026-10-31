@@ -1491,6 +1491,11 @@ test("the instructions state the one-turn flaky-check procedure", async () => {
   const text = await readInstructions();
   expectRule(text, /one worker turn/i, /required check/i, /flaky/i);
   expectRule(text, /worker turn/i, /read the failure/i);
+  // A read of the failure log needs a completed run, so the bounded wait comes first.
+  expect(text.search(/worker turn must wait, with a bound/i)).toBeGreaterThan(-1);
+  expect(text.search(/worker turn must wait, with a bound/i)).toBeLessThan(
+    text.search(/worker turn must read the failure/i),
+  );
   expectRule(text, /worker turn/i, /(?:decide|decides) whether the diff reaches/i);
   expectRule(text, /worker turn/i, /record/i, /#1067/);
   expectRule(text, /worker turn/i, /wait/i, /run completes/i, /bound/i);
@@ -1498,4 +1503,29 @@ test("the instructions state the one-turn flaky-check procedure", async () => {
   expectRule(text, /run `?wait-checks`? again/i, /same head/i, /before the reviewer/i);
   expectRule(text, /never/i, /wait-checks/i, /rest of the run/i);
   expectRule(text, /parent/i, /never/i, /rerun/i);
+});
+
+// Usefulness: verifies the headless prompt tells a wait-class or reviewer-class orchestrator to send a failing
+// flaky required check to one run_worker turn, because that orchestrator writes nothing to GitHub (#1303).
+test("the headless prompt sends a flaky required-check failure to one worker turn", () => {
+  for (const orchestratorKind of ["claude", "codex"]) {
+    const prompt = initialPrompt({
+      task: "Implement feature X",
+      maxSteps: 10,
+      pr: 42,
+      requireCi: 42,
+      orchestratorKind,
+      reviewerKind: "claude",
+      waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+    });
+    expectRule(prompt, /required check can fail on a known flaky test/i);
+    expectRule(prompt, /write nothing to GitHub/i, /dispatch one run_worker turn/i);
+    expectRule(prompt, /waits, with a bound, until the run completes/i, /reads the failure/i);
+    expectRule(
+      prompt,
+      /records a known flaky recurrence/i,
+      /#1067/,
+      /reruns only the failed jobs/i,
+    );
+  }
 });
