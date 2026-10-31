@@ -151,7 +151,7 @@ Andro Marces
 - Implementation:
   - Source: The `sandbox` option in `src/agents/codex.mjs`
   - Source: `reviewerSandbox` in `runChild` in `src/child-turn.mjs` and `runLoop` in `src/runtime.mjs`, and `legacyReviewerSandbox` in `src/lib/args.mjs` for the legacy `reviewerWorkspaceWrite` state field
-  - Source: `workspaceWriteLine` in `src/prompts/reviewer.mjs`
+  - Source: `sandboxNotes` in `src/prompts/reviewer.mjs`
   - Source: `reviewerSandboxBlock` in `src/prompts/orchestrator.mjs`
   - Source: The init field in `src/role-dispatch.mjs`
   - Source: The flag in `src/cli.mjs` and `src/lib/args.mjs`

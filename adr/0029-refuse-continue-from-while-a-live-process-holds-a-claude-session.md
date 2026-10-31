@@ -58,5 +58,5 @@ Andro Marces
 - [Issue #647](https://github.com/andromarces/agent-loops/issues/647)
 - [Issue #627](https://github.com/andromarces/agent-loops/issues/627)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
-- Implementation: `refuseHeldSessions` in `src/lib/continuation.mjs`, `readProcessCommands` in `src/lib/process-ancestry.mjs`, and the call in `src/cli.mjs`. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run).
+- Implementation: `refuseHeldSessions` in `src/lib/command-line.mjs`, `readProcessCommands` in `src/lib/process-ancestry.mjs`, and the call in `src/cli.mjs`. Documented in [Continue a run](../docs/reference/usage.md#continue-a-run).
 - [ADR Index](README.md)

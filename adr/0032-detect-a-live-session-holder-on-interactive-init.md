@@ -85,8 +85,8 @@ Andro Marces
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:
   - Source: `readClaudeSessions` in `src/lib/runstate.mjs`
-  - Source: `refuseHeldIds` in `src/lib/continuation.mjs`
-  - Source: `holdsSession` in `src/lib/command-line.mjs`
+  - Source: `refuseHeldIds` in `src/lib/command-line.mjs`
+  - Source: `heldSessionIds` in `src/lib/command-line.mjs`
   - Source: The call in `dispatchLocked` in `src/role-dispatch.mjs`
   - Test: `tests/role.init.test.mjs`
   - Test: `tests/lib/continuation.test.mjs`
