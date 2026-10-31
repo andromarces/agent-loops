@@ -520,10 +520,10 @@ export async function runChild(options) {
       roleName === "reviewer" ? await createReviewerScratch(cwd, { signal }) : null;
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
-    sharedBefore = roleName === "worker" ? await readShared() : null;
     // The parent installs once before the first dispatch, so a worker turn that changes a lockfile
-    // leaves the next reviewer on stale dependencies (issue #1180).
-    lockfilesBefore = roleName === "worker" ? await readLockfiles(cwd) : null;
+    // leaves the next reviewer on stale dependencies (issue #1180). The two reads are independent.
+    [sharedBefore, lockfilesBefore] =
+      roleName === "worker" ? await Promise.all([readShared(), readLockfiles(cwd)]) : [null, null];
     if (roleName === "reviewer") {
       [tmpdirBefore, storeBefore] = await Promise.all([
         snapshotInheritedTmpdir(),
@@ -554,18 +554,20 @@ export async function runChild(options) {
     }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
-    // The two reads are independent, so they run together. Both settle before a failure throws, so
-    // a cancel in the work tree read leaves the shared Git items read once and kept for the catch path.
-    const [workTreeRead, sharedRead] = await Promise.allSettled([
+    // The three reads are independent, so they run together. All settle before a failure throws, so
+    // a cancel in the work tree read leaves the shared Git items and the lockfile paths read once and
+    // kept for the catch path.
+    const [workTreeRead, sharedRead, lockfileRead] = await Promise.allSettled([
       roleName === "worker" ? readWorkTree() : null,
       readSharedGitChanged(),
+      readLockfileChanged(),
     ]);
-    for (const read of [workTreeRead, sharedRead]) {
+    for (const read of [workTreeRead, sharedRead, lockfileRead]) {
       if (read.status === "rejected") throw read.reason;
     }
     const workTree = workTreeRead.value;
     const sharedGitChanged = sharedRead.value;
-    const lockfileChanged = await readLockfileChanged();
+    const lockfileChanged = lockfileRead.value;
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -139,5 +139,59 @@ test("withMutationCheck reports the path that a turn changed", async () => {
     ).rejects.toMatchObject({ name: "MutationError", paths: ["sub/a.txt"] });
   } finally {
     await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a --cwd subdirectory that is removed during a mutation-checked turn while
+// its repository survives is refused, so sharing one root between the two snapshots of a turn
+// never weakens the check of the original --cwd (#760, #1268).
+test("withMutationCheck refuses a subdirectory cwd that was removed during the turn", async () => {
+  const repo = await createRepo();
+  try {
+    await expect(
+      withMutationCheck(join(repo, "sub"), "reviewer", () =>
+        rm(join(repo, "sub"), { recursive: true }),
+      ),
+    ).rejects.toThrow(REFUSAL);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies an ancestor of --cwd that is replaced by a link into a subdirectory of another repository
+// during a mutation-checked turn is refused, as the repository change it is, even though the
+// ignored ancestor leaves the old repository unchanged (#760, #1268). A junction is the link on
+// Windows. The test skips where the system refuses to create the link.
+test("withMutationCheck refuses a cwd whose ancestor became a link into another repository", async (ctx) => {
+  const repo = await createRepo();
+  const other = await createRepo();
+  try {
+    await writeFile(join(repo, ".gitignore"), "pivot/\n");
+    await mkdir(join(repo, "pivot", "sub"), { recursive: true });
+    await writeFile(join(repo, "pivot", "sub", "a.txt"), "a\n");
+    await mkdir(join(other, "inner", "sub"), { recursive: true });
+    await writeFile(join(other, "inner", "sub", "a.txt"), "b\n");
+    const swap = async () => {
+      await rm(join(repo, "pivot"), { recursive: true });
+      try {
+        await symlink(join(other, "inner"), join(repo, "pivot"), "junction");
+      } catch (err) {
+        if (err.code === "EPERM" || err.code === "EACCES") return false;
+        throw err;
+      }
+      return true;
+    };
+    let linked = true;
+    const outcome = await withMutationCheck(join(repo, "pivot", "sub"), "reviewer", async () => {
+      linked = await swap();
+    }).then(
+      () => null,
+      (err) => err,
+    );
+    if (!linked) ctx.skip();
+    expect(outcome).toMatchObject({ name: "MutationError" });
+  } finally {
+    await removePath(repo);
+    await removePath(other);
   }
 });
