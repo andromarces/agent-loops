@@ -296,6 +296,34 @@ export function classifyRulesets(data) {
 }
 
 /**
+ * The contexts a classic `required_status_checks` object names, from its `contexts` names and its
+ * `checks` entries. A missing list is empty.
+ * @param {Record<string, unknown>} required
+ * @returns {{ name: string, appId: number | null }[] | null} `null` when either list is not an
+ *   array or holds an entry that names no check (issue #1265).
+ */
+function protectionContexts(required) {
+  const { contexts = [], checks = [] } = required;
+  if (!Array.isArray(contexts) || !Array.isArray(checks)) {
+    return null;
+  }
+  const named = [];
+  for (const context of contexts) {
+    if (typeof context !== "string" || context === "") {
+      return null;
+    }
+    named.push({ name: context, appId: null });
+  }
+  for (const check of checks) {
+    if (typeof check?.context !== "string" || check.context === "") {
+      return null;
+    }
+    named.push({ name: check.context, appId: check.app_id });
+  }
+  return named;
+}
+
+/**
  * Classifies a successful classic branch-protection read. No body proves an
  * absence for this source: the only reply that states the branch is unprotected
  * is the exact `Branch not protected` (404), handled on the error path, so a
@@ -314,18 +342,9 @@ function classifyProtection(data) {
   if (!isJsonObject(required)) {
     return { state: UNKNOWN, contexts: [] };
   }
-  const contexts = [];
-  for (const context of required.contexts ?? []) {
-    if (typeof context !== "string" || context === "") {
-      return { state: UNKNOWN, contexts: [] };
-    }
-    contexts.push({ name: context, appId: null });
-  }
-  for (const check of required.checks ?? []) {
-    if (typeof check?.context !== "string" || check.context === "") {
-      return { state: UNKNOWN, contexts: [] };
-    }
-    contexts.push({ name: check.context, appId: check.app_id });
+  const contexts = protectionContexts(required);
+  if (contexts === null) {
+    return { state: UNKNOWN, contexts: [] };
   }
   if (contexts.length === 0) {
     return { state: UNKNOWN, contexts: [] };
@@ -348,13 +367,7 @@ function isProtectionMalformed(data) {
   if (!isJsonObject(required)) {
     return true;
   }
-  const { contexts = [], checks = [] } = required;
-  return (
-    !Array.isArray(contexts) ||
-    !Array.isArray(checks) ||
-    contexts.some((context) => typeof context !== "string" || context === "") ||
-    checks.some((check) => typeof check?.context !== "string" || check.context === "")
-  );
+  return protectionContexts(required) === null;
 }
 
 /** A runner whose calls also end when `signal` aborts, beside any signal the caller's runner already carries. */
