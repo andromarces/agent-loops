@@ -56,6 +56,7 @@ Andro Marces
 
 ## Links
 
+- [Pull request #1331](https://github.com/andromarces/agent-loops/pull/1331)
 - [Issue #1326: End the Codex reviewer command tree on POSIX after a parent signal](https://github.com/andromarces/agent-loops/issues/1326)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [ADR 0034: Keep the Codex reviewer descendant gap after a parent end](0034-keep-the-codex-reviewer-descendant-gap-after-a-parent-end.md)
