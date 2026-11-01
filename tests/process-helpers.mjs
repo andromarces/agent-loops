@@ -577,8 +577,8 @@ export async function withGitHangingAfter(passes, run) {
       join(dir, "git"),
       [
         "#!/bin/sh",
-        // The step record names the furthest step a call reached, so a failure states where it
-        // stopped (issue #1258). A failed write must not change the call path, so it drops stderr.
+        // The step record ends with the last step a call recorded (issue #1258). A failed write must
+        // not change the call path, so it drops stderr.
         `printf 'start %s\\n' "$PPID" 2>/dev/null > '${dir}/steps/'$$`,
         // The marker records the pid of a call that ran the shim. A failed `mkdir` never ends the
         // shell, so the claim below always runs.

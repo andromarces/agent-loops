@@ -462,8 +462,9 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
-// Usefulness: verifies each call records the steps it reached, so a failure names the step a call
-// stopped at (issue #1258). The record test reads the claim only, and no other test reads the steps.
+// Usefulness: verifies each call writes its start and claim steps, so a failure can name the last
+// step a call recorded (issue #1258). The record test reads the claim only, and no other test
+// reads the steps.
 test.skipIf(process.platform === "win32")(
   "withGitHangingAfter records the start and the claim of each call",
   async () => {
