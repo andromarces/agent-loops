@@ -28,7 +28,11 @@ const ACTIONS = {
   app: { id: 15368, slug: "github-actions" },
 };
 
-/** A scripted `gh` whose head check runs are `runsByPoll[n]` on poll `n`, the last entry repeating. */
+/**
+ * A scripted `gh` whose head check runs are `runsByPoll[n]` on poll `n`, the last entry repeating.
+ * A failure count fails that many reads of the source and then succeeds. `reads` collects each source
+ * read with its poll and whether it succeeded.
+ */
 function holdGh({
   workflow = PR_WORKFLOW,
   prFiles = [{ filename: "src/a.js" }],
@@ -36,9 +40,12 @@ function holdGh({
   listingFailures = 0,
   listingFailureText = "gh: Bad Gateway (HTTP 502)",
   baseFailureText = null,
+  baseFailures = 0,
   filesFailureText = null,
+  filesFailures = 0,
   heads = [HEAD_A],
   failBaseRead = 0,
+  reads = null,
 }) {
   const inner = scriptedGh([{ status: 0, checks: [{ name: WORKERS.name, bucket: "pass" }] }], {
     all: true,
@@ -46,34 +53,51 @@ function holdGh({
   });
   const repo = "repos/owner/repo";
   let polls = 0;
+  let pollIndex = 0;
   let failuresLeft = listingFailures;
   let baseReads = 0;
+  let fileReads = 0;
+  const note = (read, ok) => reads?.push({ read, ok, poll: pollIndex });
   return async (args, cwd) => {
     if (args[0] === "pr" && args[1] === "view") {
       polls += 1;
     }
+    if (args[0] === "pr" && args[1] === "checks") {
+      pollIndex += 1;
+    }
     const endpoint = args[0] === "api" ? args[1] : "";
     if (endpoint === `${repo}/commits/main`) {
       baseReads += 1;
-      if (baseFailureText !== null) {
+      const failed = baseFailureText !== null && (baseFailures === 0 || baseReads <= baseFailures);
+      if (failed) {
+        note("base", false);
         return { status: 1, stdout: "", stderr: baseFailureText, timedOut: false };
       }
       if (baseReads === failBaseRead) {
+        note("base", false);
         return { status: 1, stdout: "", stderr: "gh: Bad Gateway (HTTP 502)", timedOut: false };
       }
+      note("base", true);
       return readOk({ sha: BASE_HEAD });
     }
     if (endpoint.startsWith(`${repo}/pulls/42/files`)) {
-      if (filesFailureText !== null) {
+      fileReads += 1;
+      const failed =
+        filesFailureText !== null && (filesFailures === 0 || fileReads <= filesFailures);
+      if (failed) {
+        note("files", false);
         return { status: 1, stdout: "", stderr: filesFailureText, timedOut: false };
       }
+      note("files", true);
       return readOk(prFiles);
     }
     if (endpoint === `${repo}/contents/.github/workflows?ref=${BASE_HEAD}`) {
       if (failuresLeft > 0) {
         failuresLeft -= 1;
+        note("listing", false);
         return { status: 1, stdout: "", stderr: listingFailureText, timedOut: false };
       }
+      note("listing", true);
       return readOk([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file" }]);
     }
     if (endpoint === `${repo}/contents/.github/workflows/ci.yml?ref=${BASE_HEAD}`) {
@@ -259,6 +283,75 @@ test.each([
     await expect(holdWait({ runsByPoll: [[WORKERS]], ...options })).rejects.toThrow(/dial tcp/);
   },
 );
+
+// Runs the wait once with `failure` and once with no failure, and collects the source reads.
+async function recovered({ failure, ...options }) {
+  const reads = [];
+  const failed = await holdWait({ ...options, ...failure, reads }, { timeoutSeconds: 40 });
+  const baseline = await holdWait(options);
+  return { result: failed.result, elapsed: failed.elapsed, baseline: baseline.result, reads };
+}
+
+// Usefulness: verifies the base head read of the workflow answer runs again on a later poll.
+// It also verifies the wait settles as it does with no failure, so the retry is what allows the
+// pass (issue #1314). The inert workflow needs the successful read, because a failed read holds.
+test("the --all wait reads the base head again on a later poll after a transport failure", async () => {
+  const { result, elapsed, baseline, reads } = await recovered({
+    workflow: INERT_WORKFLOW,
+    runsByPoll: [[WORKERS]],
+    failure: { baseFailureText: DIAL_TIMEOUT, baseFailures: 1 },
+  });
+  expect(result).toEqual(baseline);
+  expect(result.timedOut).toBe(false);
+  expect(reads.filter((entry) => !entry.ok)).toEqual([{ read: "base", ok: false, poll: 1 }]);
+  const base = reads.filter((entry) => entry.read === "base");
+  expect(base.slice(0, 2)).toEqual([
+    { read: "base", ok: false, poll: 1 },
+    { read: "base", ok: true, poll: 2 },
+  ]);
+  expect(elapsed).toBeGreaterThan(0);
+});
+
+// Usefulness: verifies the workflow-directory read runs again on a later poll after one transport
+// failure. It also verifies the wait settles as it does with no failure, so the retry is what
+// allows the pass (issue #1314). The inert workflow needs the successful read, because a failed
+// read holds.
+test("the --all wait reads the workflow directory again on a later poll after a transport failure", async () => {
+  const { result, elapsed, baseline, reads } = await recovered({
+    workflow: INERT_WORKFLOW,
+    runsByPoll: [[WORKERS]],
+    failure: { listingFailures: 1, listingFailureText: DIAL_TIMEOUT },
+  });
+  expect(result).toEqual(baseline);
+  expect(result.timedOut).toBe(false);
+  expect(reads.filter((entry) => !entry.ok)).toEqual([{ read: "listing", ok: false, poll: 1 }]);
+  expect(reads.filter((entry) => entry.read === "listing")).toEqual([
+    { read: "listing", ok: false, poll: 1 },
+    { read: "listing", ok: true, poll: 2 },
+  ]);
+  expect(elapsed).toBeGreaterThan(0);
+});
+
+// Usefulness: verifies the PR files read runs again on a later poll after one transport failure.
+// It also verifies the wait settles as it does with no failure, so the retry is what allows the
+// pass (issue #1314). The paths filter excludes the PR file, so the pass needs the successful
+// read, and a failed read holds it.
+test("the --all wait reads the PR files again on a later poll after a transport failure", async () => {
+  const { result, elapsed, baseline, reads } = await recovered({
+    workflow: "name: docs\non:\n  pull_request:\n    paths-ignore:\n      - 'docs/**'\n",
+    prFiles: [{ filename: "docs/b.md" }],
+    runsByPoll: [[WORKERS]],
+    failure: { filesFailureText: DIAL_TIMEOUT, filesFailures: 1 },
+  });
+  expect(result).toEqual(baseline);
+  expect(result.timedOut).toBe(false);
+  expect(reads.filter((entry) => !entry.ok)).toEqual([{ read: "files", ok: false, poll: 1 }]);
+  expect(reads.filter((entry) => entry.read === "files")).toEqual([
+    { read: "files", ok: false, poll: 1 },
+    { read: "files", ok: true, poll: 2 },
+  ]);
+  expect(elapsed).toBeGreaterThan(0);
+});
 
 // Usefulness: verifies a workflow with no `pull_request` trigger skips the hold, so a repository whose
 // workflows cannot run for a PR keeps the immediate pass.
