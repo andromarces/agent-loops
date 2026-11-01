@@ -104,7 +104,9 @@ Avoid the effect:
 - Store the account in the `gh` keyring (`gh auth login`), so the fallback can read the repository.
 - Pass the token under another name, for example `AGENT_GH_TOKEN`, then set it in the command: `$env:GH_TOKEN = $env:AGENT_GH_TOKEN; gh ...`. A profile that clears only the two standard names leaves it alone.
 
-Not verified: macOS and Linux shells, other Codex versions, and a profile that clears other names.
+Not verified: Linux shells, other Codex versions, and a profile that clears other names.
+
+macOS result (2026-11-02, macOS 27.2, zsh 5.9, codex-cli 0.166.0): each result run printed its own `ps` row, parent chain, and `set` or `unset`. The control and the default run used `zsh -c` and printed `set`. With `-c 'allow_login_shell=false'`, with the snapshot on or off, the run used `zsh -c` and printed `set`. With `-c 'features.shell_snapshot=false'`, the run used `zsh -lc` and printed `unset`. A marker run printed `zshenv`, `zprofile`, `zlogin`, and `zshrc`, so the login shell loaded `.zprofile`. The probe set `GH_TOKEN` to a dummy value, and all six outer runs exited 0.
 
 #### Codex read-only child-spawn limit
 
