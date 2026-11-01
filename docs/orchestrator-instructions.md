@@ -168,8 +168,9 @@ The example below is indented for display only. Example reviewer envelope:
   transient. The Codex adapter marks the reply `Selected model is at capacity. Please
   try a different model.`. The Claude Code adapter marks a `result` event with
   `is_error: true` and `api_error_status: 529`. The OpenCode adapter marks a
-  `provider.internal` error with `status` 529. The Copilot and agy adapters
-  set no field.
+  `provider.internal` error with `status` 529. The Copilot adapter marks a
+  `session.error` event with `statusCode` 529. The agy adapter marks an
+  `AGY_ERROR` line whose `short_error` carries code 529.
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.

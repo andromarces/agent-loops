@@ -273,3 +273,124 @@ test("agy invocation is identical with the reviewer sandbox input on and off", a
   const [off, on] = vi.mocked(exec).mock.calls;
   expect(on).toEqual(off);
 });
+
+// The machine line that agy 1.4.12 printed on stderr of a failed turn against a local 529 server
+// (issue #1323). The `short_error` prefix is the CLI's own text, and the provider message follows
+// it. No live capacity reply confirmed the line.
+const agyErrorLine = (shortError, extra = {}) =>
+  `AGY_ERROR: ${JSON.stringify({
+    short_error: shortError,
+    retryable: false,
+    error_id: "e-1",
+    ...extra,
+  })}`;
+
+const agyCapacityLine = agyErrorLine(
+  "UNAVAILABLE (code 529): The model API is currently overloaded.",
+);
+
+const agyFailedTurn = (overrides = {}) =>
+  Object.assign(new Error("agy exited with code 3."), {
+    exitCode: 3,
+    stdout: JSON.stringify({
+      conversation_id: "conv-cap",
+      status: "ERROR",
+      response: "",
+      error: "The model API is currently overloaded.",
+      finished_reason: "error",
+    }),
+    stderr: `error: The model API is currently overloaded.\n${agyCapacityLine}\n`,
+    timedOut: false,
+    isCanceled: false,
+    isTerminated: false,
+    ...overrides,
+  });
+
+const agyState = () => ({ kind: "agy", sessionId: null, model: null, effort: null });
+
+// Usefulness: verifies requirement "each adapter with a sourced capacity signal is marked transient" (issue #1323), so a parent retries without reading the error text.
+test("agy marks a provider capacity failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(agyFailedTurn());
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies "consecutive capacity failures stay marked" (issue #1323): two capacity lines still mark the turn.
+test("agy keeps the mark when consecutive lines are capacity", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    agyFailedTurn({ stderr: `${agyCapacityLine}\n${agyCapacityLine}\n` }),
+  );
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies requirement "only the terminal failure decides" (issue #1323): a later error with another cause must not make a parent retry a real fault.
+test("agy does not mark a capacity line that a later error replaces", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    agyFailedTurn({
+      stderr: `${agyCapacityLine}\n${agyErrorLine("UNAVAILABLE (code 401): bad key")}\n`,
+    }),
+  );
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a non-capacity reply is never marked (issue #1323), because a wrong mark makes a parent retry a real fault.
+test.each([
+  ["a provider 503", agyErrorLine("UNAVAILABLE (code 503): service unavailable")],
+  ["an auth failure", agyErrorLine("UNAVAILABLE (code 401): bad key")],
+  [
+    "the code inside the provider message",
+    agyErrorLine("UNAVAILABLE (code 503): retry (code 529)"),
+  ],
+])("agy does not mark %s transient", async (_name, line) => {
+  vi.mocked(exec).mockRejectedValueOnce(agyFailedTurn({ stderr: `${line}\n` }));
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a capacity reply on a turn that fails for another reason is never marked (issue #1323). A timeout, a cancel, and a signal fail the turn for another reason.
+test.each([
+  ["a timeout", { timedOut: true }],
+  ["a cancel", { isCanceled: true }],
+  ["a signal", { isTerminated: true }],
+])("agy does not mark a capacity line on %s", async (_name, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(agyFailedTurn(overrides));
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a broken final AGY_ERROR line keeps the earlier capacity line decisive (issue #1323), so a truncated tail cannot hide an overload.
+test("agy keeps the mark when the final line is truncated", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    agyFailedTurn({ stderr: `${agyCapacityLine}\nAGY_ERROR: {"short_error":"UNAVAIL` }),
+  );
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies the adapter reads stderr only (issue #1323): model output that quotes the capacity line never marks a turn.
+test("agy does not mark a capacity line that only the model output holds", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    agyFailedTurn({
+      stdout: JSON.stringify({ conversation_id: "conv-cap", status: "ERROR", error: "boom" }),
+      stderr: `error: boom\n${agyCapacityLine}\n`.replace("AGY_ERROR:", "note AGY_ERROR:"),
+    }),
+  );
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});

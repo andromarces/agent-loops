@@ -1256,3 +1256,125 @@ test("runCopilot refuses a UUID-shaped non-string unconfirmed session id with th
     expect(vi.mocked(exec)).not.toHaveBeenCalled();
   });
 });
+
+// The stream that Copilot CLI 1.0.106-2 wrote for a 529 from a local BYOK provider (issue #1323).
+// The terminal `session.error` event carries the provider HTTP status. No live capacity reply
+// confirmed the stream.
+const sessionErrorLine = (statusCode, extra = {}) =>
+  JSON.stringify({
+    type: "session.error",
+    data: {
+      errorType: "query",
+      message: "Failed to get response from the AI model; retried 5 times.",
+      statusCode,
+      originatingMessageId: "m-1",
+      ...extra,
+    },
+  });
+
+const copilotResultLine = JSON.stringify({
+  type: "result",
+  sessionId: "s-cap",
+  exitCode: 1,
+});
+
+const capacityStream = (...events) => [...events, copilotResultLine].join("\n");
+
+const capacityState = () => ({ kind: "copilot", sessionId: "s-cap", model: null, effort: null });
+
+// Usefulness: verifies requirement "each adapter with a sourced capacity signal is marked transient" (issue #1323), so a parent retries without reading the error text.
+test("copilot marks a provider capacity failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({ stdout: capacityStream(sessionErrorLine(529)) }),
+  );
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies "consecutive capacity failures stay marked" (issue #1323): two capacity events still mark the turn.
+test("copilot keeps the mark when consecutive error events are capacity", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({ stdout: capacityStream(sessionErrorLine(529), sessionErrorLine(529)) }),
+  );
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies requirement "only the terminal failure decides" (issue #1323): a later error with another cause must not make a parent retry a real fault.
+test("copilot does not mark a capacity event that a later error replaces", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({ stdout: capacityStream(sessionErrorLine(529), sessionErrorLine(500)) }),
+  );
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a retried 529 model call that a later event replaces is never marked (issue #1323), because only the terminal session error decides.
+test("copilot does not mark a retried model call failure without a capacity session error", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: capacityStream(
+        JSON.stringify({ type: "model.call_failure", data: { statusCode: 529 } }),
+        sessionErrorLine(500),
+      ),
+    }),
+  );
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a non-capacity reply is never marked (issue #1323), because a wrong mark makes a parent retry a real fault.
+test.each([
+  ["a provider 503", sessionErrorLine(503)],
+  ["an auth failure", sessionErrorLine(401, { errorType: "authentication" })],
+  ["a session error with no status", JSON.stringify({ type: "session.error", data: {} })],
+  [
+    "a message that quotes the capacity text",
+    JSON.stringify({
+      type: "assistant.message",
+      data: { content: "Failed to get response from the AI model; Last error: 529" },
+    }),
+  ],
+])("copilot does not mark %s transient", async (_name, line) => {
+  vi.mocked(exec).mockRejectedValueOnce(copilotFailure({ stdout: capacityStream(line) }));
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a capacity stream on a timeout, a cancel, or a signal is never marked (issue #1323), because that turn fails for another reason.
+test.each([
+  ["a timeout", { timedOut: true }],
+  ["a cancel", { isCanceled: true }],
+  ["a signal", { isTerminated: true }],
+])("copilot does not mark a capacity stream on %s", async (_name, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({ stdout: capacityStream(sessionErrorLine(529)), ...overrides }),
+  );
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies a broken final line keeps the earlier capacity event decisive (issue #1323), so a truncated tail cannot hide an overload.
+test("copilot keeps the mark when the final line is truncated", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    copilotFailure({
+      stdout: `${sessionErrorLine(529)}\n{"type":"session.error","data":{"statusCo`,
+    }),
+  );
+
+  const caught = await runCopilot(capacityState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});

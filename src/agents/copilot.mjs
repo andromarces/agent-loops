@@ -10,6 +10,7 @@ import {
   assertResumedSession,
   childRan,
   closingText,
+  markCapacityFailure,
   recordResolvedModel,
   keepFailedSessionId,
   readSessionHead,
@@ -20,6 +21,25 @@ import {
 
 // Text Copilot returns for a tool call that `--no-ask-user` leaves without an approval (issue #713).
 const SHELL_DENIAL_TEXT = "Permission denied because no interactive user response was available";
+
+// Copilot CLI 1.0.106-2 writes the provider HTTP status on the terminal `session.error` event of
+// a failed turn. A probe against a local 529 server with a BYOK provider captured that event. A
+// provider capacity reply is status 529 (issue #1323).
+const CAPACITY_STATUS = 529;
+
+/**
+ * Marks a failed turn whose terminal failure is a provider capacity reply. The terminal failure is
+ * the last `session.error` event, so an earlier retried failure followed by another cause is never
+ * marked. A truncated tail loses only the line it cut, so an earlier event stays decisive.
+ * @param {unknown} error the error `exec` threw
+ * @param {unknown[]} events the failed turn's parsed output lines, in order
+ */
+function flagCapacityFailure(error, events) {
+  const terminal = events.filter(isJsonObject).findLast((event) => event.type === "session.error");
+  if (terminal?.data?.statusCode === CAPACITY_STATUS) {
+    markCapacityFailure(error);
+  }
+}
 
 /**
  * True when Copilot saved a turn under `id`: `events.jsonl` of the session is a regular file whose
@@ -116,6 +136,7 @@ export async function runCopilot(state, prompt, options = {}) {
       );
     }
     setMainLoopUsage(state, objectUsage(failedResult));
+    flagCapacityFailure(error, failedEvents);
     // An id the CLI reported wins. Otherwise the pre-assigned id stays only when Copilot saved a
     // turn under it: a failed first turn that ran a tool leaves such a session (issue #641), and
     // one that fails before the prompt is recorded does not, so keeping its id would skip the role
