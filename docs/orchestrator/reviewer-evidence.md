@@ -163,6 +163,7 @@ the flag is unchanged.
   as a cancel of the command does, and holds no slot.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
   bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
+- A command that no kill ends settles 10 s after the bound or the cancel, with the same `timed-out` or `canceled` result fields.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
   The runtime redacts the values of secret-named environment variables, in the

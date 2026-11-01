@@ -152,7 +152,8 @@ async function holdSlotFor(command, signal) {
  * on Windows) in `cwd`, so the command is written in the syntax of the shell
  * that runs it and the runtime adds no quoting. The command and its child
  * processes are killed when the bound expires, which reports `timed-out` with
- * `exitCode: null`, whatever code the killed command exited with. The kill reaches
+ * `exitCode: null`, whatever code the killed command exited with. A command that
+ * no kill ends settles 10 s after the bound or the cancel. The kill reaches
  * the process group of the command on POSIX and its tree on Windows only: an orphan
  * that left the group, or whose parent exited on Windows, can survive (ADR 0017).
  * Output is read as a rolling window, so a noisy command cannot exhaust memory.
@@ -202,6 +203,11 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
     stdin: "ignore",
     all: true,
     buffer: false,
+    // The same bound and cancel as `execBounded` gives `exec`: at the bound, or on a cancel,
+    // execa kills the group on POSIX or the tree on Windows, and the call settles 10 s later
+    // even when no kill ends the command (issue #1307).
+    timeoutMs: timeoutSeconds * 1000,
+    signal,
   });
   // The runtime owns the bound and the cancel, and kills what it owns and nothing else. execa
   // starts the command as the leader of a process group of its own on POSIX, so SIGKILL to that
@@ -211,21 +217,6 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   // Approved limit (maintainer, 2026-10-04, ADR 0017): an orphan that left the group, for example
   // through `setsid`, survives on POSIX, and an orphan whose parent exited survives on Windows.
   // Neither Node nor execa exposes a Windows job object.
-  let timedOut = false;
-  let canceled = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    subprocess.kill("SIGKILL");
-  }, timeoutSeconds * 1000);
-  const onAbort = () => {
-    canceled = true;
-    subprocess.kill("SIGKILL");
-  };
-  if (signal?.aborted) {
-    onAbort();
-  } else {
-    signal?.addEventListener("abort", onAbort, { once: true });
-  }
   let window = Buffer.alloc(0);
   let total = 0;
   subprocess.all.on("data", (chunk) => {
@@ -236,13 +227,9 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
       window = window.subarray(window.length - CAPTURE_WINDOW_BYTES);
     }
   });
-  let result;
-  try {
-    result = await subprocess;
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
-  }
+  const result = await subprocess;
+  const timedOut = Boolean(result.timedOut);
+  const canceled = Boolean(result.isCanceled);
   const durationMs = Date.now() - startedAt;
 
   // The cancel is already set when it ended the command, and the changed paths are its evidence,
