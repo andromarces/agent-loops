@@ -20,12 +20,14 @@ ADR 0058 removes the turn directory of a dispatch that died mid-turn, and record
 2. **Record origin.** The call refuses a record whose `parentReal` is not the real path of the temporary directory that the call inherited, because a turn directory is created there only. An `al-` directory elsewhere with its real device and inode is not removed. A call that runs with another temporary directory than the dispatch that died keeps the directory with a warning. This is an added refusal of decision 4 of ADR 0058.
 3. **Stale record.** The dispatch clears `lastDispatch.turnTmpdir` in memory when its record write fails, so the later write of the error result saves no record of a directory that is already removed.
 4. **Unrecorded child stays.** A dispatch that died between the spawn and the write of the child pid keeps its directory, and no later sweep removes it. The record holds no pid in that window, so no group id is known, and a removal by age or by name alone can delete a directory that a live child uses (ADR 0058 alternative 1).
+5. **Command shell of a CLI.** A Codex shell command runs in its own process group (codex-cli 0.166.0 on macOS). The group of the dead child does not name its descendant. The removal adds no other marker: the turn ended, so its directory carries no result of the turn. Every other marker depends on the platform, and a session id can be shared with unrelated processes of the same terminal or harness. The extension option of issue #1318 is closed.
 
 ## Consequences
 
 - A descendant that outlives a dead child in its group keeps the directory until the group ends.
 - A group id that the OS reused for a new group after the old one ended keeps the directory, with a warning. The cost is a leaked directory, never a wrong removal.
 - A descendant that leaves the group of the child, with `setsid` for example, is not found.
+  - Observed on 2026-11-01 with codex-cli 0.166.0 on macOS (issue #1318). The CLI pid 38377 led group 38377, and the `sh -c` wrapper pid 39025 led group 39025 with parent 38377. The `sleep 987` descendant pid 39026 ran in group 39025. After `SIGKILL` to the dispatch and the CLI tree, pid 39026 was alive and group 38377 was empty. The saved listing was `["al-MCmHAp"]` while the turn ran and `[]` after the next dispatch. That dispatch removed the directory and logged no turn-directory warning.
 - The group check runs on POSIX only. Its live check is open on issue #707 (Linux) and issue #708 (macOS).
 - The dispatch that died in the unrecorded window leaves its directory for a person to delete by hand.
 
@@ -42,6 +44,8 @@ Andro Marces
 
 - [Issue #1216](https://github.com/andromarces/agent-loops/issues/1216)
 - [PR #1230](https://github.com/andromarces/agent-loops/pull/1230)
+- [Issue #1318](https://github.com/andromarces/agent-loops/issues/1318)
+- [PR #1320](https://github.com/andromarces/agent-loops/pull/1320)
 - Supersedes (partially): [ADR 0058](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:

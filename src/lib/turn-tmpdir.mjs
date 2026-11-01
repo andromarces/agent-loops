@@ -159,9 +159,11 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
  * directory is refused without a removal, and so is a record whose parent is not the real path of
  * the temporary directory that this call inherited, because a turn directory is created there only.
  * Every outcome other than a removal warns and never throws.
+ *
  * known-limit: a POSIX descendant that left the group of the child, and a Windows descendant below
- * a chain with no live link, are not found. A group id that the OS reused for a new group after the
- * old one ended keeps the directory, with the warning.
+ * a chain with no live link, are not found. A Codex shell command runs in its own process group
+ * (codex-cli 0.166.0 on macOS). The group of the dead CLI does not name its descendant. A group id
+ * that the OS reused for a new group after the old one ended keeps the directory, with the warning.
  */
 export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_MS) {
   if (record === undefined || record === null) return;
