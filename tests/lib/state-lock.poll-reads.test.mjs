@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readLockOwner, tryStateLock, withStateLock } from "../../src/lib/state-lock.mjs";
-import { removePath, trackedTempDir } from "../runtime-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 
 // A partial module mock keeps the real filesystem and lets a test count the directory listings.
 vi.mock("node:fs/promises", async (importOriginal) => {

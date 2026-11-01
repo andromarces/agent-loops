@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test } from "vite-plus/test";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
-import { processExists, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { processExists } from "../process-helpers.mjs";
 
 // The start-time query runs the real command here: a fake `ps` (`powershell.exe` on
 // Windows, as a `.cmd` that PATHEXT resolves) first on PATH hangs on purpose, so the bound and the end of the whole query tree are observed, not stubbed.

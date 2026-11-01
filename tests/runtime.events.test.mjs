@@ -1,7 +1,9 @@
 import { expect, test } from "vite-plus/test";
 
 import { runLoop } from "../src/runtime.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 // 26. Usefulness: verifies one invocation event per CLI call, including the orchestrator repair
 // turn, carrying the usage the adapter exposed (issue #47).

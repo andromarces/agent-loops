@@ -17,7 +17,8 @@ import { main } from "../src/cli.mjs";
 import { exec } from "../src/lib/exec.mjs";
 import { readContinuation } from "../src/lib/continuation.mjs";
 import { sessionRecordPath } from "../src/lib/session-record.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Every test body runs through a body barrier (issue #943)

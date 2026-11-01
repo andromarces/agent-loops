@@ -7,7 +7,8 @@ import {
   splitWindowsArguments,
 } from "../../src/lib/command-line.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
-import { createPsShim, within } from "../runtime-helpers.mjs";
+import { createPsShim } from "../process-helpers.mjs";
+import { within } from "../wait-helpers.mjs";
 
 // Expected tokens come from the argument parser of the C runtime, which gives `process.argv` in Node:
 // the column is `process.argv.slice(2)` of a child that node started with the raw command line

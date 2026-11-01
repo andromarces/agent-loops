@@ -7,14 +7,14 @@ import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
 import { redactAndClean } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
-  createTempRepo,
   expectAbortKillsShim,
   processExists,
-  removePath,
   withGitHangingAfter,
-} from "../runtime-helpers.mjs";
+} from "../process-helpers.mjs";
 
 const dirs = [];
 afterEach(async () => {

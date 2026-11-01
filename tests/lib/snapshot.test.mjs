@@ -16,15 +16,15 @@ import {
   snapshot,
   withMutationCheck,
 } from "../../src/lib/snapshot.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
-  createTempRepo,
   expectBoundKillsShim,
-  removePath,
   withGitHangingAfter,
-} from "../runtime-helpers.mjs";
+} from "../process-helpers.mjs";
 
 // Runs `onFirstChunk` once, after the consumer takes the first chunk of the next streamed file
 // read, so a test can change the file or cancel the read while the read is in progress.

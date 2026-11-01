@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll } from "vite-plus/test";
-import { removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
 
 const TMP_VARS = ["TMPDIR", "TEMP", "TMP"];
 // Roots that an agent-loop turn pins in its children (issues #955, #970, #1022). A pin inherited

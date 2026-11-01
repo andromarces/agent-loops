@@ -13,13 +13,8 @@ import { basename, join, sep } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { createReviewerScratch, removeReviewerScratch } from "../../src/lib/reviewer-scratch.mjs";
-import {
-  createLinkedWorkTree,
-  createTempRepo,
-  exists,
-  removePath,
-  symlinkOrSkip,
-} from "../runtime-helpers.mjs";
+import { exists, removePath, symlinkOrSkip } from "../fs-helpers.mjs";
+import { createLinkedWorkTree, createTempRepo } from "../git-helpers.mjs";
 
 const untracked = async (cwd) =>
   (await execa("git", ["status", "--porcelain", "--untracked-files=all"], { cwd })).stdout;

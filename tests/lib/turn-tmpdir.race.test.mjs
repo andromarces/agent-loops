@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 // `swap` runs once, right before the removal helper starts. It stands for a swap after the runtime
 // validated its path and before the removal acts.

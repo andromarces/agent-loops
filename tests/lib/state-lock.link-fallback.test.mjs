@@ -2,7 +2,8 @@ import { link, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { deadPid, removePath, trackedTempDir } from "../runtime-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 
 // A filesystem without hard links (FAT/exFAT, some network mounts) makes every
 // `link` fail. Linux vfat reports EPERM and macOS reports ENOTSUP; Windows

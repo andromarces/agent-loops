@@ -6,7 +6,8 @@ import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestLockFile, manifestPath } from "../../src/install/manifest.mjs";
-import { deadPid, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 import {
   PACKAGE_ROOT,
   makeHome,

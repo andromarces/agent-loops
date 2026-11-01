@@ -18,11 +18,11 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `gitWhileDotGitExists` in runtime-helpers.mjs); every other test reaches the real `execa`.
+// `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();

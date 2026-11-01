@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 
-// Answers `git` from memory (see `cleanRepoGit` in runtime-helpers.mjs).
+// Answers `git` from memory (see `cleanRepoGit` in git-helpers.mjs).
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -14,13 +14,9 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { runLoop } from "../src/runtime.mjs";
-import {
-  CLEAN_REPO_HEAD,
-  cleanRepoGit,
-  createCleanRepoDir,
-  removePath,
-  scripted,
-} from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 import {
   freePlanGh,
   gateRoles,

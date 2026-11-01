@@ -4,7 +4,8 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { exec } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
   ...(await importOriginal()),

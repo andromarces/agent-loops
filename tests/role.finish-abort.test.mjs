@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see `useCleanRepo`
-// and `cleanRepoGit` in runtime-helpers.mjs), so no test here starts a `git`
+// and `cleanRepoGit` in git-helpers.mjs), so no test here starts a `git`
 // process. Snapshot behavior against a real repo is tested in
 // tests/lib/snapshot.test.mjs.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
@@ -34,7 +34,8 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { CLEAN_REPO_HEAD, cleanRepoGit, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit } from "./git-helpers.mjs";
 import {
   apiArgs,
   equalsArgs,

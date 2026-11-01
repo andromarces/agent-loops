@@ -6,7 +6,7 @@ import { main as cliMain } from "../../src/cli.mjs";
 import { sha256 } from "../../src/lib/hash.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { manifestPath } from "../../src/install/manifest.mjs";
-import { restoreAgentLoopHome } from "../runtime-helpers.mjs";
+import { restoreAgentLoopHome } from "../env-helpers.mjs";
 import { PACKAGE_ROOT, makeHome, cleanupHomes, writeJson, readText } from "./install-helpers.mjs";
 
 afterEach(cleanupHomes);

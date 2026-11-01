@@ -8,7 +8,7 @@ import {
   restoreSessions,
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));

@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, expect, test } from "vite-plus/test";
-import { createBodyBarrier } from "./runtime-helpers.mjs";
+import { createBodyBarrier } from "./body-barrier.mjs";
 
 /**
  * Returns a `test` that runs every body through a body barrier, for a file whose tests spy on

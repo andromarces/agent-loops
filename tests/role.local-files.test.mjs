@@ -13,7 +13,8 @@ import {
   setup,
   withRepo,
 } from "./role-helpers.mjs";
-import { createLinkedWithEnv, createLinkedWorkTree, exists } from "./runtime-helpers.mjs";
+import { exists } from "./fs-helpers.mjs";
+import { createLinkedWithEnv, createLinkedWorkTree } from "./git-helpers.mjs";
 
 afterEach(cleanup);
 

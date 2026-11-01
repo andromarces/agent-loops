@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rename, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
-import { exists, removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
+import { exists, removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import {
   TMP_VARS,
   OK_EVENTS,

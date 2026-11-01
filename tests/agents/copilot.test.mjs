@@ -7,7 +7,7 @@ import { exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { runChild } from "../../src/child-turn.mjs";
-import { cleanRepoGit } from "../runtime-helpers.mjs";
+import { cleanRepoGit } from "../git-helpers.mjs";
 
 // `exec` is replaced. The work tree read after a worker turn runs `git` through `execBounded`,
 // which answers a clean repository so the tests start no process and the read succeeds.

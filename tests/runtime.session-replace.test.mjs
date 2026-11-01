@@ -7,7 +7,7 @@ import { workerPrompt } from "../src/prompts/worker.mjs";
 const LATER_TURN_PROMPT = workerPrompt("do the work", false);
 
 // Answers `git` from memory for the tests that switch it on (see
-// `cleanRepoGit` in runtime-helpers.mjs); every other test reaches the real `execa`.
+// `cleanRepoGit` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -23,13 +23,9 @@ vi.mock("execa", async (importOriginal) => {
 import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
 import { gateFromTranscript } from "../src/lib/gate.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import {
-  cleanRepoGit,
-  createCleanRepoDir,
-  createTempRepo,
-  removePath,
-  scripted,
-} from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { gateRoles, prGateGh, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./gh-doubles.mjs";
 
 // Usefulness: verifies a worker turn that ran in a replacement conversation is followed by one

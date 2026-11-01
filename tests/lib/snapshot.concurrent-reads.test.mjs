@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { snapshot } from "../../src/lib/snapshot.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 // Probes of the reads a snapshot makes: the most file reads in flight, and the order of the events.
 const probe = vi.hoisted(() => ({ flying: 0, max: 0, events: [] }));

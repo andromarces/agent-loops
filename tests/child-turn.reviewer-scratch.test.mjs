@@ -5,7 +5,9 @@ import { expect, test } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
-import { createTempRepo, exists, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { exists, removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 const SCRATCH_PARENT = ".agent-loop";
 

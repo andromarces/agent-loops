@@ -2,7 +2,9 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main } from "../src/cli.mjs";
-import { continueAgents, createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { continueAgents } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 // A partial mock keeps the real filesystem and fails `rename` on demand. It lives
 // in its own file because the mock applies to the whole module (see

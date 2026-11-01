@@ -2,7 +2,7 @@ import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { writeSessionEntry } from "../../src/lib/runstate.mjs";
-import { removePath, trackedTempDir } from "../runtime-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 
 // A real Windows EPERM needs another process to hold the destination open, so
 // it is not reproducible in-process on Linux or macOS CI. This file replaces

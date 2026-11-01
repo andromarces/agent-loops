@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 // A real Windows EPERM needs another process to hold the destination open, so
 // this file stubs `rename` to inject the failure. The stub applies to the whole

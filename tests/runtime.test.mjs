@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `cleanRepoGit` in runtime-helpers.mjs); every other test reaches the real `execa`.
+// `cleanRepoGit` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -23,13 +23,9 @@ import { runChild } from "../src/child-turn.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { workerPrompt } from "../src/prompts/worker.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
-import {
-  cleanRepoGit,
-  createTempRepo,
-  gitAbortingPostTurn,
-  removePath,
-  scripted,
-} from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { cleanRepoGit, createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
 
 // 1. Usefulness: verifies orchestrator dispatches worker first.
 test("orchestrator dispatches worker first", async () => {
