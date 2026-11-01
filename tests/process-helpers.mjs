@@ -549,7 +549,8 @@ export async function shimCallSteps(shimDir) {
  * once it started.
  *
  * `shimDir` holds one `call-<n>` directory per call, each with a `record` file of the claimed
- * number and the pid (read it with `shimCallRecords`). The shim also writes
+ * number and the pid (read it with `shimCallRecords`). A call counts a number only when it created
+ * the directory and the record names the call (issue #1258). The shim also writes
  * `started/<pid>` before its claim, which `shimStartPids` reads. It writes a `steps/<pid>` file of
  * the steps it reached, which `shimCallSteps` reads. The hung process carries the unique
  * shim directory in its command line. The helper ends it through `endOwnedProcess` if the test left
@@ -586,9 +587,18 @@ export async function withGitHangingAfter(passes, run) {
         // Calls can start at once, as the reads of one snapshot do. `mkdir` is atomic, so each call
         // claims the first free number. A counter file loses updates and can be read half written.
         "n=0",
-        `while ! mkdir '${dir}/call-'$n 2>/dev/null; do n=$((n + 1)); done`,
+        // A number counts only when this call created the directory and its record names this call.
+        // If `mkdir` reports success without a directory, or the record is lost, the call moves to
+        // the next number (issue #1258).
+        "while :; do",
+        `  if mkdir '${dir}/call-'$n 2>/dev/null; then`,
+        `    if (set -C; echo "$n $$" > '${dir}/call-'$n/record) 2>/dev/null; then`,
+        `      [ "$(cat '${dir}/call-'$n/record 2>/dev/null)" = "$n $$" ] && break`,
+        "    fi",
+        "  fi",
+        "  n=$((n + 1))",
+        "done",
         // The record holds the claimed number and the pid, which `exec` keeps.
-        `echo "$n $$" > '${dir}/call-'$n/record`,
         `printf 'claimed %s\\n' "$n" 2>/dev/null >> '${dir}/steps/'$$`,
         `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
         `echo $$ > '${pidFile}'`,

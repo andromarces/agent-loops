@@ -484,6 +484,40 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
+// Usefulness: verifies a call counts a number only when its own directory and record exist. The
+// test injects one `mkdir` that reports success without the directory. An exit-0 call without its
+// record fails here (issue #1258).
+test.skipIf(process.platform === "win32")(
+  "withGitHangingAfter claims a number only when its call directory holds its record",
+  async () => {
+    await withGitHangingAfter(1, async ({ shimDir }) => {
+      // The shim resolves `mkdir` through `shimDir` first. The first call to create call-0 is told
+      // that it succeeded without a directory, and every later call gets the real `mkdir`. The
+      // noclobber create makes exactly one call take the lie, also when calls start at once.
+      const realMkdir = existsSync("/bin/mkdir") ? "/bin/mkdir" : "/usr/bin/mkdir";
+      await writeFile(
+        join(shimDir, "mkdir"),
+        [
+          "#!/bin/sh",
+          `if [ "$1" = '${shimDir}/call-0' ] && (set -C; : > '${shimDir}/lied') 2>/dev/null; then`,
+          "  exit 0",
+          "fi",
+          `exec '${realMkdir}' "$@"`,
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const calls = await Promise.all([
+        execa("git", ["--version"], { reject: false, timeout: 5000 }),
+        execa("git", ["--version"], { reject: false, timeout: 5000 }),
+      ]);
+      const records = await shimCallRecords(shimDir);
+      expect(calls.filter((call) => call.exitCode === 0)).toHaveLength(1);
+      expect(records.map((record) => record.number).sort((a, b) => a - b)).toEqual([0, 1]);
+    });
+  },
+  30_000,
+);
+
 // Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
 // calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
 // atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
