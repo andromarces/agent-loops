@@ -163,6 +163,7 @@ Andro Marces
 - [Issue #710: Verification checklist: live runs](https://github.com/andromarces/agent-loops/issues/710)
 - [Pull Request #562](https://github.com/andromarces/agent-loops/pull/562)
 - [Pull Request #662: Record the live changed-default check of --continue-from](https://github.com/andromarces/agent-loops/pull/662)
+- [Pull Request #1332: Record the opencode export and default-model checks for issue #710](https://github.com/andromarces/agent-loops/pull/1332)
 - [Pull Request #586: Record the opencode resolved model from session export](https://github.com/andromarces/agent-loops/pull/586)
 - Implementation:
   - Source: `gateFromTranscript` and `matchingGate` in `src/lib/gate.mjs`, and `verifyResolvedModels` and `restoreSessions` in `src/lib/continuation.mjs`
