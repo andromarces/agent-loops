@@ -203,11 +203,10 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
     stdin: "ignore",
     all: true,
     buffer: false,
-    // Arms the kill bound in `settleWithin`: at the bound, or on a cancel, execa kills the
-    // group on POSIX or the tree on Windows, and the call settles 10 s later even when no
-    // kill ends the command (issue #1307).
-    timeoutMs: timeoutSeconds * 1000,
-    signal,
+    // The runtime sends the immediate SIGKILL to the group at the bound or on the cancel.
+    // `killBound` arms the settle bound of `execBounded` from the same timeout and cancel,
+    // so a command that no kill ends settles 10 s later (issue #1307).
+    killBound: { timeoutMs: timeoutSeconds * 1000, signal },
   });
   // The runtime owns the bound and the cancel, and kills what it owns and nothing else. execa
   // starts the command as the leader of a process group of its own on POSIX, so SIGKILL to that
@@ -217,6 +216,21 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   // Approved limit (maintainer, 2026-10-04, ADR 0017): an orphan that left the group, for example
   // through `setsid`, survives on POSIX, and an orphan whose parent exited survives on Windows.
   // Neither Node nor execa exposes a Windows job object.
+  let timedOut = false;
+  let canceled = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    subprocess.kill("SIGKILL");
+  }, timeoutSeconds * 1000);
+  const onAbort = () => {
+    canceled = true;
+    subprocess.kill("SIGKILL");
+  };
+  if (signal?.aborted) {
+    onAbort();
+  } else {
+    signal?.addEventListener("abort", onAbort, { once: true });
+  }
   let window = Buffer.alloc(0);
   let total = 0;
   subprocess.all.on("data", (chunk) => {
@@ -227,9 +241,13 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
       window = window.subarray(window.length - CAPTURE_WINDOW_BYTES);
     }
   });
-  const result = await subprocess;
-  const timedOut = Boolean(result.timedOut);
-  const canceled = Boolean(result.isCanceled);
+  let result;
+  try {
+    result = await subprocess;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
   const durationMs = Date.now() - startedAt;
 
   // The cancel is already set when it ended the command, and the changed paths are its evidence,

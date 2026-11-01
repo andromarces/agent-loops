@@ -134,6 +134,59 @@ async function expectAllGone(pidFiles) {
   }
 }
 
+// A runner that spawns a descendant with ignored stdio and exits on SIGTERM, while the
+// descendant ignores SIGTERM and stays alive: only the immediate group SIGKILL reaches it.
+async function termIgnoringTree() {
+  const dir = await mkdtemp(join(tmpdir(), "test-cmd-sigterm-"));
+  dirs.push(dir);
+  const pidFile = join(dir, "descendant.pid");
+  const descendant = join(dir, "descendant.js");
+  const runner = join(dir, "runner.js");
+  await writeFile(
+    descendant,
+    `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\n` +
+      'process.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);\n',
+  );
+  await writeFile(
+    runner,
+    `require("child_process").spawn(process.execPath, [${JSON.stringify(descendant)}], { stdio: "ignore" });\n` +
+      "setInterval(() => {}, 1000);\n",
+  );
+  return { command: `node "${runner}"`, pidFile };
+}
+
+// Usefulness: verifies a descendant that ignores SIGTERM and stdio still dies with the group at
+// the timeout, so execa's SIGTERM never replaces the runtime's immediate SIGKILL (#1307 review).
+test.skipIf(process.platform === "win32")(
+  "POSIX only: a timeout SIGKILLs a descendant that ignores SIGTERM and stdio",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFile } = await termIgnoringTree();
+    const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
+    expect(run).toMatchObject({ status: "timed-out", exitCode: null });
+    await expectAllGone([pidFile]);
+  },
+  20_000,
+);
+
+// Usefulness: verifies a cancel sends the immediate group SIGKILL too, so a descendant that
+// ignores SIGTERM and stdio never survives the cancel (#1307 review).
+test.skipIf(process.platform === "win32")(
+  "POSIX only: a cancel SIGKILLs a descendant that ignores SIGTERM and stdio",
+  async () => {
+    const cwd = await repo();
+    const { command, pidFile } = await termIgnoringTree();
+    const controller = new AbortController();
+    const pending = runTestCmd({ command, timeoutSeconds: 60, cwd, signal: controller.signal });
+    const outcome = pending.catch((err) => err);
+    await waitForPidFiles([pidFile]);
+    controller.abort();
+    expect(await outcome).toMatchObject({ isCanceled: true });
+    await expectAllGone([pidFile]);
+  },
+  30_000,
+);
+
 // Usefulness: verifies a command that runs past its bound is reported as timed
 // out, never as a failure or a pass, and that the command and the child process
 // it started, which stay in its process group, are both gone (issue #420). The bound
