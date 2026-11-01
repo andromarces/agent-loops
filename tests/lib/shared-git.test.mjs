@@ -2,6 +2,7 @@ import { inspect } from "node:util";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 // Makes the named `node:fs/promises` function throw an error whose message and path carry
@@ -63,9 +64,11 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.mjs";
+import { execBounded } from "../../src/lib/exec.mjs";
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
+import { endOwnedProcess, shimCallRecords, withGitHangingAfter } from "../process-helpers.mjs";
 
 const dirs = [];
 
@@ -223,6 +226,50 @@ test("the deadline aborts the git calls with the default abort reason", async ()
     });
   }
 });
+
+// The kill continues after the read rejects, so the check polls for this bound. It exceeds the 1 s
+// force-kill delay of the read.
+const ENDED_WAIT_MS = 5_000;
+
+// True once `pid` has ended: no process holds it, or the holder lacks the shim marker in its
+// command line. A pid that the OS reused therefore reads as ended, not as a failure.
+async function processEnded(pid, marker) {
+  const read = await execBounded("ps", ["-o", "command=", "-p", String(pid)], { timeoutMs: 3_000 });
+  if (read.timedOut) throw new Error(`the check of process ${pid} timed out`);
+  return !(read.stdout ?? "").includes(marker);
+}
+
+async function endedWithin(pid, marker, limitMs) {
+  const deadline = Date.now() + limitMs;
+  for (;;) {
+    if (await processEnded(pid, marker)) return true;
+    if (Date.now() >= deadline) return false;
+    await delay(50);
+  }
+}
+
+// Usefulness: verifies requirement "every git process of the read has ended when it rejects at its
+// deadline" (issue #1315): a deadline that stops waiting without ending the git processes leaves
+// them running past the end of a canceled turn. The shim `exec`s one node process per call, so no
+// child of the shim survives it. The check covers each process that the read starts.
+test("every git process of the read has ended when the read rejects at its deadline", async (ctx) => {
+  if (process.platform === "win32") ctx.skip("win32 cannot run a POSIX shell git shim");
+  const { linked } = await createLinkedWorkTree();
+  await withGitHangingAfter(0, async ({ shimDir }) => {
+    const failure = await readSharedGit(linked, { deadlineMs: 2_000 }).catch((err) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toMatch(/2000 ms/);
+    const records = await shimCallRecords(shimDir);
+    expect(records).toHaveLength(2);
+    try {
+      for (const { pid } of records) {
+        expect(await endedWithin(pid, shimDir, ENDED_WAIT_MS)).toBe(true);
+      }
+    } finally {
+      for (const { pid } of records) await endOwnedProcess(pid, shimDir);
+    }
+  });
+}, 20_000);
 
 // Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
 // that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
