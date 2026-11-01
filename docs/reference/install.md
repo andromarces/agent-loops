@@ -28,6 +28,11 @@ Set up the harness entry points and parent guards at user scope:
 agent-loop install
 ```
 
+The prompt lists every harness as a checkbox. Space toggles the highlighted
+harness, Up and Down move the highlight, and Enter confirms. Detected harnesses
+start checked, and a terminal that cannot enter raw mode gets the numbered
+prompt instead.
+
 `install` detects the harness CLIs on `PATH`, preselects them, and writes the
 entry point and guard for each selected harness. It is interactive; pass
 `--harness <list> --yes` for scripts, and `--dry-run` to print the planned

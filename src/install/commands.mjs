@@ -10,6 +10,7 @@ import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.
 import { nearestHarness } from "../lib/process-ancestry.mjs";
 import { HARNESS_META, HARNESS_ORDER, harnessForCommand, isHarness } from "../lib/harnesses.mjs";
 import { detectHarnesses } from "./detect-harnesses.mjs";
+import { askHarnessCheckboxes, harnessCheckboxItems } from "./harness-prompt.mjs";
 import { install, uninstall } from "./installer.mjs";
 import { stablePackageRoot } from "./stable-root.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
@@ -67,12 +68,12 @@ function resolveSelection(token) {
   return parseHarnessList(token)[0];
 }
 
-async function askSelection(discovered) {
+async function askSelection(discovered, { input = process.stdin, output = process.stdout } = {}) {
   const menu = HARNESS_ORDER.map((harness, index) => {
     const marker = discovered.includes(harness) ? " [detected]" : "";
     return `${index + 1}. ${HARNESS_META[harness].label} (${harness})${marker}`;
   });
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({ input, output });
   try {
     return (
       await rl.question(
@@ -86,14 +87,22 @@ async function askSelection(discovered) {
 }
 
 /**
- * Runs the menu and returns the selection, or null after reporting a bad answer
- * and setting exit code 1. Only answer validation is caught; a prompt failure
+ * Runs the checkbox list, and the current numbered prompt when the terminal
+ * cannot host it. Returns the selection, or null after a bad answer (exit code
+ * 1) or a cancelled prompt. Only answer validation is caught; a prompt failure
  * propagates.
  */
-async function selectHarnesses(discovered) {
-  const answer = await askSelection(discovered);
+async function selectHarnesses(names, checked, io, { markDetected = false } = {}) {
+  const asked = await askHarnessCheckboxes({
+    items: harnessCheckboxItems({ harnesses: names, checked, markDetected }),
+    ...io,
+  });
+  if (asked.supported) {
+    return asked.canceled ? null : asked.selected;
+  }
+  const answer = await askSelection(checked, io);
   if (answer === "") {
-    return discovered;
+    return checked;
   }
   try {
     return [
@@ -154,7 +163,15 @@ function parseCommand(argv, usage) {
   return options;
 }
 
-export async function runInstallCommand(argv) {
+function commandStreams(io = {}) {
+  return {
+    input: io.input ?? process.stdin,
+    output: io.output ?? process.stdout,
+    env: io.env ?? process.env,
+  };
+}
+
+export async function runInstallCommand(argv, io = {}) {
   const options = parseCommand(argv, [
     "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run] [--verbose]",
     "",
@@ -168,12 +185,14 @@ export async function runInstallCommand(argv) {
 
   let harnesses = options.harnesses;
   if (!harnesses) {
-    if (options.yes || !process.stdin.isTTY) {
+    const streams = commandStreams(io);
+    if (options.yes || !streams.input.isTTY) {
       logError("No --harness given and stdin is not interactive. Pass --harness <list>.");
       process.exitCode = 1;
       return;
     }
-    harnesses = await selectHarnesses(await detectHarnesses());
+    const discovered = await detectHarnesses();
+    harnesses = await selectHarnesses(HARNESS_ORDER, discovered, streams, { markDetected: true });
     if (!harnesses) {
       return;
     }
@@ -208,7 +227,7 @@ export async function runInstallCommand(argv) {
   printReports(reports, options.dryRun);
 }
 
-export async function runUninstallCommand(argv) {
+export async function runUninstallCommand(argv, io = {}) {
   const options = parseCommand(argv, [
     "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run] [--verbose]",
     "",
@@ -220,7 +239,8 @@ export async function runUninstallCommand(argv) {
   }
 
   let harnesses = options.harnesses;
-  if (!harnesses && !options.yes && process.stdin.isTTY) {
+  const streams = commandStreams(io);
+  if (!harnesses && !options.yes && streams.input.isTTY) {
     let manifest;
     try {
       manifest = await readManifest(resolveHome());
@@ -234,7 +254,7 @@ export async function runUninstallCommand(argv) {
       logInfo("No harness is installed; nothing to remove.");
       return;
     }
-    harnesses = await selectHarnesses(installed);
+    harnesses = await selectHarnesses(installed, installed, streams);
     if (!harnesses) {
       return;
     }
