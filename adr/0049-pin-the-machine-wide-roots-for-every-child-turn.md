@@ -34,11 +34,11 @@ Issue #710 ran the live check on macOS 27.2 (26B123) at source head `5a33f11e03b
 
 - Claude Code, Codex, OpenCode, and agy each ran one worker turn and one reviewer turn through `role dispatch` in a disposable Git repository.
 - Each of those eight turns set `TMP`, `TEMP`, and `TMPDIR` to one other existing directory, then ran `test-slot --wait 120`.
-- Each turn printed its TMP, TEMP, and TMPDIR values, the three parent roots, and the exact `test-slot` command it ran.
+- Each turn printed its TMP, TEMP, and TMPDIR values, the three parent roots, the exact `test-slot` command, and the script hash.
 - Each held turn read its lock file and printed the owner pid, which equaled the pid of its own `test-slot` process.
 - The lock nonce matched the marker nonce, and the parent slot directory listing held that lock file.
 - The nested dispatch removed `AGENT_LOOP_TEST_SLOT_HELD`, and each child printed `child_slot_marker=<unset>`.
-- The saved fields are `child_slot_marker`, `TMP`, `TEMP`, `TMPDIR`, `runs`, `records`, `slots`, `marker_lock`, `slot_owner`, `slot_owner_pid`, `shell_ppid`, `owner_match`, `slot_files`, and `test_slot_exit`.
+- The saved fields are `child_slot_marker`, `TMP`, `TEMP`, `TMPDIR`, `runs`, `records`, `slots`, `marker_lock`, `slot_owner`, `slot_owner_pid`, `shell_ppid`, `owner_match`, `slot_files`, `test_slot_exit`, and `script_sha256`.
 - The CLIs were Claude Code 2.1.316, codex-cli 0.166.0, GitHub Copilot CLI 1.0.106-2, opencode v0.0.0-dev-466, and agy 1.4.12.
 - The models were `haiku`, `gpt-6-luna` at low effort, `mai-code-1.1-flash`, `opencode-go/deepseek-v4.1-flash`, and `gemini-3.8-flash` at low effort.
 - Copilot ran both turns, but the CLI refused each shell call with `Permission denied because no interactive user response was available`.
