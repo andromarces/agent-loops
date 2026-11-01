@@ -24,9 +24,10 @@ const NO_DETAIL = "no provider error event in the output";
 const UNKNOWN_ERROR = "unknown error";
 
 // opencode v0.0.0-dev-466 streams a provider overload as a `provider.internal` error whose
-// structured `status` is the provider's HTTP status. Its source maps 503 and 529 to the overload
-// reason, and a probe against a local 529 server streamed that event (issue #1017).
-const CAPACITY_STATUSES = new Set([503, 529]);
+// structured `status` is the provider's HTTP status. A probe against a local 529 server streamed
+// that event, and a 503 carries a generic service-unavailable message, so only 529 is marked
+// (issue #1017).
+const CAPACITY_STATUS = 529;
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -143,7 +144,7 @@ function flagCapacityFailure(err, events) {
   if (
     isJsonObject(error) &&
     error.type === "provider.internal" &&
-    CAPACITY_STATUSES.has(error.status)
+    error.status === CAPACITY_STATUS
   ) {
     markCapacityFailure(err);
   }

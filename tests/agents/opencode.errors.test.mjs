@@ -618,8 +618,8 @@ test("opencode drops a usage total that overflows on a non-zero exit", async () 
 });
 
 // The provider error that opencode v0.0.0-dev-466 streamed for a 529 from a local probe server
-// (issue #1017). opencode maps a provider internal error with HTTP 503 or 529 to its overload
-// reason, and the stream carries the structured `status`. No live provider reply confirmed it.
+// (issue #1017). The stream carries the provider HTTP status, and a 503 reports a generic
+// service failure, so only 529 counts. No live provider reply confirmed it.
 const CAPACITY_ERROR = {
   type: "provider.internal",
   message: "Overloaded",
@@ -650,13 +650,15 @@ test("opencode marks a provider capacity failure transient", async () => {
   expect(caught.transient).toBe("capacity");
 });
 
-// Usefulness: verifies the sourced 503 branch of the opencode overload reason (issue #1017): a provider internal error with 503 marks the turn.
-test("opencode marks a provider 503 failure transient", async () => {
-  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent({ ...CAPACITY_ERROR, status: 503 })));
+// Usefulness: verifies a provider 503 "Service unavailable" stays unmarked (issue #1017): only the sourced 529 status is a capacity failure.
+test("opencode does not mark a provider 503 failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn(errorEvent({ ...CAPACITY_ERROR, message: "Service unavailable", status: 503 })),
+  );
 
   const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
 
-  expect(caught.transient).toBe("capacity");
+  expect(caught.transient).toBeUndefined();
 });
 
 // Usefulness: verifies requirement "consecutive capacity failures stay marked" (issue #1017): the last error event decides, so two capacity events still mark the turn.
