@@ -49,8 +49,8 @@ The issue leaves three options open: leave no such command after a parent end, d
 - Live `SIGTERM` probe on macOS (issue #708). Host: macOS 27.2 (arm64) and Node v27.0.0-alpha.0.0.0. CLI versions: codex-cli 0.166.0 and Claude Code 2.1.316. Tools: Git 2.56.0. Repository head: `4145e480`.
   - The reviewer ran under `--reviewer-workspace-write` with `gpt-5.6-luna` and effort `low`. Its prompt ran the committed `check.sh`, with `sleep 60` and then `echo ORPHAN > orphan-write-rev.txt`. The driver sent `SIGTERM` to the headless parent 15341 ms after the spawn. No continued run followed.
   - The parent exited with signal `SIGTERM` 6 ms after the call. The row of the trigger process read `5181 5175 5175 sh ./check.sh`. The other rows were the Codex CLI `4246 2414 4246`, the wrapper `5175`, and `5182 5181 5175 sleep 60`.
-  - At 1.5 s after the signal, the Codex CLI and its helper pids were alive, and the wrapper `5175` had parent pid 1. The first sample at 27.0 s held only `5175`, `5181`, and `5182`, so the Codex pids ended between the two reads.
-  - `orphan-write-rev.txt` appeared 60.16 s after the signal, with the content `ORPHAN`. The writer is the command tree in group 5175, outside the group of the Codex child. The Codex process did not survive to the write.
+  - The `after1_5s` entries of the probe log hold `alive: false` and `row: null` for the Codex CLI `4246` and its helper pids. Only `5175`, `5181`, and `5182` were alive, and the row of `5175` held parent pid 1.
+  - `orphan-write-rev.txt` appeared 60.157 s after the signal, with the content `ORPHAN`. The writer is the command tree in group 5175, outside the group of the Codex child. The Codex process did not survive to the write.
   - The result meets the first reopen condition in the form of a surviving command outside the process group. Alternatives 2 and 3 stay deferred, because no Codex process survived to the write. Alternative 1 reopens, and a decision on a tree end that covers a descendant group is open in issue #1326. This decision stays in force until that decision, and no code changed here.
 
 ## Alternatives
