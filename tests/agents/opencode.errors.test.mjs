@@ -616,3 +616,118 @@ test("opencode drops a usage total that overflows on a non-zero exit", async () 
   });
   expect(state.usage.totalCostUsd).toBeUndefined();
 });
+
+// The provider error that opencode v0.0.0-dev-466 streamed for a 529 from a local probe server
+// (issue #1017). opencode maps a provider internal error with HTTP 503 or 529 to its overload
+// reason, and the stream carries the structured `status`. No live provider reply confirmed it.
+const CAPACITY_ERROR = {
+  type: "provider.internal",
+  message: "Overloaded",
+  status: 529,
+  response: {
+    body: '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+  },
+};
+
+const CAPACITY_TEXT = "Overloaded";
+
+const failedTurn = (stdout, overrides) =>
+  Object.assign(new Error("opencode exited with code 1."), {
+    exitCode: 1,
+    stdout,
+    stderr: "",
+    ...overrides,
+  });
+
+const ocState = () => ({ kind: "opencode", sessionId: null, model: null, effort: null });
+
+// Usefulness: verifies requirement "each adapter with a sourced capacity signal is marked transient" (issue #1017), so a parent retries without reading the error text.
+test("opencode marks a provider capacity failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent(CAPACITY_ERROR)));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies the sourced 503 branch of the opencode overload reason (issue #1017): a provider internal error with 503 marks the turn.
+test("opencode marks a provider 503 failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent({ ...CAPACITY_ERROR, status: 503 })));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies requirement "consecutive capacity failures stay marked" (issue #1017): the last error event decides, so two capacity events still mark the turn.
+test("opencode keeps the mark when consecutive error events are capacity", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn([errorEvent(CAPACITY_ERROR), errorEvent(CAPACITY_ERROR)].join("\n")),
+  );
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies requirement "a non-capacity failure is never marked" (issue #1017), because a wrong mark makes a parent retry a real fault.
+test.each([
+  ["another internal status", errorEvent({ ...CAPACITY_ERROR, status: 500 }), {}],
+  [
+    "a rate limit",
+    errorEvent({ type: "provider.rate-limit", message: CAPACITY_TEXT, status: 429 }),
+    {},
+  ],
+  [
+    "an auth failure",
+    errorEvent({ type: "provider.auth", message: CAPACITY_TEXT, status: 401 }),
+    {},
+  ],
+  ["the wording in response text", textEvent(`the provider said ${CAPACITY_TEXT}`), {}],
+  ["a timeout", errorEvent(CAPACITY_ERROR), { timedOut: true }],
+  ["a cancel", errorEvent(CAPACITY_ERROR), { isCanceled: true }],
+  ["a signal", errorEvent(CAPACITY_ERROR), { isTerminated: true }],
+  ["no events", "", {}],
+])("opencode does not mark %s transient", async (_name, stdout, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(stdout, overrides));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "only the terminal failure decides" (issue #1017): a later error must not make a parent retry a real fault.
+test("opencode does not mark a capacity error that a later error replaces", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn(
+      [
+        errorEvent(CAPACITY_ERROR),
+        errorEvent({ type: "provider.internal", message: "Internal server error", status: 500 }),
+      ].join("\n"),
+    ),
+  );
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a malformed or truncated final line keeps an earlier decisive event" (issue #1017), so a broken tail cannot hide an overload.
+test("opencode keeps the mark when the final line is truncated", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn(`${errorEvent(CAPACITY_ERROR)}\n{"type":"error","error":{"type":"provider`),
+  );
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies the exit-0 error-event path marks the same capacity failure (issue #1017), so the parent gets the field on both paths.
+test("opencode marks a capacity error event on an exit-0 turn", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: errorEvent(CAPACITY_ERROR), stderr: "" });
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});

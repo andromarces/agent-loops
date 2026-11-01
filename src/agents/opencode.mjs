@@ -7,6 +7,7 @@ import {
   assertResumedSession,
   childRan,
   keepFailedSessionId,
+  markCapacityFailure,
   recordResolvedModel,
   setResolvedModel,
   setUsageOrDelete,
@@ -21,6 +22,11 @@ import { isNonEmptyString, joinTextParts } from "./opencode-text.mjs";
 const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no provider error event in the output";
 const UNKNOWN_ERROR = "unknown error";
+
+// opencode v0.0.0-dev-466 streams a provider overload as a `provider.internal` error whose
+// structured `status` is the provider's HTTP status. Its source maps 503 and 529 to the overload
+// reason, and a probe against a local 529 server streamed that event (issue #1017).
+const CAPACITY_STATUSES = new Set([503, 529]);
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -94,6 +100,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
     const failure = err instanceof Error ? err : new Error(String(err));
     failure.message = failureMessage(err, events, timeout);
+    flagCapacityFailure(failure, events);
     throw failure;
   }
 
@@ -121,6 +128,25 @@ export async function runOpenCode(state, prompt, options = {}) {
 /** Returns the first truthy `sessionID` of the events, which may hold non-object entries. */
 function firstSessionId(events) {
   return events.map((event) => event?.sessionID).find(Boolean);
+}
+
+/**
+ * Marks a failed turn whose terminal failure is a provider overload. The terminal failure is the
+ * last `error` event of the stream, so an earlier overload followed by another error is never
+ * marked. A truncated final line is dropped by the line reader, so an earlier event stays decisive.
+ * @param {unknown} err the error the adapter throws
+ * @param {object[]} events the parsed stream events, in order
+ */
+function flagCapacityFailure(err, events) {
+  const terminal = events.findLast((event) => event?.type === "error");
+  const error = terminal?.error;
+  if (
+    isJsonObject(error) &&
+    error.type === "provider.internal" &&
+    CAPACITY_STATUSES.has(error.status)
+  ) {
+    markCapacityFailure(err);
+  }
 }
 
 /** Validates the stream of a turn whose child exited 0, records its session, usage, and model, and returns its text. */
@@ -152,7 +178,9 @@ async function settleTurn(state, events, { requestedSessionId, execOptions, star
   const errorDetail = lastErrorDetail(events);
 
   if (errorDetail || events.some((event) => event.type === "error")) {
-    throw new Error(`opencode returned an error event: ${errorDetail || UNKNOWN_ERROR}`);
+    const failure = new Error(`opencode returned an error event: ${errorDetail || UNKNOWN_ERROR}`);
+    flagCapacityFailure(failure, events);
+    throw failure;
   }
 
   const text = joinTextParts(

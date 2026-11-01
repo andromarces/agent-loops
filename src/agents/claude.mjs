@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { isJsonObject, parseJson } from "../lib/json.mjs";
+import { isJsonObject, parseJson, parseJsonObjects } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
@@ -14,6 +14,7 @@ import {
   failedWithLine,
   flagMissingSession,
   keepFailedSessionId,
+  markCapacityFailure,
   readSessionHead,
   requireHeldUnconfirmedSession,
   setUsageOrDelete,
@@ -22,6 +23,27 @@ import {
 
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
 const missingSession = (id) => `No conversation found with session ID: ${id}`;
+
+// Claude Code 2.1.316 writes `api_error_status: 529` on the result event of a provider overload
+// (probe against a local 529 server). The `result` text carries an environment suffix, so only the
+// structured status is matched (issue #1017).
+const CAPACITY_STATUS = 529;
+
+/**
+ * Marks a failed turn whose terminal failure is a provider overload. The terminal failure is the
+ * last `result` event of the output, so an earlier overload followed by another cause is never
+ * marked. A truncated tail loses only the events it cut, so an earlier result stays decisive.
+ * @param {unknown} err the error `exec` threw
+ * @param {string} stdout the failed turn's output, a JSON array or object, possibly truncated
+ */
+function flagCapacityFailure(err, stdout) {
+  const terminal = parseJsonObjects(stdout ?? "")
+    .filter(isJsonObject)
+    .findLast((event) => event.type === "result");
+  if (terminal?.is_error === true && terminal.api_error_status === CAPACITY_STATUS) {
+    markCapacityFailure(err);
+  }
+}
 
 // Claude Code prints exactly this on stderr, exit 1, when `--session-id` names an existing session.
 const sessionInUse = (id) => `Error: Session ID ${id} is already in use.`;
@@ -178,6 +200,7 @@ export async function runClaude(state, prompt, options = {}) {
       }
     }
     flagMissingSession(err, requestedSessionId, missingSession);
+    flagCapacityFailure(err, err?.stdout);
     throw err;
   }
   let parsed;

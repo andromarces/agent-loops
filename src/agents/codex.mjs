@@ -7,6 +7,7 @@ import {
   closingText,
   flagMissingSession,
   keepFailedSessionId,
+  markCapacityFailure,
   setMainLoopUsage,
   turnExecOptions,
 } from "./shared.mjs";
@@ -26,15 +27,12 @@ const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different 
  * it is never marked either.
  */
 function flagCapacityFailure(err, events) {
-  if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
-    return;
-  }
   const terminal = events.findLast(
     (event) => event?.type === "error" || event?.type === "turn.failed",
   );
   const message = terminal?.type === "error" ? terminal.message : terminal?.error?.message;
   if (message === CAPACITY_MESSAGE) {
-    err.transient = "capacity";
+    markCapacityFailure(err);
   }
 }
 
