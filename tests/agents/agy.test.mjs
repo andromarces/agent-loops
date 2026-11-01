@@ -357,7 +357,7 @@ test.each([
   expect(caught.transient).toBeUndefined();
 });
 
-// Usefulness: verifies a capacity reply that a turn did not fail on is never marked (issue #1323): a timeout, a cancel, and a signal fail for another reason.
+// Usefulness: verifies a capacity reply on a turn that fails for another reason is never marked (issue #1323). A timeout, a cancel, and a signal fail the turn for another reason.
 test.each([
   ["a timeout", { timedOut: true }],
   ["a cancel", { isCanceled: true }],
