@@ -54,11 +54,12 @@ A working directory match was also examined. Probed on Windows 11 Pro 10.0.26220
   5. After the refusal, the state directory held only `state.json`, and `session-runs` held only the first parent session. The init archived and wrote nothing.
   6. The `ps` read ended in 20 ms with exit 0.
   7. The probe ended the orphan tree by exact pid.
-- Live SIGINT during the init process-table read on macOS, 2026-11-02 (decision 1). Host: macOS 27.2 (Darwin 27.2.0, arm64), Node v27.0.0-alpha.0.0.0, agent-loop source `cc5ed5d6`. A logging `ps` shim on `PATH` slept 6 s and wrote its pid, parent pid, start time, and arguments to a file. The probe waited for the shim line with `-eo pid=,command=`, the holder read, then sent one SIGINT to the dispatch pid.
-  - The disposable repository held an aborted state with the earlier Claude session id `f7a31057-05a5-458e-8c71-99184d2b382a`, so the init read the table.
-  - The dispatch pid was 18616, and the shim pid 18810 was alive at the signal time `2026-11-01T20:56:41.892Z`.
+- Live SIGINT during the init process-table read on macOS, 2026-11-02 (decision 1). Host: macOS 27.2 (Darwin 27.2.0, arm64), build 26B123, Node v27.0.0-alpha.0.0.0, agent-loop source `7274986`. The record holds `sw_vers -productVersion` 27.2, the build, the source revision, the shell identity, and each environment value. A logging `ps` shim on `PATH` slept 6 s and wrote its pid, parent pid, start time, and arguments to a file. The probe waited for the shim line with `-eo pid=,command=`, the holder read, then sent one SIGINT to the dispatch pid.
+  - The disposable repository held an aborted state with the earlier Claude session id `c0d06c61-d46d-4108-9e46-da71ba4ed809`, so the init read the table.
+  - The dispatch pid was 54529, and the shim pid 54546 was alive at the signal time `2026-11-01T21:15:59.794Z`.
   - The dispatch exited 130 with the stdout envelope `{"status":"error","error":"Interrupted by SIGINT"}`. The stderr held only `[agent-loop] info: ps started`.
-  - The lifecycle stayed `aborted`, the state directory held only `state.json` after the exit, and the state file kept its SHA-256. The shim was not alive at a check 300 ms after the exit, and no observed child outlived the exit.
+  - The lifecycle stayed `aborted`, the state directory held only `state.json` after the exit, and the state file kept its SHA-256.
+  - The observed descendants were pids 54546 and 54548. Each had `alive: false` at a fresh check 300 ms after the exit.
   - Mutant: a source copy with the `isCanceled` branch of `errorResult` removed exited 1 with `process table read was canceled`. The check failed as required.
 - Not verified:
   - A real `claude` orphan of a hard-killed `role dispatch` on Windows and Linux.
