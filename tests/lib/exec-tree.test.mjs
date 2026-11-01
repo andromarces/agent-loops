@@ -391,10 +391,10 @@ const tableOf = (rows) =>
     rows.map(([pid, ppid, start = "Mon Jan 1 00:00:00 2026"]) => [pid, { pid, ppid, start }]),
   );
 
-// Usefulness: acceptance (#1326) — the walk signals only the descendants of the given child, so a
+// Usefulness: acceptance (#1326) — the walk ends only the given roots and their descendants, so a
 // process of another agent-loop run is never ended. Not redundant: no other test covers a table
 // with a second, unrelated tree.
-test("a tree end signals only the descendants of its own roots", () => {
+test("a tree end signals only its own roots and their descendants", () => {
   const table = tableOf([
     [100, 1],
     [101, 100],
@@ -410,38 +410,62 @@ test("a tree end signals only the descendants of its own roots", () => {
     stop: () => {},
     kill: (pid) => killed.push(pid),
   });
-  expect(killed.sort()).toEqual([101, 102]);
-  expect(ended.sort()).toEqual([101, 102]);
+  expect(killed.sort()).toEqual([100, 101, 102]);
+  expect(ended.sort()).toEqual([100, 101, 102]);
 });
 
-// Usefulness: acceptance (#1326) — a descendant is stopped before it is killed. A descendant is
-// stopped only while its parent is the Codex child or a stopped descendant. Its pid cannot then be
-// reused between the read and the kill. Not redundant: no other test observes the order of the
-// stop and the kill.
-test("a descendant is killed only after its parent is stopped", () => {
+// Usefulness: acceptance (#1326) — the Codex child is stopped before any descendant. It cannot reap
+// a first-level child and free that pid before the stop. Not redundant: no other test records the
+// stop order from the root.
+test("the Codex child is stopped before any descendant", () => {
   const table = tableOf([
     [100, 1],
     [101, 100],
     [102, 101],
   ]);
+  const stops = [];
+  endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: (pid) => stops.push(pid),
+    kill: () => {},
+  });
+  expect(stops).toEqual([100, 101, 102]);
+});
+
+// Usefulness: acceptance (#1326) — each process is killed while its parent is still stopped and
+// alive. The Codex child is killed last, so no killed parent releases a zombie child to init. Not
+// redundant: no other test records the kill order.
+test("each kill comes before its parent's kill, and the Codex child is killed last", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+    [102, 101],
+  ]);
+  const parentOf = new Map([
+    [101, 100],
+    [102, 101],
+  ]);
   const events = [];
-  const stopped = new Set();
-  const killedWithoutStop = [];
+  const killed = new Set();
+  const killedAfterParent = [];
   const ended = endDescendantTrees({
     roots: [100],
     readTable: () => table,
-    stop: (pid) => {
-      events.push(`stop ${pid}`);
-      stopped.add(pid);
-    },
+    stop: (pid) => events.push(`stop ${pid}`),
     kill: (pid) => {
       events.push(`kill ${pid}`);
-      if (!stopped.has(pid)) killedWithoutStop.push(pid);
+      if (killed.has(parentOf.get(pid))) killedAfterParent.push(pid);
+      killed.add(pid);
     },
   });
-  expect(killedWithoutStop).toEqual([]);
-  expect(events).toEqual(["stop 101", "stop 102", "kill 101", "kill 102"]);
-  expect(ended.sort()).toEqual([101, 102]);
+  expect(killedAfterParent).toEqual([]);
+  expect(events.filter((event) => event.startsWith("kill "))).toEqual([
+    "kill 102",
+    "kill 101",
+    "kill 100",
+  ]);
+  expect(ended).toEqual([102, 101, 100]);
 });
 
 // Usefulness: the walk reads the table twice and drops a pid whose start stamp changed. A pid
@@ -467,13 +491,13 @@ test("a pid whose start stamp changed between the reads is not signaled", () => 
     stop: (pid) => stopped.push(pid),
     kill: (pid) => killed.push(pid),
   });
-  expect(stopped).toEqual([102]);
-  expect(killed).toEqual([102]);
+  expect(stopped).toEqual([100, 102]);
+  expect(killed).toEqual([102, 100]);
 });
 
-// Usefulness: a process-table read that fails ends the walk with no kill and no throw, so a broken
-// read never fails the parent exit path. Not redundant: no other test gives a null read.
-test("a failed process table read ends the walk with no kill", () => {
+// Usefulness: a failed process-table read still ends the stopped root, so a broken read never leaves
+// a process stopped. Not redundant: it is the first read of the walk and the guard read is separate.
+test("a failed process table read still ends the stopped root", () => {
   const killed = [];
   expect(
     endDescendantTrees({
@@ -482,13 +506,13 @@ test("a failed process table read ends the walk with no kill", () => {
       stop: () => {},
       kill: (pid) => killed.push(pid),
     }),
-  ).toEqual([]);
-  expect(killed).toEqual([]);
+  ).toEqual([100]);
+  expect(killed).toEqual([100]);
 });
 
-// Usefulness: the second table read guards the kill, so a failure there also ends the walk with no
-// kill. Not redundant: the first-read failure returns before any target is computed.
-test("a failed second process table read ends the walk with no kill", () => {
+// Usefulness: a failed guard read still ends the stopped root, so the guard cannot leave a process
+// stopped. Not redundant: it fails on the second read, after the root is stopped.
+test("a failed guard read still ends the stopped root", () => {
   const table = tableOf([
     [100, 1],
     [101, 100],
@@ -501,11 +525,11 @@ test("a failed second process table read ends the walk with no kill", () => {
     stop: () => {},
     kill: (pid) => killed.push(pid),
   });
-  expect(killed).toEqual([]);
+  expect(killed).toEqual([100]);
 });
 
-// Usefulness: a walk that reaches its budget still ends the stopped set, so a slow or deep tree
-// cannot hold the parent exit past the budget. Not redundant: no other test moves the walk clock.
+// Usefulness: a walk that reaches its budget still ends the stopped set. A slow or deep tree cannot
+// hold the parent exit past the budget. Not redundant: no other test moves the walk clock.
 test("the walk ends at its budget and still ends the stopped set", () => {
   const table = tableOf([
     [100, 1],
@@ -525,12 +549,13 @@ test("the walk ends at its budget and still ends the stopped set", () => {
     now: () => clock,
     budgetMs: 4_000,
   });
-  expect(stopped).toEqual([101]);
-  expect(killed).toEqual([101]);
+  expect(stopped).toEqual([100, 101]);
+  expect(killed).toEqual([101, 100]);
 });
 
-// Usefulness: a read that fails after a level is stopped still ends the stopped set, so a broken read
-// never leaves the freeze in place. Not redundant: the other read-failure tests stop nothing.
+// Usefulness: a read that fails after a level is stopped still kills the stopped set from the leaves
+// up. A broken read never leaves the freeze in place. Not redundant: the other read-failure tests
+// stop no descendant.
 test("a failed read after a stop still ends the stopped set", () => {
   const table = tableOf([
     [100, 1],
@@ -544,8 +569,29 @@ test("a failed read after a stop still ends the stopped set", () => {
     stop: () => {},
     kill: (pid) => killed.push(pid),
   });
-  expect(killed).toEqual([101]);
-  expect(ended).toEqual([101]);
+  expect(killed).toEqual([101, 100]);
+  expect(ended).toEqual([101, 100]);
+});
+
+// Usefulness: a kill that fails resumes the row, so a failed kill never leaves a process stopped.
+// Not redundant: the other tests kill every stopped row.
+test("a row that a failed kill leaves stopped is resumed", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+  ]);
+  const resumed = [];
+  const ended = endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: () => {},
+    kill: (pid) => {
+      if (pid === 101) throw new Error("not permitted");
+    },
+    resume: (pid) => resumed.push(pid),
+  });
+  expect(resumed).toEqual([101]);
+  expect(ended).toEqual([100]);
 });
 
 // Usefulness: records the accepted gap of ADR 0071. A descendant that lost its parent chain, for
@@ -563,7 +609,8 @@ test("a process reparented to pid 1 is not a descendant of the root", () => {
     stop: (pid) => signalled.push(`stop ${pid}`),
     kill: (pid) => signalled.push(`kill ${pid}`),
   });
-  expect(signalled).toEqual([]);
+  expect(signalled).toEqual(["stop 100", "kill 100"]);
+  expect(signalled.some((event) => event.endsWith("301"))).toBe(false);
 });
 
 // Usefulness: a `ps` that hangs is ended at the read bound, so a parent signal never holds the
@@ -580,8 +627,8 @@ test.skipIf(IS_WINDOWS)(
       const script = [
         `import { endDescendantTrees } from ${JSON.stringify(EXEC_TREE_URL)};`,
         "const started = Date.now();",
-        "const ended = endDescendantTrees({ roots: [process.pid] });",
-        "console.log(JSON.stringify({ ended, elapsed: Date.now() - started }));",
+        "const ended = endDescendantTrees({ roots: [process.pid], stop: () => {}, kill: () => {}, resume: () => {} });",
+        "console.log(JSON.stringify({ pid: process.pid, ended, elapsed: Date.now() - started }));",
       ].join("\n");
       const result = await execa(process.execPath, ["--input-type=module", "-e", script], {
         env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
@@ -589,8 +636,8 @@ test.skipIf(IS_WINDOWS)(
         reject: false,
       });
       expect(result.exitCode).toBe(0);
-      const { ended, elapsed } = JSON.parse(result.stdout);
-      expect(ended).toEqual([]);
+      const { pid, ended, elapsed } = JSON.parse(result.stdout);
+      expect(ended).toEqual([pid]);
       expect(elapsed).toBeLessThan(5_000);
     } finally {
       await removePath(dir);

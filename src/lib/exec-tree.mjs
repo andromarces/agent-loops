@@ -64,40 +64,59 @@ function readProcessTableSync({ timeoutMs = TREE_READ_TIMEOUT_MS } = {}) {
 }
 
 /**
- * Ends the descendants of `roots` with a freeze from the top. Each round reads the table, sends
- * `SIGSTOP` to the rows whose parent is a root or a stopped row, and keeps those pids held. After the
- * last round, every stopped row receives `SIGKILL`, so no pid of that set can be reused between the
- * stop and the kill. A signal to a held zombie is harmless.
+ * Ends the Codex child and its descendants with a freeze from the top. The Codex child is stopped
+ * first. It is this process's own unreaped child, so its pid is safe to signal. A stopped child reaps
+ * nothing. Then each round reads the table, sends `SIGSTOP` to the rows whose parent is already
+ * stopped, and keeps those pids held.
  *
- * The first level also needs a second read, because its parent is the Codex child and still runs. A
- * row whose start stamp changed is not stopped. A row that was reparented is not found. Each read is
- * bounded, and the walk ends at its budget or its round cap.
+ * After the last round, the stopped rows receive `SIGKILL` from the leaves up. A parent is still
+ * stopped and alive when its children are killed, so it releases no zombie child to init. The Codex
+ * child is killed last. A signal to a held zombie is harmless, and a row that a failed kill leaves
+ * stopped receives `SIGCONT`.
+ *
+ * The first level also needs a second read, as a guard. A row whose start stamp changed is not
+ * stopped. A row that was reparented is not found. Each read is bounded, and the walk ends at its
+ * budget or its round cap.
  * @param {{ roots?: number[],
  *   readTable?: (options: { timeoutMs: number }) =>
  *     Map<number, { pid: number, ppid: number, start: string }> | null,
  *   stop?: (pid: number) => void,
  *   kill?: (pid: number) => void,
+ *   resume?: (pid: number) => void,
  *   now?: () => number,
  *   budgetMs?: number,
  *   maxRounds?: number }} [options]
- * @returns {number[]} the pids that the kill call accepted
+ * @returns {number[]} the pids that the kill call accepted, leaves first
  */
 export function endDescendantTrees({
   roots = [],
   readTable = readProcessTableSync,
   stop,
   kill,
+  resume,
   now = () => performance.now(),
   budgetMs = TREE_WALK_BUDGET_MS,
   maxRounds = TREE_WALK_MAX_ROUNDS,
 } = {}) {
   const liveRoots = [...new Set(roots)].filter((pid) => Number.isInteger(pid) && pid > 1);
   if (liveRoots.length === 0) return [];
-  const rootPids = new Set(liveRoots);
+  const rootPids = new Set();
+  // Freeze order: the roots first, then one level per round. The reverse order kills the leaves first.
   const stopped = new Map();
   const deadline = now() + budgetMs;
   const doStop = stop ?? ((pid) => process.kill(pid, "SIGSTOP"));
   const doKill = kill ?? ((pid) => process.kill(pid, "SIGKILL"));
+  const doResume = resume ?? ((pid) => process.kill(pid, "SIGCONT"));
+  for (const pid of liveRoots) {
+    try {
+      doStop(pid);
+      stopped.set(pid, null);
+      rootPids.add(pid);
+    } catch {
+      // A root that ended before the stop has no tree to freeze.
+    }
+  }
+  if (rootPids.size === 0) return [];
   const read = () => {
     const remaining = deadline - now();
     return remaining <= 0
@@ -108,7 +127,7 @@ export function endDescendantTrees({
     for (let round = 0; round < maxRounds; round += 1) {
       const table = read();
       if (!table) break;
-      const frozen = new Set([...rootPids, ...stopped.keys()]);
+      const frozen = new Set(stopped.keys());
       const candidates = [];
       for (const row of table.values()) {
         if (row.pid <= 1 || frozen.has(row.pid) || !frozen.has(row.ppid)) continue;
@@ -117,8 +136,7 @@ export function endDescendantTrees({
       if (candidates.length === 0) break;
       let accepted = candidates;
       if (candidates.some((row) => rootPids.has(row.ppid))) {
-        // The parent of the first level runs during the walk. A second read drops a reused pid
-        // before the stop, and the stop then holds the pid until the kill.
+        // A second read drops a row whose start stamp changed before the stop.
         const again = read();
         if (!again) break;
         accepted = candidates.filter((row) => {
@@ -143,19 +161,24 @@ export function endDescendantTrees({
     logWarn(`process tree end: the process table read failed: ${error?.code ?? error?.message}`);
   }
   const ended = [];
-  for (const pid of stopped.keys()) {
+  for (const pid of [...stopped.keys()].reverse()) {
     try {
       doKill(pid);
       ended.push(pid);
     } catch (error) {
       logWarn(`process tree end: pid ${pid} not ended: ${error?.code ?? error?.message}`);
+      try {
+        doResume(pid);
+      } catch {
+        // A pid that ended needs no resume.
+      }
     }
   }
   return ended;
 }
 
 /**
- * Ends the descendants of every live child that registered a tree end. A child that settled is
+ * Ends every live child that registered a tree end, and its descendants. A child that settled is
  * skipped, so a pid that the OS reassigned is never walked. Returns the pids that were signaled.
  * @returns {number[]}
  */
@@ -176,7 +199,7 @@ export function endCommandTrees() {
   if (roots.length === 0) return [];
   const ended = endDescendantTrees({ roots });
   if (ended.length > 0) {
-    logDebug(`process tree end: ended ${ended.length} descendant(s) of ${roots.join(", ")}`);
+    logDebug(`process tree end: ended ${ended.length} process(es) of ${roots.join(", ")}`);
   }
   return ended;
 }
@@ -258,8 +281,8 @@ export function killLiveTrees() {
  * `SystemRoot` directory only. A failure is logged and never thrown. A parent that a hard kill
  * ends runs no handler, so its tree can survive (ADR 0028).
  *
- * With `treeEnd` on POSIX, a parent signal also walks the child. Its descendants that left its
- * process group are ended by pid before the parent ends (ADR 0071).
+ * With `treeEnd` on POSIX, a parent signal also freezes the child and its descendants. The ones
+ * that left its process group are ended by pid before the parent ends (ADR 0071).
  */
 export function killTreeOnExit(subprocess, { treeEnd = false } = {}) {
   const pid = subprocess?.pid;
