@@ -89,7 +89,7 @@ async function askSelection(discovered, { input = process.stdin, output = proces
 /**
  * Runs the checkbox list, and the current numbered prompt when the terminal
  * cannot host it. Returns the selection, or null after a bad answer (exit code
- * 1) or a cancelled prompt. Only answer validation is caught; a prompt failure
+ * 1) or a cancelled prompt. Only answer validation is caught. A prompt failure
  * propagates.
  */
 async function selectHarnesses(names, checked, io, { markDetected = false } = {}) {
