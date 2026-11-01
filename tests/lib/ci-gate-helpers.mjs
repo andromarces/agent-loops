@@ -138,7 +138,7 @@ export const MERGE_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${MERGE}/check-
 
 export const MERGE_STATUS = pageRoute(`repos/${SLUG}/commits/${MERGE}/status`);
 
-const HEAD_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${HEAD}/check-runs`);
+export const HEAD_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${HEAD}/check-runs`);
 
 const HEAD_STATUS = pageRoute(`repos/${SLUG}/commits/${HEAD}/status`);
 

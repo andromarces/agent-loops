@@ -31,6 +31,7 @@ function holdGh({
   prFiles = [{ filename: "src/a.js" }],
   runsByPoll,
   listingFailures = 0,
+  listingFailureText = "gh: Bad Gateway (HTTP 502)",
   heads = [HEAD_A],
   failBaseRead = 0,
 }) {
@@ -60,7 +61,7 @@ function holdGh({
     if (endpoint === `${repo}/contents/.github/workflows?ref=${BASE_HEAD}`) {
       if (failuresLeft > 0) {
         failuresLeft -= 1;
-        return { status: 1, stdout: "", stderr: "gh: Bad Gateway (HTTP 502)", timedOut: false };
+        return { status: 1, stdout: "", stderr: listingFailureText, timedOut: false };
       }
       return readOk([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file" }]);
     }
@@ -233,6 +234,19 @@ test("the --all wait holds when the workflow read fails and retries on the next 
   });
   expect(retried.result.timedOut).toBe(false);
   expect(retried.result.checks.map(({ name }) => name)).toContain("checks");
+});
+
+// Usefulness: verifies a transport failure of the base workflow read, which carries no HTTP status,
+// holds the pass and reads again on the next poll, so a connection timeout is no pass (issue #1312).
+test("the --all wait reads the base workflow again after a transport failure", async () => {
+  const { result } = await holdWait({
+    listingFailures: 1,
+    listingFailureText:
+      'Get "https://api.github.com/repos/owner/repo/contents": dial tcp 20.205.243.168:443: connect: operation timed out',
+    runsByPoll: [[WORKERS], [WORKERS, ACTIONS]],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(result.checks.map(({ name }) => name)).toContain("checks");
 });
 
 // Usefulness: verifies a workflow with no `pull_request` trigger skips the hold, so a repository whose

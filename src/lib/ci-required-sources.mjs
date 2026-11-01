@@ -6,6 +6,7 @@ import {
   ghFailureText,
   inOrder,
   isCleanServerError,
+  isTransportFailure,
   pagedRead,
   readOne,
 } from "./gh-api.mjs";
@@ -437,8 +438,8 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
  * list on a non-zero exit, an error text that merely contains those words, and the `no checks
  * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read and
  * the check wait refuse on it, because the list may name a required check no configuration source
- * did (issue #349). A reply that is no list carries `transient` and the `failure` text only for a clean
- * server-error failure, which the wait retries (#1121).
+ * did (issue #349). A reply that is no list carries `transient` and the `failure` text for a clean
+ * server-error failure or a transport failure, which the wait retries (#1121, #1312).
  * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */
 export function requiredNamesOf({ status, stdout, stderr }) {
@@ -457,8 +458,10 @@ export function requiredNamesOf({ status, stdout, stderr }) {
     };
   }
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
-  // A clean server-error failure only: an unparseable reply is never retried (#1121).
-  const transient = isCleanServerError({ stdout, stderr });
+  // A clean server error or a transport failure only: an unparseable reply is never retried
+  // (#1121, #1312).
+  const transient =
+    isCleanServerError({ stdout, stderr }) || isTransportFailure({ stdout, stderr });
   return { names: [], ok: none, transient, failure: transient ? stderr.trim() : "" };
 }
 

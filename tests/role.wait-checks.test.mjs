@@ -471,3 +471,32 @@ test("wait-checks takes a repeatable --expect only with --all", async () => {
   expect(misplaced.exitCode).toBe(1);
   expect(misplaced.payload.error).toMatch(/--expect is only valid for wait-checks/);
 });
+
+// Usefulness: verifies a transport failure that lasts to the bound exits 1 with `status: "error"`
+// that names it, never `timedOut: true` and never a pass (issue #1312).
+test("wait-checks reports a transport failure that lasts to the bound as an error", async () => {
+  const repo = await newRunRepo();
+  const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
+    {
+      gh: (args, cwd, options) => {
+        if (args[0] === "api" && args[1].includes("/rules/branches/")) {
+          return Promise.resolve({
+            status: 1,
+            stdout: "",
+            stderr:
+              'Get "https://api.github.com/repos/owner/repo/rules/branches/main": dial tcp 20.205.243.168:443: connect: operation timed out',
+          });
+        }
+        return inner(args, cwd, options);
+      },
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ status: "error" });
+  expect(result.payload.error).toMatch(/dial tcp .*connect: operation timed out/);
+  expect(result.payload).not.toHaveProperty("timedOut");
+}, 20000);

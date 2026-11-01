@@ -62,17 +62,56 @@ export function ghFailureText({ status, stderr, stdout }) {
 }
 
 /**
- * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did. Only
- * a result marked `include`, a failed `gh api --include` read, passes its stdout on for a status
- * line (#1246): the stdout of any other read is a reply body.
+ * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did, or
+ * when the failure is a transport failure. Only a result marked `include`, a failed `gh api
+ * --include` read, passes its stdout on for a status line (#1246): the stdout of any other read is
+ * a reply body.
  */
 export function ghApiFailure(endpoint, { status, stdout, stderr, transient, include }) {
   const text = ghFailureText({ status, stdout: include ? stdout : undefined, stderr });
   const err = new Error(`gh api ${endpoint} failed: ${text}`);
-  if (transient) {
+  if (transient || isTransportFailure({ stdout, stderr })) {
     err.transient = true;
   }
   return err;
+}
+
+// The words that the network stack of `gh` writes for a transport failure, which carries no server
+// reply and so no HTTP status (#1312).
+const TRANSPORT_FAILURES = [
+  /\bdial tcp\b/i,
+  /\bconnection refused\b/i,
+  /\bconnection reset by peer\b/i,
+  /\bconnection timed out\b/i,
+  /\bi\/o timeout\b/i,
+  /\btls handshake timeout\b/i,
+  /\bnetwork is unreachable\b/i,
+  /\bno route to host\b/i,
+  /\bno such host\b/i,
+  /\bserver misbehaving\b/i,
+  /\btemporary failure in name resolution\b/i,
+  /\bproxyconnect tcp\b/i,
+  /\b(?:unexpected )?EOF\b/i,
+  /\bbroken pipe\b/i,
+  /\bhttp2: client connection lost\b/i,
+];
+
+// An HTTP status in the form of `gh`, or the first line that `gh api --include` writes.
+const HTTP_STATUS_TEXT = /\bHTTP(?:\/\d(?:\.\d)?)?\s+\d{3}\b/i;
+
+/**
+ * Whether a failed read is a transport failure: the text that `gh` wrote names a known transport
+ * failure, it names no HTTP status, and the read wrote no reply body. A status line decides first,
+ * so a 4xx or 5xx reply whose body or error text also holds transport wording stays as it was
+ * (#1312). Text that the server supplies arrives in the body, which is never scanned.
+ */
+export function isTransportFailure({ stdout, stderr }) {
+  const text = stderr.trim();
+  return (
+    stdout.trim() === "" &&
+    !HTTP_STATUS_TEXT.test(text) &&
+    TRANSPORT_FAILURES.some((pattern) => pattern.test(text))
+  );
 }
 
 /**
@@ -113,13 +152,14 @@ export const isCleanServerError = ({ stdout, stderr }) =>
   stdout.trim() === "" && isServerErrorText(stderr);
 
 /**
- * The error of a failed `gh pr` read named `label`. It carries `transient` for a clean server error,
- * so the wait retries the read on its next poll (#1121). Every other failure ends the wait.
+ * The error of a failed `gh pr` read named `label`. It carries `transient` for a clean server error
+ * or a transport failure, so the wait retries the read on its next poll (#1121, #1312). Every other
+ * failure ends the wait.
  */
 export function ghReadError(label, result) {
   const { status, stderr } = result;
   const err = new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
-  if (isCleanServerError(result)) {
+  if (isCleanServerError(result) || isTransportFailure(result)) {
     err.transient = true;
   }
   return err;
@@ -297,8 +337,12 @@ async function readReply(read, args, cwd, state) {
     };
   }
   if (result.status !== 0) {
+    // A reply with no status block is a failure that wrote no reply, so a transport failure is its
+    // only retryable form (#1312). A reply with a status block keeps the 5xx rule.
     const transient =
-      reply !== null && RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
+      reply === null
+        ? isTransportFailure(result)
+        : RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
     return {
       reply,
       targets,
@@ -330,8 +374,9 @@ async function readReply(read, args, cwd, state) {
  * never requests that target, and it ends rather than return pages that a reply could have steered.
  * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
  * and the gate reads throw; a foreign `Link` target is no `unreadable` refusal, so every read throws
- * on it. `transient` is set on a failed result only when the failed
- * request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON.
+ * on it. `transient` is set on a failed result when the failed
+ * request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON, or when the
+ * failure is a transport failure with no status block (#1312).
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
  * @param {string} endpoint the endpoint with no query
  * @param {string} cwd
