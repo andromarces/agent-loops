@@ -50,6 +50,7 @@ Andro Marces
 
 ## Links
 
+- [Pull request #1336](https://github.com/andromarces/agent-loops/pull/1336)
 - [Issue #1333: An orchestrator command writes to the work tree after the headless parent is killed](https://github.com/andromarces/agent-loops/issues/1333)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [Issue #1326: End the Codex reviewer command tree on POSIX after a parent signal](https://github.com/andromarces/agent-loops/issues/1326)
