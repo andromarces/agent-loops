@@ -36,6 +36,7 @@ Decisions 1, 2, and 5, the shape check of decision 4, the other consequences, an
 - The state file of a Codex turn holds a path under the temporary directory of the host.
 - A run that no later call touches keeps its directory.
 - A dispatch that died before the child pid was recorded, or whose child still runs, keeps the directory with a warning. A person deletes it by hand.
+- A later call on an interrupted run re-checks the kept directory and removes it once no process of the turn runs (issue #1329).
 - On POSIX only the recorded child is checked. A descendant that outlives a dead child and still uses the directory is not found.
 - The limits of ADR 0047 decision 7 and the Windows identity check (issue #709) apply to this removal.
 
@@ -52,6 +53,8 @@ Andro Marces
 
 - [Issue #1207](https://github.com/andromarces/agent-loops/issues/1207)
 - [Issue #1216](https://github.com/andromarces/agent-loops/issues/1216)
+- [Issue #1329](https://github.com/andromarces/agent-loops/issues/1329)
+- [PR #1330](https://github.com/andromarces/agent-loops/pull/1330)
 - [PR #1230](https://github.com/andromarces/agent-loops/pull/1230)
 - [PR #1212](https://github.com/andromarces/agent-loops/pull/1212)
 - [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md)

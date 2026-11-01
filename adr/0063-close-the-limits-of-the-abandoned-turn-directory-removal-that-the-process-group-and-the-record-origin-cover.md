@@ -25,6 +25,7 @@ ADR 0058 removes the turn directory of a dispatch that died mid-turn, and record
 ## Consequences
 
 - A descendant that outlives a dead child in its group keeps the directory until the group ends.
+  - A later call on the interrupted run re-checks the kept directory and removes it once the group ends (issue #1329).
 - A group id that the OS reused for a new group after the old one ended keeps the directory, with a warning. The cost is a leaked directory, never a wrong removal.
 - A descendant that leaves the group of the child, with `setsid` for example, is not found.
   - Observed on 2026-11-01 with codex-cli 0.166.0 on macOS (issue #1318). The CLI pid 38377 led group 38377, and the `sh -c` wrapper pid 39025 led group 39025 with parent 38377. The `sleep 987` descendant pid 39026 ran in group 39025. After `SIGKILL` to the dispatch and the CLI tree, pid 39026 was alive and group 38377 was empty. The saved listing was `["al-MCmHAp"]` while the turn ran and `[]` after the next dispatch. That dispatch removed the directory and logged no turn-directory warning.
@@ -55,6 +56,7 @@ Andro Marces
 - [PR #1320](https://github.com/andromarces/agent-loops/pull/1320)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [Issue #1329: Remove a kept turn directory after the group of the dead child ends](https://github.com/andromarces/agent-loops/issues/1329)
+- [PR #1330](https://github.com/andromarces/agent-loops/pull/1330)
 - Supersedes (partially): [ADR 0058](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:
