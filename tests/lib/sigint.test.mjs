@@ -8,6 +8,8 @@ import { removePath } from "../fs-helpers.mjs";
 import { processExists } from "../process-helpers.mjs";
 import { beginEvidenceRead, cancelOnSigInt, forceCancelSignal } from "../../src/lib/sigint.mjs";
 
+const IS_WINDOWS = process.platform === "win32";
+
 // Usefulness: acceptance (#669) — the first SIGINT cancels the run and the process stays alive, so
 // the run handler can set exit 130 and write its transcript; the listener stays registered.
 test("the first SIGINT aborts the controller and keeps the listener", () => {
@@ -224,90 +226,98 @@ async function readPidFile(file) {
 // Usefulness: acceptance (#1326) — the first SIGINT ends a descendant that left the child process
 // group. A cancel leaves no writer in the work tree. Not redundant: no other first-SIGINT test has
 // a descendant outside the group.
-test("the first SIGINT ends a descendant that left the child process group", async () => {
-  const { dir, childPidFile, treePidFile, orphanFile, script } = await setUpTreeEndChild(false);
-  const controller = new AbortController();
-  const subprocess = killTreeOnExit(
-    execa(process.execPath, ["-e", script], {
-      reject: false,
-      cleanup: true,
-      killDescendants: true,
-      cancelSignal: controller.signal,
-    }),
-    { treeEnd: true },
-  );
-  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
-  const remove = cancelOnSigInt(controller);
-  const pids = [];
-  try {
-    await vi.waitFor(
-      async () => {
-        const child = await readPidFile(childPidFile);
-        const tree = await readPidFile(treePidFile);
-        expect({ child, tree }).toEqual({ child: expect.any(Number), tree: expect.any(Number) });
-        pids.splice(0, pids.length, child, tree);
-      },
-      { timeout: 20_000, interval: 100 },
+test.skipIf(IS_WINDOWS)(
+  "the first SIGINT ends a descendant that left the child process group",
+  async () => {
+    const { dir, childPidFile, treePidFile, orphanFile, script } = await setUpTreeEndChild(false);
+    const controller = new AbortController();
+    const subprocess = killTreeOnExit(
+      execa(process.execPath, ["-e", script], {
+        reject: false,
+        cleanup: true,
+        killDescendants: true,
+        cancelSignal: controller.signal,
+      }),
+      { treeEnd: true },
     );
-    process.emit("SIGINT");
-    expect(controller.signal.aborted).toBe(true);
-    expect(exit).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(processExists(pids[1])).toBe(false), {
-      timeout: 4_000,
-      interval: 100,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    expect(await readFile(orphanFile, "utf8").catch(() => null)).toBe(null);
-  } finally {
-    pids.forEach((pid) => processExists(pid) && process.kill(pid, "SIGKILL"));
-    remove();
-    exit.mockRestore();
-    await subprocess;
-    await removePath(dir);
-  }
-}, 40_000);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+    const remove = cancelOnSigInt(controller);
+    const pids = [];
+    try {
+      await vi.waitFor(
+        async () => {
+          const child = await readPidFile(childPidFile);
+          const tree = await readPidFile(treePidFile);
+          expect({ child, tree }).toEqual({ child: expect.any(Number), tree: expect.any(Number) });
+          pids.splice(0, pids.length, child, tree);
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+      process.emit("SIGINT");
+      expect(controller.signal.aborted).toBe(true);
+      expect(exit).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(processExists(pids[1])).toBe(false), {
+        timeout: 4_000,
+        interval: 100,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      expect(await readFile(orphanFile, "utf8").catch(() => null)).toBe(null);
+    } finally {
+      pids.forEach((pid) => processExists(pid) && process.kill(pid, "SIGKILL"));
+      remove();
+      exit.mockRestore();
+      await subprocess;
+      await removePath(dir);
+    }
+  },
+  40_000,
+);
 
 // Usefulness: acceptance (#1326) — the second SIGINT also ends a descendant that left the child
 // process group, with exit 130. Not redundant: it covers the force branch, which a pre-aborted
 // controller reaches without the first branch.
-test("the second SIGINT ends a descendant that left the child process group", async () => {
-  const { dir, childPidFile, treePidFile, script } = await setUpTreeEndChild(true);
-  const subprocess = killTreeOnExit(
-    execa(process.execPath, ["-e", script], {
-      reject: false,
-      cleanup: true,
-      killDescendants: true,
-    }),
-    { treeEnd: true },
-  );
-  const controller = new AbortController();
-  controller.abort();
-  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-  const remove = cancelOnSigInt(controller);
-  const pids = [];
-  try {
-    await vi.waitFor(
-      async () => {
-        const child = await readPidFile(childPidFile);
-        const tree = await readPidFile(treePidFile);
-        expect({ child, tree }).toEqual({ child: expect.any(Number), tree: expect.any(Number) });
-        pids.splice(0, pids.length, child, tree);
-      },
-      { timeout: 20_000, interval: 100 },
+test.skipIf(IS_WINDOWS)(
+  "the second SIGINT ends a descendant that left the child process group",
+  async () => {
+    const { dir, childPidFile, treePidFile, script } = await setUpTreeEndChild(true);
+    const subprocess = killTreeOnExit(
+      execa(process.execPath, ["-e", script], {
+        reject: false,
+        cleanup: true,
+        killDescendants: true,
+      }),
+      { treeEnd: true },
     );
-    process.emit("SIGINT");
-    expect(exit).toHaveBeenCalledWith(130);
-    await vi.waitFor(() => expect(pids.some(processExists)).toBe(false), {
-      timeout: 5_000,
-      interval: 100,
-    });
-  } finally {
-    pids.forEach((pid) => processExists(pid) && process.kill(pid, "SIGKILL"));
-    remove();
-    exit.mockRestore();
-    errorSpy.mockRestore();
-    await subprocess;
-    await removePath(dir);
-  }
-}, 40_000);
+    const controller = new AbortController();
+    controller.abort();
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const remove = cancelOnSigInt(controller);
+    const pids = [];
+    try {
+      await vi.waitFor(
+        async () => {
+          const child = await readPidFile(childPidFile);
+          const tree = await readPidFile(treePidFile);
+          expect({ child, tree }).toEqual({ child: expect.any(Number), tree: expect.any(Number) });
+          pids.splice(0, pids.length, child, tree);
+        },
+        { timeout: 20_000, interval: 100 },
+      );
+      process.emit("SIGINT");
+      expect(exit).toHaveBeenCalledWith(130);
+      await vi.waitFor(() => expect(pids.some(processExists)).toBe(false), {
+        timeout: 5_000,
+        interval: 100,
+      });
+    } finally {
+      pids.forEach((pid) => processExists(pid) && process.kill(pid, "SIGKILL"));
+      remove();
+      exit.mockRestore();
+      errorSpy.mockRestore();
+      await subprocess;
+      await removePath(dir);
+    }
+  },
+  40_000,
+);

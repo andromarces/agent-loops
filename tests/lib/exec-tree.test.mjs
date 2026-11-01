@@ -478,32 +478,36 @@ test("a process reparented to pid 1 is not a descendant of the root", () => {
 
 // Usefulness: a `ps` that hangs is ended at the read bound, so a parent signal never holds the
 // exit beyond it. Not redundant: no other test exercises the real synchronous read and its bound.
-test("a hanging process-table read ends at its bound", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "exec-tree-read-"));
-  try {
-    const shim = join(dir, "ps");
-    // `exec` replaces the shell, so the bound ends the `sleep` itself.
-    await writeFile(shim, "#!/bin/sh\nexec sleep 30\n");
-    await chmod(shim, 0o755);
-    const script = [
-      `import { endDescendantTrees } from ${JSON.stringify(EXEC_TREE_URL)};`,
-      "const started = Date.now();",
-      "const ended = endDescendantTrees({ roots: [process.pid] });",
-      "console.log(JSON.stringify({ ended, elapsed: Date.now() - started }));",
-    ].join("\n");
-    const result = await execa(process.execPath, ["--input-type=module", "-e", script], {
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
-      timeout: 20_000,
-      reject: false,
-    });
-    expect(result.exitCode).toBe(0);
-    const { ended, elapsed } = JSON.parse(result.stdout);
-    expect(ended).toEqual([]);
-    expect(elapsed).toBeLessThan(5_000);
-  } finally {
-    await removePath(dir);
-  }
-}, 30_000);
+test.skipIf(IS_WINDOWS)(
+  "a hanging process-table read ends at its bound",
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "exec-tree-read-"));
+    try {
+      const shim = join(dir, "ps");
+      // `exec` replaces the shell, so the bound ends the `sleep` itself.
+      await writeFile(shim, "#!/bin/sh\nexec sleep 30\n");
+      await chmod(shim, 0o755);
+      const script = [
+        `import { endDescendantTrees } from ${JSON.stringify(EXEC_TREE_URL)};`,
+        "const started = Date.now();",
+        "const ended = endDescendantTrees({ roots: [process.pid] });",
+        "console.log(JSON.stringify({ ended, elapsed: Date.now() - started }));",
+      ].join("\n");
+      const result = await execa(process.execPath, ["--input-type=module", "-e", script], {
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+        timeout: 20_000,
+        reject: false,
+      });
+      expect(result.exitCode).toBe(0);
+      const { ended, elapsed } = JSON.parse(result.stdout);
+      expect(ended).toEqual([]);
+      expect(elapsed).toBeLessThan(5_000);
+    } finally {
+      await removePath(dir);
+    }
+  },
+  30_000,
+);
 
 // Usefulness: a table read that returns no parseable row is an empty table, not a crash. Not
 // redundant: the parse is the only place that reads raw `ps` output.
