@@ -12,7 +12,7 @@ accepted
 
 Issue #1333 records a macOS probe of issue #708. A headless run with an `opencode` orchestrator ran `sh ./check.sh` in a disposable Git repository. The committed script ran `sleep 60` and then wrote `orphan-write-orch.txt`. The driver sent `SIGKILL` to the parent 6957 ms after the spawn. The parent exited with the signal 4 ms later.
 
-At 1.581 s after the exit, the opencode CLI, its server, and the shell tree all ran. The write landed 59935 ms after the signal. No transcript existed at the signal or after it.
+At 1.581 s after the exit, the opencode CLI, its server, and the shell tree all ran. The write landed 59935 ms after the signal. No transcript existed at the signal or at the end of the watch.
 
 ADR 0027 records the orphan behavior of a killed parent. ADR 0071 ends the descendants of a Codex child on a POSIX `SIGTERM` or `SIGINT`. It records that a `SIGKILL` of the parent runs no handler. ADR 0031 decision 7 rejects an end signal to a process that the current run did not start. ADR 0037 alternative 2 rejects a watchdog process that reports a vanished dispatcher.
 
@@ -29,7 +29,7 @@ The probe holds the shell rows `23328 14967 23328 sh ./check.sh` and `23329 2332
 ## Consequences
 
 - A command of an orchestrator turn can write to the work tree after a `SIGKILL` of the parent. The runtime reports nothing for it.
-- The probe recorded no transcript at the signal or after it. The killed parent wrote no result, so no clean tree report preceded the write in that probe.
+- The probe recorded no transcript at the signal or at the end of the watch. The killed parent wrote no result, so no clean tree report preceded the write in that probe.
 - A `SIGINT` of the parent still runs `cancelOnSigInt`, and a second `SIGINT` still ends the live trees (ADR 0033). A `SIGTERM` of a Codex child still runs the ADR 0071 walk. An `opencode` child keeps the execa group signal.
 - Reopen this decision on one of three events. A portable parent-death signal exists for the adapters. The runtime starts a supervisor that ends with the parent. A probe records a live `opencode` command tree after a parent signal other than `SIGKILL`.
 - Not verified: Linux, Windows, a `SIGTERM` or `SIGINT` of an `opencode` parent with a shell tree, and the parent link of the opencode server.
