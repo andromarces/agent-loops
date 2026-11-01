@@ -50,6 +50,7 @@ test("codex sends correct argv for initial turn with readOnly", async () => {
       signal: undefined,
       role: undefined,
       env: expect.objectContaining({ TMPDIR: expect.any(String) }),
+      treeEnd: true,
     },
   );
 });
@@ -103,6 +104,7 @@ test("codex resumes session with readOnly", async () => {
       signal: undefined,
       role: undefined,
       env: expect.objectContaining({ TMPDIR: expect.any(String) }),
+      treeEnd: true,
     },
   );
 });

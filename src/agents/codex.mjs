@@ -80,7 +80,13 @@ export async function runCodex(state, prompt, options = {}) {
     // The CLI creates two empty `.tmp*` directories in its temporary directory on every turn, so it
     // gets a private one that the runtime removes (issue #955).
     ({ stdout } = await withTurnTmpdir(
-      (env) => exec("codex", args, turnExecOptions({ ...options, env }, prompt)),
+      // A command of the turn can leave the group of the child. A parent signal walks the child's
+      // descendants by pid (ADR 0071).
+      (env) =>
+        exec("codex", args, {
+          ...turnExecOptions({ ...options, env }, prompt),
+          treeEnd: true,
+        }),
       { onCreated: onTurnTmpdir },
     ));
   } catch (err) {

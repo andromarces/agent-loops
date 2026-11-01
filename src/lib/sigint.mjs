@@ -1,4 +1,4 @@
-import { killLiveTrees } from "./exec-tree.mjs";
+import { endCommandTrees, killLiveTrees } from "./exec-tree.mjs";
 import { logWarn, logError } from "./log.mjs";
 
 const FORCE_EXIT_WAIT_MS = 2000;
@@ -67,6 +67,9 @@ export function cancelOnSigInt(controller, { onForceExit } = {}) {
   let deferredExit = null;
   const onSigInt = () => {
     if (!controller.signal.aborted) {
+      // Before the abort: the abort kills the group of the child. A descendant that left that group
+      // is found only while the child lives.
+      endCommandTrees();
       controller.abort();
       return;
     }
@@ -79,6 +82,7 @@ export function cancelOnSigInt(controller, { onForceExit } = {}) {
     clearTimeout(deferredExit);
     logWarn("second SIGINT: ending the child processes and exiting with code 130");
     force.abort();
+    endCommandTrees();
     killLiveTrees();
     const exit = () => process.exit(130);
     let pending;
@@ -109,6 +113,7 @@ export function cancelOnSigInt(controller, { onForceExit } = {}) {
     // The run finished its writes, so the deferred exit happens now.
     if (deferredExit !== null) {
       clearTimeout(deferredExit);
+      endCommandTrees();
       killLiveTrees();
       process.exit(130);
     }

@@ -1,9 +1,15 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
-import { killLiveTrees, killTreeOnExit } from "../../src/lib/exec-tree.mjs";
+import {
+  endDescendantTrees,
+  killLiveTrees,
+  killTreeOnExit,
+  processTableRows,
+} from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { processExists } from "../process-helpers.mjs";
 
@@ -310,4 +316,343 @@ test("killLiveTrees warns when a SIGKILL is not delivered and still kills the ne
     Object.defineProperty(process, "platform", platform);
     warn.mockRestore();
   }
+});
+
+/**
+ * Starts a parent that runs one child with the tree end on. It waits until the child's detached
+ * command tree records its pid. Then it sends `SIGTERM` to the parent, and returns the parent exit
+ * and the tree pid. The child is the stand-in for a Codex child. Its command runs in its own
+ * session, so the process-group signal of the parent cannot reach it.
+ */
+async function startSigTermParent() {
+  const dir = await mkdtemp(join(tmpdir(), "exec-tree-sigterm-"));
+  const treePidFile = join(dir, "tree.pid");
+  const orphanFile = join(dir, "orphan.txt");
+  const child = join(dir, "child.mjs");
+  const parent = join(dir, "parent.mjs");
+  await writeFile(
+    child,
+    [
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      `const tree = spawn("/bin/sh", ["-c", "sleep 1; echo ORPHAN > " + JSON.stringify(${JSON.stringify(orphanFile)}) + "; sleep 60"], { detached: true, stdio: "ignore" });`,
+      `writeFileSync(${JSON.stringify(treePidFile)}, String(tree.pid));`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n"),
+  );
+  await writeFile(
+    parent,
+    [
+      `import { exec } from ${JSON.stringify(new URL("../../src/lib/exec.mjs", import.meta.url).href)};`,
+      `exec(process.execPath, [${JSON.stringify(child)}], { treeEnd: true }).catch(() => {});`,
+    ].join("\n"),
+  );
+  const runner = spawn(process.execPath, [parent], { stdio: "ignore" });
+  const exited = new Promise((resolve) =>
+    runner.once("exit", (code, signal) => resolve({ code, signal })),
+  );
+  await waitUntil(async () => {
+    const pid = Number(await readFile(treePidFile, "utf8").catch(() => ""));
+    return Number.isInteger(pid) && pid > 0;
+  }, 20_000);
+  const treePid = Number(await readFile(treePidFile, "utf8"));
+  runner.kill("SIGTERM");
+  const exit = await exited;
+  return { dir, exit, treePid, orphanFile };
+}
+
+// Usefulness: acceptance (#1326) — a SIGTERM of the parent ends a command tree that left the Codex
+// child's process group. No orphan write lands after the parent exit. Not redundant: the other
+// tests end a tree through a kill inside the parent, never through a parent signal.
+test.skipIf(IS_WINDOWS)(
+  "a parent SIGTERM ends a descendant command tree that left the child process group",
+  async () => {
+    const { dir, exit, treePid, orphanFile } = await startSigTermParent();
+    try {
+      expect(exit.signal).toBe("SIGTERM");
+      await vi.waitFor(() => expect(processExists(treePid)).toBe(false), {
+        timeout: 4_000,
+        interval: 100,
+      });
+      // The tree writes 1 s after the signal if it survives the parent.
+      await sleep(2_500);
+      expect(await readFile(orphanFile, "utf8").catch(() => null)).toBe(null);
+    } finally {
+      endProcess(treePid);
+      await removePath(dir);
+    }
+  },
+  60_000,
+);
+
+/** Builds a process table from `[pid, ppid, start]` rows. */
+const tableOf = (rows) =>
+  new Map(
+    rows.map(([pid, ppid, start = "Mon Jan 1 00:00:00 2026"]) => [pid, { pid, ppid, start }]),
+  );
+
+// Usefulness: acceptance (#1326) — the walk ends only the given roots and their descendants, so a
+// process of another agent-loop run is never ended. Not redundant: no other test covers a table
+// with a second, unrelated tree.
+test("a tree end signals only its own roots and their descendants", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+    [102, 101],
+    [200, 1],
+    [201, 200],
+    [1, 0],
+  ]);
+  const killed = [];
+  const ended = endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: () => {},
+    kill: (pid) => killed.push(pid),
+  });
+  expect(killed.sort()).toEqual([100, 101, 102]);
+  expect(ended.sort()).toEqual([100, 101, 102]);
+});
+
+// Usefulness: acceptance (#1326) — the Codex child is stopped before any descendant. It cannot reap
+// a first-level child and free that pid before the stop. Not redundant: no other test records the
+// stop order from the root.
+test("the Codex child is stopped before any descendant", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+    [102, 101],
+  ]);
+  const stops = [];
+  endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: (pid) => stops.push(pid),
+    kill: () => {},
+  });
+  expect(stops).toEqual([100, 101, 102]);
+});
+
+// Usefulness: acceptance (#1326) — each process is killed while its parent is still stopped and
+// alive. The Codex child is killed last, so no killed parent releases a zombie child to init. Not
+// redundant: no other test records the kill order.
+test("each kill comes before its parent's kill, and the Codex child is killed last", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+    [102, 101],
+  ]);
+  const parentOf = new Map([
+    [101, 100],
+    [102, 101],
+  ]);
+  const events = [];
+  const killed = new Set();
+  const killedAfterParent = [];
+  const ended = endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: (pid) => events.push(`stop ${pid}`),
+    kill: (pid) => {
+      events.push(`kill ${pid}`);
+      if (killed.has(parentOf.get(pid))) killedAfterParent.push(pid);
+      killed.add(pid);
+    },
+  });
+  expect(killedAfterParent).toEqual([]);
+  expect(events.filter((event) => event.startsWith("kill "))).toEqual([
+    "kill 102",
+    "kill 101",
+    "kill 100",
+  ]);
+  expect(ended).toEqual([102, 101, 100]);
+});
+
+// Usefulness: the walk reads the table twice and drops a pid whose start stamp changed. A pid
+// reused between the read and the signal is never ended. Not redundant: no other test presents a
+// changed stamp.
+test("a pid whose start stamp changed between the reads is not signaled", () => {
+  const first = tableOf([
+    [100, 1, "a"],
+    [101, 100, "a"],
+    [102, 100, "a"],
+  ]);
+  const second = tableOf([
+    [100, 1, "a"],
+    [101, 100, "b"],
+    [102, 100, "a"],
+  ]);
+  const reads = [first, second];
+  const killed = [];
+  const stopped = [];
+  endDescendantTrees({
+    roots: [100],
+    readTable: () => reads.shift(),
+    stop: (pid) => stopped.push(pid),
+    kill: (pid) => killed.push(pid),
+  });
+  expect(stopped).toEqual([100, 102]);
+  expect(killed).toEqual([102, 100]);
+});
+
+// Usefulness: a failed process-table read still ends the stopped root, so a broken read never leaves
+// a process stopped. Not redundant: it is the first read of the walk and the guard read is separate.
+test("a failed process table read still ends the stopped root", () => {
+  const killed = [];
+  expect(
+    endDescendantTrees({
+      roots: [100],
+      readTable: () => null,
+      stop: () => {},
+      kill: (pid) => killed.push(pid),
+    }),
+  ).toEqual([100]);
+  expect(killed).toEqual([100]);
+});
+
+// Usefulness: a failed guard read still ends the stopped root, so the guard cannot leave a process
+// stopped. Not redundant: it fails on the second read, after the root is stopped.
+test("a failed guard read still ends the stopped root", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+  ]);
+  let reads = 0;
+  const killed = [];
+  endDescendantTrees({
+    roots: [100],
+    readTable: () => (reads++ === 0 ? table : null),
+    stop: () => {},
+    kill: (pid) => killed.push(pid),
+  });
+  expect(killed).toEqual([100]);
+});
+
+// Usefulness: a walk that reaches its budget still ends the stopped set. A slow or deep tree cannot
+// hold the parent exit past the budget. Not redundant: no other test moves the walk clock.
+test("the walk ends at its budget and still ends the stopped set", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+  ]);
+  let clock = 0;
+  const stopped = [];
+  const killed = [];
+  endDescendantTrees({
+    roots: [100],
+    readTable: () => {
+      clock += 2_000;
+      return table;
+    },
+    stop: (pid) => stopped.push(pid),
+    kill: (pid) => killed.push(pid),
+    now: () => clock,
+    budgetMs: 4_000,
+  });
+  expect(stopped).toEqual([100, 101]);
+  expect(killed).toEqual([101, 100]);
+});
+
+// Usefulness: a read that fails after a level is stopped still kills the stopped set from the leaves
+// up. A broken read never leaves the freeze in place. Not redundant: the other read-failure tests
+// stop no descendant.
+test("a failed read after a stop still ends the stopped set", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+  ]);
+  let reads = 0;
+  const killed = [];
+  const ended = endDescendantTrees({
+    roots: [100],
+    readTable: () => (reads++ < 2 ? table : null),
+    stop: () => {},
+    kill: (pid) => killed.push(pid),
+  });
+  expect(killed).toEqual([101, 100]);
+  expect(ended).toEqual([101, 100]);
+});
+
+// Usefulness: a kill that fails resumes the row, so a failed kill never leaves a process stopped.
+// Not redundant: the other tests kill every stopped row.
+test("a row that a failed kill leaves stopped is resumed", () => {
+  const table = tableOf([
+    [100, 1],
+    [101, 100],
+  ]);
+  const resumed = [];
+  const ended = endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: () => {},
+    kill: (pid) => {
+      if (pid === 101) throw new Error("not permitted");
+    },
+    resume: (pid) => resumed.push(pid),
+  });
+  expect(resumed).toEqual([101]);
+  expect(ended).toEqual([100]);
+});
+
+// Usefulness: records the accepted gap of ADR 0071. A descendant that lost its parent chain, for
+// example reparented to pid 1, is not found by a parent-link walk. Not redundant: this is the one
+// hostile case that the fix does not cover, and the assertion pins it.
+test("a process reparented to pid 1 is not a descendant of the root", () => {
+  const table = tableOf([
+    [100, 1],
+    [301, 1],
+  ]);
+  const signalled = [];
+  endDescendantTrees({
+    roots: [100],
+    readTable: () => table,
+    stop: (pid) => signalled.push(`stop ${pid}`),
+    kill: (pid) => signalled.push(`kill ${pid}`),
+  });
+  expect(signalled).toEqual(["stop 100", "kill 100"]);
+  expect(signalled.some((event) => event.endsWith("301"))).toBe(false);
+});
+
+// Usefulness: a `ps` that hangs is ended at the read bound, so a parent signal never holds the
+// exit beyond it. Not redundant: no other test exercises the real synchronous read and its bound.
+test.skipIf(IS_WINDOWS)(
+  "a hanging process-table read ends at its bound",
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "exec-tree-read-"));
+    try {
+      const shim = join(dir, "ps");
+      // `exec` replaces the shell, so the bound ends the `sleep` itself.
+      await writeFile(shim, "#!/bin/sh\nexec sleep 30\n");
+      await chmod(shim, 0o755);
+      const script = [
+        `import { endDescendantTrees } from ${JSON.stringify(EXEC_TREE_URL)};`,
+        "const started = Date.now();",
+        "const ended = endDescendantTrees({ roots: [process.pid], stop: () => {}, kill: () => {}, resume: () => {} });",
+        "console.log(JSON.stringify({ pid: process.pid, ended, elapsed: Date.now() - started }));",
+      ].join("\n");
+      const result = await execa(process.execPath, ["--input-type=module", "-e", script], {
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+        timeout: 20_000,
+        reject: false,
+      });
+      expect(result.exitCode).toBe(0);
+      const { pid, ended, elapsed } = JSON.parse(result.stdout);
+      expect(ended).toEqual([pid]);
+      expect(elapsed).toBeLessThan(5_000);
+    } finally {
+      await removePath(dir);
+    }
+  },
+  30_000,
+);
+
+// Usefulness: a table read that returns no parseable row is an empty table, not a crash. Not
+// redundant: the parse is the only place that reads raw `ps` output.
+test("a process table with no parseable row is empty", () => {
+  expect(processTableRows("not a table\n")).toEqual(new Map());
+  expect(processTableRows("  1     0 Sat Oct 31 09:50:03 2026\n").get(1)).toEqual({
+    pid: 1,
+    ppid: 0,
+    start: "Sat Oct 31 09:50:03 2026",
+  });
 });

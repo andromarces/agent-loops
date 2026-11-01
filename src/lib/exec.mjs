@@ -253,9 +253,11 @@ export function execFailureCause(command, failure, timeout) {
  * `options.onSpawn(pid)` is called once, right after the child starts and only when it has a pid.
  * It runs beside the child and is awaited before `exec` returns or throws. A rejection warns and
  * never changes the outcome of the child.
+ * `options.treeEnd` ends the child and its descendants at a parent SIGTERM or SIGINT (POSIX only,
+ * ADR 0071). It reaches a descendant that left the child's process group.
  */
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal, role, env, maxBuffer, onSpawn } = options;
+  const { cwd, input, timeout, signal, role, env, maxBuffer, onSpawn, treeEnd } = options;
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -300,7 +302,7 @@ export async function exec(command, args = [], options = {}) {
     execaOptions.cancelSignal = signal;
   }
 
-  const subprocess = killTreeOnExit(execa(command, args, execaOptions));
+  const subprocess = killTreeOnExit(execa(command, args, execaOptions), { treeEnd });
   const { pid } = subprocess;
   // Settled at once, so a rejection before the child ends is never unhandled.
   const hook =
