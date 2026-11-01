@@ -18,6 +18,7 @@ import {
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
+import { recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
 import {
   ROLE_USAGE,
   parseRoleArgs,
@@ -51,6 +52,11 @@ function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = n
     rejectInitFlagChanges(args, state, allowed);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
       throw new RoleError(`Run is already ${state.lifecycle}.`);
+    }
+    // A later call on an interrupted run re-checks the turn directory that the call which marked it
+    // interrupted kept while a process of the dead child group ran (issue #1329).
+    if (state.lifecycle === "interrupted") {
+      await recheckKeptTurnTmpdir(state.lastDispatch?.turnTmpdir);
     }
     return fn(state, paths);
   });

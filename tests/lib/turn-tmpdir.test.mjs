@@ -11,11 +11,15 @@ import { spawn } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { expect, test } from "vite-plus/test";
-import { removeAbandonedTurnTmpdir, withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
+import { expect, test, vi } from "vite-plus/test";
+import {
+  recheckKeptTurnTmpdir,
+  removeAbandonedTurnTmpdir,
+  withTurnTmpdir,
+} from "../../src/lib/turn-tmpdir.mjs";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { removePath } from "../fs-helpers.mjs";
-import { deadPid } from "../process-helpers.mjs";
+import { deadPid, processExists } from "../process-helpers.mjs";
 
 const TMP_VARS = ["TMPDIR", "TEMP", "TMP", "AGENT_LOOP_RUNS_ROOT"];
 
@@ -235,6 +239,54 @@ c.unref();`,
       });
     } finally {
       if (grandchild > 0) process.kill(grandchild, "SIGKILL");
+    }
+  },
+);
+
+// Usefulness: verifies issue #1329, that a later re-check keeps the turn directory and warns
+// while a process of the dead child group runs, then removes it once that group ends.
+test.skipIf(process.platform === "win32")(
+  "a later re-check removes a kept directory after the dead child group ends",
+  async () => {
+    const leader = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+console.log(c.pid);
+c.unref();`,
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let grandchild;
+    try {
+      let out = "";
+      leader.stdout.on("data", (chunk) => (out += chunk));
+      await new Promise((resolve) => leader.once("exit", resolve));
+      grandchild = Number(out.trim());
+      expect(grandchild).toBeGreaterThan(0);
+      await withRoot(async (root) => {
+        const record = abandonedRecord(root, { pid: leader.pid });
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          await recheckKeptTurnTmpdir(record);
+          const warnings = errorSpy.mock.calls.map(([line]) => String(line));
+          expect(warnings.some((line) => line.includes("group") && line.includes(record.dir))).toBe(
+            true,
+          );
+          expect(existsSync(join(record.dir, "sentinel.txt"))).toBe(true);
+
+          process.kill(grandchild, "SIGKILL");
+          await vi.waitFor(() => expect(processExists(grandchild)).toBe(false), { timeout: 5000 });
+
+          await recheckKeptTurnTmpdir(record);
+          expect(existsSync(record.dir)).toBe(false);
+        } finally {
+          errorSpy.mockRestore();
+        }
+      });
+    } finally {
+      if (grandchild > 0 && processExists(grandchild)) process.kill(grandchild, "SIGKILL");
     }
   },
 );

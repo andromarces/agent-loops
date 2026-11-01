@@ -232,6 +232,19 @@ function processGroupAlive(pgid) {
   }
 }
 
+/**
+ * Re-checks the turn directory that a call kept after an interrupted turn and removes it when no
+ * process of the dead child runs (issue #1329). Every guard of the first removal holds. A failure
+ * warns and never throws, so the later call keeps its exit code and envelope.
+ */
+export async function recheckKeptTurnTmpdir(record) {
+  try {
+    await removeAbandonedTurnTmpdir(record);
+  } catch (err) {
+    logWarn(`turn temporary directory not re-checked: ${firstErrorLine(readableErrorText(err))}`);
+  }
+}
+
 // True when `parentReal` is the real path of the temporary directory that this process inherited.
 async function inInheritedTmpdir(parentReal) {
   try {

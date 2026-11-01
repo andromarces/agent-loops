@@ -1,17 +1,27 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readProcessCommands, readProcessTable } from "../src/lib/process-ancestry.mjs";
+import { statePaths } from "../src/lib/runstate.mjs";
 import { withTurnTmpdir } from "../src/lib/turn-tmpdir.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
   basicDeps,
   cleanup,
   dispatchArgv,
+  INIT_OVERRIDES,
   initRun,
   newRunRepo,
   readRepoState,
@@ -20,7 +30,7 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { processExists } from "./process-helpers.mjs";
+import { deadPid, processExists } from "./process-helpers.mjs";
 
 // Passes every state write through, except the ones that a test arms to fail after the record write
 // of a turn directory. `failures` is how many of the next writes throw, `Infinity` for every one.
@@ -220,6 +230,42 @@ const nextCall = (repo, tmpRoot) => {
   return executeRoleCommand(withRepo(dispatchArgv(), repo), { ...basicDeps(), stdin: stdinPrompt });
 };
 
+// Runs another role operation on the run in `repo`, under the temporary root of its killed
+// dispatch, so a re-check of the kept turn directory meets the record origin check.
+const laterCall = (repo, tmpRoot, argv) => {
+  for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, tmpRoot);
+  return executeRoleCommand(withRepo(argv, repo), { ...basicDeps(), stdin: stdinPrompt });
+};
+
+// Turns the run in `repo` into an interrupted run that kept a turn directory whose recorded child
+// is dead. Returns the directory and the temporary root that holds it.
+async function interruptedWithKeptDir(repo) {
+  const tmpRoot = await mkdtemp(join(tmpdir(), "kept-turn-"));
+  scratches.push(tmpRoot);
+  const dir = await mkdtemp(join(tmpRoot, "al-"));
+  writeFileSync(join(dir, "leftover.txt"), "x\n");
+  const stat = lstatSync(dir, { bigint: true });
+  const state = await readRepoState(repo);
+  state.lifecycle = "interrupted";
+  state.lastDispatch = {
+    role: "worker",
+    at: new Date().toISOString(),
+    turnTmpdir: {
+      dir,
+      parentReal: dirname(realpathSync.native(dir)),
+      device: String(stat.dev),
+      inode: String(stat.ino),
+      child: { pid: await deadPid() },
+    },
+  };
+  await writeFile(
+    statePaths({ cwd: repo }).stateFile,
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf8",
+  );
+  return { dir, tmpRoot };
+}
+
 // Usefulness: verifies issue #1207 acceptance 1, that the call which marks a run `interrupted`
 // after its dispatch process died mid-turn removes the directory of that turn.
 test("the call that marks a killed dispatch interrupted removes its turn directory", async () => {
@@ -274,6 +320,190 @@ test("a live child of the killed dispatch keeps the turn directory", async () =>
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
   expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+}, 60_000);
+
+// Usefulness: verifies issue #1329 acceptance 1, that a later call on an interrupted run
+// re-checks the kept turn directory and removes it once no process of the dead child group runs.
+test("a later abort removes the turn directory kept for a dead child group", async () => {
+  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
+  const first = await nextCall(repo, tmpRoot);
+  expect(first.payload.error).toContain("interrupted");
+  expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+
+  process.kill(childPid, "SIGKILL");
+  await vi.waitFor(() => expect(processExists(childPid)).toBe(false), { timeout: 5000 });
+
+  const later = await laterCall(repo, tmpRoot, ["abort", "--cwd", "<repo>", "--reason", "stop"]);
+
+  expect(later.exitCode).toBe(0);
+  expect(later.payload.lifecycle).toBe("aborted");
+  expect(existsSync(turnDir)).toBe(false);
+  expect(readdirSync(tmpRoot)).toEqual([]);
+}, 60_000);
+
+// Usefulness: verifies issue #1329 hostile case, that a later call keeps the turn directory and
+// warns while a process of the dead child group still runs.
+test("a later call keeps the turn directory and warns while the dead child group runs", async () => {
+  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
+  await nextCall(repo, tmpRoot);
+  expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const later = await nextCall(repo, tmpRoot);
+
+    expect(later.exitCode).toBe(1);
+    expect(later.payload.error).toContain("interrupted");
+    const warnings = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(warnings.some((line) => line.includes("kept") && line.includes(turnDir))).toBe(true);
+    expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+    expect(processExists(childPid)).toBe(true);
+  } finally {
+    errorSpy.mockRestore();
+  }
+}, 60_000);
+
+// Usefulness: verifies issue #1329 hostile case, that a later call does not follow a directory that
+// replaced the kept turn directory.
+test("a later call keeps a directory that replaced the kept turn directory", async () => {
+  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
+  await nextCall(repo, tmpRoot);
+  renameSync(turnDir, join(tmpRoot, "moved"));
+  mkdirSync(turnDir);
+  const sentinel = join(turnDir, "sentinel.txt");
+  writeFileSync(sentinel, "keep\n");
+
+  process.kill(childPid, "SIGKILL");
+  await vi.waitFor(() => expect(processExists(childPid)).toBe(false), { timeout: 5000 });
+
+  const later = await laterCall(repo, tmpRoot, ["abort", "--cwd", "<repo>", "--reason", "stop"]);
+
+  expect(later.exitCode).toBe(0);
+  expect(existsSync(sentinel)).toBe(true);
+}, 60_000);
+
+// Usefulness: verifies issue #1329 hostile case, that a later call with no turn directory record
+// still ends the run, because the re-check has nothing to remove.
+test("a later abort with no turn directory record still ends the run", async () => {
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const state = await readRepoState(repo);
+  state.lifecycle = "interrupted";
+  delete state.lastDispatch.turnTmpdir;
+  await writeFile(
+    statePaths({ cwd: repo }).stateFile,
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf8",
+  );
+
+  const later = await executeRoleCommand(
+    withRepo(["abort", "--cwd", "<repo>", "--reason", "stop"], repo),
+    basicDeps(),
+  );
+
+  expect(later.exitCode).toBe(0);
+  expect(later.payload.lifecycle).toBe("aborted");
+});
+
+// Usefulness: verifies issue #1329, that `dispatch --resume-interrupted` re-checks the kept turn
+// directory of an ended child before it starts the new turn.
+test("resume-interrupted removes the kept turn directory of an ended child", async () => {
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+
+  const resumed = await laterCall(repo, tmpRoot, dispatchArgv(["--resume-interrupted"]));
+
+  expect(resumed.exitCode).toBe(0);
+  expect(existsSync(dir)).toBe(false);
+}, 60_000);
+
+// Usefulness: verifies issue #1329, that a new init after abort re-checks a directory that abort
+// kept because it ran under another temporary directory, and removes it.
+test("a new init after abort removes a turn directory that abort kept", async () => {
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+
+  const elsewhere = await mkdtemp(join(tmpdir(), "other-tmp-"));
+  scratches.push(elsewhere);
+  const aborted = await laterCall(repo, elsewhere, [
+    "abort",
+    "--cwd",
+    "<repo>",
+    "--reason",
+    "stop",
+  ]);
+  expect(aborted.exitCode).toBe(0);
+  expect(existsSync(dir)).toBe(true);
+
+  const reinit = await laterCall(repo, tmpRoot, [
+    "dispatch",
+    "--role",
+    "worker",
+    ...INIT_OVERRIDES,
+    "--cwd",
+    "<repo>",
+  ]);
+
+  expect(reinit.exitCode).toBe(0);
+  expect(existsSync(dir)).toBe(false);
+}, 60_000);
+
+// Usefulness: verifies issue #1329, that `extend` on an interrupted run re-checks and removes a kept
+// turn directory whose child has ended.
+test("extend re-checks the kept turn directory of an interrupted run", async () => {
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+
+  const extended = await laterCall(repo, tmpRoot, [
+    "extend",
+    "--cwd",
+    "<repo>",
+    "--max-steps",
+    "100",
+    "--parent-session",
+    "parent-sess-1",
+  ]);
+
+  expect(extended.exitCode).toBe(0);
+  expect(existsSync(dir)).toBe(false);
+}, 60_000);
+
+// Usefulness: verifies issue #1329, that `declare-pr` on an interrupted run re-checks and removes a
+// kept turn directory whose child has ended.
+test("declare-pr re-checks the kept turn directory of an interrupted run", async () => {
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+
+  const declared = await laterCall(repo, tmpRoot, [
+    "declare-pr",
+    "--cwd",
+    "<repo>",
+    "--pr",
+    "42",
+    "--parent-session",
+    "parent-sess-1",
+  ]);
+
+  expect(declared.exitCode).toBe(0);
+  expect(existsSync(dir)).toBe(false);
+}, 60_000);
+
+// Usefulness: verifies issue #1329, that a plain dispatch refused for an interrupted run still
+// re-checks and removes a kept turn directory whose child has ended.
+test("a plain dispatch refused for the interrupted run removes the kept directory", async () => {
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+
+  const refused = await nextCall(repo, tmpRoot);
+
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("interrupted");
+  expect(existsSync(dir)).toBe(false);
 }, 60_000);
 
 // The pids of the processes that run the fake `codex` script of `scratch`.

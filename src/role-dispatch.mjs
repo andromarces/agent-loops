@@ -30,7 +30,7 @@ import {
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
-import { removeAbandonedTurnTmpdir } from "./lib/turn-tmpdir.mjs";
+import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
 import { failedTurnEvidence, pickTurnEvidence, runChild } from "./child-turn.mjs";
 import {
   normalizedLocalPaths,
@@ -256,6 +256,9 @@ async function dispatchLocked(
     if (args.pr !== null) {
       await refuseUnreadableGate(`--pr ${args.pr}`, { pr: args.pr, cwd: args.cwd, gh, signal });
     }
+    // Init over a terminal run replaces its record, so re-check a turn directory that the ended run
+    // kept before the new state drops the record (issue #1329).
+    await recheckKeptTurnTmpdir(existing?.lastDispatch?.turnTmpdir);
     state = initialState(args);
   } else {
     state = requireState(existing, args.cwd, { needsBudget: true });
@@ -420,6 +423,9 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
   }
 
   if (state.lifecycle === "interrupted") {
+    // Every later call re-checks the turn directory that the interrupted mark kept while a process
+    // of the dead child group ran, and removes it once that group has ended (issue #1329).
+    await recheckKeptTurnTmpdir(state.lastDispatch?.turnTmpdir);
     if (!args.resumeInterrupted) {
       throw new RoleError(
         "Previous turn is interrupted. Use abort, or dispatch --resume-interrupted to continue.",
