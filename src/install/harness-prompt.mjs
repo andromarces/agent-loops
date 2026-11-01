@@ -1,7 +1,7 @@
 // Interactive checkbox prompt for the install and uninstall harness selection
-// (#1319). It drives `node:readline` keypress events in raw mode, so it adds no
-// dependency, and the caller runs the numbered prompt when the terminal cannot
-// host it.
+// (#1319). It drives `node:readline` keypress events in raw mode.
+// It adds no dependency because Node supplies the keypress events.
+// The caller runs the numbered prompt when the terminal cannot host the list.
 import { emitKeypressEvents } from "node:readline";
 import { HARNESS_META, HARNESS_ORDER } from "../lib/harnesses.mjs";
 
@@ -37,6 +37,14 @@ export function checkboxSupported({
   );
 }
 
+/** Rows that a block of lines occupies on a terminal of `columns` columns. */
+function wrappedRows(lines, columns) {
+  if (!(Number.isInteger(columns) && columns > 0)) {
+    return lines.length;
+  }
+  return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(line.length / columns)), 0);
+}
+
 /**
  * Renders the checkbox list and resolves one of three outcomes. `supported:
  * false` means the caller must run the numbered prompt. A cancelled prompt
@@ -60,7 +68,7 @@ export async function askHarnessCheckboxes({
 
   const checked = items.map((item) => Boolean(item.checked));
   let cursor = 0;
-  let drawn = 0;
+  let drawnRows = 0;
 
   try {
     emitKeypressEvents(input);
@@ -80,14 +88,15 @@ export async function askHarnessCheckboxes({
       input.off?.("keypress", onKeypress);
       input.off?.("end", onEnd);
       input.off?.("close", onEnd);
+      output.off?.("error", onOutputError);
     };
 
     const clear = () => {
-      if (drawn === 0) {
+      if (drawnRows === 0) {
         return;
       }
-      output.write(`\x1b[${drawn - 1}A\r\x1b[0J`);
-      drawn = 0;
+      output.write(`\x1b[${drawnRows - 1}A\r\x1b[0J`);
+      drawnRows = 0;
     };
 
     const render = () => {
@@ -99,24 +108,29 @@ export async function askHarnessCheckboxes({
             `${item.label} (${item.id})${item.marker ?? ""}`,
         ),
       ];
-      if (drawn > 0) {
-        output.write(`\x1b[${drawn - 1}A\r`);
+      if (drawnRows > 0) {
+        output.write(`\x1b[${drawnRows - 1}A\r`);
       }
       output.write(`\x1b[0J${lines.join("\n")}`);
-      drawn = lines.length;
+      drawnRows = wrappedRows(lines, output.columns);
     };
 
     // Clears the redraw, shows the cursor, and leaves raw mode. Returns the
-    // first failure so a restore error still reaches the caller.
+    // first failure so a restore error still reaches the caller. A destroyed
+    // stream gets no write, because the failed write is already the report.
     const restore = () => {
       let failure = null;
       try {
-        clear();
+        if (!output.destroyed) {
+          clear();
+        }
       } catch (err) {
         failure = err;
       }
       try {
-        output.write(SHOW_CURSOR);
+        if (!output.destroyed) {
+          output.write(SHOW_CURSOR);
+        }
       } catch (err) {
         failure ??= err;
       }
@@ -138,8 +152,8 @@ export async function askHarnessCheckboxes({
         return;
       }
       settled = true;
-      detach();
       const restoreError = restore();
+      detach();
       if (error) {
         reject(error);
       } else if (restoreError) {
@@ -149,18 +163,19 @@ export async function askHarnessCheckboxes({
       }
     };
 
+    const onOutputError = (error) => settle(null, error);
+
     const onKeypress = (sequence, key) => {
       if (settled) {
         return;
       }
       try {
         const name = key?.name ?? "";
-        if (
-          (key?.ctrl && (name === "c" || name === "d")) ||
-          sequence === "\x03" ||
-          sequence === "\x04"
-        ) {
-          return settle({ supported: true, canceled: true });
+        if ((key?.ctrl && name === "c") || sequence === "\x03") {
+          return settle({ supported: true, canceled: true, reason: "sigint" });
+        }
+        if ((key?.ctrl && name === "d") || sequence === "\x04") {
+          return settle({ supported: true, canceled: true, reason: "end" });
         }
         if (name === "return" || name === "enter" || sequence === "\r" || sequence === "\n") {
           return settle({
@@ -185,11 +200,12 @@ export async function askHarnessCheckboxes({
       }
     };
 
-    const onEnd = () => settle({ supported: true, canceled: true });
+    const onEnd = () => settle({ supported: true, canceled: true, reason: "end" });
 
     input.on("keypress", onKeypress);
     input.on("end", onEnd);
     input.on("close", onEnd);
+    output.on?.("error", onOutputError);
 
     try {
       output.write(HIDE_CURSOR);

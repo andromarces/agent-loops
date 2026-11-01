@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { Writable } from "node:stream";
 import { expect, test } from "vite-plus/test";
 import {
   askHarnessCheckboxes,
@@ -25,11 +26,15 @@ class FakeInput extends EventEmitter {
   }
 }
 
-class FakeOutput {
-  constructor({ isTTY = true } = {}) {
+class FakeOutput extends EventEmitter {
+  constructor({ isTTY = true, columns } = {}) {
+    super();
     this.isTTY = isTTY;
     this.chunks = [];
     this.failWhen = null;
+    if (columns !== undefined) {
+      this.columns = columns;
+    }
   }
 
   write(text) {
@@ -68,9 +73,9 @@ function assertRestored(input, output) {
   expect(output.chunks.at(-2)).toContain("\x1b[0J");
 }
 
-// Usefulness: acceptance #1319 — the list shows every harness once in
-// HARNESS_ORDER with its label, id, and detection marker, and the checked set
-// starts as the detected harnesses.
+// Usefulness: acceptance #1319 — the list shows every harness once in HARNESS_ORDER.
+// Each row carries its label, id, and detection marker.
+// The checked set starts as the detected harnesses.
 test("the checkbox list shows every harness in order with detection markers", async () => {
   const { input, output, pending } = start({ checked: ["claude", "opencode"] });
   const text = output.text;
@@ -139,22 +144,81 @@ test("typed names and numbers are ignored by the checkbox list", async () => {
   await expect(pending).resolves.toEqual({ supported: true, selected: ["claude"] });
 });
 
-// Usefulness: acceptance #1319 — Ctrl+C ends the prompt with no selection and
-// restores the terminal: raw mode off, cursor shown, redraw cleared.
-test("Ctrl+C cancels and restores the terminal", async () => {
+// Usefulness: acceptance #1319 and the README exit-code table — Ctrl+C cancels,
+// reports its own reason, and restores raw mode, the cursor, and the redraw.
+test("Ctrl+C cancels with the signal reason and restores the terminal", async () => {
   const { input, output, pending } = start();
   input.emit("keypress", "\x03", { name: "c", ctrl: true });
-  await expect(pending).resolves.toEqual({ supported: true, canceled: true });
+  await expect(pending).resolves.toEqual({
+    supported: true,
+    canceled: true,
+    reason: "sigint",
+  });
   assertRestored(input, output);
 });
 
-// Usefulness: acceptance #1319 — end of input ends the prompt with no selection
-// and restores the terminal, so it never writes a file.
-test("end of input cancels and restores the terminal", async () => {
+// Usefulness: acceptance #1319 — end of input cancels with its own reason and
+// restores the terminal, so it never writes a file.
+test("end of input cancels with the end reason and restores the terminal", async () => {
   const { input, output, pending } = start();
   input.emit("end");
-  await expect(pending).resolves.toEqual({ supported: true, canceled: true });
+  await expect(pending).resolves.toEqual({ supported: true, canceled: true, reason: "end" });
   assertRestored(input, output);
+});
+
+// Usefulness: acceptance #1319 — an asynchronous writable error must restore the terminal.
+// The prompt drops every listener before it rejects with the same error.
+// A failed stream cannot leave raw mode on.
+test("an asynchronous output error rejects and restores the terminal", async () => {
+  const { input, output, pending } = start();
+  const failure = new Error("stream broke");
+  output.emit("error", failure);
+  await expect(pending).rejects.toBe(failure);
+  expect(input.rawMode).toBe(false);
+  expect(input.rawModeCalls.at(-1)).toBe(false);
+  expect(input.listenerCount("keypress")).toBe(0);
+  expect(output.listenerCount("error")).toBe(0);
+  expect(output.chunks).toContain(SHOW_CURSOR);
+  expect(output.chunks.at(-2)).toContain("\x1b[0J");
+});
+
+// Usefulness: acceptance #1319 — a real Writable that emits an error restores the
+// terminal and removes the keypress listener before the same error propagates.
+test("a destroyed output stream restores the terminal", async () => {
+  const input = new FakeInput();
+  const output = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  output.isTTY = true;
+  output.columns = 80;
+  const pending = askHarnessCheckboxes({
+    items: harnessCheckboxItems({ checked: ["claude"] }),
+    input,
+    output,
+    env: {},
+  });
+  const failure = new Error("stream broke");
+  output.destroy(failure);
+  await expect(pending).rejects.toBe(failure);
+  expect(input.rawMode).toBe(false);
+  expect(input.listenerCount("keypress")).toBe(0);
+  expect(output.listenerCount("error")).toBe(0);
+});
+
+// Usefulness: acceptance #1319 — the redraw counts wrapped terminal rows, so a
+// narrow terminal clears the whole block and leaves no header behind.
+test("the redraw counts wrapped rows at a narrow width", async () => {
+  const { input, output, pending } = start({ checked: [], output: { columns: 20 } });
+  const block = output.chunks[1].replace("\x1b[0J", "");
+  const expectedRows = block
+    .split("\n")
+    .reduce((rows, line) => rows + Math.max(1, Math.ceil(line.length / 20)), 0);
+  expect(expectedRows).toBeGreaterThan(block.split("\n").length);
+  input.emit("keypress", "\r", { name: "return" });
+  await expect(pending).resolves.toEqual({ supported: true, selected: [] });
+  expect(output.chunks.at(-2)).toContain(`\x1b[${expectedRows - 1}A`);
 });
 
 // Usefulness: acceptance #1319 — an error thrown inside a keypress handler
@@ -184,8 +248,8 @@ test("an error thrown inside a keypress handler rejects and restores the termina
   expect(output.text.endsWith(SHOW_CURSOR)).toBe(true);
 });
 
-// Usefulness: acceptance #1319 — a write error rejects the prompt and still
-// leaves raw mode and shows the cursor, so a failed redraw cannot trap the user.
+// Usefulness: acceptance #1319 — a write error rejects the prompt and restores the terminal.
+// Raw mode is off and the cursor returns, so a failed redraw cannot trap the user.
 test("a write error rejects and restores the terminal", async () => {
   const { input, output, pending } = start();
   output.failWhen = (text) => text !== SHOW_CURSOR;
@@ -195,9 +259,9 @@ test("a write error rejects and restores the terminal", async () => {
   expect(output.chunks).toContain(SHOW_CURSOR);
 });
 
-// Usefulness: acceptance #1319 — the numbered prompt runs when the terminal
-// cannot host the checkbox list; each case resolves `supported: false` with no
-// output and no raw mode, so the caller can fall back unchanged.
+// Usefulness: acceptance #1319 — the numbered prompt runs when the terminal cannot
+// host the checkbox list. Each case resolves `supported: false` with no output and
+// no raw mode, so the caller can fall back unchanged.
 test.each([
   ["stdin is not a TTY", { input: { isTTY: false } }],
   ["stdout is not a TTY", { output: { isTTY: false } }],

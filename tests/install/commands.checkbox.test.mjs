@@ -225,12 +225,12 @@ test("install unchecking every harness warns and writes nothing", async () => {
   }
 });
 
-// Usefulness: acceptance #1319 — Ctrl+C and end of input end the prompt without
-// writing anything, so neither ends in a partial install.
+// Usefulness: acceptance #1319 and the README exit-code table — Ctrl+C exits 130
+// and end of input keeps the base-branch exit 1. Neither writes a file.
 test.each([
-  ["Ctrl+C", (input) => input.emit("keypress", "\x03", { name: "c", ctrl: true })],
-  ["end of input", (input) => input.emit("end")],
-])("install %s writes nothing", async (_name, cancel) => {
+  ["Ctrl+C", (input) => input.emit("keypress", "\x03", { name: "c", ctrl: true }), 130],
+  ["end of input", (input) => input.emit("end"), 1],
+])("install %s exits %i and writes nothing", async (_name, cancel, expectedCode) => {
   const home = await makeHome();
   const path = await pathWith("claude");
   const originalPath = process.env.PATH;
@@ -245,7 +245,7 @@ test.each([
     await output.waitFor((text) => text.includes("Select harnesses"));
     cancel(input);
     await run;
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(expectedCode);
     expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
     expect(input.rawMode).toBe(false);
     expect(output.text.endsWith("\x1b[?25h")).toBe(true);
@@ -284,6 +284,37 @@ test("uninstall lists the installed harnesses checked and removes only the check
     expect(process.exitCode).toBe(0);
     expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
     expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(true);
+  } finally {
+    captured.restore();
+    process.env.PATH = originalPath;
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: acceptance #1319 — unchecking every uninstall item warns, exits 0,
+// and writes no file, the same outcome as install.
+test("uninstall with every item unchecked warns and writes nothing", async () => {
+  const home = await makeHome();
+  const originalPath = process.env.PATH;
+  const captured = captureConsole();
+  process.env.AGENT_LOOP_HOME = home;
+  process.env.PATH = home;
+  const settingsPath = join(home, ".claude", "settings.json");
+  try {
+    await runInstallCommand(["--harness", "claude", "--yes"]);
+    const output = new FakeOutput();
+    const input = new FakeInput();
+    process.exitCode = 0;
+    const run = runUninstallCommand([], { input, output, env: { TERM: "xterm-256color" } });
+    await output.waitFor((text) => text.includes("Select harnesses"));
+    input.emit("keypress", " ", { name: "space" });
+    input.emit("keypress", "\r", { name: "return" });
+    await run;
+    expect(process.exitCode).toBe(0);
+    expect(captured.errors.join("\n")).toContain("No harness selected; nothing to do.");
+    expect(captured.logs.join("\n")).not.toContain("Nothing to change.");
+    expect(existsSync(settingsPath)).toBe(true);
   } finally {
     captured.restore();
     process.env.PATH = originalPath;

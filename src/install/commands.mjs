@@ -98,7 +98,11 @@ async function selectHarnesses(names, checked, io, { markDetected = false } = {}
     ...io,
   });
   if (asked.supported) {
-    return asked.canceled ? null : asked.selected;
+    if (!asked.canceled) {
+      return asked.selected;
+    }
+    process.exitCode = asked.reason === "sigint" ? 130 : 1;
+    return null;
   }
   const answer = await askSelection(checked, io);
   if (answer === "") {
@@ -258,6 +262,11 @@ export async function runUninstallCommand(argv, io = {}) {
     if (!harnesses) {
       return;
     }
+  }
+
+  if (harnesses && harnesses.length === 0) {
+    logWarn("No harness selected; nothing to do.");
+    return;
   }
 
   let reports;
