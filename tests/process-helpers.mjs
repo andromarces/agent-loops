@@ -523,6 +523,26 @@ export async function shimStartPids(shimDir) {
 }
 
 /**
+ * Reads the step records that the `withGitHangingAfter` shim wrote into `shimDir/steps`, a map from
+ * a call pid to its steps, oldest first. A missing entry is an observation only, because a failed
+ * write gives the same result. Rejects when the directory cannot be read.
+ */
+export async function shimCallSteps(shimDir) {
+  const names = (await readdir(join(shimDir, "steps"))).filter((name) => /^\d+$/.test(name));
+  const entries = await Promise.all(
+    names.map(async (name) => {
+      const text = await readFile(join(shimDir, "steps", name), "utf8").catch(() => "");
+      const steps = text
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => line.replace(/\s+/g, " ").trim());
+      return [Number(name), steps];
+    }),
+  );
+  return new Map(entries);
+}
+
+/**
  * Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also when calls start
  * at once, and then hangs. A test can let the before snapshot finish and stall the read that
  * follows. `run` gets `hungPid()` and `shimDir`. `hungPid()` resolves with the pid of the hung `git`
@@ -530,14 +550,16 @@ export async function shimStartPids(shimDir) {
  *
  * `shimDir` holds one `call-<n>` directory per call, each with a `record` file of the claimed
  * number and the pid (read it with `shimCallRecords`). The shim also writes
- * `started/<pid>` before its claim, which `shimStartPids` reads. The hung process carries the unique
+ * `started/<pid>` before its claim, which `shimStartPids` reads. It writes a `steps/<pid>` file of
+ * the steps it reached, which `shimCallSteps` reads. The hung process carries the unique
  * shim directory in its command line. The helper ends it through `endOwnedProcess` if the test left
  * it alive, and removes the shim directory.
  *
  * On POSIX the shell shim `exec`s the hung node process, so one pid carries the call. On Windows a
  * `git.cmd` wrapper starts the hung node process, and the record names that node pid. The runtime
  * kills the process tree, so the wrapper ends with it. On Windows the helper ends no process, since
- * no cheap marker read exists there, and a leftover shim ends at its own ceiling.
+ * no cheap marker read exists there, and a leftover shim ends at its own ceiling. Only the POSIX
+ * shim writes step records.
  */
 export async function withGitHangingAfter(passes, run) {
   const realGit =
@@ -547,6 +569,7 @@ export async function withGitHangingAfter(passes, run) {
   const dir = await mkdtemp(join(tmpdir(), "git-hang-after-"));
   const pidFile = join(dir, "hung.pid");
   await mkdir(join(dir, "started"));
+  await mkdir(join(dir, "steps"));
   if (process.platform === "win32") {
     await writeWindowsGitShim(dir, { passes, realGit, pidFile });
   } else {
@@ -554,6 +577,9 @@ export async function withGitHangingAfter(passes, run) {
       join(dir, "git"),
       [
         "#!/bin/sh",
+        // The step record ends with the last step a call recorded (issue #1258). A failed write must
+        // not change the call path, so it drops stderr.
+        `printf 'start %s\\n' "$PPID" 2>/dev/null > '${dir}/steps/'$$`,
         // The marker records the pid of a call that ran the shim. A failed `mkdir` never ends the
         // shell, so the claim below always runs.
         `mkdir '${dir}/started/'$$ 2>/dev/null`,
@@ -563,6 +589,7 @@ export async function withGitHangingAfter(passes, run) {
         `while ! mkdir '${dir}/call-'$n 2>/dev/null; do n=$((n + 1)); done`,
         // The record holds the claimed number and the pid, which `exec` keeps.
         `echo "$n $$" > '${dir}/call-'$n/record`,
+        `printf 'claimed %s\\n' "$n" 2>/dev/null >> '${dir}/steps/'$$`,
         `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
         `echo $$ > '${pidFile}'`,
         `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,
