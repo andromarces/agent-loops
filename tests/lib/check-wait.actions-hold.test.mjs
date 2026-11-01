@@ -9,6 +9,9 @@ import { fakeClock, fileReply, HEAD_A, HEAD_B, readOk, scriptedGh } from "./chec
 const BASE_HEAD = "c".repeat(40);
 const PR_WORKFLOW = "name: checks\non:\n  pull_request:\n";
 const INERT_WORKFLOW = "name: nightly\non:\n  workflow_dispatch:\n";
+// The text the `gh` network stack writes for a transport failure: no HTTP status, no reply body.
+const DIAL_TIMEOUT =
+  'Get "https://api.github.com/repos/owner/repo": dial tcp 20.205.243.168:443: connect: operation timed out';
 const WORKERS = {
   id: 1,
   name: "Workers Builds: site",
@@ -31,6 +34,9 @@ function holdGh({
   prFiles = [{ filename: "src/a.js" }],
   runsByPoll,
   listingFailures = 0,
+  listingFailureText = "gh: Bad Gateway (HTTP 502)",
+  baseFailureText = null,
+  filesFailureText = null,
   heads = [HEAD_A],
   failBaseRead = 0,
 }) {
@@ -49,18 +55,24 @@ function holdGh({
     const endpoint = args[0] === "api" ? args[1] : "";
     if (endpoint === `${repo}/commits/main`) {
       baseReads += 1;
+      if (baseFailureText !== null) {
+        return { status: 1, stdout: "", stderr: baseFailureText, timedOut: false };
+      }
       if (baseReads === failBaseRead) {
         return { status: 1, stdout: "", stderr: "gh: Bad Gateway (HTTP 502)", timedOut: false };
       }
       return readOk({ sha: BASE_HEAD });
     }
     if (endpoint.startsWith(`${repo}/pulls/42/files`)) {
+      if (filesFailureText !== null) {
+        return { status: 1, stdout: "", stderr: filesFailureText, timedOut: false };
+      }
       return readOk(prFiles);
     }
     if (endpoint === `${repo}/contents/.github/workflows?ref=${BASE_HEAD}`) {
       if (failuresLeft > 0) {
         failuresLeft -= 1;
-        return { status: 1, stdout: "", stderr: "gh: Bad Gateway (HTTP 502)", timedOut: false };
+        return { status: 1, stdout: "", stderr: listingFailureText, timedOut: false };
       }
       return readOk([{ name: "ci.yml", path: ".github/workflows/ci.yml", type: "file" }]);
     }
@@ -234,6 +246,19 @@ test("the --all wait holds when the workflow read fails and retries on the next 
   expect(retried.result.timedOut).toBe(false);
   expect(retried.result.checks.map(({ name }) => name)).toContain("checks");
 });
+
+// Usefulness: verifies a lasting transport failure of each `--all` source read ends the wait with an
+// error that names it. The result is never a timeout envelope (issue #1312).
+test.each([
+  ["the base head read", { baseFailureText: DIAL_TIMEOUT }],
+  ["the workflow-directory read", { listingFailures: 99, listingFailureText: DIAL_TIMEOUT }],
+  ["the PR files read", { filesFailureText: DIAL_TIMEOUT }],
+])(
+  "the --all wait reports an error when %s fails with a transport failure until the bound",
+  async (_name, options) => {
+    await expect(holdWait({ runsByPoll: [[WORKERS]], ...options })).rejects.toThrow(/dial tcp/);
+  },
+);
 
 // Usefulness: verifies a workflow with no `pull_request` trigger skips the hold, so a repository whose
 // workflows cannot run for a PR keeps the immediate pass.

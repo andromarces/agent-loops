@@ -376,8 +376,8 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
   }
 }
 
-// Whether a refusal comes from a names read that failed with a server error and no reply that
-// could not be parsed. The next poll retries it, and the error names the server error (#1121).
+// Whether a names read failed with a server error or a transport failure. The refusal holds no
+// unparseable reply. The next poll retries it, and the error names the cause (#1121, #1312).
 const namesRetryable = (required) => required.namesTransient && required.unparsed.length === 0;
 const namesCause = (required) => (namesRetryable(required) ? `: ${required.namesFailure}` : "");
 const unresolved = (required, refusal) => {
@@ -424,8 +424,8 @@ async function contextsOf({ bounded, slug, pr, cwd, sourceCache }, base, listed,
 // refuses only when no source can state the required checks: both configuration sources are
 // unreadable and no check is named. A malformed reply of
 // one source says nothing about the other, so it is not judged. A source that names a check or
-// states the absence keeps the wait running whatever the other returned (#941). A server error
-// of a source read carries `transient` and the poll retries it. The names are those of the poll's
+// states the absence keeps the wait running whatever the other returned (#941). A server error or a
+// transport failure of a source read carries `transient` and the poll retries it. The names are those of the poll's
 // own `gh pr checks --required` read, which is the reply that raised the question, so no names
 // read can fail here (#1125). `context` is the one of `contextsOf`.
 async function absenceOf(
@@ -441,7 +441,8 @@ async function absenceOf(
     sourceCache,
   });
   // A no-checks-reported poll accepts its names read, which is the `no checks reported` reply
-  // itself. Any other refusal stands, and only a clean server error is retried (#1121).
+  // itself. Any other refusal stands, and only a clean server error or a transport failure is
+  // retried (#1121, #1312).
   const namesRefusal = noChecksYet
     ? null
     : requiredNamesRefusal(required, pr, namesCause(required));
@@ -513,6 +514,12 @@ async function absenceOf(
  * PR head is the one read at the start of the poll, so the PR can have moved on by the time
  * the wait returns. `head` is null when no read completed, such as a wait that reached the
  * bound before the PR head reached `head` (#961).
+ *
+ * A retryable server error or transport failure of a read is retried on the next poll. One that
+ * lasts to the bound throws, so it is never `timedOut: true` and never a pass. A transport failure
+ * carries no HTTP status and no reply body. A 4xx, a 5xx with an unreadable body, and a text with no
+ * known transport wording stay terminal. The `--require-ci` finish gate still fails closed on every
+ * read failure.
  *
  * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
  * the whole command, including the work that runs before the first read; a
@@ -595,8 +602,9 @@ export async function waitChecks({
   };
   // The commit reads are the gate's own reads, which page by page number with one `gh api --include`
   // request per page and never follow the `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is marked
-  // `transient`, and the wait retries it on the next poll, only when its first-line status is 500,
-  // 502, 503, or 504 and its body is empty or one JSON value. Every other failure ends the wait: any
+  // `transient`, and the wait retries it on the next poll. That needs a first-line status of 500,
+  // 502, 503, or 504 with a body that is empty or one JSON value. It also covers a transport failure
+  // with no status line and no body (#1312). Every other failure ends the wait: any
   // other status, a 4xx whatever its body says, a failure with no status block, and a reply whose
   // body is not exactly one JSON value.
   const readCommit = async (sha) => {
@@ -632,8 +640,12 @@ export async function waitChecks({
   };
   const readPrHead = async () => readHead(pr, await bounded(headArgv));
   const probeContext = () => ({ bounded, slug, cwd, pr, headOf: readPrHead });
-  // Whether the probe of `noCheckSource` ran. It runs at most once per wait.
+  // Whether the probe of `noCheckSource` settled. A retryable failure leaves it unset, so the next
+  // poll probes again.
   let probed = false;
+  // The retryable failure of the current poll, or null. The next poll retries it, and a wait that
+  // reaches the bound with it set reports it as an error (#1025, #1312).
+  let failed = null;
   // Whether a workflow of the base branch may run for the PR head `sha`, read once per head. A read
   // that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
   let workflowMayRun = { sha: null, value: true };
@@ -644,9 +656,13 @@ export async function waitChecks({
         await ensureSlug();
         value = await pullRequestWorkflowMayRun(probeContext(), sha, base);
       } catch (raw) {
-        // A failed read holds the pass. The bound still ends the wait.
-        if (failureOf(raw) instanceof BoundReached) {
-          throw failureOf(raw);
+        const err = failureOf(raw);
+        // A failed read holds the pass. A transport failure is kept for the bound, which reports it.
+        if (err instanceof BoundReached) {
+          throw err;
+        }
+        if (err?.transport) {
+          failed = err;
         }
       }
       if (value === null) {
@@ -660,9 +676,9 @@ export async function waitChecks({
     await ensureSlug();
     return noCheckSource(probeContext(), sha, base);
   };
-  // The retryable server error of the latest completed poll, or null when that poll had none.
-  // A wait that ends on the bound with it set reports it as an error, so a server error never
-  // reads as a timeout or a pass (#1025).
+  // The retryable failure of the latest completed poll, or null when that poll had none. It is a
+  // server error or a transport failure. A wait that ends on the bound with it set reports it as an
+  // error. Neither then reads as a timeout or a pass (#1025, #1312).
   let transient = null;
   // The `gh pr` reads of one poll: the head, and the check list when the head is the one waited
   // for. `listed` is null for another head.
@@ -681,7 +697,7 @@ export async function waitChecks({
     }
     return { sha, base, listed, names };
   };
-  // The retryable server error of a failed read, or a throw for the bound and every other failure.
+  // The retryable failure of a failed read, or a throw for the bound and every other failure.
   const retryableOrThrow = (raw) => {
     const err = failureOf(raw);
     if (!err?.transient || err instanceof BoundReached) {
@@ -689,10 +705,8 @@ export async function waitChecks({
     }
     return err;
   };
-  // The server error of the current poll that the next poll retries, or null.
-  let failed = null;
   // The outcome of one poll that read the check list of `sha`: the commit states read by SHA, or the
-  // probe result. A server error of a read is kept in `failed`, and a listed failure settles the wait
+  // probe result. A retryable failure of a read is kept in `failed`, and a listed failure settles the wait
   // whatever the commit read returns.
   const commitOutcome = async (sha, base, listed, names) => {
     let items = null;
@@ -712,27 +726,33 @@ export async function waitChecks({
       // that fails never delays it. The bound and every other failure still end it.
       const err = failureOf(raw);
       if (err?.transient && !(err instanceof BoundReached)) {
-        // A server error is retried on the next poll, unless a listed failure settles the wait.
+        // A retryable failure is retried on the next poll, unless a listed failure settles the wait.
         failed = err;
       }
       if (err instanceof BoundReached || (failed === null && prFailures.length === 0)) {
         throw err;
       }
     }
-    // The probe runs once, only for an `--all` wait that names no expected check, after
-    // `gh pr checks` listed nothing and the by-SHA read of the PR head found no check run and no
-    // commit status, so a state on the PR head never gives way to the probe (ADR 0048).
+    // The probe runs once per settled answer, only for an `--all` wait that names no expected check.
+    // It runs after `gh pr checks` listed nothing and the by-SHA read found no check run and no
+    // commit status. A state on the PR head never gives way to the probe (ADR 0048).
     if (items !== null && all && expect.length === 0 && !probed && headEmpty) {
-      probed = true;
       try {
-        if (listed.checks.length === 0 && (await probe(sha, base))) {
+        const noSource = await probe(sha, base);
+        probed = true;
+        if (listed.checks.length === 0 && noSource) {
           return { settled: true, checks: [], noCheckSource: true };
         }
       } catch (raw) {
-        // A failed probe read keeps the normal wait. The bound still ends it.
         const err = failureOf(raw);
         if (err instanceof BoundReached) {
           throw err;
+        }
+        // A transport failure keeps the probe open, so the next poll reads again.
+        if (err?.transport) {
+          failed = err;
+        } else {
+          probed = true;
         }
       }
     }
@@ -769,7 +789,7 @@ export async function waitChecks({
       try {
         state = await readPr();
       } catch (raw) {
-        // A server error of a `gh pr` read is retried on the next poll.
+        // A retryable failure of a `gh pr` read is retried on the next poll.
         failed = retryableOrThrow(raw);
       }
       if (state?.listed) {
@@ -778,7 +798,7 @@ export async function waitChecks({
           try {
             await absent(base, names, "no checks");
           } catch (raw) {
-            // A server error of a source read is retried on the next poll.
+            // A retryable failure of a source read is retried on the next poll.
             failed = retryableOrThrow(raw);
           }
         }
@@ -827,7 +847,7 @@ export async function waitChecks({
     let err = failureOf(raw);
     if (err instanceof BoundReached) {
       unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
-      // A listed failure is reported with the bound, so an earlier server error never replaces it.
+      // A listed failure is reported with the bound, so an earlier retryable failure never replaces it.
       if (transient === null || prFailures.length > 0) {
         return seal(timeout());
       }

@@ -101,6 +101,13 @@ output the wait cannot parse, still ends the wait at once. The error that ends t
 bound carries the `gh` error text, so it names the server status. This retry belongs to `wait-checks`: the `--require-ci`
 finish gate reads the same names once and still fails closed.
 
+A read that fails with no HTTP status and names a known transport failure is retried on the next
+poll. Examples are `dial tcp ...: connect: operation timed out`, `connection reset by peer`, and
+the bare `EOF` after a quoted URL. A bare `EOF` counts only at the end of the text, after a quoted
+URL. A failure that lasts to the bound exits 1 with `status: "error"` that names it, never
+`timedOut: true`. A 4xx, a status line, a foreign-host `Link` refusal, a reply body, and an unknown
+text stay terminal.
+
 The PR head is the one read at the start of the poll, so the PR can have moved on by
 the time the wait returns. Compare `head` with the commit you expect before you record the
 checks as passed.
