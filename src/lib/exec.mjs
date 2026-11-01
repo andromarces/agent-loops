@@ -371,15 +371,20 @@ export async function exec(command, args = [], options = {}) {
  * bounds the call and `signal` cancels it. Either one kills the child, with SIGTERM then SIGKILL
  * after 1 s on POSIX and `taskkill /T /F` over the process tree on Windows, so no platform keeps a
  * child the bound gave up on (#329). `execaOptions` pass through, for example `stripFinalNewline`.
- * The run logs nothing, so a caller that reads sensitive output controls what is logged.
+ * `killBound` arms the same give-up bound for a caller that sends its own kill. Its `{ timeoutMs,
+ * signal }` reaches `settleWithin` and never reaches execa. The caller's immediate SIGKILL is then
+ * the only kill (#1307). The run logs nothing, so a caller that reads sensitive output controls
+ * what is logged.
  * @param {string} command
  * @param {string[]} args
- * @param {{ cwd?: string, timeoutMs?: number, signal?: AbortSignal | null } & import("execa").Options} [options]
+ * @param {{ cwd?: string, timeoutMs?: number, signal?: AbortSignal | null,
+ *   killBound?: { timeoutMs?: number, signal?: AbortSignal | null } | null } &
+ *   import("execa").Options} [options]
  */
 export function execBounded(
   command,
   args,
-  { cwd, timeoutMs = 0, signal = null, ...execaOptions } = {},
+  { cwd, timeoutMs = 0, signal = null, killBound = null, ...execaOptions } = {},
 ) {
   const options = { cwd, reject: false, cleanup: true, killDescendants: true, ...execaOptions };
   if (timeoutMs > 0) {
@@ -393,8 +398,8 @@ export function execBounded(
   if (typeof subprocess?.then !== "function") return subprocess;
   // The bounds apply to `await` and to `.then`, while `kill`, `pid`, and the streams stay execa's.
   const settled = settleWithin(subprocess, {
-    timeoutMs,
-    signal,
+    timeoutMs: killBound?.timeoutMs ?? timeoutMs,
+    signal: killBound?.signal ?? signal,
     label: `${command} (bounded)`,
   });
   for (const method of ["then", "catch", "finally"]) {

@@ -152,7 +152,8 @@ async function holdSlotFor(command, signal) {
  * on Windows) in `cwd`, so the command is written in the syntax of the shell
  * that runs it and the runtime adds no quoting. The command and its child
  * processes are killed when the bound expires, which reports `timed-out` with
- * `exitCode: null`, whatever code the killed command exited with. The kill reaches
+ * `exitCode: null`, whatever code the killed command exited with. A command that
+ * no kill ends settles 10 s after the bound or the cancel. The kill reaches
  * the process group of the command on POSIX and its tree on Windows only: an orphan
  * that left the group, or whose parent exited on Windows, can survive (ADR 0017).
  * Output is read as a rolling window, so a noisy command cannot exhaust memory.
@@ -202,6 +203,10 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
     stdin: "ignore",
     all: true,
     buffer: false,
+    // The runtime sends the immediate SIGKILL to the group at the bound or on the cancel.
+    // `killBound` arms the settle bound of `execBounded` from the same timeout and cancel,
+    // so a command that no kill ends settles 10 s later (issue #1307).
+    killBound: { timeoutMs: timeoutSeconds * 1000, signal },
   });
   // The runtime owns the bound and the cancel, and kills what it owns and nothing else. execa
   // starts the command as the leader of a process group of its own on POSIX, so SIGKILL to that
