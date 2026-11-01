@@ -63,6 +63,7 @@ Andro Marces
 
 - [Issue #955](https://github.com/andromarces/agent-loops/issues/955)
 - [PR #958](https://github.com/andromarces/agent-loops/pull/958)
+- [PR #1324](https://github.com/andromarces/agent-loops/pull/1324)
 - Related issues: #709, #903
 - [ADR 0042: Remove the reviewer scratch folder in the runtime](0042-remove-the-reviewer-scratch-folder-in-the-runtime.md)
 - [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
