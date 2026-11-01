@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
-import { createTempRepo, removePath, restoreRunsRoot } from "./runtime-helpers.mjs";
+import { restoreRunsRoot } from "./env-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";

@@ -5,13 +5,13 @@ import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import { runGh } from "../../src/lib/gh-api.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
   expectBoundKillsShim,
-  removePath,
-} from "../runtime-helpers.mjs";
+} from "../process-helpers.mjs";
 import {} from "./ci-gate-helpers.mjs";
 
 // Usefulness: verifies the real `gh` runner passes the installed execa only options

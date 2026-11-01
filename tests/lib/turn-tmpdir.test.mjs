@@ -14,7 +14,8 @@ import { basename, dirname, join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { removeAbandonedTurnTmpdir, withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
-import { deadPid, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 
 const TMP_VARS = ["TMPDIR", "TEMP", "TMP", "AGENT_LOOP_RUNS_ROOT"];
 

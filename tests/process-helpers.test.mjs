@@ -1,55 +1,22 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { execa } from "execa";
-import { beforeEach, describe, expect, test, vi } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { pidAlive } from "../src/lib/process-identity.mjs";
 import {
   BOUND_KILL_TEST_TIMEOUT_MS,
-  cleanRepoGit,
-  createBodyBarrier,
   createPsShim,
   deadPid,
   endOwnedProcess,
   expectBoundKillsShim,
-  pollUntil,
   shimCallRecords,
   shimStartPids,
-  untrackedFilesGit,
   withGitHangingAfter,
-  within,
-} from "./runtime-helpers.mjs";
-import {} from "./gh-doubles.mjs";
-import { scriptedGh } from "./lib/check-wait-helpers.mjs";
-
-const options = { cwd: tmpdir() };
-const expected = ["rev-parse", "--verify", "-q", "HEAD"];
-const merged = ["rev-parse", "--verify -q", "HEAD"];
-
-// Usefulness: acceptance (#514) — a merged-argument call reads differently from the expected call in the error.
-test("cleanRepoGit error for a merged-argument call differs from the expected call text", () => {
-  const message = (args) => {
-    try {
-      cleanRepoGit("git", args, options);
-    } catch (error) {
-      return error.message;
-    }
-    return undefined;
-  };
-  expect(message(expected)).toBeUndefined();
-  expect(message(merged)).toBeDefined();
-  expect(message(merged)).not.toBe(`unexpected git call: ${expected.join(" ")}`);
-});
-
-// Usefulness: acceptance (#514) — the same holds for `untrackedFilesGit`, which delegates unknown calls.
-test("untrackedFilesGit error for a merged-argument call differs from the expected call text", async () => {
-  const error = await untrackedFilesGit("git", merged, options).catch((caught) => caught);
-  expect(error.message).toContain("unexpected git call");
-  expect(error.message).not.toBe(`unexpected git call: ${expected.join(" ")}`);
-});
+} from "./process-helpers.mjs";
+import { pollUntil, within } from "./wait-helpers.mjs";
 
 // Largest pid limit of a supported OS: Linux `pid_max` is at most 2^22. macOS (99999) is lower, and a Windows pid is a multiple of 4.
 // Status of these assumptions (#571):
@@ -73,31 +40,6 @@ test("deadPid is a valid pid that no OS assigns and the production liveness chec
   expect(pid).toBeLessThanOrEqual(INT32_MAX);
   expect(pid % 4).not.toBe(0);
   expect(pidAlive(pid)).toBe(false);
-});
-
-// Usefulness: a probe that never settles must not hold the wait past its deadline (#647 review).
-// No other test covers the polling helper.
-test("pollUntil rejects at its deadline when a probe never settles", async () => {
-  const started = performance.now();
-  await expect(pollUntil(() => new Promise(() => {}), 100)).rejects.toThrow(
-    /not met within 100 ms/,
-  );
-  expect(performance.now() - started).toBeLessThan(2000);
-  await expect(pollUntil(async () => 7, 100)).resolves.toBe(7);
-});
-
-// Usefulness: a probe result that arrives after the deadline must be rejected, even when the timer
-// callback has not run yet (#647 review). The probe blocks the event loop past the deadline, so the
-// timer cannot fire first.
-test("pollUntil rejects a probe result that arrives after the deadline", async () => {
-  const late = () => {
-    const until = performance.now() + 150;
-    while (performance.now() < until) {
-      // Busy wait: the result is ready only after the 100 ms deadline.
-    }
-    return 7;
-  };
-  await expect(pollUntil(late, 100)).rejects.toThrow(/not met within 100 ms/);
 });
 
 // Usefulness: the shim readiness reader must never accept a partial heartbeat, and its wait must
@@ -470,105 +412,6 @@ test.skipIf(process.platform === "win32")(
   },
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
-
-describe("createBodyBarrier", () => {
-  const barrier = createBodyBarrier();
-  let lateCleanupDone = false;
-  beforeEach(() => barrier.settled());
-
-  // Usefulness: sets up the leak that the next test checks, a body that outlives its own timeout.
-  // `fails` expects the timeout, so only an unexpected pass or error shows in the report.
-  test.fails("a body past its timeout keeps running", { timeout: 20 }, () =>
-    barrier.run(async () => {
-      await delay(200);
-      lateCleanupDone = true;
-    }),
-  );
-
-  // Usefulness: verifies that a test starts only after an earlier timed-out body ended, so its late
-  // cleanup cannot change the spy calls or the exit code that this test reads (issue #935).
-  test("a test starts after an earlier timed-out body has ended", () => {
-    expect(lateCleanupDone).toBe(true);
-  });
-});
-
-describe("createBodyBarrier with a body that never ends", () => {
-  const WAIT_MS = 60_000;
-  const hang = () => new Promise(() => {});
-  beforeEach(() => {
-    vi.useFakeTimers();
-    return () => vi.useRealTimers();
-  });
-
-  // Usefulness: acceptance (#942) — the first wait ends at its bound and the error names the hung
-  // body, so the failed test shows which body blocked it.
-  test("the first wait fails at its bound and names the hung body", async () => {
-    const barrier = createBodyBarrier({ waitMs: WAIT_MS });
-    barrier.run(hang, "hung body");
-    const outcome = barrier.settled().then(
-      () => undefined,
-      (error) => error,
-    );
-    await vi.advanceTimersByTimeAsync(WAIT_MS);
-    expect((await outcome)?.message).toMatch(/hung body/);
-  });
-
-  // Usefulness: acceptance (#942) — a later wait for the same body fails at once and names it, so one
-  // hung body costs one bound across the suite. With fake timers no time passes, so a second wait
-  // would never settle.
-  test("a later wait fails at once and names the abandoned body", async () => {
-    const barrier = createBodyBarrier({ waitMs: WAIT_MS });
-    barrier.run(hang, "hung body");
-    const first = barrier.settled().catch(() => {});
-    await vi.advanceTimersByTimeAsync(WAIT_MS);
-    await first;
-    await expect(barrier.settled()).rejects.toThrow(/hung body/);
-    await expect(barrier.settled()).rejects.toThrow(/hung body/);
-  });
-
-  // Usefulness: acceptance (#942) — the guarantee of #935 holds again once the abandoned body ends,
-  // so a late finish does not fail the rest of the suite.
-  test("waits succeed again after the abandoned body ends", async () => {
-    const barrier = createBodyBarrier({ waitMs: WAIT_MS });
-    let finish;
-    const body = barrier.run(() => new Promise((resolve) => (finish = resolve)), "late body");
-    const first = barrier.settled().catch(() => {});
-    await vi.advanceTimersByTimeAsync(WAIT_MS);
-    await first;
-    finish();
-    await body;
-    await expect(barrier.settled()).resolves.toBeUndefined();
-  });
-});
-
-// Usefulness: acceptance (#1022) — a runs-root pin inherited before isolation starts must not come back through `restoreRunsRoot`, or default run paths escape the per-file directory.
-test("restoreRunsRoot leaves the runs root unset even when the helpers loaded under an inherited pin", async () => {
-  const before = process.env.AGENT_LOOP_RUNS_ROOT;
-  try {
-    process.env.AGENT_LOOP_RUNS_ROOT = join(tmpdir(), "sentinel-real-root", "runs");
-    vi.resetModules();
-    const helpers = await import("./runtime-helpers.mjs");
-    process.env.AGENT_LOOP_RUNS_ROOT = join(tmpdir(), "test-set-root");
-    helpers.restoreRunsRoot();
-    expect(process.env.AGENT_LOOP_RUNS_ROOT).toBeUndefined();
-  } finally {
-    if (before === undefined) delete process.env.AGENT_LOOP_RUNS_ROOT;
-    else process.env.AGENT_LOOP_RUNS_ROOT = before;
-  }
-});
-
-// Usefulness: verifies the scripted `gh` routes on the argument elements, so a
-// call that merges the arguments into one element gets no reply and its error
-// prints the array, which differs from the text of the expected call (issue #530).
-test("the scripted gh gives no reply to a merged-argument call", async () => {
-  const merged = ["pr checks 42 --required --json name,state,bucket"];
-  const reply = await scriptedGh([{ checks: [] }])(merged, ".");
-  expect(reply.status).toBe(1);
-  expect(reply.stdout).toBe("");
-  expect(reply.stderr).toContain(JSON.stringify(merged));
-  const unfiltered = ["pr", "checks", "42", "--json", "name,state,bucket"];
-  expect((await scriptedGh([{ checks: [] }])(unfiltered, ".")).status).toBe(1);
-});
 
 // Usefulness: verifies each shim call leaves a record with its claimed number and pid, so a
 // failed run can say how many calls never reached the shim (issue #1258); no other test reads it.

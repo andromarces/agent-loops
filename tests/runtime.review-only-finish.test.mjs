@@ -7,7 +7,9 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
 import { runLoop } from "../src/runtime.mjs";
-import { cleanRepoGit, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { cleanRepoGit } from "./git-helpers.mjs";
 
 const dirs = [];
 afterEach(async () => {

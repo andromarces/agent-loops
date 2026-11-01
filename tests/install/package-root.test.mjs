@@ -9,7 +9,7 @@ import {
   INHERITED_TMPDIR_INVALID_MESSAGE,
   installRefusal,
 } from "../../src/install/package-root.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import {
   LINK_TYPE,
   PACKAGE_ROOT as REPO_ROOT,

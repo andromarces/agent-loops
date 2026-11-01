@@ -19,7 +19,8 @@ import {
   MAX_WALKED_ENTRIES,
 } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
-import { createLinkedWorkTree, exists, removePath } from "../runtime-helpers.mjs";
+import { exists, removePath } from "../fs-helpers.mjs";
+import { createLinkedWorkTree } from "../git-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { resolveWorkerPr } from "../../src/lib/worker-pr.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 // The order in which the run state `git` reads start and end. `slowBranch` delays the end of the
 // branch read, as a slow disk does.

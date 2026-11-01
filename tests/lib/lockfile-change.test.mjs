@@ -2,7 +2,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 const hashing = vi.hoisted(() => ({
   stall: false,

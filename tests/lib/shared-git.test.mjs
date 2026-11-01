@@ -64,7 +64,8 @@ vi.mock("execa", async (importOriginal) => {
 
 import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.mjs";
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 const dirs = [];
 

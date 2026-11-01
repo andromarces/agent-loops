@@ -11,8 +11,8 @@ import {
   BOUND_KILL_TEST_TIMEOUT_MS,
   createPsShim,
   expectBoundKillsShim,
-  within,
-} from "../runtime-helpers.mjs";
+} from "../process-helpers.mjs";
+import { within } from "../wait-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();

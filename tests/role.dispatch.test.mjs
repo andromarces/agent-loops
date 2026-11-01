@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `gitWhileDotGitExists` in runtime-helpers.mjs); every other test reaches the real `execa`.
+// `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -35,7 +35,8 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, gitWhileDotGitExists, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo, gitWhileDotGitExists } from "./git-helpers.mjs";
 import { PASSING_RUN, prGateGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 

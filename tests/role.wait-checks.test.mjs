@@ -7,7 +7,7 @@ import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, newRunRepo, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
 import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./lib/check-wait-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 import { pageStdout } from "./gh-doubles.mjs";
 
 afterEach(cleanup);

@@ -1,7 +1,9 @@
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { runLoop } from "../src/runtime.mjs";
-import { createLinkedWithEnv, exists, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { exists, removePath } from "./fs-helpers.mjs";
+import { createLinkedWithEnv } from "./git-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];

@@ -8,7 +8,10 @@ import { MutationError } from "../src/lib/snapshot.mjs";
 import { testSlotRule } from "../src/prompts/report.mjs";
 import { reviewerPrompt } from "../src/prompts/reviewer.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import { createTempRepo, processExists, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
+import { processExists } from "./process-helpers.mjs";
 
 // Headless behavior of `--test-cmd` (issue #420, ADR 0017). Each test runs a real
 // command through the platform shell inside a real Git work tree.

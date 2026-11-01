@@ -15,7 +15,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
 
 afterEach(cleanup);
 

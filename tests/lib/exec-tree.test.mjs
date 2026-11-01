@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { killLiveTrees, killTreeOnExit } from "../../src/lib/exec-tree.mjs";
-import { processExists, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { processExists } from "../process-helpers.mjs";
 
 const EXEC_TREE_URL = new URL("../../src/lib/exec-tree.mjs", import.meta.url).href;
 const LOG_URL = new URL("../../src/lib/log.mjs", import.meta.url).href;

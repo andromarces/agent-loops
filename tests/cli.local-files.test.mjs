@@ -2,7 +2,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createLinkedWorkTree, exists, removePath } from "./runtime-helpers.mjs";
+import { exists, removePath } from "./fs-helpers.mjs";
+import { createLinkedWorkTree } from "./git-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];

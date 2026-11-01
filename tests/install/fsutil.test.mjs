@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeTextAtomic } from "../../src/install/fsutil.mjs";
-import { symlinkOrSkip } from "../runtime-helpers.mjs";
+import { symlinkOrSkip } from "../fs-helpers.mjs";
 import { cleanupHomes, trackHome } from "./install-helpers.mjs";
 
 afterEach(cleanupHomes);

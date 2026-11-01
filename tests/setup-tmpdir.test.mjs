@@ -7,7 +7,7 @@ import { killTreeOnExit } from "../src/lib/exec-tree.mjs";
 import { stateRoot } from "../src/lib/runstate.mjs";
 import { sessionRecordsRoot } from "../src/lib/session-record.mjs";
 import { slotsRoot } from "../src/lib/slots-root.mjs";
-import { removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
 import { createTmpdirIsolation } from "./setup-tmpdir.mjs";
 
 // Usefulness: a failed per-file directory creation leaves the temp variables as they were and removes nothing, so the next file does not inherit a changed or deleted TMPDIR.

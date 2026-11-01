@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const calls = vi.hoisted(() => ({ count: 0, dirReads: 0, slowPath: null }));
 vi.mock("node:fs/promises", async (importOriginal) => {

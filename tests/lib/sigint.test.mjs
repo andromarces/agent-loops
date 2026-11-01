@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import { beginEvidenceRead, cancelOnSigInt, forceCancelSignal } from "../../src/lib/sigint.mjs";
 
 // Usefulness: acceptance (#669) — the first SIGINT cancels the run and the process stays alive, so

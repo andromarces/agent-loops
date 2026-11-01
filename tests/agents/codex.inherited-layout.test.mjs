@@ -6,7 +6,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { stateRoot } from "../../src/lib/runstate.mjs";
 import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
 import { slotsRoot } from "../../src/lib/slots-root.mjs";
-import { removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
+import { removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import { OK_EVENTS, withInheritedTmp, fakeCodex, runTurn } from "./codex-tmpdir-helpers.mjs";
 
 // Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.

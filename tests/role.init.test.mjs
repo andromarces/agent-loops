@@ -19,7 +19,7 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./runtime-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 

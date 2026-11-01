@@ -4,7 +4,9 @@ import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { failedLockfileChanged } from "../src/lib/lockfile-change.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 let repo;
 beforeEach(async () => {

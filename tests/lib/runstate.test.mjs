@@ -11,7 +11,9 @@ import {
 } from "../../src/lib/runstate.mjs";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { deadPid, removePath, restoreRunsRoot, trackedTempDir } from "../runtime-helpers.mjs";
+import { restoreRunsRoot } from "../env-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 
 let dirs = [];
 

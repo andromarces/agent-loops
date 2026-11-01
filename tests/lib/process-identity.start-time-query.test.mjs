@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 // The start-time query runs `ps` or PowerShell. Its failure modes (error, timeout,
 // empty or unparseable output) cannot be produced on demand with the real command,

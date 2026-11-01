@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { createTempRepo, exists, removePath } from "../runtime-helpers.mjs";
+import { exists, removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 // The `--test-cmd` run inside a machine-wide test slot (issue #848, ADR 0040). Each test points
 // the slot directory at a scratch directory of its own and drops any marker that a wrapped test

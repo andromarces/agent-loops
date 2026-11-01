@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `gitAbortingPostTurn` in runtime-helpers.mjs); every other test reaches the real `execa`.
+// `gitAbortingPostTurn` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -30,14 +30,11 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 import { executeRoleCommand, main } from "../src/role.mjs";
-import {
-  createTempRepo,
-  gitAbortingPostTurn,
-  processExists,
-  removePath,
-  restoreRunsRoot,
-  within,
-} from "./runtime-helpers.mjs";
+import { restoreRunsRoot } from "./env-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
+import { processExists } from "./process-helpers.mjs";
+import { within } from "./wait-helpers.mjs";
 import {
   basicDeps,
   cleanup,

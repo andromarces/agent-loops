@@ -21,15 +21,11 @@ vi.mock("execa", async (importOriginal) => {
 
 import { main, parseArgs } from "../src/cli.mjs";
 import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
-import {
-  continueAgents,
-  createWithContinueRepo,
-  createTempRepo,
-  removePath,
-  createPsShim,
-  symlinkOrSkip,
-  within,
-} from "./runtime-helpers.mjs";
+import { continueAgents } from "./agent-doubles.mjs";
+import { removePath, symlinkOrSkip } from "./fs-helpers.mjs";
+import { createTempRepo, createWithContinueRepo } from "./git-helpers.mjs";
+import { createPsShim } from "./process-helpers.mjs";
+import { within } from "./wait-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Every test body runs through a body barrier (issue #943)

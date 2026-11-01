@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { exec, execBounded } from "../../src/lib/exec.mjs";
-import { processExists } from "../runtime-helpers.mjs";
+import { processExists } from "../process-helpers.mjs";
 
 // The child prints `lines` lines and starts a grandchild that keeps stdout and stderr open for a
 // minute. It records the grandchild pid in the file named by argv[3] and exits at once. The grandchild

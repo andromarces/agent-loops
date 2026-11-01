@@ -7,7 +7,7 @@ import {
   snapshotInheritedTmpdir,
 } from "../../src/lib/tmpdir-entries.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 let root;
 let runsRoot;

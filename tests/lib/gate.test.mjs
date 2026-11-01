@@ -9,7 +9,8 @@ import {
   resetGate,
 } from "../../src/lib/gate.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 const CWD = resolve("work-tree");
 

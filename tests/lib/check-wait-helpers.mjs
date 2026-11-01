@@ -1,7 +1,7 @@
 // Doubles for the check wait: a scripted `gh`, a fake clock, and the shared fixtures and wait runners of
 // the `check-wait` and `role wait-checks` tests.
 import { waitChecks } from "../../src/lib/check-wait.mjs";
-import { ok } from "../runtime-helpers.mjs";
+import { ok } from "../agent-doubles.mjs";
 import { equalsArgs, isPagedRead, pageStdout, startsWithArgs } from "../gh-doubles.mjs";
 
 // True when `args` is exactly the wait's read, `gh pr checks <pr> --required --json

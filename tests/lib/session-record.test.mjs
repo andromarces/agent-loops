@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
-import { symlinkOrSkip } from "../runtime-helpers.mjs";
+import { symlinkOrSkip } from "../fs-helpers.mjs";
 import {
   isInside,
   readSessionRecord,

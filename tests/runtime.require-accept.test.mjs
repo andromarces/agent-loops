@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `cleanRepoGit` in runtime-helpers.mjs); every other test reaches the real `execa`.
+// `cleanRepoGit` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -15,7 +15,9 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { runLoop } from "../src/runtime.mjs";
-import { cleanRepoGit, createCleanRepoDir, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./gh-doubles.mjs";
 
 // 29. Usefulness: verifies --require-accept refuses a finish with no later

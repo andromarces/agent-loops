@@ -2,7 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readStatesForSession, statePaths } from "../../src/lib/runstate.mjs";
-import { removePath, restoreRunsRoot, trackedTempDir } from "../runtime-helpers.mjs";
+import { restoreRunsRoot } from "../env-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 
 // Reads in flight at once, counted around every `readFile` call. Each read yields a turn so reads
 // that start together overlap.

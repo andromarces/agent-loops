@@ -1,6 +1,7 @@
 // Fixtures shared by the opencode test files.
 import { afterEach } from "vite-plus/test";
-import { removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
+import { restoreRunsRoot } from "../env-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 export function textEvent(text, messageID) {
   return JSON.stringify({

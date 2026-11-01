@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, afterEach, describe, expect, test } from "vite-plus/test";
 import { createBarrierTest } from "./barrier-test.mjs";
-import { createBodyBarrier } from "./runtime-helpers.mjs";
+import { createBodyBarrier } from "./body-barrier.mjs";
 
 describe("createBarrierTest names the hung test", () => {
   const barrier = createBodyBarrier({ waitMs: 50 });

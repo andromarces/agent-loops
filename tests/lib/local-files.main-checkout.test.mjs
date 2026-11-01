@@ -9,7 +9,7 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
 import { copyLocalFiles } from "../../src/lib/local-files.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const dirs = [];
 let log;
