@@ -1326,3 +1326,90 @@ test("runClaude flags a non-string unconfirmed session id as missing", async () 
     },
   );
 });
+
+// The capacity reply that Claude Code 2.1.316 wrote for a 529 from a local probe server (issue #1017).
+// The exact wording of the result field carries an environment suffix, so the marker reads the
+// structured `api_error_status` field instead. No live provider reply confirmed this wording.
+const CAPACITY_RESULT = {
+  type: "result",
+  subtype: "success",
+  is_error: true,
+  terminal_reason: "api_error",
+  api_error_status: 529,
+  result:
+    "API Error: Repeated 529 Overloaded errors. The API is at capacity — this is usually temporary. Try again in a moment. If it persists, check your inference gateway (127.0.0.1:18765).",
+  session_id: "s-cap",
+};
+
+const capacityInitEvent = { type: "system", subtype: "init", session_id: "s-cap" };
+
+const failedTurn = (events, overrides) =>
+  Object.assign(new Error("claude exited with code 1."), {
+    exitCode: 1,
+    stdout: Array.isArray(events) ? JSON.stringify(events) : events,
+    stderr: "",
+    ...overrides,
+  });
+
+const claudeState = () => ({ kind: "claude", sessionId: null, model: null, effort: null });
+
+// Usefulness: verifies requirement "each adapter with a sourced capacity signal is marked transient" (issue #1017), so a parent retries without reading the error text.
+test("claude marks a provider capacity failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn([capacityInitEvent, CAPACITY_RESULT]));
+
+  const caught = await runClaude(claudeState(), "p", { cwd: "/path" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies "consecutive capacity failures stay marked" (issue #1017): the last result event decides, so two capacity results still mark the turn.
+test("claude keeps the mark when consecutive results are capacity", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn([CAPACITY_RESULT, CAPACITY_RESULT]));
+
+  const caught = await runClaude(claudeState(), "p", { cwd: "/path" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies requirement "a non-capacity failure is never marked" (issue #1017), because a wrong mark makes a parent retry a real fault.
+test.each([
+  ["another API status", [{ ...CAPACITY_RESULT, api_error_status: 500 }], {}],
+  ["an auth failure", [{ ...CAPACITY_RESULT, api_error_status: 401 }], {}],
+  [
+    "a successful result that quotes the wording",
+    [{ ...CAPACITY_RESULT, is_error: false, api_error_status: undefined }],
+    {},
+  ],
+  ["a timeout", [CAPACITY_RESULT], { timedOut: true }],
+  ["a cancel", [CAPACITY_RESULT], { isCanceled: true }],
+  ["a signal", [CAPACITY_RESULT], { isTerminated: true }],
+  ["no events", "", {}],
+])("claude does not mark %s transient", async (_name, events, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(events, overrides));
+
+  const caught = await runClaude(claudeState(), "p", { cwd: "/path" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "only the terminal failure decides" (issue #1017): a later terminal error must not make a parent retry a real fault.
+test("claude does not mark a capacity result that a later result replaces", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn([CAPACITY_RESULT, { ...CAPACITY_RESULT, api_error_status: 500 }]),
+  );
+
+  const caught = await runClaude(claudeState(), "p", { cwd: "/path" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a malformed or truncated final line keeps an earlier decisive event" (issue #1017), so a broken tail cannot hide an overload.
+test("claude keeps the mark when the final line is truncated", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn(`${JSON.stringify([initEvent, CAPACITY_RESULT])}{"type":"result"`),
+  );
+
+  const caught = await runClaude(claudeState(), "p", { cwd: "/path" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});

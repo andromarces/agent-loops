@@ -163,6 +163,19 @@ export function failedWithLine(err, line) {
 }
 
 /**
+ * Marks a failed turn as a provider capacity failure, so a parent can retry it without reading the
+ * error text. A turn that timed out, was canceled, or ended on a signal fails for another reason,
+ * so it is never marked. The caller names the terminal event that decides (issue #1017).
+ * @param {unknown} err the error `exec` threw
+ */
+export function markCapacityFailure(err) {
+  if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
+    return;
+  }
+  err.transient = "capacity";
+}
+
+/**
  * Returns `value` when it is a non-empty string, else `undefined`. A CLI id of any other type,
  * such as a number or an object, is not a session id, so a success path must not store it.
  */

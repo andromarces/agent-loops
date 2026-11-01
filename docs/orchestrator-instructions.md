@@ -158,15 +158,18 @@ The example below is indented for display only. Example reviewer envelope:
 
 - `status: "error"` carries `error`. Treat it as not accepted.
 - An error envelope can carry `"transient": "capacity"`. It means the last failure
-  event of the Codex turn was the model capacity reply (`Selected model is at
-  capacity. Please try a different model.`), a provider outage and not a reviewer
-  fault. A turn is not marked when its last parsed `error` or `turn.failed` event
-  carries another message. Consecutive capacity failures stay marked. The runtime
+  event of the turn was a provider capacity reply, a provider outage and not a reviewer
+  fault. A turn is not marked when its last failure event carries another
+  cause. Consecutive capacity failures stay marked. The runtime
   ignores a malformed or truncated final line, so an earlier capacity event stays
   decisive then. The turn charged its step and gave no review result. Dispatch
   the same turn again, after a short wait, without reading the `error` text. Raise the budget with `extend`
   when no step is left. An error with no `transient` field is not known to be
-  transient. Only the Codex adapter sets the field.
+  transient. The Codex adapter marks the reply `Selected model is at capacity. Please
+  try a different model.`. The Claude Code adapter marks a `result` event with
+  `is_error: true` and `api_error_status: 529`. The OpenCode adapter marks a
+  `provider.internal` error with `status` 529. The Copilot and agy adapters
+  set no field.
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
