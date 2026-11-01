@@ -1,7 +1,43 @@
 import { parseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
-import { asSessionId, keepFailedSessionId, setMainLoopUsage, turnExecOptions } from "./shared.mjs";
+import {
+  asSessionId,
+  keepFailedSessionId,
+  markCapacityFailure,
+  setMainLoopUsage,
+  turnExecOptions,
+} from "./shared.mjs";
+
+// agy 1.4.12 writes one machine line to stderr for a failed turn: `AGY_ERROR: {...}`. Its
+// `short_error` field opens with the provider status and code, for example
+// `UNAVAILABLE (code 529): ...`, which a probe against a local 529 server captured. A provider
+// capacity reply carries code 529 (issue #1323).
+const AGY_ERROR_PREFIX = "AGY_ERROR: ";
+const CAPACITY_SHORT_ERROR = /^(?:[A-Z_]+ )?\(code 529\): /;
+
+/**
+ * Marks a failed turn whose terminal failure is a provider capacity reply. The terminal failure is
+ * the last complete `AGY_ERROR` line, so an earlier failure followed by another cause is never
+ * marked. A truncated or malformed line is dropped, so an earlier line stays decisive.
+ * @param {unknown} err the error `exec` threw
+ */
+function flagCapacityFailure(err) {
+  const payloads = String(err?.stderr ?? "")
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith(AGY_ERROR_PREFIX))
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line.slice(AGY_ERROR_PREFIX.length))];
+      } catch {
+        return [];
+      }
+    });
+  const shortError = payloads.at(-1)?.short_error;
+  if (typeof shortError === "string" && CAPACITY_SHORT_ERROR.test(shortError)) {
+    markCapacityFailure(err);
+  }
+}
 
 export async function runAgy(state, prompt, options = {}) {
   const { readOnly } = options;
@@ -37,6 +73,7 @@ export async function runAgy(state, prompt, options = {}) {
     } catch {
       // Not JSON: the failure names no conversation.
     }
+    flagCapacityFailure(err);
     throw err;
   }
   const result = parseJson(stdout, "Antigravity CLI");
