@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { writeState } from "../../src/lib/runstate.mjs";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { removePath, trackedTempDir } from "../runtime-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 
 // A real partial write is not reproducible on demand, so `writeFile` is stubbed
 // to create the file and then fail, the shape of a write cut short by a full

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 // The order in which the post-turn `git` reads start and end. `slowStatus` delays the end of the
 // work tree status read, as a large work tree does.

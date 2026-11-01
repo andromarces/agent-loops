@@ -2,7 +2,9 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 // The order in which the `git` reads start and end. `slowShared` delays the end of the shared Git
 // read, as a slow remote read does. `beforeLockfileRoot` runs before the second lockfile root read

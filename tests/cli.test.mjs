@@ -21,12 +21,8 @@ vi.mock("execa", async (importOriginal) => {
 import { execa } from "execa";
 import { main } from "../src/cli.mjs";
 import { parseRoleArgs } from "../src/role.mjs";
-import {
-  createWithContinueRepo,
-  createTempRepo,
-  removePath,
-  untrackedFilesGit,
-} from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo, createWithContinueRepo, untrackedFilesGit } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Every test body runs through a body barrier (issue #943)

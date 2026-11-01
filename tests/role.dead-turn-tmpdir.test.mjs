@@ -19,7 +19,8 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { processExists, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { processExists } from "./process-helpers.mjs";
 
 // Passes every state write through, except the ones that a test arms to fail after the record write
 // of a turn directory. `failures` is how many of the next writes throw, `Infinity` for every one.

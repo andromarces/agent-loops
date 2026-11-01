@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { writeFileAtomic, writeFileAtomicSync } from "../../src/lib/atomic-write.mjs";
-import { removePath, symlinkOrSkip } from "../runtime-helpers.mjs";
+import { removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 
 let dir;
 

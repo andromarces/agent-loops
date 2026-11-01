@@ -2,7 +2,8 @@ import { readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { deadPid, removePath, trackedTempDir } from "../runtime-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 
 // The stale-lock race needs a second process to act between the owner read and
 // the removal, which real timing cannot reproduce on demand. `readFile` and

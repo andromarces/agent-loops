@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the test that switches it on (see `gitAbortingPostTurn` in
-// runtime-helpers.mjs); every other test reaches the real `execa`.
+// git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -19,7 +19,9 @@ import { execa } from "execa";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runProbeTurn } from "../src/child-turn.mjs";
 import { runLoop } from "../src/runtime.mjs";
-import { createTempRepo, gitAbortingPostTurn, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {

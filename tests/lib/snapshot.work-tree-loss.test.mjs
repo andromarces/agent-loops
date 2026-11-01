@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { snapshot, withMutationCheck } from "../../src/lib/snapshot.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const REFUSAL = /--cwd must be inside a Git work tree/;
 

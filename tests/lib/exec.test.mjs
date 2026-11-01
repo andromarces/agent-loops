@@ -8,7 +8,7 @@ import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
 import { stateRoot } from "../../src/lib/runstate.mjs";
 import { slotsRoot } from "../../src/lib/slots-root.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 afterEach(() => {
   setVerbose(false);

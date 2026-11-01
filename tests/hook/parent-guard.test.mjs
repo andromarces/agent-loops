@@ -10,7 +10,9 @@ import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-p
 import { buildTargets } from "../../src/install/targets.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
 import { PACKAGE_ROOT } from "../install/install-helpers.mjs";
-import { createTempRepo, removePath, restoreRunsRoot } from "../runtime-helpers.mjs";
+import { restoreRunsRoot } from "../env-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 const noopAdapter = {
   async run() {

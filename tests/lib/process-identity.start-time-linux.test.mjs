@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFile, readlink } from "node:fs/promises";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
-import { deadPid, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 
 // The Linux source reads /proc, which does not exist on the other test platforms, so
 // the platform is fixed to linux and `readFile` answers the /proc paths from a table.

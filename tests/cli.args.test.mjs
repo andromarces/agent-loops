@@ -1,7 +1,9 @@
 import { tmpdir } from "node:os";
 import { beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createBodyBarrier, createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { createBodyBarrier } from "./body-barrier.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
 
 // Tests that spy on console.error and read process.exitCode run through the barrier. A body that

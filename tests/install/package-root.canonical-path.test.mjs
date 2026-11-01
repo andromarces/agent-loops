@@ -9,7 +9,7 @@ import {
   installRefusal,
   isEphemeralPackageRoot,
 } from "../../src/install/package-root.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const realpathMock = vi.hoisted(() => ({
   fail: null,

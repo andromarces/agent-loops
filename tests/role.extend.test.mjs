@@ -17,7 +17,8 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { createTempRepo, removePath } from "./runtime-helpers.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

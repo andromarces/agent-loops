@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ok } from "./runtime-helpers.mjs";
+import { ok } from "./agent-doubles.mjs";
 
 /**
  * True when `args` begins with the elements of `lead`, compared element by

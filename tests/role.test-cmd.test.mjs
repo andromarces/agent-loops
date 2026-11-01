@@ -18,7 +18,7 @@ import {
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { exists, removePath } from "./runtime-helpers.mjs";
+import { exists, removePath } from "./fs-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
 // Every test body runs through a body barrier (issue #943)

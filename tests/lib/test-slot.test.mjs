@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { deadPid, processExists, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { deadPid, processExists } from "../process-helpers.mjs";
 
 // Delays each in-process lock attempt by `ms`, so a test can make one acquisition pass end
 // after the wait bound. With `failTableRelease`, the release of the short acquisition lock

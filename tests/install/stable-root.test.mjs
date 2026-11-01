@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { install } from "../../src/install/installer.mjs";
 import { stablePackageRoot } from "../../src/install/stable-root.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import {
   LINK_TYPE,
   PACKAGE_ROOT as REPO_ROOT,

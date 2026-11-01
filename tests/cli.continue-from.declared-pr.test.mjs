@@ -17,13 +17,13 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { main } from "../src/cli.mjs";
+import { continueAgents } from "./agent-doubles.mjs";
 import {
   CLEAN_REPO_BRANCH,
   CLEAN_REPO_HEAD,
   cleanRepoGit,
-  continueAgents,
   createWithContinueRepo,
-} from "./runtime-helpers.mjs";
+} from "./git-helpers.mjs";
 import { prGateGh, SUMMARY } from "./gh-doubles.mjs";
 
 const withContinueRepo = createWithContinueRepo(doubles);

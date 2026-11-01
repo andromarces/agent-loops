@@ -3,7 +3,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { processExists, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { processExists } from "../process-helpers.mjs";
 
 // `helperArgs` replaces the arguments of the removal helper, so the test runs a helper that hangs
 // or dies instead of the real one.

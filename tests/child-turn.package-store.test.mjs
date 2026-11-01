@@ -11,7 +11,9 @@ import {
 import { failedInheritedTmpdirEntries } from "../src/lib/tmpdir-entries.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 let repo;
 let store;

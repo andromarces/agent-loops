@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { readTextOrNull } from "../../src/install/fsutil.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const homes = [];
 

@@ -14,7 +14,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { failedSharedGitChanged } from "../src/lib/shared-git.mjs";
-import { createTempRepo, removePath, scripted } from "./runtime-helpers.mjs";
+import { scripted } from "./agent-doubles.mjs";
+import { removePath } from "./fs-helpers.mjs";
+import { createTempRepo } from "./git-helpers.mjs";
 
 let repo;
 beforeEach(async () => {

@@ -7,7 +7,7 @@ import { exec } from "../../src/lib/exec.mjs";
 import {} from "../../src/lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
-import { createTempRepo } from "../runtime-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 import { textEvent, trackDispatchPaths } from "./opencode-helpers.mjs";
 
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({

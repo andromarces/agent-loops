@@ -11,7 +11,8 @@ import { main as cliMain } from "../../src/cli.mjs";
 import { removeDirQuiet } from "../../src/install/fsutil.mjs";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath, readManifest } from "../../src/install/manifest.mjs";
-import { removePath, restoreAgentLoopHome } from "../runtime-helpers.mjs";
+import { restoreAgentLoopHome } from "../env-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import { PACKAGE_ROOT, cleanupHomes, makeHome, readText, trackHome } from "./install-helpers.mjs";
 
 // Caller-set path -> error code for a forced `rmdir` failure.

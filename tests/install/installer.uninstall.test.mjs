@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { afterEach, expect, test } from "vite-plus/test";
 import { install, uninstall } from "../../src/install/installer.mjs";
 import { installRoot, manifestPath } from "../../src/install/manifest.mjs";
-import { removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import {
   PACKAGE_ROOT,
   makeHome,
