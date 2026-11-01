@@ -524,8 +524,8 @@ export async function shimStartPids(shimDir) {
 
 /**
  * Reads the step records that the `withGitHangingAfter` shim wrote into `shimDir/steps`, a map from
- * a call pid to its steps, oldest first. A call with no entry never ran the shim. Rejects when the
- * directory cannot be read.
+ * a call pid to its steps, oldest first. A missing entry is an observation only, because a failed
+ * write gives the same result. Rejects when the directory cannot be read.
  */
 export async function shimCallSteps(shimDir) {
   const names = (await readdir(join(shimDir, "steps"))).filter((name) => /^\d+$/.test(name));
@@ -550,8 +550,8 @@ export async function shimCallSteps(shimDir) {
  *
  * `shimDir` holds one `call-<n>` directory per call, each with a `record` file of the claimed
  * number and the pid (read it with `shimCallRecords`). The shim also writes
- * `started/<pid>` before its claim, which `shimStartPids` reads, and a `steps/<pid>` file of the
- * steps it reached, which `shimCallSteps` reads. The hung process carries the unique
+ * `started/<pid>` before its claim, which `shimStartPids` reads. It writes a `steps/<pid>` file of
+ * the steps it reached, which `shimCallSteps` reads. The hung process carries the unique
  * shim directory in its command line. The helper ends it through `endOwnedProcess` if the test left
  * it alive, and removes the shim directory.
  *

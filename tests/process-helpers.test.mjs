@@ -463,7 +463,7 @@ test.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: verifies each call records the steps it reached, so a failure names the step a call
-// stopped at (issue #1258); the record test reads the claim only, and no other test reads the steps.
+// stopped at (issue #1258). The record test reads the claim only, and no other test reads the steps.
 test.skipIf(process.platform === "win32")(
   "withGitHangingAfter records the start and the claim of each call",
   async () => {
@@ -502,9 +502,9 @@ test.skipIf(process.platform === "win32")(
       );
       const pids = running.map((call) => call.pid);
       const calls = await Promise.all(running);
-      // The message names the call-* counts, the marker and step counts, the steps of each call
-      // without a record, and each exit code, so a CI recurrence records them. The reads never
-      // throw, so the assertion below always runs. A timed-out call shows as "timeout".
+      // The message names the call-* counts, the marker and step counts, and each exit code. It also
+      // names the steps of each call without a record, so a CI recurrence records them. The reads
+      // never throw, so the assertion below always runs. A timed-out call shows as "timeout".
       const names = await readdir(shimDir).catch(() => undefined);
       const claimed = names?.filter((name) => name.startsWith("call-")).length;
       const records = await shimCallRecords(shimDir).catch(() => undefined);
@@ -517,7 +517,8 @@ test.skipIf(process.platform === "win32")(
           : [...steps.values()].filter((lines) => lines.some((line) => line.startsWith("claimed ")))
               .length;
       // Each call without a record shows as index:pid:exit code:marker state:trace state:steps. Each
-      // state is what the read found: present, absent, or unreadable. An absent file proves nothing.
+      // state is what the read found: present, absent, or unreadable. An absent file is an
+      // observation only.
       const state = (found) => (found === undefined ? "unreadable" : found ? "present" : "absent");
       const unrecorded = calls
         .map((_, index) => index)
