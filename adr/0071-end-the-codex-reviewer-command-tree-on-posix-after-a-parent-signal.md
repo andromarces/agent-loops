@@ -26,20 +26,20 @@ The runtime starts the Codex child with `killDescendants: true` (`src/lib/exec.m
 2. On the first `SIGINT`, `cancelOnSigInt` walks the tree before `controller.abort()`. The abort kills the process group of the child. A descendant that left that group is linked only while the child lives.
 3. On the second `SIGINT`, the force path walks the tree before `killLiveTrees()`. The exit stays 130, and the final write and the transcript do not change.
 4. On `SIGTERM`, a listener walks the tree, removes itself, and re-sends `SIGTERM`. The parent still ends by `SIGTERM`, so the shell observes 143 (ADR 0033).
-5. The walk reads `ps -eo pid=,ppid=,lstart=` once. It selects the rows whose parent chain reaches a live child pid. A second read drops a pid that is gone or whose start stamp changed, so a reused pid is never signaled (ADR 0020).
-6. Each remaining row receives `SIGKILL`, so a descendant that traps `SIGTERM` cannot outlive the walk. The signal path of the parent stays the same for every other process.
+5. The walk freezes the tree from the top. The pid of the Codex child is held until this process reaps it. A round sends `SIGSTOP` to the rows whose parent is the Codex child or a stopped row. Then it reads the table again for the next level.
+6. After the last round, each stopped row receives `SIGKILL`. A stopped process holds its pid until it is reaped. No pid of the stopped set can therefore be reused between the stop and the kill, and a signal to a held zombie is harmless.
 7. Only the live children that registered `treeEnd` are roots. A process of another run is not in the parent chain of a root, so it is never signaled.
-8. Each table read is bounded at 2 s and is ended with `SIGKILL` past the bound. A failed, timed-out, or unparseable read ends the walk with no kill. Every error is caught, so a failed walk never fails the parent exit. A parent end waits at most two reads, about 4 s, plus the kill calls.
-9. The tests are POSIX only where the path needs a POSIX signal. A `SIGTERM` integration test starts a parent that runs a detached command tree through `exec` with `treeEnd`. Further tests cover the first and the second `SIGINT`, a second tree, and a changed start stamp. They also cover a failed read, a reparented process, and a hanging `ps` that must end at the read bound. The `SIGINT` exit and transcript assertions stay as documented.
+8. Each table read is bounded at 2 s or at the budget left. The whole walk ends at 4 s or 32 rounds, and the stopped set is killed at that point. A failed, timed-out, or unparseable read ends the walk the same way. The guard read of the first level shares the budget. Every error is caught, so a failed walk never fails the parent exit.
+9. The tests are POSIX only where the path needs a POSIX signal. A `SIGTERM` integration test starts a parent that runs a detached command tree through `exec` with `treeEnd`. Further tests cover the first and the second `SIGINT`, a second tree, a changed start stamp, a failed read, and a reparented process. One test records the order: a row is stopped before it is killed, and only while its parent is a root or a stopped row. Another test ends a hanging `ps` at the read bound. The `SIGINT` exit and transcript assertions stay as documented.
 
 ## Consequences
 
 - A descendant of the Codex child that left its process group but kept its parent chain now ends with the parent. This closes the write of the issue #1326 probe.
-- These gaps stay. A descendant that left the group and lost its parent chain, for example reparented to pid 1, is not found. A `SIGKILL` of the parent runs no handler. A pid reused between the second read and the signal is a small window. A process that a descendant starts after the walk is not found.
+- These gaps stay. A descendant that left the group and lost its parent chain, for example reparented to pid 1, is not found. A `SIGKILL` of the parent runs no handler. A pid reused between the guard read and the `SIGSTOP` of a first-level row is a small window. A command that the Codex child starts after the walk can still escape the group.
 - A failed or bounded table read skips the end. The operator check of ADR 0034 decision 4 therefore stays in force for these gaps.
 - A non-Codex adapter and the Windows path behave as before. The group signal of execa is unchanged on every path.
 - Probe evidence covers a `SIGTERM`, one `SIGINT`, and two `SIGINT` of the real CLI process. Each run had a detached command tree and an unrelated process. In every run the tree and the Codex child ended, the unrelated process stayed alive, and no orphan write appeared. The `SIGINT` runs exited 130 with the transcript error `Interrupted by SIGINT`.
-- The cost is two synchronous `ps` reads per parent signal, bounded as in decision 8. A host without `ps` on `PATH` skips the end.
+- The cost is one synchronous `ps` read per tree level, plus one guard read, bounded as in decision 8. A host without `ps` on `PATH` skips the end.
 
 ## Alternatives
 
@@ -47,7 +47,7 @@ The runtime starts the Codex child with `killDescendants: true` (`src/lib/exec.m
 2. **Take a periodic snapshot of the descendants of the child**: rejected. It costs a repeated table read, and it still races a descendant that starts or reparents between reads.
 3. **Use a Linux subreaper or a cgroup for the child**: rejected. Node exposes no API for either, and macOS is the host of the probe.
 4. **Signal every process of a matching name**: rejected. It ends the processes of other runs on the host (ADR 0007, ADR 0032 decision 4).
-5. **Detect and end the tree on the next run**: rejected. The runtime would signal a process that it did not start in this run (ADR 0031 decision 7).
+5. **Detect and end the tree on the next run**: rejected. The runtime signals a process that it did not start in this run (ADR 0031 decision 7).
 6. **Keep the gap of ADR 0034**: rejected. The probe shows a command that writes after a clean review, so the smaller risk is the bounded walk at the parent end.
 
 ## Authors

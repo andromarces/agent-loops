@@ -1,14 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { isAbsolute, join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { logDebug, logWarn } from "./log.mjs";
 
 const TASKKILL_TIMEOUT_MS = 5000;
 // `taskkill` reports 128 when no process has the pid. It is neither a failure nor a confirmed kill.
 const TASKKILL_NO_SUCH_PROCESS = 128;
 
-// Bound on one process-table read of a tree end. A read that passes it is ended, so a hung `ps`
-// cannot hold the parent exit past this bound.
+// Bound on one process-table read of a tree end, and on the whole walk. A read that passes its bound
+// is ended. The walk stops at its budget, so a hung `ps` cannot hold the parent exit past it.
 const TREE_READ_TIMEOUT_MS = 2000;
+const TREE_WALK_BUDGET_MS = 4000;
+const TREE_WALK_MAX_ROUNDS = 32;
 const TREE_READ_MAX_BUFFER = 16 * 1024 * 1024;
 
 const liveRuns = new Set();
@@ -46,38 +49,13 @@ export function processTableRows(text) {
 }
 
 /**
- * Returns the rows of `table` below any pid in `roots`, keyed by pid, by parent links only. A row
- * whose parent chain does not reach a root is not a descendant, so a process of another run is
- * never in the result. A pid is visited once, so a malformed cycle ends the walk.
- * @param {Map<number, { pid: number, ppid: number, start: string }>} table
- * @param {number[]} roots
+ * Reads the process table with each pid's parent and start stamp, or null when the read fails.
+ * @param {{ timeoutMs?: number }} [options]
  */
-export function descendantRows(table, roots) {
-  const children = new Map();
-  for (const row of table.values()) {
-    const list = children.get(row.ppid);
-    if (list) list.push(row);
-    else children.set(row.ppid, [row]);
-  }
-  const found = new Map();
-  const seen = new Set(roots);
-  const queue = [...roots];
-  while (queue.length > 0) {
-    for (const row of children.get(queue.shift()) ?? []) {
-      if (seen.has(row.pid) || row.pid <= 1) continue;
-      seen.add(row.pid);
-      found.set(row.pid, row);
-      queue.push(row.pid);
-    }
-  }
-  return found;
-}
-
-/** Reads the process table with each pid's parent and start stamp, or null when the read fails. */
-function readProcessTableSync() {
+function readProcessTableSync({ timeoutMs = TREE_READ_TIMEOUT_MS } = {}) {
   const result = spawnSync("ps", ["-eo", "pid=,ppid=,lstart="], {
     encoding: "utf8",
-    timeout: TREE_READ_TIMEOUT_MS,
+    timeout: Math.max(1, Math.min(TREE_READ_TIMEOUT_MS, timeoutMs)),
     maxBuffer: TREE_READ_MAX_BUFFER,
     killSignal: "SIGKILL",
     windowsHide: true,
@@ -86,43 +64,94 @@ function readProcessTableSync() {
 }
 
 /**
- * Ends with SIGKILL every process whose parent chain reaches a pid in `roots`. The set comes from
- * one table read. A second read drops a pid that is gone or whose start stamp changed, so a pid
- * reused between the two reads is never signaled. A failed, timed-out, or null read ends the walk
- * with no kill, and the caller is never held past `TREE_READ_TIMEOUT_MS` per read.
+ * Ends the descendants of `roots` with a freeze from the top. Each round reads the table, sends
+ * `SIGSTOP` to the rows whose parent is a root or a stopped row, and keeps those pids held. After the
+ * last round, every stopped row receives `SIGKILL`, so no pid of that set can be reused between the
+ * stop and the kill. A signal to a held zombie is harmless.
+ *
+ * The first level also needs a second read, because its parent is the Codex child and still runs. A
+ * row whose start stamp changed is not stopped. A row that was reparented is not found. Each read is
+ * bounded, and the walk ends at its budget or its round cap.
  * @param {{ roots?: number[],
- *   readTable?: () => Map<number, { pid: number, ppid: number, start: string }> | null,
- *   kill?: (pid: number) => void }} [options]
+ *   readTable?: (options: { timeoutMs: number }) =>
+ *     Map<number, { pid: number, ppid: number, start: string }> | null,
+ *   stop?: (pid: number) => void,
+ *   kill?: (pid: number) => void,
+ *   now?: () => number,
+ *   budgetMs?: number,
+ *   maxRounds?: number }} [options]
  * @returns {number[]} the pids that the kill call accepted
  */
-export function endDescendantTrees({ roots = [], readTable = readProcessTableSync, kill } = {}) {
+export function endDescendantTrees({
+  roots = [],
+  readTable = readProcessTableSync,
+  stop,
+  kill,
+  now = () => performance.now(),
+  budgetMs = TREE_WALK_BUDGET_MS,
+  maxRounds = TREE_WALK_MAX_ROUNDS,
+} = {}) {
   const liveRoots = [...new Set(roots)].filter((pid) => Number.isInteger(pid) && pid > 1);
   if (liveRoots.length === 0) return [];
-  let first;
-  let second;
+  const rootPids = new Set(liveRoots);
+  const stopped = new Map();
+  const deadline = now() + budgetMs;
+  const doStop = stop ?? ((pid) => process.kill(pid, "SIGSTOP"));
+  const doKill = kill ?? ((pid) => process.kill(pid, "SIGKILL"));
+  const read = () => {
+    const remaining = deadline - now();
+    return remaining <= 0
+      ? null
+      : readTable({ timeoutMs: Math.min(TREE_READ_TIMEOUT_MS, remaining) });
+  };
   try {
-    first = readTable();
-    if (!first) return [];
-    const targets = descendantRows(first, liveRoots);
-    if (targets.size === 0) return [];
-    second = readTable();
-    if (!second) return [];
-    const ended = [];
-    for (const row of targets.values()) {
-      if (second.get(row.pid)?.start !== row.start) continue;
-      try {
-        if (kill) kill(row.pid);
-        else process.kill(row.pid, "SIGKILL");
-        ended.push(row.pid);
-      } catch {
-        // A process that ended between the read and the signal needs no end.
+    for (let round = 0; round < maxRounds; round += 1) {
+      const table = read();
+      if (!table) break;
+      const frozen = new Set([...rootPids, ...stopped.keys()]);
+      const candidates = [];
+      for (const row of table.values()) {
+        if (row.pid <= 1 || frozen.has(row.pid) || !frozen.has(row.ppid)) continue;
+        candidates.push(row);
       }
+      if (candidates.length === 0) break;
+      let accepted = candidates;
+      if (candidates.some((row) => rootPids.has(row.ppid))) {
+        // The parent of the first level runs during the walk. A second read drops a reused pid
+        // before the stop, and the stop then holds the pid until the kill.
+        const again = read();
+        if (!again) break;
+        accepted = candidates.filter((row) => {
+          if (!rootPids.has(row.ppid)) return true;
+          const seen = again.get(row.pid);
+          return seen?.ppid === row.ppid && seen.start === row.start;
+        });
+      }
+      let progressed = false;
+      for (const row of accepted) {
+        try {
+          doStop(row.pid);
+          stopped.set(row.pid, row.ppid);
+          progressed = true;
+        } catch {
+          // A row that ended between the read and the stop needs no stop.
+        }
+      }
+      if (!progressed) break;
     }
-    return ended;
   } catch (error) {
     logWarn(`process tree end: the process table read failed: ${error?.code ?? error?.message}`);
-    return [];
   }
+  const ended = [];
+  for (const pid of stopped.keys()) {
+    try {
+      doKill(pid);
+      ended.push(pid);
+    } catch (error) {
+      logWarn(`process tree end: pid ${pid} not ended: ${error?.code ?? error?.message}`);
+    }
+  }
+  return ended;
 }
 
 /**
