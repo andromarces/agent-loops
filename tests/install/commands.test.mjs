@@ -487,6 +487,7 @@ test.each([
 // Usefulness: acceptance (#539) — a number selects the harness the menu prints at that
 // position whatever is detected. Detection is empty here (PATH holds no CLI), so a number
 // resolved against the detected list would select nothing instead.
+// The test stdout is not a TTY, so the numbered fallback prompt handles the answer.
 test.each([
   ["2", { codex: true, claude: false }],
   ["1,2", { codex: true, claude: true }],
@@ -525,6 +526,7 @@ test.each([
 // Usefulness: acceptance (#1070) — a bad menu answer in install or uninstall prints one
 // `[agent-loop] error:` line, no stack trace, and exits 1, like every other refusal; a
 // stack trace would mean the selection error escaped the command.
+// The test stdout is not a TTY, so the numbered fallback prompt handles the answer.
 test.each([
   ["install", "9", "No harness at position 9."],
   ["install", "0", "No harness at position 0."],
