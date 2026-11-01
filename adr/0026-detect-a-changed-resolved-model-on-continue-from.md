@@ -114,14 +114,17 @@ The #567 probe found these facts:
 - Issue #710 item B ran the `--continue-from` default-model check on macOS 27.2 on 2026-11-02, at head `9767ef3`.
   - The CLIs were opencode v0.0.0-dev-466, Claude Code 2.1.316, and GitHub Copilot CLI 1.0.106-2, with Node v27.0.0-alpha.0.0.0.
   - Each probe used `--mode review-only --max-steps 1` in a disposable Git repository, with its transcript outside the work tree.
+  - Each run record saved the exit code, the stdout and stderr text, the transcript state, and the before and after sha256 of each watched file.
+  - Each record also saved the environment values the probe set, and the project `opencode.json` content for opencode.
   - opencode: the project `opencode.json` set the default model. The first run recorded `opencode-go/deepseek-v4.1-flash`.
   - The second run set `opencode-go/glm-5.3-flash`, ran the probe turn, and exited 1 with the changed-model refusal.
-  - The refusal read `orchestrator resolved to "opencode-go/deepseek-v4.1-flash" in the earlier run, not "opencode-go/glm-5.3-flash"`.
-  - It wrote no transcript, and the earlier transcript stayed byte-identical.
+  - The saved stderr read `orchestrator resolved to "opencode-go/deepseek-v4.1-flash" in the earlier run, not "opencode-go/glm-5.3-flash"`.
+  - The saved record showed no transcript after the call, and an unchanged sha256 for the earlier transcript.
   - Claude: `ANTHROPIC_MODEL=haiku` recorded `claude-haiku-5-5`, and `ANTHROPIC_MODEL=sonnet` exited 1 with `claude-sonnet-5-5`.
   - Copilot: `COPILOT_MODEL=gpt-5.4-nano` recorded `mai-code-1.1-flash`, and `COPILOT_MODEL=gemini-3.8-flash` exited 1.
-  - The opencode control continuation with the earlier default exited 0 and wrote a transcript.
-  - A mutant transcript whose recorded model equaled the new default passed that role's probe.
+  - Each CLI control continuation with the earlier default exited 0 and wrote a transcript.
+  - Each CLI mutant transcript whose recorded model equaled the new default exited 0 and wrote a transcript.
+  - A check over the saved records found 51 passes and no failure, and it failed an exit-code mutant and a sha256 mutant.
   - **Not run: a vendor change of an alias target.** No alias target changed during the run, and this host cannot force one.
   - No contradiction of decision 11 was found, so no bug was opened.
 
