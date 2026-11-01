@@ -41,6 +41,16 @@ The interactive `agent-loop role dispatch` path has the same exposure. A `role d
 - The real upper bound of the read on POSIX is about 35 seconds: the 30 second bound, then the SIGTERM, then the 5 second force-kill delay that `exec` leaves at the execa default, for a process that ignores SIGTERM. A test with a 1 second bound and a shell that ignores SIGTERM asserts that the read ends in under 12 seconds and that the process is gone. The Windows bound is not measured.
 - The check costs one process-table read per continued run or resumed dispatch. On Windows, this is one PowerShell start.
 - Verified on macOS 27.2 (arm64), Node v26.11.1, Claude Code 2.1.296, with `haiku` in a probe repository under the temporary directory. A real `claude -p --session-id <id>` child that ran a 40 s `Bash` call was found by `refuseHeldSessions` while alive, and was not found 1.5 s after `SIGKILL`. A full reproduction with an orphan of a killed runtime and a continued run is not repeated. Linux and Windows are not run. The Windows command is not run on a Windows host.
+- Full reproduction of issue #647 on macOS (issue #708). Host: macOS 27.2 (arm64) and Node v27.0.0-alpha.0.0.0. CLI versions: Claude Code 2.1.316 and codex-cli 0.166.0. Tools: Git 2.56.0. Repository head: `ca4bf176`.
+  - The command was the headless work-first command of ADR 0027, with `haiku` for every role and a transcript outside the work tree. The worker turn held `python3 -c 'import time; time.sleep(60)'`.
+  - The driver sent `SIGKILL` to the parent 12699 ms after the spawn, and the parent exited with signal `SIGKILL` 6 ms later. At 1.5 s, a `claude` process (pid 62924) with the worker session id in its `--session-id` argument was alive with parent pid 1.
+  - The continued run started 1626 ms after the signal and ended with exit code 1 in 165 ms. It dispatched no turn. The stderr holds this line:
+
+    ```
+    --continue-from: the worker session 3b6cbe9e-7aa5-4cfa-ab09-3fe2822f8559 is held by process 62924, a leftover of an earlier run. End that process, or wait for it to finish, and run again.
+    ```
+
+  - The stdout held only the two lines of the process-table read, `ps started` and `ps finished in 23ms (exit 0)`. The driver ended the six recorded processes by exact pid, and a later check found none alive.
 
 ## Alternatives
 
@@ -62,6 +72,7 @@ Andro Marces
 - [Issue #671](https://github.com/andromarces/agent-loops/issues/671)
 - [Issue #647](https://github.com/andromarces/agent-loops/issues/647)
 - [Issue #627](https://github.com/andromarces/agent-loops/issues/627)
+- [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0029: Refuse --continue-from while a live process holds a Claude session](0029-refuse-continue-from-while-a-live-process-holds-a-claude-session.md)
 - [ADR 0032: Detect a live session holder on interactive init, keep the headless gap](0032-detect-a-live-session-holder-on-interactive-init.md)
