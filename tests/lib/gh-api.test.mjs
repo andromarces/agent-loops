@@ -29,6 +29,9 @@ describe("isTransportFailure", () => {
   it("accepts a transport failure with no HTTP status and no reply body", () => {
     expect(isTransportFailure(failed(DIAL_TIMEOUT))).toBe(true);
     expect(isTransportFailure(failed(CONNECTION_RESET))).toBe(true);
+    // The Go client writes a bare EOF as a quoted URL followed by `: EOF` at the end.
+    expect(isTransportFailure(failed('Get "https://api.github.com/graphql": EOF'))).toBe(true);
+    expect(isTransportFailure(failed('Post "https://api.github.com/graphql": EOF'))).toBe(true);
   });
 
   it("refuses a text with an HTTP status, a reply body, or no known transport wording", () => {
@@ -40,6 +43,17 @@ describe("isTransportFailure", () => {
       false,
     );
     expect(isTransportFailure(failed("gh: the reply could not be parsed"))).toBe(false);
+    // A bare EOF only counts in the shape of the Go client, a quoted URL plus `: EOF` at the end.
+    expect(isTransportFailure(failed('Get "https://x": EOF and then more'))).toBe(false);
+    expect(isTransportFailure(failed("gh: the reply mentions EOF"))).toBe(false);
+    expect(
+      isTransportFailure(failed('HTTP 404: Not Found (https://x): Get "https://x": EOF')),
+    ).toBe(false);
+    expect(
+      isTransportFailure(
+        failed("gh: the reply could not be parsed", '{"message":"Get \\"https://x\\": EOF"}'),
+      ),
+    ).toBe(false);
   });
 });
 

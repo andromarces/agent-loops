@@ -96,6 +96,9 @@ const TRANSPORT_FAILURES = [
   /\btemporary failure in name resolution\b/i,
   /\bproxyconnect tcp\b/i,
   /\bunexpected EOF\b/i,
+  // A bare EOF counts only in the shape the Go HTTP client writes, a quoted URL then `: EOF` at the
+  // end. A body or message that holds EOF elsewhere never matches (#1312).
+  /"[^"]*": EOF$/,
   /\bbroken pipe\b/i,
   /\bhttp2: client connection lost\b/i,
 ];

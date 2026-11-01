@@ -247,19 +247,6 @@ test("the --all wait holds when the workflow read fails and retries on the next 
   expect(retried.result.checks.map(({ name }) => name)).toContain("checks");
 });
 
-// Usefulness: verifies a transport failure of the base workflow read holds the pass.
-// The next poll reads again, so a connection timeout is no pass (issue #1312).
-test("the --all wait reads the base workflow again after a transport failure", async () => {
-  const { result } = await holdWait({
-    listingFailures: 1,
-    listingFailureText:
-      'Get "https://api.github.com/repos/owner/repo/contents": dial tcp 20.205.243.168:443: connect: operation timed out',
-    runsByPoll: [[WORKERS], [WORKERS, ACTIONS]],
-  });
-  expect(result.timedOut).toBe(false);
-  expect(result.checks.map(({ name }) => name)).toContain("checks");
-});
-
 // Usefulness: verifies a lasting transport failure of each `--all` source read ends the wait with an
 // error that names it. The result is never a timeout envelope (issue #1312).
 test.each([

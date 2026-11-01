@@ -122,6 +122,9 @@ const DIAL_TIMEOUT =
 const CONNECTION_RESET =
   'Get "https://api.github.com/graphql": read tcp 10.0.0.2:51234->20.205.243.168:443: read: connection reset by peer\n';
 
+// The text `gh` 2.103.3 wrote when a local server closed the connection without a reply.
+const BARE_EOF = 'Get "https://api.github.com/graphql": EOF\n';
+
 const transportFailure = (stderr) => ({ status: 1, stdout: "", stderr, timedOut: false });
 
 // The required wait that reads `no checks reported` first, with `failing` ("rules" or "protection")
@@ -299,6 +302,57 @@ test("waitChecks does not retry a body text that names a transport failure", asy
   });
   await expect(wait.result).rejects.toThrow(/could not be read/);
   expect(wait.attempts()).toBe(1);
+});
+
+// Usefulness: verifies a bare EOF from the Go client is retried on the head read, in both modes.
+// That is the text `gh` 2.103.3 wrote when a server closed the connection (issue #1312).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode retries a bare EOF on the head read", async (_mode, all) => {
+  const wait = prReadFailsWait("head", BARE_EOF, { all });
+  expect(await wait.result).toEqual({
+    timedOut: false,
+    head: HEAD_A,
+    checks: [PASSED_ITEM],
+  });
+  expect(wait.attempts()).toBe(1);
+});
+
+// Usefulness: verifies a bare EOF on a commit read is retried, in both modes (issue #1312).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode retries a bare EOF on a commit read", async (_mode, all) => {
+  const { gh, commitReads } = failingCommitGh((n) => n === 1 && transportFailure(BARE_EOF), {
+    all,
+  });
+  expect(await waitOn(gh, all)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+  expect(commitReads.length).toBeGreaterThan(2);
+});
+
+// Usefulness: verifies a status-line reply that ends in EOF stays terminal.
+// The bare-EOF shape never overrides a status (issue #1312).
+test("waitChecks does not retry a 404 that ends in EOF", async () => {
+  const wait = prReadFailsWait(
+    "head",
+    "HTTP 404: Not Found (https://api.github.com/graphql): EOF\n",
+  );
+  await expect(wait.result).rejects.toThrow(/could not be read/);
+  expect(wait.attempts()).toBe(1);
+});
+
+// Usefulness: verifies a 4xx message that ends in EOF stays terminal.
+// A body that holds the bare-EOF shape never matches (issue #1312).
+test("waitChecks does not retry a 403 message or body that ends in EOF", async () => {
+  const reply = replyOf(
+    403,
+    'gh: Forbidden (HTTP 403): Get "https://x": EOF',
+    JSON.stringify({ message: 'Get "https://x": EOF' }),
+  );
+  const { gh, commitReads } = failingCommitGh(() => reply);
+  await expect(waitOn(gh, false)).rejects.toThrow(/gh api/);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
 });
 
 // Usefulness: verifies the acceptance item that a 4xx reply of each `gh pr` read still ends the wait
