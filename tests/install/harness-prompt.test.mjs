@@ -40,11 +40,12 @@ class FakeOutput extends EventEmitter {
     }
   }
 
-  write(text) {
+  write(text, callback) {
     if (this.failWhen?.(String(text), this.chunks.length)) {
       throw new Error("write failed");
     }
     this.chunks.push(String(text));
+    callback?.();
     return true;
   }
 
@@ -204,6 +205,36 @@ test("cleanup attempts the cursor show on a destroyed stream", async () => {
   expect(output.chunks).toContain(SHOW_CURSOR);
   expect(input.rawMode).toBe(false);
   expect(input.listenerCount("keypress")).toBe(0);
+});
+
+// Usefulness: acceptance #1319 — a cleanup write that fails asynchronously must
+// reject the prompt with that error, not resolve a selection.
+test("an asynchronous cleanup write error rejects the prompt", async () => {
+  const input = new FakeInput();
+  let writes = 0;
+  const output = new Writable({
+    write(_chunk, _encoding, callback) {
+      writes += 1;
+      if (writes > 2) {
+        queueMicrotask(() => callback(Object.assign(new Error("EIO"), { code: "EIO" })));
+        return;
+      }
+      callback();
+    },
+  });
+  output.isTTY = true;
+  output.columns = 80;
+  const pending = askHarnessCheckboxes({
+    items: harnessCheckboxItems({ checked: ["claude"] }),
+    input,
+    output,
+    env: {},
+  });
+  input.emit("keypress", "\r", { name: "return" });
+  await expect(pending).rejects.toThrow("EIO");
+  expect(input.rawMode).toBe(false);
+  expect(input.listenerCount("keypress")).toBe(0);
+  expect(() => output.emit("error", new Error("late"))).not.toThrow();
 });
 
 // Usefulness: acceptance #1319 — a real Writable that emits an error restores the

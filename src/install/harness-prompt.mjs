@@ -111,21 +111,33 @@ export async function askHarnessCheckboxes({
   return await new Promise((resolve, reject) => {
     let settled = false;
 
-    const detach = () => {
+    const detachInput = () => {
       input.off?.("keypress", onKeypress);
       input.off?.("end", onEnd);
       input.off?.("close", onEnd);
-      output.off?.("error", onOutputError);
-      guardLateOutputError(output);
     };
 
-    const clear = () => {
-      if (drawnRows === 0) {
-        return;
-      }
-      output.write(`\x1b[${drawnRows - 1}A\r\x1b[0J`);
-      drawnRows = 0;
-    };
+    // Writes one cleanup chunk and resolves with its error, if any. The write
+    // callback always fires, and the stream error event covers an early failure.
+    const writeCleanup = (text) =>
+      new Promise((resolve) => {
+        let done = false;
+        const finish = (err) => {
+          if (done) {
+            return;
+          }
+          done = true;
+          output.off?.("error", onWriteError);
+          resolve(err ?? null);
+        };
+        const onWriteError = (err) => finish(err);
+        output.on?.("error", onWriteError);
+        try {
+          output.write(text, finish);
+        } catch (err) {
+          finish(err);
+        }
+      });
 
     const render = () => {
       const lines = [
@@ -144,44 +156,52 @@ export async function askHarnessCheckboxes({
     };
 
     // Leaves raw mode and pauses the input first, so a failed cursor write
-    // cannot skip them. Each cleanup step is attempted, and the first failure
-    // still reaches the caller.
-    const restore = () => {
-      let failure = null;
+    // cannot skip them. Then waits for the cleanup writes, and the first
+    // failure still reaches the caller.
+    const settle = async (value, error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+
+      detachInput();
+      let failure = error;
       try {
         input.setRawMode(false);
       } catch (err) {
-        failure = err;
+        failure ??= err;
       }
       try {
         input.pause?.();
       } catch (err) {
         failure ??= err;
       }
-      try {
-        clear();
-      } catch (err) {
-        failure ??= err;
-      }
-      try {
-        output.write(SHOW_CURSOR);
-      } catch (err) {
-        failure ??= err;
-      }
-      return failure;
-    };
 
-    const settle = (value, error) => {
-      if (settled) {
-        return;
+      let streamError = null;
+      const onCleanupError = (err) => {
+        streamError ??= err;
+      };
+      output.on?.("error", onCleanupError);
+      const chunks = [];
+      if (drawnRows > 0) {
+        chunks.push(`\x1b[${drawnRows - 1}A\r\x1b[0J`);
+        drawnRows = 0;
       }
-      settled = true;
-      const restoreError = restore();
-      detach();
-      if (error) {
-        reject(error);
-      } else if (restoreError) {
-        reject(restoreError);
+      chunks.push(SHOW_CURSOR);
+      try {
+        for (const chunk of chunks) {
+          const writeError = await writeCleanup(chunk);
+          failure ??= writeError;
+        }
+      } finally {
+        output.off?.("error", onCleanupError);
+        output.off?.("error", onOutputError);
+        guardLateOutputError(output);
+      }
+      failure ??= streamError;
+
+      if (failure) {
+        reject(failure);
       } else {
         resolve(value);
       }

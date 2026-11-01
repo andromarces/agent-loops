@@ -45,14 +45,15 @@ class FakeInput extends EventEmitter {
 }
 
 class FakeOutput {
-  constructor({ isTTY = true, failWhen = null } = {}) {
+  constructor({ isTTY = true, failWhen = null, failCallbackFrom = null } = {}) {
     this.isTTY = isTTY;
     this.failWhen = failWhen;
+    this.failCallbackFrom = failCallbackFrom;
     this.chunks = [];
     this.waiters = [];
   }
 
-  write(text) {
+  write(text, callback) {
     if (this.failWhen?.(String(text), this.chunks.length)) {
       throw new Error("write failed");
     }
@@ -64,6 +65,14 @@ class FakeOutput {
       waiter.resolve();
       return false;
     });
+    if (callback) {
+      const index = this.chunks.length - 1;
+      if (this.failCallbackFrom !== null && index >= this.failCallbackFrom) {
+        queueMicrotask(() => callback(new Error("EIO")));
+      } else {
+        callback();
+      }
+    }
     return true;
   }
 
@@ -449,6 +458,35 @@ test("a checkbox prompt failure propagates unchanged", async () => {
     expect(process.exitCode).toBe(0);
     expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
     expect(captured.errors).toEqual([]);
+  } finally {
+    captured.restore();
+    process.env.PATH = originalPath;
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: acceptance #1319 — an asynchronous cleanup write error rejects the
+// install with the same error and writes no file.
+test("an asynchronous cleanup write error rejects install and writes nothing", async () => {
+  const home = await makeHome();
+  const path = await pathWith("claude");
+  const originalPath = process.env.PATH;
+  const output = new FakeOutput({ failCallbackFrom: 2 });
+  const input = new FakeInput();
+  const captured = captureConsole();
+  process.env.AGENT_LOOP_HOME = home;
+  process.env.PATH = path;
+  try {
+    process.exitCode = 0;
+    const run = runInstallCommand([], { input, output, env: { TERM: "xterm-256color" } });
+    await output.waitFor((text) => text.includes("Select harnesses"));
+    input.emit("keypress", "\r", { name: "return" });
+    await expect(run).rejects.toThrow("EIO");
+    expect(process.exitCode).toBe(0);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
+    expect(input.rawMode).toBe(false);
+    expect(input.listenerCount("keypress")).toBe(0);
   } finally {
     captured.restore();
     process.env.PATH = originalPath;
