@@ -45,6 +45,7 @@ Andro Marces
 - [Issue #1216](https://github.com/andromarces/agent-loops/issues/1216)
 - [PR #1230](https://github.com/andromarces/agent-loops/pull/1230)
 - [Issue #1318](https://github.com/andromarces/agent-loops/issues/1318)
+- [PR #1320](https://github.com/andromarces/agent-loops/pull/1320)
 - Supersedes (partially): [ADR 0058](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:
