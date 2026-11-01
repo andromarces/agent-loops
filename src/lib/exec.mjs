@@ -371,8 +371,8 @@ export async function exec(command, args = [], options = {}) {
  * bounds the call and `signal` cancels it. Either one kills the child, with SIGTERM then SIGKILL
  * after 1 s on POSIX and `taskkill /T /F` over the process tree on Windows, so no platform keeps a
  * child the bound gave up on (#329). `execaOptions` pass through, for example `stripFinalNewline`.
- * `killBound` arms the same give-up bound for a caller that sends its own kill: `{ timeoutMs,
- * signal }` reaches `settleWithin` and never reaches execa, so the caller's immediate SIGKILL is
+ * `killBound` arms the same give-up bound for a caller that sends its own kill. Its `{ timeoutMs,
+ * signal }` reaches `settleWithin` and never reaches execa. The caller's immediate SIGKILL is then
  * the only kill (#1307). The run logs nothing, so a caller that reads sensitive output controls
  * what is logged.
  * @param {string} command

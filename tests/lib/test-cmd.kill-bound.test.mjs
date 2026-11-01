@@ -52,7 +52,8 @@ vi.mock("execa", async () => {
 });
 
 import { runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { createTempRepo, removePath } from "../runtime-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 const SLOT_ENV = [
   "AGENT_LOOP_TEST_SLOTS_ROOT",
