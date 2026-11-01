@@ -54,6 +54,7 @@ Andro Marces
 - [Issue #1207](https://github.com/andromarces/agent-loops/issues/1207)
 - [Issue #1216](https://github.com/andromarces/agent-loops/issues/1216)
 - [Issue #1329](https://github.com/andromarces/agent-loops/issues/1329)
+- [PR #1330](https://github.com/andromarces/agent-loops/pull/1330)
 - [PR #1230](https://github.com/andromarces/agent-loops/pull/1230)
 - [PR #1212](https://github.com/andromarces/agent-loops/pull/1212)
 - [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md)

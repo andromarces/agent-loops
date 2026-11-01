@@ -56,6 +56,7 @@ Andro Marces
 - [PR #1320](https://github.com/andromarces/agent-loops/pull/1320)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [Issue #1329: Remove a kept turn directory after the group of the dead child ends](https://github.com/andromarces/agent-loops/issues/1329)
+- [PR #1330](https://github.com/andromarces/agent-loops/pull/1330)
 - Supersedes (partially): [ADR 0058](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:
