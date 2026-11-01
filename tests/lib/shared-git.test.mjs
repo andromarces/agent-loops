@@ -66,6 +66,12 @@ import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.m
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
+import {
+  endOwnedProcess,
+  processExists,
+  shimCallRecords,
+  withGitHangingAfter,
+} from "../process-helpers.mjs";
 
 const dirs = [];
 
@@ -223,6 +229,29 @@ test("the deadline aborts the git calls with the default abort reason", async ()
     });
   }
 });
+
+// Usefulness: verifies requirement "every git process of the read has ended when it rejects at its
+// deadline" (issue #1315). A deadline that stops waiting without ending the git processes leaves
+// them running past the end of a canceled turn.
+test("every git process of the read has ended when the read rejects at its deadline", async () => {
+  const { linked } = await createLinkedWorkTree();
+  await withGitHangingAfter(0, async ({ shimDir }) => {
+    const failure = await readSharedGit(linked, { deadlineMs: 5_000 }).catch((err) => err);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toMatch(/5000 ms/);
+    const records = await shimCallRecords(shimDir);
+    expect(records).toHaveLength(2);
+    try {
+      // `readWithin` awaits both git reads before it throws (`src/lib/shared-git.mjs` line 50), so
+      // the check needs no wait. An error other than ESRCH reads as alive and fails the test.
+      for (const { pid } of records) expect(processExists(pid)).toBe(false);
+    } finally {
+      if (process.platform !== "win32") {
+        for (const { pid } of records) await endOwnedProcess(pid, shimDir);
+      }
+    }
+  });
+}, 20_000);
 
 // Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
 // that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
