@@ -43,6 +43,13 @@ PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in 
   - `role dispatch`, a second SIGINT after a 0.2 s sleep: exit 130. Stdout held `{"status":"error","error":"Interrupted by SIGINT"}` and stderr held the `second SIGINT` warning. No transcript file existed.
   - In each of the four runs, no pid from the process listing taken before the first signal was alive after the exit. The listing held the `claude` child, its helper processes, the `Bash` tool shell, and the `node` sleeper. The `Bash` tool shell and the sleeper ran in a process group other than that of `claude`.
   - Not covered: a second SIGINT after the cleanup took longer than 0.2 s, a real terminal Ctrl-C to the process group, and the `codex` adapter.
+- macOS probe of the deferred SIGINT cases (issue #708 item A, 2026-11-02). Host: macOS 27.2 (arm64, build 26B123), Node v27.0.0-alpha.0.0.0, Claude Code 2.1.316, codex-cli 0.166.0, Git 2.56.0. Repository head: `9767ef3f`. Each probe ran in a disposable Git repository under the private temporary directory, with a separate `AGENT_LOOP_RUNS_ROOT` and a transcript outside the work tree. The driver signaled only the parent that it started, by exact pid. The probes cover the three cases of the earlier `Not covered` line.
+  - Second SIGINT after cleanup past 0.2 s (probe `A1`): the worker ran the `node` sleeper, and the first `SIGINT` came at 17890 ms. The runtime was alive 537 ms later, and the `claude` worker row read `20909 19184 20909 claude -p`. The second `SIGINT` then escalated. The exit code was 130 at 547 ms, and stderr held the `second SIGINT` warning. The transcript held `exitCode` 130 and the error `Interrupted by SIGINT`. It held the orchestrator `invocation` and `action` events, with no worker `invocation` event.
+  - Survivors of probe `A1`: the process listing at the trigger held seven pids. No pid was alive 1.5 s after the exit, and a fresh signal 0 check found none after the probe cleanup.
+  - Real terminal Ctrl-C (probe `A2`): a `pty.fork()` child ran the CLI, and the driver wrote `0x03` to the pty master. A control run with a shell `INT` trap printed `trap-received-INT` and exited 42, so the terminal driver delivered the signal to the foreground group. The worker turn ran the same `node` sleeper. The Ctrl-C came 15767 ms after the spawn, and the exit code was 130 after 992 ms. The transcript held `exitCode` 130 and a worker `invocation` event with status `error`. No recorded pid was alive 1.5 s after the exit.
+  - One SIGINT on the `codex` adapter (probe `A3-one`): the worker was `codex` with `gpt-5.6-luna`. The signal came 16528 ms after the spawn, and the exit code was 130 after 70 ms. The transcript held `exitCode` 130, the error, and a worker `invocation` event with status `error`. The codex CLI and its helpers ended. The worker command `node -e ... setTimeout(()=>{},600000)` ran in its own group and stayed alive with parent pid 1 at the 1.5 s sample. The driver ended it by exact pid.
+  - Two SIGINTs on the `codex` adapter (probe `A3-two`): the second signal came 44 ms after the first, while the runtime was alive. Stderr held the `second SIGINT` warning, and the exit code was 130 after 50 ms. The transcript held `exitCode` 130 and no worker `invocation` event. The same worker command stayed alive at the 1.5 s sample, and the driver ended it by exact pid.
+  - The surviving command matches decision 5, the case of a child that left the process group. ADR 0063 decision 5 records that a Codex shell command runs in its own group. Issue #1326 holds the related tree-end decision for a Codex reviewer command.
 
 ## Alternatives
 
@@ -56,6 +63,9 @@ Andro Marces
 
 - Partially superseded by [ADR 0036](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md) (decision 8)
 - [Issue #669: SIGINT can end the runtime by signal before the cancel handler finishes](https://github.com/andromarces/agent-loops/issues/669)
+- [Issue #695: Verify the SIGINT cancel path during a live agent turn on macOS or Linux](https://github.com/andromarces/agent-loops/issues/695)
+- [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
+- [Issue #1326: End the Codex reviewer command tree on POSIX after a parent signal](https://github.com/andromarces/agent-loops/issues/1326)
 - [Pull request #689](https://github.com/andromarces/agent-loops/pull/689)
 - [Issue #693: Record the SIGINT cancel decision in an active ADR instead of superseded ADR 0029](https://github.com/andromarces/agent-loops/issues/693)
 - [ADR 0028: End the Windows process tree of a child when the runtime exits](0028-end-the-windows-process-tree-when-the-runtime-exits.md)
