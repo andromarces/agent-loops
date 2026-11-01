@@ -13,6 +13,7 @@ import {
   endOwnedProcess,
   expectBoundKillsShim,
   shimCallRecords,
+  shimCallSteps,
   shimStartPids,
   withGitHangingAfter,
 } from "./process-helpers.mjs";
@@ -461,6 +462,27 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
+// Usefulness: verifies each call records the steps it reached, so a failure names the step a call
+// stopped at (issue #1258); the record test reads the claim only, and no other test reads the steps.
+test.skipIf(process.platform === "win32")(
+  "withGitHangingAfter records the start and the claim of each call",
+  async () => {
+    await withGitHangingAfter(2, async ({ shimDir }) => {
+      const calls = [execa("git", ["--version"]), execa("git", ["--version"])];
+      const pids = calls.map((call) => call.pid);
+      await Promise.all(calls);
+      const steps = await shimCallSteps(shimDir);
+      expect([...steps.keys()].sort((a, b) => a - b)).toEqual([...pids].sort((a, b) => a - b));
+      for (const pid of pids) {
+        expect(steps.get(pid)).toHaveLength(2);
+        expect(steps.get(pid)[0]).toMatch(/^start \d+$/);
+        expect(steps.get(pid)[1]).toMatch(/^claimed \d+$/);
+      }
+    });
+  },
+  30_000,
+);
+
 // Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
 // calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
 // atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
@@ -480,15 +502,22 @@ test.skipIf(process.platform === "win32")(
       );
       const pids = running.map((call) => call.pid);
       const calls = await Promise.all(running);
-      // The message names the call-* counts and each exit code, so a CI recurrence records them.
-      // The reads never throw, so the assertion below always runs. A timed-out call shows as "timeout".
+      // The message names the call-* counts, the marker and step counts, the steps of each call
+      // without a record, and each exit code, so a CI recurrence records them. The reads never
+      // throw, so the assertion below always runs. A timed-out call shows as "timeout".
       const names = await readdir(shimDir).catch(() => undefined);
       const claimed = names?.filter((name) => name.startsWith("call-")).length;
       const records = await shimCallRecords(shimDir).catch(() => undefined);
       const markers = await shimStartPids(shimDir).catch(() => undefined);
+      const steps = await shimCallSteps(shimDir).catch(() => undefined);
       const codes = calls.map((call) => call.exitCode ?? (call.timedOut ? "timeout" : "undefined"));
-      // Each call without a record shows as index:pid:exit code:marker state:trace state. Each state
-      // is what the read found: present, absent, or unreadable. An absent file proves nothing else.
+      const loggedClaims =
+        steps === undefined
+          ? "unreadable"
+          : [...steps.values()].filter((lines) => lines.some((line) => line.startsWith("claimed ")))
+              .length;
+      // Each call without a record shows as index:pid:exit code:marker state:trace state:steps. Each
+      // state is what the read found: present, absent, or unreadable. An absent file proves nothing.
       const state = (found) => (found === undefined ? "unreadable" : found ? "present" : "absent");
       const unrecorded = calls
         .map((_, index) => index)
@@ -496,10 +525,12 @@ test.skipIf(process.platform === "win32")(
         .map((index) => {
           const marker = state(markers?.includes(pids[index]));
           const trace = state(names?.includes(`trace-${index}`));
-          return `${index}:${pids[index]}:exit ${codes[index]}:marker ${marker}:trace ${trace}`;
+          const reached =
+            steps === undefined ? "unreadable" : (steps.get(pids[index]) ?? ["absent"]).join("|");
+          return `${index}:${pids[index]}:exit ${codes[index]}:marker ${marker}:trace ${trace}:steps ${reached}`;
         });
       const message = records
-        ? `call-* directories: ${claimed}; call-* directories without a record: ${claimed - records.length}; calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]; exit codes: ${codes.join(",")}`
+        ? `call-* directories: ${claimed}; call-* directories without a record: ${claimed - records.length}; start markers: ${markers?.length}; step records: ${steps?.size}; claims logged: ${loggedClaims}; calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]; exit codes: ${codes.join(",")}`
         : `the shim records or directory were unreadable; exit codes: ${codes.join(",")}`;
       expect(
         calls.filter((call) => call.exitCode === 0),
