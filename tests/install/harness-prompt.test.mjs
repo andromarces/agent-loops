@@ -27,13 +27,16 @@ class FakeInput extends EventEmitter {
 }
 
 class FakeOutput extends EventEmitter {
-  constructor({ isTTY = true, columns } = {}) {
+  constructor({ isTTY = true, columns, destroyed = undefined } = {}) {
     super();
     this.isTTY = isTTY;
     this.chunks = [];
     this.failWhen = null;
     if (columns !== undefined) {
       this.columns = columns;
+    }
+    if (destroyed !== undefined) {
+      this.destroyed = destroyed;
     }
   }
 
@@ -177,9 +180,30 @@ test("an asynchronous output error rejects and restores the terminal", async () 
   expect(input.rawMode).toBe(false);
   expect(input.rawModeCalls.at(-1)).toBe(false);
   expect(input.listenerCount("keypress")).toBe(0);
-  expect(output.listenerCount("error")).toBe(0);
   expect(output.chunks).toContain(SHOW_CURSOR);
   expect(output.chunks.at(-2)).toContain("\x1b[0J");
+  expect(() => output.emit("error", new Error("late"))).not.toThrow();
+});
+
+// Usefulness: acceptance #1319 — an error that arrives after the prompt settled
+// must not reach an unhandled `error` event, because the selection is final.
+test("a late output error after confirming does not throw", async () => {
+  const { input, output, pending } = start();
+  input.emit("keypress", "\r", { name: "return" });
+  await expect(pending).resolves.toEqual({ supported: true, selected: ["claude"] });
+  expect(() => output.emit("error", new Error("late"))).not.toThrow();
+  expect(() => output.emit("error", new Error("later"))).not.toThrow();
+});
+
+// Usefulness: acceptance #1319 — cleanup attempts the cursor show even when the
+// stream reports itself destroyed, without throwing from the attempt.
+test("cleanup attempts the cursor show on a destroyed stream", async () => {
+  const { input, output, pending } = start({ output: { destroyed: true } });
+  input.emit("keypress", "\r", { name: "return" });
+  await expect(pending).resolves.toEqual({ supported: true, selected: ["claude"] });
+  expect(output.chunks).toContain(SHOW_CURSOR);
+  expect(input.rawMode).toBe(false);
+  expect(input.listenerCount("keypress")).toBe(0);
 });
 
 // Usefulness: acceptance #1319 — a real Writable that emits an error restores the
@@ -204,7 +228,7 @@ test("a destroyed output stream restores the terminal", async () => {
   await expect(pending).rejects.toBe(failure);
   expect(input.rawMode).toBe(false);
   expect(input.listenerCount("keypress")).toBe(0);
-  expect(output.listenerCount("error")).toBe(0);
+  expect(() => output.emit("error", new Error("late"))).not.toThrow();
 });
 
 // Usefulness: acceptance #1319 — the redraw counts wrapped terminal rows, so a
@@ -263,12 +287,12 @@ test("a write error rejects and restores the terminal", async () => {
 // host the checkbox list. Each case resolves `supported: false` with no output and
 // no raw mode, so the caller can fall back unchanged.
 test.each([
-  ["stdin is not a TTY", { input: { isTTY: false } }],
-  ["stdout is not a TTY", { output: { isTTY: false } }],
-  ["TERM is dumb", { env: { TERM: "dumb" } }],
-  ["stdin has no setRawMode", { input: { noRawMode: true } }],
-  ["setRawMode throws", { input: { failRawMode: true } }],
-])("the checkbox list declines when %s", async (_name, options) => {
+  ["stdin is not a TTY", { input: { isTTY: false } }, true],
+  ["stdout is not a TTY", { output: { isTTY: false } }, false],
+  ["TERM is dumb", { env: { TERM: "dumb" } }, false],
+  ["stdin has no setRawMode", { input: { noRawMode: true } }, true],
+  ["setRawMode throws", { input: { failRawMode: true } }, true],
+])("the checkbox list declines when %s", async (_name, options, rawModeUnavailable) => {
   const input = new FakeInput({
     isTTY: options.input?.isTTY ?? true,
     failRawMode: options.input?.failRawMode,
@@ -283,7 +307,7 @@ test.each([
     output,
     env: options.env ?? {},
   });
-  expect(result).toEqual({ supported: false });
+  expect(result).toEqual({ supported: false, rawModeUnavailable });
   expect(output.chunks).toEqual([]);
   expect(input.rawMode).toBe(false);
 });

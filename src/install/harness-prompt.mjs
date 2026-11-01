@@ -8,6 +8,18 @@ import { HARNESS_META, HARNESS_ORDER } from "../lib/harnesses.mjs";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 const HEADER = "Select harnesses: Up/Down move, Space toggles, Enter confirms.";
+const LATE_ERROR_GUARD = Symbol.for("agent-loop.late-output-error");
+
+// A stream that stays open after the prompt can emit an error with no reader.
+// Node turns that event into an uncaught exception, so keep one inert listener
+// on the stream once its prompt has settled.
+function guardLateOutputError(output) {
+  if (!output?.on || output[LATE_ERROR_GUARD]) {
+    return;
+  }
+  output[LATE_ERROR_GUARD] = true;
+  output.on("error", () => {});
+}
 
 /**
  * Builds the checkbox rows in HARNESS_ORDER. `markDetected` labels the checked
@@ -45,6 +57,20 @@ function wrappedRows(lines, columns) {
   return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(line.length / columns)), 0);
 }
 
+/** True when the input TTY accepts raw mode now. Leaves raw mode off again. */
+function canEnterRawMode(input) {
+  if (!input?.isTTY || typeof input.setRawMode !== "function") {
+    return false;
+  }
+  try {
+    input.setRawMode(true);
+    input.setRawMode(false);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Renders the checkbox list and resolves one of three outcomes. `supported:
  * false` means the caller must run the numbered prompt. A cancelled prompt
@@ -57,13 +83,14 @@ export async function askHarnessCheckboxes({
   output = process.stdout,
   env = process.env,
 } = {}) {
-  if (!checkboxSupported({ input, output, env })) {
-    return { supported: false };
+  const rawMode = canEnterRawMode(input);
+  if (!checkboxSupported({ input, output, env }) || !rawMode) {
+    return { supported: false, rawModeUnavailable: !rawMode };
   }
   try {
     input.setRawMode(true);
   } catch {
-    return { supported: false };
+    return { supported: false, rawModeUnavailable: true };
   }
 
   const checked = items.map((item) => Boolean(item.checked));
@@ -89,6 +116,7 @@ export async function askHarnessCheckboxes({
       input.off?.("end", onEnd);
       input.off?.("close", onEnd);
       output.off?.("error", onOutputError);
+      guardLateOutputError(output);
     };
 
     const clear = () => {
@@ -115,32 +143,28 @@ export async function askHarnessCheckboxes({
       drawnRows = wrappedRows(lines, output.columns);
     };
 
-    // Clears the redraw, shows the cursor, and leaves raw mode. Returns the
-    // first failure so a restore error still reaches the caller. A destroyed
-    // stream gets no write, because the failed write is already the report.
+    // Leaves raw mode and pauses the input first, so a failed cursor write
+    // cannot skip them. Each cleanup step is attempted, and the first failure
+    // still reaches the caller.
     const restore = () => {
       let failure = null;
       try {
-        if (!output.destroyed) {
-          clear();
-        }
+        input.setRawMode(false);
       } catch (err) {
         failure = err;
       }
       try {
-        if (!output.destroyed) {
-          output.write(SHOW_CURSOR);
-        }
-      } catch (err) {
-        failure ??= err;
-      }
-      try {
-        input.setRawMode(false);
-      } catch (err) {
-        failure ??= err;
-      }
-      try {
         input.pause?.();
+      } catch (err) {
+        failure ??= err;
+      }
+      try {
+        clear();
+      } catch (err) {
+        failure ??= err;
+      }
+      try {
+        output.write(SHOW_CURSOR);
       } catch (err) {
         failure ??= err;
       }

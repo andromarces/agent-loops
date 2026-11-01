@@ -11,18 +11,21 @@ import { cleanupHomes, makeHome } from "./install-helpers.mjs";
 const test = createBarrierTest();
 
 // The numbered fallback prompt reads its answer from this stub instead of a
-// terminal. The checkbox list never calls it.
-const prompt = vi.hoisted(() => ({ answer: "", failure: null }));
+// terminal. The checkbox list never calls it. Each call records its options.
+const prompt = vi.hoisted(() => ({ answer: "", failure: null, options: null }));
 vi.mock("node:readline/promises", () => ({
-  createInterface: () => ({
-    question: async () => {
-      if (prompt.failure) {
-        throw prompt.failure;
-      }
-      return prompt.answer;
-    },
-    close() {},
-  }),
+  createInterface: (options) => {
+    prompt.options = options;
+    return {
+      question: async () => {
+        if (prompt.failure) {
+          throw prompt.failure;
+        }
+        return prompt.answer;
+      },
+      close() {},
+    };
+  },
 }));
 
 class FakeInput extends EventEmitter {
@@ -353,6 +356,40 @@ test.each([
     expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(expected.command === "codex");
   } finally {
     prompt.answer = "";
+    captured.restore();
+    process.env.PATH = originalPath;
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: acceptance #1319 — when raw mode is unavailable, the numbered
+// fallback must not retry raw mode through readline. It runs non-terminal and
+// completes the selection.
+test.each([
+  ["setRawMode throws", { failRawMode: true }],
+  ["setRawMode is missing", { noRawMode: true }],
+])("the numbered fallback runs without raw mode when %s", async (_name, inputOptions) => {
+  const home = await makeHome();
+  const path = await pathWith("claude", "codex");
+  const originalPath = process.env.PATH;
+  const output = new FakeOutput();
+  const input = new FakeInput(inputOptions);
+  const captured = captureConsole();
+  process.env.AGENT_LOOP_HOME = home;
+  process.env.PATH = path;
+  prompt.answer = "2";
+  prompt.options = null;
+  try {
+    process.exitCode = 0;
+    await runInstallCommand([], { input, output, env: { TERM: "xterm-256color" } });
+    expect(process.exitCode).toBe(0);
+    expect(prompt.options.terminal).toBe(false);
+    expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(true);
+    expect(existsSync(join(home, ".claude", "settings.json"))).toBe(false);
+  } finally {
+    prompt.answer = "";
+    prompt.options = null;
     captured.restore();
     process.env.PATH = originalPath;
     restoreAgentLoopHome();

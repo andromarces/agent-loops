@@ -68,12 +68,22 @@ function resolveSelection(token) {
   return parseHarnessList(token)[0];
 }
 
-async function askSelection(discovered, { input = process.stdin, output = process.stdout } = {}) {
+async function askSelection(
+  discovered,
+  { input = process.stdin, output = process.stdout } = {},
+  { terminal } = {},
+) {
   const menu = HARNESS_ORDER.map((harness, index) => {
     const marker = discovered.includes(harness) ? " [detected]" : "";
     return `${index + 1}. ${HARNESS_META[harness].label} (${harness})${marker}`;
   });
-  const rl = createInterface({ input, output });
+  // Readline calls setRawMode on a terminal input, so a terminal that refused
+  // raw mode runs the same prompt without terminal handling.
+  const rl = createInterface({
+    input,
+    output,
+    ...(terminal === false ? { terminal: false } : {}),
+  });
   try {
     return (
       await rl.question(
@@ -104,7 +114,11 @@ async function selectHarnesses(names, checked, io, { markDetected = false } = {}
     process.exitCode = asked.reason === "sigint" ? 130 : 1;
     return null;
   }
-  const answer = await askSelection(checked, io);
+  const answer = await askSelection(
+    checked,
+    io,
+    asked.rawModeUnavailable ? { terminal: false } : {},
+  );
   if (answer === "") {
     return checked;
   }
