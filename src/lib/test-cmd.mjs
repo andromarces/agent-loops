@@ -203,9 +203,9 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
     stdin: "ignore",
     all: true,
     buffer: false,
-    // The same bound and cancel as `execBounded` gives `exec`: at the bound, or on a cancel,
-    // execa kills the group on POSIX or the tree on Windows, and the call settles 10 s later
-    // even when no kill ends the command (issue #1307).
+    // Arms the kill bound in `settleWithin`: at the bound, or on a cancel, execa kills the
+    // group on POSIX or the tree on Windows, and the call settles 10 s later even when no
+    // kill ends the command (issue #1307).
     timeoutMs: timeoutSeconds * 1000,
     signal,
   });
