@@ -142,7 +142,7 @@ async function readRequiredSource(
   cwd,
   { absentOnError, classify, malformed = () => false },
 ) {
-  const { status, stdout, stderr, unreadable, transient, include } = await gh(
+  const { status, stdout, stderr, unreadable, transient, include, terminal } = await gh(
     ["api", ...args],
     cwd,
   );
@@ -156,7 +156,7 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include });
+    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include, terminal });
   }
   const text = stdout.trim();
   if (text === "") {
@@ -439,7 +439,7 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
  * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read and
  * the check wait refuse on it, because the list may name a required check no configuration source
  * did (issue #349). A reply that is no list carries `transient` and the `failure` text for a clean
- * server-error failure or a transport failure, which the wait retries (#1121, #1312).
+ * server error or a transport failure. The wait retries either one (#1121, #1312).
  * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */
 export function requiredNamesOf({ status, stdout, stderr }) {

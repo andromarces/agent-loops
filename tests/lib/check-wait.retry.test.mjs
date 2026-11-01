@@ -77,8 +77,8 @@ const PR_READS = {
 };
 
 /**
- * One wait whose passing `gh pr` read named by `which` ("head" or "checks")
- * answers with `failure` on its first call, or on every call when `always` is set. `stdout` and
+ * One wait whose passing `gh pr` read named by `which` ("head" or "checks") answers with `failure` on
+ * its first call. It answers on every call when `always` is set. `stdout` and
  * `reads` replace the empty output and the scripted check list reads. `result` is the wait, and
  * `attempts()` counts the failing reads it made.
  */
@@ -151,8 +151,8 @@ function noChecksThenPassReply(failing, reply) {
   });
 }
 
-// Usefulness: verifies the acceptance item that a transport failure of a source read is retried on
-// the next poll, for the ruleset read and the protection read (issue #1312).
+// Usefulness: verifies a transport failure of a source read is retried on the next poll.
+// It covers the ruleset read and the protection read (issue #1312).
 test.each(["rules", "protection"])(
   "waitChecks retries a %s source read that fails with a transport failure",
   async (failing) => {
@@ -167,8 +167,8 @@ test.each(["rules", "protection"])(
   },
 );
 
-// Usefulness: verifies a transport failure of a source read that lasts to the bound is an error
-// that names it, never a timeout envelope and never a pass (issue #1312).
+// Usefulness: verifies a lasting transport failure of a source read is an error that names it.
+// It is never a timeout envelope and never a pass (issue #1312).
 test.each(["rules", "protection"])(
   "waitChecks reports an error when the %s source read fails with a transport failure until the bound",
   async (failing) => {
@@ -208,9 +208,8 @@ test.each([
   },
 );
 
-// Usefulness: verifies the acceptance item that a transport failure of the head read and of the
-// check list read is retried on the next poll, in the required wait and in the --all wait, so a
-// connection timeout no longer ends a bounded wait at once (issue #1312).
+// Usefulness: verifies a transport failure of the head read and the check list read is retried.
+// It retries in the required wait and in the --all wait (issue #1312).
 test.each([
   ["required", "head", DIAL_TIMEOUT, false],
   ["all", "head", DIAL_TIMEOUT, true],
@@ -229,9 +228,8 @@ test.each([
   },
 );
 
-// Usefulness: verifies the acceptance item that a transport failure that lasts to the bound exits
-// with an error that names it, after a read on each poll, never a timeout envelope and never a pass,
-// in both modes (issue #1312).
+// Usefulness: verifies a lasting transport failure exits with an error that names it, in both modes.
+// It reads again on each poll and is never a timeout envelope or a pass (issue #1312).
 test.each([
   ["required", "head", DIAL_TIMEOUT, false, /gh pr view 42 could not be read: .*dial tcp/],
   ["all", "head", DIAL_TIMEOUT, true, /gh pr view 42 could not be read: .*dial tcp/],
@@ -258,9 +256,9 @@ test.each([
   },
 );
 
-// Usefulness: verifies the status line decides before the transport wording, so a 502 whose error
-// text also names a transport failure is still retried, and a 404 whose text names one stays
-// terminal, in both modes (issue #1312).
+// Usefulness: verifies the status line decides before the transport wording.
+// A 502 with transport words is still retried. A 404 with transport words stays terminal
+// (issue #1312).
 test.each([
   [
     "a 502",
@@ -285,16 +283,16 @@ test.each([
   },
 );
 
-// Usefulness: verifies a failure text with no HTTP status and no known transport wording stays
-// terminal, so the new retry does not cover every status-less failure (issue #1312).
+// Usefulness: verifies a status-less failure with no known transport wording stays terminal.
+// The new retry does not cover every status-less failure (issue #1312).
 test("waitChecks ends at once on a failure text that names no transport failure", async () => {
   const wait = prReadFailsWait("head", "gh: could not read the PR\n");
   await expect(wait.result).rejects.toThrow(/could not be read/);
   expect(wait.attempts()).toBe(1);
 });
 
-// Usefulness: verifies server-supplied text never triggers the transport retry: the reply body of a
-// failed check list read is not the text `gh` wrote, so it stays terminal (issue #1312).
+// Usefulness: verifies server-supplied text never triggers the transport retry.
+// A reply body is not the text `gh` wrote, so it stays terminal (issue #1312).
 test("waitChecks does not retry a body text that names a transport failure", async () => {
   const wait = prReadFailsWait("checks", "gh: the reply could not be parsed\n", {
     stdout: JSON.stringify({ message: "connection reset by peer" }),
@@ -359,8 +357,8 @@ test.each([
   },
 );
 
-// Usefulness: verifies the acceptance item that a transport failure of a commit read is retried on
-// the next poll, for the check-run read and the status read, in both modes (issue #1312).
+// Usefulness: verifies a transport failure of a commit read is retried on the next poll.
+// It covers the check-run read and the status read, in both modes (issue #1312).
 test.each([
   ["required", "check-runs", false, 1],
   ["all", "check-runs", true, 1],
@@ -379,8 +377,8 @@ test.each([
   },
 );
 
-// Usefulness: verifies a transport failure of a commit read that lasts to the bound is an error
-// that names it, never a pass and never a timeout envelope, in both modes (issue #1312).
+// Usefulness: verifies a lasting transport failure of a commit read is an error that names it.
+// It is never a pass and never a timeout envelope, in both modes (issue #1312).
 test.each([
   ["required", false],
   ["all", true],
@@ -394,6 +392,31 @@ test.each([
     expect(commitReads.length).toBeGreaterThan(1);
   },
 );
+
+// Usefulness: verifies a foreign-host Link refusal stays terminal on the first poll.
+// The transport retry never weakens the Link guard, whatever text its target holds (issue #1312).
+test("waitChecks does not retry a foreign-host Link refusal whose target names EOF", async () => {
+  const reply = {
+    status: 1,
+    stdout:
+      'HTTP/2.0 403 Forbidden\r\nContent-Type: application/json\r\nLink: <https://other.example/EOF>; rel="next"\r\n\r\n{}',
+    stderr: "gh: Forbidden (HTTP 403)",
+  };
+  const { gh, commitReads } = failingCommitGh(() => reply);
+  await expect(waitOn(gh, false)).rejects.toThrow(/Link/);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
+});
+
+// Usefulness: verifies a failure with an HTTP status line stays terminal.
+// Transport words after it change nothing, on a commit read and on a paged source read
+// (issue #1312).
+test("waitChecks does not retry a status line with transport wording after it", async () => {
+  const { gh, commitReads } = failingCommitGh(() =>
+    replyOf(502, `gh: Bad Gateway (HTTP 502): connection reset by peer`, "<html>bad</html>"),
+  );
+  await expect(waitOn(gh, false)).rejects.toThrow(/HTTP 502/);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
+});
 
 // Usefulness: verifies a 4xx reply whose body and error text also name a transport failure stays
 // terminal, because the status line decides first (issue #1312).
@@ -612,8 +635,8 @@ test.each([
   20000,
 );
 
-// Usefulness: verifies a listed failure still survives the bound after a transport failure, so the
-// new retry never replaces `prFailures` with an error, in both modes (issue #1312).
+// Usefulness: verifies a listed failure still survives the bound after a transport failure.
+// The new retry never replaces `prFailures` with an error, in both modes (issue #1312).
 test.each([
   ["required", false],
   ["all", true],

@@ -376,9 +376,8 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
   }
 }
 
-// Whether a refusal comes from a names read that failed with a server error or a transport failure
-// and no reply that could not be parsed. The next poll retries it, and the error names the cause
-// (#1121, #1312).
+// Whether a names read failed with a server error or a transport failure. The refusal holds no
+// unparseable reply. The next poll retries it, and the error names the cause (#1121, #1312).
 const namesRetryable = (required) => required.namesTransient && required.unparsed.length === 0;
 const namesCause = (required) => (namesRetryable(required) ? `: ${required.namesFailure}` : "");
 const unresolved = (required, refusal) => {
@@ -603,9 +602,9 @@ export async function waitChecks({
   };
   // The commit reads are the gate's own reads, which page by page number with one `gh api --include`
   // request per page and never follow the `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is marked
-  // `transient`, and the wait retries it on the next poll, only when its first-line status is 500,
-  // 502, 503, or 504 and its body is empty or one JSON value, or when it is a transport failure with
-  // no status line and no body (#1312). Every other failure ends the wait: any
+  // `transient`, and the wait retries it on the next poll. That needs a first-line status of 500,
+  // 502, 503, or 504 with a body that is empty or one JSON value. It also covers a transport failure
+  // with no status line and no body (#1312). Every other failure ends the wait: any
   // other status, a 4xx whatever its body says, a failure with no status block, and a reply whose
   // body is not exactly one JSON value.
   const readCommit = async (sha) => {
@@ -641,8 +640,12 @@ export async function waitChecks({
   };
   const readPrHead = async () => readHead(pr, await bounded(headArgv));
   const probeContext = () => ({ bounded, slug, cwd, pr, headOf: readPrHead });
-  // Whether the probe of `noCheckSource` ran. It runs at most once per wait.
+  // Whether the probe of `noCheckSource` settled. A retryable failure leaves it unset, so the next
+  // poll probes again.
   let probed = false;
+  // The retryable failure of the current poll, or null. The next poll retries it, and a wait that
+  // reaches the bound with it set reports it as an error (#1025, #1312).
+  let failed = null;
   // Whether a workflow of the base branch may run for the PR head `sha`, read once per head. A read
   // that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
   let workflowMayRun = { sha: null, value: true };
@@ -653,9 +656,13 @@ export async function waitChecks({
         await ensureSlug();
         value = await pullRequestWorkflowMayRun(probeContext(), sha, base);
       } catch (raw) {
-        // A failed read holds the pass. The bound still ends the wait.
-        if (failureOf(raw) instanceof BoundReached) {
-          throw failureOf(raw);
+        const err = failureOf(raw);
+        // A failed read holds the pass. A transport failure is kept for the bound, which reports it.
+        if (err instanceof BoundReached) {
+          throw err;
+        }
+        if (err?.transport) {
+          failed = err;
         }
       }
       if (value === null) {
@@ -671,7 +678,7 @@ export async function waitChecks({
   };
   // The retryable failure of the latest completed poll, or null when that poll had none. It is a
   // server error or a transport failure. A wait that ends on the bound with it set reports it as an
-  // error, so neither reads as a timeout or a pass (#1025, #1312).
+  // error. Neither then reads as a timeout or a pass (#1025, #1312).
   let transient = null;
   // The `gh pr` reads of one poll: the head, and the check list when the head is the one waited
   // for. `listed` is null for another head.
@@ -698,9 +705,6 @@ export async function waitChecks({
     }
     return err;
   };
-  // The server error of the current poll that the next poll retries, or null. A transport failure
-  // is kept here too.
-  let failed = null;
   // The outcome of one poll that read the check list of `sha`: the commit states read by SHA, or the
   // probe result. A retryable failure of a read is kept in `failed`, and a listed failure settles the wait
   // whatever the commit read returns.
@@ -729,20 +733,26 @@ export async function waitChecks({
         throw err;
       }
     }
-    // The probe runs once, only for an `--all` wait that names no expected check, after
-    // `gh pr checks` listed nothing and the by-SHA read of the PR head found no check run and no
-    // commit status, so a state on the PR head never gives way to the probe (ADR 0048).
+    // The probe runs once per settled answer, only for an `--all` wait that names no expected check.
+    // It runs after `gh pr checks` listed nothing and the by-SHA read found no check run and no
+    // commit status. A state on the PR head never gives way to the probe (ADR 0048).
     if (items !== null && all && expect.length === 0 && !probed && headEmpty) {
-      probed = true;
       try {
-        if (listed.checks.length === 0 && (await probe(sha, base))) {
+        const noSource = await probe(sha, base);
+        probed = true;
+        if (listed.checks.length === 0 && noSource) {
           return { settled: true, checks: [], noCheckSource: true };
         }
       } catch (raw) {
-        // A failed probe read keeps the normal wait. The bound still ends it.
         const err = failureOf(raw);
         if (err instanceof BoundReached) {
           throw err;
+        }
+        // A transport failure keeps the probe open, so the next poll reads again.
+        if (err?.transport) {
+          failed = err;
+        } else {
+          probed = true;
         }
       }
     }

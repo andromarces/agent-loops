@@ -51,6 +51,10 @@ const MERGED_PR = {
 const http = (status, body, headers = "") =>
   `HTTP/2.0 ${status} X\r\nContent-Type: application/json\r\n${headers}\r\n${typeof body === "string" ? body : JSON.stringify(body)}`;
 
+// The text the `gh` network stack writes for a transport failure: no HTTP status, no reply body.
+const TRANSPORT_TEXT =
+  'Get "https://api.github.com/repos/owner/repo": dial tcp 20.205.243.168:443: connect: operation timed out';
+
 /** A scripted `gh` for a PR with no check yet, plus the probe reads, each overridable or failing by endpoint prefix. */
 function probeGh({
   prFiles = [{ filename: "README.md" }],
@@ -70,6 +74,8 @@ function probeGh({
   headStatuses = [],
   heads = [HEAD_A],
   all = true,
+  transport = null,
+  transportOnce = null,
 } = {}) {
   const inner = scriptedGh([NO_CHECKS_YET], {
     all,
@@ -79,8 +85,19 @@ function probeGh({
   });
   const repo = "repos/owner/repo";
   let baseReads = 0;
+  let transported = 0;
   return async (args, cwd) => {
     const endpoint = args[0] === "api" ? args[1] : "";
+    if (transport !== null && endpoint.startsWith(`${repo}/${transport}`)) {
+      return { status: 1, stdout: "", stderr: TRANSPORT_TEXT, timedOut: false };
+    }
+    if (
+      transportOnce !== null &&
+      endpoint.startsWith(`${repo}/${transportOnce}`) &&
+      transported++ === 0
+    ) {
+      return { status: 1, stdout: "", stderr: TRANSPORT_TEXT, timedOut: false };
+    }
     if (failing !== null && endpoint.startsWith(`${repo}/${failing}`)) {
       return { status: 1, stdout: "", stderr: "gh: Internal failure (HTTP 500)", timedOut: false };
     }
@@ -224,6 +241,26 @@ test.each([
   const { result } = await probedWait(options);
   expect(result.noCheckSource).toBeUndefined();
   expect(result).toMatchObject({ timedOut: true, checks: [] });
+});
+
+// Usefulness: verifies a lasting transport failure of each no-check-source read ends the wait with
+// an error that names it. The result is never a timeout envelope (issue #1312).
+test.each([
+  ["base head read", "commits/main"],
+  ["workflow-directory read", "contents/.github/workflows?"],
+  ["PR files read", "pulls/42/files"],
+])(
+  "the --all wait reports an error when the no-check-source %s fails with a transport failure until the bound",
+  async (_name, endpoint) => {
+    await expect(probedWait({ transport: endpoint })).rejects.toThrow(/dial tcp/);
+  },
+);
+
+// Usefulness: verifies a transport failure of the no-check-source probe is retried.
+// A later probe still returns noCheckSource instead of waiting to the bound (issue #1312).
+test("the --all wait probes again after a transport failure", async () => {
+  const { result } = await probedWait({ transportOnce: "commits/main" });
+  expect(result).toEqual({ timedOut: false, noCheckSource: true, head: HEAD_A, checks: [] });
 });
 
 const FILTERED = (events) => `name: ci\non:\n${events}\njobs:\n  t:\n    runs-on: ubuntu-latest\n`;

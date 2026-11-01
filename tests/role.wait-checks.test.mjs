@@ -472,8 +472,8 @@ test("wait-checks takes a repeatable --expect only with --all", async () => {
   expect(misplaced.payload.error).toMatch(/--expect is only valid for wait-checks/);
 });
 
-// Usefulness: verifies a transport failure that lasts to the bound exits 1 with `status: "error"`
-// that names it, never `timedOut: true` and never a pass (issue #1312).
+// Usefulness: verifies a lasting transport failure exits 1 with `status: "error"` that names it.
+// It is never `timedOut: true` and never a pass (issue #1312).
 test("wait-checks reports a transport failure that lasts to the bound as an error", async () => {
   const repo = await newRunRepo();
   const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });

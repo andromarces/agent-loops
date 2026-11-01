@@ -1,7 +1,7 @@
 // The probe of the `--all` check wait that decides whether any source can report a check for a PR
 // head. It reads only, through the bounded `gh` runner of the wait (#1054).
 import { commitEntries } from "./ci-gate.mjs";
-import { ghApi, inOrder, pagedRead, readOne } from "./gh-api.mjs";
+import { ghApi, ghApiFailure, inOrder, pagedRead, readOne } from "./gh-api.mjs";
 import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject } from "./json.mjs";
 import { prEventsFilteredOut, prWorkflowMayRun, UNREADABLE_TEXT } from "./workflow-paths.mjs";
@@ -136,7 +136,12 @@ async function mergedHeadsOf({ bounded, slug, cwd }, baseSha, base) {
 
 /** The lowercase full SHA of the head of `base`, or null for a read that fails or names none. */
 async function baseShaOf({ bounded, slug, cwd }, base) {
-  const read = await readOne(bounded, `repos/${slug}/commits/${encodeURIComponent(base)}`, cwd);
+  const endpoint = `repos/${slug}/commits/${encodeURIComponent(base)}`;
+  const read = await readOne(bounded, endpoint, cwd);
+  // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
+  if (read.status !== 0 && read.transport) {
+    throw ghApiFailure(endpoint, read);
+  }
   const parsed = read.status === 0 ? JSON.parse(read.stdout) : null;
   const found = isJsonObject(parsed) && typeof parsed.sha === "string" ? parsed.sha : "";
   return isFullSha(found.toLowerCase()) ? found.toLowerCase() : null;
@@ -190,11 +195,12 @@ async function changedFilesOf({ bounded, slug, cwd, pr }) {
  * cap, or an entry or file of another shape. A missing workflow directory holds no file.
  */
 async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
-  const listing = await readOne(
-    bounded,
-    `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`,
-    cwd,
-  );
+  const listingEndpoint = `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`;
+  const listing = await readOne(bounded, listingEndpoint, cwd);
+  // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
+  if (listing.status !== 0 && listing.transport) {
+    throw ghApiFailure(listingEndpoint, listing);
+  }
   let entries = [];
   if (listing.status !== 0) {
     if (!listing.notFound) {
@@ -228,7 +234,12 @@ async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
     bounded,
     files.map((filePath) => async (read) => {
       const path = filePath.split("/").map(encodeURIComponent).join("/");
-      const reply = await readOne(read, `repos/${slug}/contents/${path}?ref=${baseSha}`, cwd);
+      const endpoint = `repos/${slug}/contents/${path}?ref=${baseSha}`;
+      const reply = await readOne(read, endpoint, cwd);
+      // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
+      if (reply.status !== 0 && reply.transport) {
+        throw ghApiFailure(endpoint, reply);
+      }
       const body = reply.status === 0 ? JSON.parse(reply.stdout) : null;
       return isJsonObject(body) ? workflowText(body, filePath) : null;
     }),

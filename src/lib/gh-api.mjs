@@ -63,15 +63,19 @@ export function ghFailureText({ status, stderr, stdout }) {
 
 /**
  * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did, or
- * when the failure is a transport failure. Only a result marked `include`, a failed `gh api
- * --include` read, passes its stdout on for a status line (#1246): the stdout of any other read is
- * a reply body.
+ * when the failure is a transport failure. A `terminal` result never becomes transport. Only a
+ * result marked `include`, a failed `gh api --include` read, passes its stdout on for a status line
+ * (#1246): the stdout of any other read is a reply body.
  */
-export function ghApiFailure(endpoint, { status, stdout, stderr, transient, include }) {
+export function ghApiFailure(endpoint, { status, stdout, stderr, transient, include, terminal }) {
   const text = ghFailureText({ status, stdout: include ? stdout : undefined, stderr });
   const err = new Error(`gh api ${endpoint} failed: ${text}`);
-  if (transient || isTransportFailure({ stdout, stderr })) {
+  const transport = !terminal && isTransportFailure({ stdout, stderr });
+  if (transient || transport) {
     err.transient = true;
+  }
+  if (transport) {
+    err.transport = true;
   }
   return err;
 }
@@ -91,7 +95,7 @@ const TRANSPORT_FAILURES = [
   /\bserver misbehaving\b/i,
   /\btemporary failure in name resolution\b/i,
   /\bproxyconnect tcp\b/i,
-  /\b(?:unexpected )?EOF\b/i,
+  /\bunexpected EOF\b/i,
   /\bbroken pipe\b/i,
   /\bhttp2: client connection lost\b/i,
 ];
@@ -100,10 +104,10 @@ const TRANSPORT_FAILURES = [
 const HTTP_STATUS_TEXT = /\bHTTP(?:\/\d(?:\.\d)?)?\s+\d{3}\b/i;
 
 /**
- * Whether a failed read is a transport failure: the text that `gh` wrote names a known transport
- * failure, it names no HTTP status, and the read wrote no reply body. A status line decides first,
- * so a 4xx or 5xx reply whose body or error text also holds transport wording stays as it was
- * (#1312). Text that the server supplies arrives in the body, which is never scanned.
+ * Whether a failed read is a transport failure. Such a read names a known transport failure, names
+ * no HTTP status, and wrote no reply body. A status line decides first, so a 4xx or 5xx reply whose
+ * body or error text also holds transport wording stays as it was (#1312). Text that the server
+ * supplies arrives in the body, which is never scanned.
  */
 export function isTransportFailure({ stdout, stderr }) {
   const text = stderr.trim();
@@ -121,9 +125,9 @@ export function isTransportFailure({ stdout, stderr }) {
  *   stdout that is not JSON throws a raw `SyntaxError`
  */
 export async function ghApi(gh, args, cwd) {
-  const { status, stdout, stderr, transient, include } = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, transient, include, terminal } = await gh(["api", ...args], cwd);
   if (status !== 0) {
-    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include });
+    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include, terminal });
   }
   const text = stdout.trim();
   return text === "" ? null : JSON.parse(text);
@@ -159,8 +163,12 @@ export const isCleanServerError = ({ stdout, stderr }) =>
 export function ghReadError(label, result) {
   const { status, stderr } = result;
   const err = new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
-  if (isCleanServerError(result) || isTransportFailure(result)) {
+  const transport = isTransportFailure(result);
+  if (isCleanServerError(result) || transport) {
     err.transient = true;
+  }
+  if (transport) {
+    err.transport = true;
   }
   return err;
 }
@@ -333,20 +341,28 @@ async function readReply(read, args, cwd, state) {
         status: 1,
         stdout: "",
         stderr: `a Link header names a host other than the request host: ${foreign}`,
+        // A refused target is terminal, whatever its text, so the transport retry never applies.
+        terminal: true,
       },
     };
   }
   if (result.status !== 0) {
     // A reply with no status block is a failure that wrote no reply, so a transport failure is its
     // only retryable form (#1312). A reply with a status block keeps the 5xx rule.
+    const transport = reply === null && isTransportFailure(result);
     const transient =
       reply === null
-        ? isTransportFailure(result)
+        ? transport
         : RETRYABLE_STATUSES.has(reply.status) && isEmptyOrJson(reply.body);
     return {
       reply,
       targets,
-      end: { ...result, include: true, ...(transient ? { transient: true } : {}) },
+      end: {
+        ...result,
+        include: true,
+        ...(transient ? { transient: true } : {}),
+        ...(transport ? { transport: true } : {}),
+      },
     };
   }
   if (reply === null || reply.status < 200 || reply.status > 299) {
@@ -374,9 +390,9 @@ async function readReply(read, args, cwd, state) {
  * never requests that target, and it ends rather than return pages that a reply could have steered.
  * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
  * and the gate reads throw; a foreign `Link` target is no `unreadable` refusal, so every read throws
- * on it. `transient` is set on a failed result when the failed
- * request's first-line status is 500, 502, 503, or 504 and its body is empty or JSON, or when the
- * failure is a transport failure with no status block (#1312).
+ * on it. `transient` is set on a failed result for a first-line status of 500, 502, 503, or 504
+ * with a body that is empty or JSON. It is also set for a transport failure with no status block
+ * (#1312).
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
  * @param {string} endpoint the endpoint with no query
  * @param {string} cwd

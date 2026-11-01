@@ -708,8 +708,8 @@ test("a thrown PR read error leaves no gh call running", async () => {
   expect(live.active).toBe(0);
 });
 
-// Usefulness: verifies the --require-ci gate still refuses a finish on a transport failure, which
-// carries `transient` for the wait only, so the gate retries nothing (issue #1312).
+// Usefulness: verifies the --require-ci gate still refuses a finish on a transport failure.
+// The failure carries `transient` for the wait only, so the gate retries nothing (issue #1312).
 test("refuses a finish when a commit read fails with a transport failure", async () => {
   const failing = routes().map(([match, value]) =>
     match === HEAD_CHECK_RUNS

@@ -24,8 +24,8 @@ describe("isCleanServerError", () => {
 });
 
 describe("isTransportFailure", () => {
-  // Usefulness: the wait retries a transport failure that carries no HTTP status, and keeps a status
-  // line, a reply body, and an unknown failure text terminal (issue #1312).
+  // Usefulness: the wait retries a transport failure that carries no HTTP status.
+  // A status line, a reply body, and an unknown failure text stay terminal (issue #1312).
   it("accepts a transport failure with no HTTP status and no reply body", () => {
     expect(isTransportFailure(failed(DIAL_TIMEOUT))).toBe(true);
     expect(isTransportFailure(failed(CONNECTION_RESET))).toBe(true);
@@ -61,8 +61,9 @@ describe("ghReadError", () => {
 });
 
 describe("ghApiFailure", () => {
-  // Usefulness: a source and commit read carries `transient` for a transport failure with or without
-  // `--include`, and a reply that wrote a body stays terminal (issue #1312).
+  // Usefulness: a source and commit read carries `transient` for a transport failure.
+  // That holds with or without `--include`, and a reply that wrote a body stays terminal
+  // (issue #1312).
   it("marks a transport failure transient with or without a reply body", () => {
     expect(ghApiFailure("repos/x", { ...failed(DIAL_TIMEOUT), include: true }).transient).toBe(
       true,
