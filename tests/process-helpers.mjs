@@ -526,8 +526,10 @@ export async function shimStartPids(shimDir) {
  * Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also when calls start
  * at once, and then hangs. A test can let the before snapshot finish and stall the read that
  * follows. `run` gets `hungPid()` and `shimDir`. `hungPid()` resolves with the pid of the hung `git`
- * once it started. `shimDir` holds one `call-<n>` directory per call, each with a `record` file of
- * the claimed number and the pid (read it with `shimCallRecords`). The shim also writes
+ * once it started.
+ *
+ * `shimDir` holds one `call-<n>` directory per call, each with a `record` file of the claimed
+ * number and the pid (read it with `shimCallRecords`). The shim also writes
  * `started/<pid>` before its claim, which `shimStartPids` reads. The hung process carries the unique
  * shim directory in its command line. The helper ends it through `endOwnedProcess` if the test left
  * it alive, and removes the shim directory.
