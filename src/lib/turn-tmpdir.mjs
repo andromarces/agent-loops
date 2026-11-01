@@ -162,9 +162,8 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
  *
  * known-limit: a POSIX descendant that left the group of the child, and a Windows descendant below
  * a chain with no live link, are not found. A Codex shell command runs in its own process group
- * (codex-cli 0.166.0 on macOS), so the group of the dead CLI does not name its descendant. A group
- * id that the OS reused for a new group after the old one ended keeps the directory, with the
- * warning.
+ * (codex-cli 0.166.0 on macOS). The group of the dead CLI does not name its descendant. A group id
+ * that the OS reused for a new group after the old one ended keeps the directory, with the warning.
  */
 export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_MS) {
   if (record === undefined || record === null) return;
