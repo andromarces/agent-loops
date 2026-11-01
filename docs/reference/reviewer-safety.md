@@ -106,7 +106,7 @@ Avoid the effect:
 
 Not verified: Linux shells, other Codex versions, and a profile that clears other names.
 
-macOS result (2026-11-02, macOS 27.2, zsh 5.9, codex-cli 0.166.0): a `ZDOTDIR/.zprofile` line ran `unset GH_TOKEN`, and a marker showed that the login shell loaded it. The control and the default run printed `set`, because Codex runs the command in `zsh -c` from a shell snapshot. With `-c 'features.shell_snapshot=false'`, the command ran in `zsh -lc` and printed `unset`. With `-c 'allow_login_shell=false'`, the command printed `set` with the snapshot on and off. So the macOS default keeps the name, and the unset takes effect only when the snapshot is off. The probe set `GH_TOKEN=dummy-not-a-secret` and printed only `set` or `unset`.
+macOS result (2026-11-02, macOS 27.2, zsh 5.9, codex-cli 0.166.0): each result run printed its own `ps` row, parent chain, and `set` or `unset`. The control and the default run used `zsh -c` and printed `set`. With `-c 'allow_login_shell=false'`, with the snapshot on or off, the run used `zsh -c` and printed `set`. With `-c 'features.shell_snapshot=false'`, the run used `zsh -lc` and printed `unset`. A marker run printed `zshenv`, `zprofile`, `zlogin`, and `zshrc`, so the login shell loaded `.zprofile`. The probe set `GH_TOKEN` to a dummy value, and all six outer runs exited 0.
 
 #### Codex read-only child-spawn limit
 
