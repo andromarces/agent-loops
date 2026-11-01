@@ -23,12 +23,12 @@ Issue #1339 repeats the probe with a `SIGTERM` and with one `SIGINT`, on macOS 2
 The probe records these results.
 
 - `SIGTERM`: the signal was sent at `2026-11-01T21:09:37.872Z`, and the parent exited with the signal 4 ms later.
-- `SIGTERM` liveness: the CLI child, the server, the shell, `sh ./check.sh`, and `sleep 60` were live at the signal. All eight rows were dead 1.5 s after the signal, and no `orphan-write.txt` appeared within 75 s.
+- `SIGTERM` liveness: the CLI child, the server, the shell, `sh ./check.sh`, and `sleep 60` were live at the signal. All eight rows were dead 1506 ms after the signal, and no `orphan-write.txt` appeared within 75 s.
 - `SIGINT`: the signal was sent at `2026-11-01T21:11:17.609Z`, and the parent exited 130 in 458 ms.
-- `SIGINT` liveness: the same rows were live at the signal and dead 1.5 s after it. No `orphan-write.txt` appeared within 75 s.
+- `SIGINT` liveness: the same rows were live at the signal and dead 1960 ms after it. No `orphan-write.txt` appeared within 75 s.
 - Server ancestry, `SIGTERM`: CLI child 39788 (parent 39681, group 39788). Server 39806 (parent 39788, group 39806). Shell 40324 (parent 39806, group 40324). `sh ./check.sh` 40325, and `sleep 60` 40326.
 - Server ancestry, `SIGINT`: CLI child 42160 (parent 42053, group 42160). Server 42178 (parent 42160, group 42178). Shell 42739 (parent 42178, group 42739). `sh ./check.sh` 42740, and `sleep 60` 42741.
-- Mutant: a `SIGKILL` of the parent from the same driver left all eight rows live 1.5 s after the signal. The shell wrote `orphan-write.txt` 59943 ms after that signal.
+- Mutant: a `SIGKILL` of the parent from the same driver left all eight rows live 1505 ms after the signal. The shell wrote `orphan-write.txt` 59943 ms after that signal.
 
 ## Decision
 
@@ -37,7 +37,7 @@ The probe records these results.
 3. The operator check of ADR 0034 decision 4 covers an orchestrator turn. After a parent end by a signal other than `SIGINT`, the operator checks for a surviving orchestrator process or shell child. The operator also checks the state of the work tree before the next run. The check is stated in [Continue a run](../docs/reference/usage.md#continue-a-run).
 4. Every adapter keeps its current behavior. The Codex child keeps the ADR 0071 tree end on `SIGTERM` and `SIGINT`. The other adapters, including `opencode`, keep the execa process-group end.
 5. The decision has no test, because the code does not change. The acceptance allows this: the ADR records why the gap stays.
-6. The `opencode` adapter keeps the execa process-group end. The probe records no live command tree or opencode server 1.5 s after a parent `SIGTERM` or `SIGINT`. It records no orphan write within 75 s of the signal. The runtime adds no `treeEnd` to the `opencode` child, and the code does not change.
+6. The `opencode` adapter keeps the execa process-group end. The probe records no live command tree or opencode server 1506 ms after the `SIGTERM` and 1960 ms after the `SIGINT`. It records no orphan write within 75 s of the signal. The runtime adds no `treeEnd` to the `opencode` child, and the code does not change.
 
 ## Consequences
 
@@ -45,7 +45,8 @@ The probe records these results.
 - The probe recorded no transcript at the signal or at the end of the watch. The killed parent wrote no result, so no clean tree report preceded the write in that probe.
 - A `SIGINT` of the parent still runs `cancelOnSigInt`, and a second `SIGINT` still ends the live trees (ADR 0033). A `SIGTERM` received by the parent still runs the ADR 0071 walk for the Codex child. An `opencode` child keeps the execa group signal.
 - Reopen this decision on one of three events. A portable parent-death signal exists for the adapters. The runtime starts a supervisor that ends with the parent. A probe records a live `opencode` command tree after a parent signal other than `SIGKILL`.
-- Not verified: Linux and Windows. The macOS probe of issue #1339 verifies a `SIGTERM` and one `SIGINT` of an `opencode` parent with a shell tree, and the server ancestry. The issue #708 item `macOS or Linux: SIGTERM or SIGINT a live opencode orchestrator parent with a shell command tree` records the macOS result.
+- Not verified: Linux, Windows, a `SIGTERM` or `SIGINT` received by an `opencode` parent with a shell tree, and the parent link of the opencode server. The issue #708 item `macOS or Linux: SIGTERM or SIGINT a live opencode orchestrator parent with a shell command tree` tracks the probe.
+  - Result (2026-11-02): the macOS probe of issue #1339 verifies a `SIGTERM` and one `SIGINT` of an `opencode` parent with a shell tree. It also verifies the server ancestry. Linux and Windows remain unverified.
 - A parent `SIGTERM` or one `SIGINT` of an `opencode` orchestrator leaves no command tree or server on macOS. The operator check of ADR 0034 decision 4 still covers a `SIGKILL`, Linux, and Windows.
 
 ## Alternatives
@@ -78,5 +79,6 @@ Andro Marces
 - [ADR 0037: State the process rule in child prompts and add no dead-child report](0037-state-the-process-rule-in-child-prompts-and-add-no-dead-child-report.md)
 - [ADR 0071: End the Codex reviewer command tree on POSIX after a parent signal](0071-end-the-codex-reviewer-command-tree-on-posix-after-a-parent-signal.md)
 - Implementation: none.
-- Tests: none. See decision 5 and decision 6.
+- Tests: none. See decision 5.
+  - Decision 6 records no test, because the probe found no surviving tree or server.
 - [ADR Index](README.md)
