@@ -28,6 +28,22 @@ The runs root, the test-slot directory, and the session-record directory default
 - A child that runs an `npm run` script leaves no file in the npm cache `_logs` directory. A failing npm command leaves no debug log to read, and the user can set `npm_config_logs_max` to get one.
 - `exec` adds no pin to a spawn with another role, or none, and that spawn inherits the environment as before. A Codex turn of any role, the orchestrator included, still gets the pins from `withTurnTmpdir`.
 
+## Verification
+
+Issue #710 ran the live check on macOS 27.2 (26B123) at source head `5a33f11e03b4d7d5967c2ea6fdc41b7f5dee1788`, which includes `8f14f78`.
+
+- Each adapter ran one worker turn and one reviewer turn through `role dispatch` in a disposable Git repository.
+- Inside each turn the child set `TMP`, `TEMP`, and `TMPDIR` to another directory, then ran `test-slot --wait 120`.
+- The CLIs were Claude Code 2.1.316, codex-cli 0.166.0, GitHub Copilot CLI 1.0.106-2, opencode v0.0.0-dev-466, and agy 1.4.12.
+- The models were `haiku`, `gpt-6-luna` at low effort, `mai-code-1.1-flash`, `opencode-go/deepseek-v4.1-flash`, and `gemini-3.8-flash` at low effort.
+- Eight turns printed the parent runs, slot, and session-record roots, and listed a `slot-0.lock` entry in the parent slot directory.
+- Claude Code, Codex, OpenCode, and agy supplied those eight turns, one worker and one reviewer each.
+- Copilot ran both turns, but the CLI refused each shell call with `Permission denied because no interactive user response was available`.
+- Both Copilot envelopes carried `shellDenied: true`, which ADR 0035 records as the shell limitation.
+- A comparison script matched each printed root against the saved parent values.
+- A mutant expected runs root failed all eight matches.
+- No result contradicts this ADR, so no bug was opened.
+
 ## Alternatives
 
 1. **Render the wrapper command with an explicit `AGENT_LOOP_TEST_SLOTS_ROOT`.** Not taken. It covers the slot directory only, not the runs root or the session-record directory.
@@ -42,6 +58,7 @@ Andro Marces
 
 - [Issue #970](https://github.com/andromarces/agent-loops/issues/970)
 - [Issue #995](https://github.com/andromarces/agent-loops/issues/995)
+- [Issue #710: Verification checklist: live runs](https://github.com/andromarces/agent-loops/issues/710)
 - [PR #996](https://github.com/andromarces/agent-loops/pull/996)
 - [PR #973](https://github.com/andromarces/agent-loops/pull/973)
 - Implementation: `rootPins` in `src/lib/root-pins.mjs`, `exec` and `withNpmLogSettings` in `src/lib/exec.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`; tests in `tests/lib/exec.test.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/reference/architecture.md`
