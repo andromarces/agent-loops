@@ -65,6 +65,7 @@ Andro Marces
 ## Links
 
 - [Pull request #1336](https://github.com/andromarces/agent-loops/pull/1336)
+- [Pull request #1341](https://github.com/andromarces/agent-loops/pull/1341)
 - [Issue #1333: An orchestrator command writes to the work tree after the headless parent is killed](https://github.com/andromarces/agent-loops/issues/1333)
 - [Issue #1339: Extend the ADR 0071 tree end to the opencode orchestrator if its command tree outlives a parent signal](https://github.com/andromarces/agent-loops/issues/1339)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
