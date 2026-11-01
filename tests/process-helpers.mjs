@@ -523,39 +523,51 @@ export async function shimStartPids(shimDir) {
 }
 
 /**
- * POSIX only. Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also
- * when calls start at once, and then hangs, so a test can let the before snapshot finish and stall
- * the read that follows. `run` gets `hungPid()` and `shimDir`. `hungPid()` resolves with the pid of
- * the hung `git` once it started. `shimDir` holds one `call-<n>` directory per call, each with a
- * `record` file of the claimed number and the pid (read it with `shimCallRecords`). The shim also
- * writes `started/<pid>` before its claim, which `shimStartPids` reads. The hung process
- * carries the unique shim directory in its command line. The helper ends it through
- * `endOwnedProcess` if the test left it alive, and removes the shim directory.
+ * Puts a `git` on PATH that runs the real `git` for its first `passes` calls, also when calls start
+ * at once, and then hangs. A test can let the before snapshot finish and stall the read that
+ * follows. `run` gets `hungPid()` and `shimDir`. `hungPid()` resolves with the pid of the hung `git`
+ * once it started. `shimDir` holds one `call-<n>` directory per call, each with a `record` file of
+ * the claimed number and the pid (read it with `shimCallRecords`). The shim also writes
+ * `started/<pid>` before its claim, which `shimStartPids` reads. The hung process carries the unique
+ * shim directory in its command line. The helper ends it through `endOwnedProcess` if the test left
+ * it alive, and removes the shim directory.
+ *
+ * On POSIX the shell shim `exec`s the hung node process, so one pid carries the call. On Windows a
+ * `git.cmd` wrapper starts the hung node process, and the record names that node pid. The runtime
+ * kills the process tree, so the wrapper ends with it. On Windows the helper ends no process, since
+ * no cheap marker read exists there, and a leftover shim ends at its own ceiling.
  */
 export async function withGitHangingAfter(passes, run) {
-  const realGit = (await execa("sh", ["-c", "command -v git"])).stdout.trim();
+  const realGit =
+    process.platform === "win32"
+      ? (await execa("where", ["git"])).stdout.split(/\r?\n/).find((line) => line.trim() !== "")
+      : (await execa("sh", ["-c", "command -v git"])).stdout.trim();
   const dir = await mkdtemp(join(tmpdir(), "git-hang-after-"));
   const pidFile = join(dir, "hung.pid");
   await mkdir(join(dir, "started"));
-  await writeFile(
-    join(dir, "git"),
-    [
-      "#!/bin/sh",
-      // The marker records the pid of a call that ran the shim. A failed `mkdir` never ends the
-      // shell, so the claim below always runs.
-      `mkdir '${dir}/started/'$$ 2>/dev/null`,
-      // Calls can start at once, as the reads of one snapshot do. `mkdir` is atomic, so each call
-      // claims the first free number. A counter file loses updates and can be read half written.
-      "n=0",
-      `while ! mkdir '${dir}/call-'$n 2>/dev/null; do n=$((n + 1)); done`,
-      // The record holds the claimed number and the pid, which `exec` keeps.
-      `echo "$n $$" > '${dir}/call-'$n/record`,
-      `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
-      `echo $$ > '${pidFile}'`,
-      `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,
-    ].join("\n"),
-    { mode: 0o755 },
-  );
+  if (process.platform === "win32") {
+    await writeWindowsGitShim(dir, { passes, realGit, pidFile });
+  } else {
+    await writeFile(
+      join(dir, "git"),
+      [
+        "#!/bin/sh",
+        // The marker records the pid of a call that ran the shim. A failed `mkdir` never ends the
+        // shell, so the claim below always runs.
+        `mkdir '${dir}/started/'$$ 2>/dev/null`,
+        // Calls can start at once, as the reads of one snapshot do. `mkdir` is atomic, so each call
+        // claims the first free number. A counter file loses updates and can be read half written.
+        "n=0",
+        `while ! mkdir '${dir}/call-'$n 2>/dev/null; do n=$((n + 1)); done`,
+        // The record holds the claimed number and the pid, which `exec` keeps.
+        `echo "$n $$" > '${dir}/call-'$n/record`,
+        `if [ "$n" -lt ${passes} ]; then exec '${realGit}' "$@"; fi`,
+        `echo $$ > '${pidFile}'`,
+        `exec '${process.execPath}' -e 'setTimeout(() => {}, 30000)' '${dir}'`,
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+  }
   const hungPid = () =>
     pollUntil(async () => {
       const text = await readFile(pidFile, "utf8").catch(() => "");
@@ -565,9 +577,40 @@ export async function withGitHangingAfter(passes, run) {
     return await withShimOnPath(dir, () => run({ hungPid, shimDir: dir }));
   } finally {
     const text = await readFile(pidFile, "utf8").catch(() => "");
-    if (/^\d+\n$/.test(text)) {
+    if (/^\d+\n$/.test(text) && process.platform !== "win32") {
       await endOwnedProcess(Number(text), dir);
     }
     await removePath(dir);
   }
+}
+
+// Writes the Windows shim: a `git.cmd` wrapper and the node script that records the call and hangs.
+async function writeWindowsGitShim(dir, { passes, realGit, pidFile }) {
+  const script = join(dir, "git-shim.cjs");
+  await writeFile(
+    script,
+    [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      'const { spawnSync } = require("node:child_process");',
+      "const [dir, passes, realGit, ...args] = process.argv.slice(2);",
+      'try { fs.mkdirSync(path.join(dir, "started", String(process.pid))); } catch {}',
+      "let n = 0;",
+      "for (;;) {",
+      '  try { fs.mkdirSync(path.join(dir, "call-" + n)); break; }',
+      '  catch (err) { if (err.code !== "EEXIST") throw err; n += 1; }',
+      "}",
+      'fs.writeFileSync(path.join(dir, "call-" + n, "record"), `${n} ${process.pid}\\n`);',
+      "if (n < Number(passes)) {",
+      '  const run = spawnSync(realGit, args, { stdio: "inherit" });',
+      "  process.exit(run.status ?? 1);",
+      "}",
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, \`\${process.pid}\\n\`);`,
+      "setTimeout(() => {}, 30000);",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(dir, "git.cmd"),
+    `@echo off\r\n"${process.execPath}" "${script}" "${dir}" ${passes} "${realGit}" %*\r\n`,
+  );
 }
