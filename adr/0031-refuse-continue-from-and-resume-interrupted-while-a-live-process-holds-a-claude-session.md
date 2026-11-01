@@ -47,6 +47,12 @@ The interactive `agent-loop role dispatch` path has the same exposure. A `role d
   - The continued run started 1648 ms after the signal and ended with exit code 1 in 124 ms. It dispatched no turn. The stderr holds `the worker session 3a5b370a-d254-4fc4-af7e-d535ea9abfae is held by process 6921, a leftover of an earlier run`.
   - It ends `End that process, or wait for it to finish, and run again`. The stdout held only the two lines of the process-table read, `ps started` and `ps finished in 23ms (exit 0)`.
   - The driver ended the six recorded processes by exact pid, and a later check found none alive.
+- Live SIGINT during the process-table read of `--resume-interrupted` on macOS, 2026-11-02 (decision 2). Host: macOS 27.2 (Darwin 27.2.0, arm64), Node v27.0.0-alpha.0.0.0, agent-loop source `cc5ed5d6`. A logging `ps` shim on `PATH` slept 6 s and wrote its pid, parent pid, start time, and arguments to a file. The probe waited for the shim line with `-eo pid=,command=`, the holder read, then sent one SIGINT to the dispatch pid.
+  - A real `role dispatch` init ran in a disposable repository. A cancel of its first turn left the lifecycle `interrupted` and the Claude session id `f7a31057-05a5-458e-8c71-99184d2b382a`.
+  - A real `role dispatch --resume-interrupted` ran on that state. The dispatch pid was 18375, and the shim pid 18579 was alive at the signal time `2026-11-01T20:56:36.237Z`.
+  - The dispatch exited 130 with the stdout envelope `{"status":"error","error":"Interrupted by SIGINT"}`. The stderr held only `[agent-loop] info: ps started`.
+  - The lifecycle stayed `interrupted`, `stepsUsed` stayed 1, and the state file kept its SHA-256. The shim was not alive at a check 300 ms after the exit, and no observed child outlived the exit.
+  - Mutant: a source copy with the `isCanceled` branch of `errorResult` removed exited 1 with `process table read was canceled`. The check failed as required.
 
 ## Alternatives
 
