@@ -44,6 +44,20 @@ The prompt asked for one shell command and for only its output.
 Exit code of every Copilot call was 0.
 The flag form works for one named command. Decision 1 stays, because the adapter still cannot know the validation commands of a task. This check changes no decision, so no new ADR is needed.
 
+### Shell denial event stream (issue #710)
+
+The host was macOS 27.2 (arm64), Node v27.0.0-alpha.0.0.0, and GitHub Copilot CLI 1.0.106-2. The probe ran in a scratch directory under the temporary directory. The call passed the runtime arguments directly, because the adapter envelope holds no event stream. The arguments were the runtime arguments `--session-id <new uuid> -s --no-ask-user --output-format json`, with the prompt on standard input. The prompt asked for `node --version` and for only its output. The exit code was 0.
+
+- `tool.execution_start` named the call: `data.toolName` was `bash` and `data.arguments.command` was `node --version`.
+- `tool.execution_complete` reported the denial: `data.success` was `false`, `data.error.code` was `denied`, and `data.toolTelemetry.properties.shell_error_category` was `permission_denied`.
+- `assistant.message` held the denial text whole in `data.content`, with `data.phase` equal to `final_answer`.
+- `assistant.message_delta` streamed that text in 24 pieces, which join to the assistant text.
+
+The `data.error.message` and the assistant text began with `Permission denied because no interactive user response was available.`
+The message added one retry instruction after that sentence.
+The runtime denial text is the prefix of that message.
+Decision 5 stays. An event-based flag needs the `tool.execution_complete` with `data.error.code` equal to `denied`. The adapter keeps the text match, because a model that quotes the text with no real denial is still flagged.
+
 ## Alternatives
 
 1. **`--allow-all-tools`**: rejected. It lifts every tool prompt, including write and network tools, and the issue asks for no broad flag.
@@ -63,5 +77,5 @@ Andro Marces
 - [Issue #713: A Copilot worker turn is denied shell commands that the worker contract requires](https://github.com/andromarces/agent-loops/issues/713)
 - [ADR 0014: Extend the step budget of a live run](0014-extend-the-step-budget-of-a-live-run.md)
 - Implementation: `runCopilot` in `src/agents/copilot.mjs`, `invoke` and `runChild` in `src/child-turn.mjs`, `dispatchPayload` in `src/role-dispatch.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`, and the worker preamble in `src/prompts/worker.mjs`. The rule is also stated in `docs/orchestrator-instructions.md` and [Supported agents](../docs/reference/architecture.md#supported-agents).
-- Live checks not verified: the Copilot event that reports a denial. The scoped allow flag is recorded under Consequences, on a Windows host.
+- Live checks: the denial event stream is recorded under Consequences on macOS. The scoped allow flag is recorded there on a Windows host.
 - [ADR Index](README.md)
