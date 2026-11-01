@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0071: End the Codex reviewer command tree on POSIX after a parent signal](0071-end-the-codex-reviewer-command-tree-on-posix-after-a-parent-signal.md): decisions 1, 2, and 5. The decisions on detection before a turn and on the operator check remain in force.
 
 ## Date
 
