@@ -177,6 +177,13 @@ Two directions were weighed. The first exempts the transcript path from the chec
   - The parent exited with signal `SIGTERM` 6 ms after the call. The row of the trigger process read `5181 5175 5175 sh ./check.sh`. The other rows were the Codex CLI `4246 2414 4246`, the wrapper `5175`, and `5182 5181 5175 sleep 60`.
   - The `after1_5s` entries of the probe log hold `alive: false` and `row: null` for the Codex CLI `4246` and its helper pids. Only `5175`, `5181`, and `5182` were alive, and the row of `5175` held parent pid 1.
   - `orphan-write-rev.txt` appeared 75498 ms after the spawn, which is 60.157 s after the signal, with the content `ORPHAN`. The writer is the command tree in group 5175, outside the group of the Codex child. The Codex process did not survive to the write.
+  - Orchestrator write probe (issue #708 item B, 2026-11-02). The probe run saved no host facts, and these were read after the probes. Host: macOS 27.2 (arm64, build 26B123), Node v27.0.0-alpha.0.0.0, opencode v0.0.0-dev-466, and Git 2.56.0. The branch reflog, also read after the probes, holds `9767ef3f` across the probe times. The probe ran in a disposable Git repository under the private temporary directory, with a separate `AGENT_LOOP_RUNS_ROOT` and a transcript outside the work tree. The driver killed only the parent that it started, by exact pid.
+    - Command: `node src/cli.mjs --orchestrator opencode --orchestrator-model opencode-go/gpt-5.6-luna --worker claude --reviewer claude --mode review-only --max-steps 3 --timeout 300 --cwd <repo> --transcript <file> --task <task>`. The task named the operator-approved write and asked the orchestrator to run `sh ./check.sh`. The committed script ran `sleep 60` and then `echo ORPHAN > orphan-write-orch.txt`.
+    - Result: the orchestrator turn started `sh ./check.sh` 6918 ms after the spawn. The parent received `SIGKILL` 6957 ms after the spawn and exited with signal `SIGKILL` 4 ms later. The work tree was clean at the signal, and the target file did not exist.
+    - Survivors: at 1.581 s after the exit, the opencode CLI `14919`, its server `14967`, and the shell tree `23328 23329` all ran. The shell rows read `23328 14967 23328 sh ./check.sh` and `23329 23328 23328 sleep 60`.
+    - Write: `orphan-write-orch.txt` appeared 59935 ms after the signal, with the content `ORPHAN`. At that sample, the opencode CLI and its server were alive. The shell tree ended at the write sample, and the opencode processes ended 1592 ms later.
+    - Work tree and transcript: `git status` read `?? orphan-write-orch.txt` at the end of a watch of 120125 ms. No transcript existed at the signal or after it.
+    - The mutation check saw no turn result, so no check reported the tree clean. The write repeats the orphan behavior of the Claude worker probe above for an orchestrator turn. Issue #1333 records the follow-up.
 - Copilot probe (issue #641). Host: Windows 11 Pro 10.0.26220, Node v26.8.1. Copilot CLI 1.0.95 ran the first probe and 1.0.96-2 ran the second, because the CLI updated itself between them. Each probe ran in a disposable Git repository outside the repository under test.
   - Command: `copilot --session-id <fresh uuid> -s --no-ask-user --output-format json --allow-all-tools`, with the prompt on stdin: remember a codeword, then run `ping -n 60 127.0.0.1 > nul & echo PROBE_TOOL_DONE`. The driver read the stdout events and ended the process tree with `taskkill /F /T` 1.5 s after the first `tool.execution_start` event.
   - First call, both probes: exit 1, a `tool.execution_start` event, no `tool.execution_complete` event, and no `result` event.
@@ -217,6 +224,7 @@ Andro Marces
 - [Issue #709](https://github.com/andromarces/agent-loops/issues/709)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [Issue #1326: End the Codex reviewer command tree on POSIX after a parent signal](https://github.com/andromarces/agent-loops/issues/1326)
+- [Issue #1333: An orchestrator command writes to the work tree after the headless parent is killed](https://github.com/andromarces/agent-loops/issues/1333)
 - [Issue #613](https://github.com/andromarces/agent-loops/issues/613)
 - [Issue #627](https://github.com/andromarces/agent-loops/issues/627)
 - [Issue #647](https://github.com/andromarces/agent-loops/issues/647)
