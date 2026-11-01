@@ -28,6 +28,26 @@ The runs root, the test-slot directory, and the session-record directory default
 - A child that runs an `npm run` script leaves no file in the npm cache `_logs` directory. A failing npm command leaves no debug log to read, and the user can set `npm_config_logs_max` to get one.
 - `exec` adds no pin to a spawn with another role, or none, and that spawn inherits the environment as before. A Codex turn of any role, the orchestrator included, still gets the pins from `withTurnTmpdir`.
 
+## Verification
+
+Issue #710 ran the live check on macOS 27.2 (26B123) at source head `5a33f11e03b4d7d5967c2ea6fdc41b7f5dee1788`, which includes `8f14f78`.
+
+- Claude Code, Codex, OpenCode, and agy each ran one worker turn and one reviewer turn through `role dispatch` in a disposable Git repository.
+- Each of those eight turns set `TMP`, `TEMP`, and `TMPDIR` to one other existing directory, then ran `test-slot --wait 120`.
+- Each turn printed its TMP, TEMP, and TMPDIR values, the three parent roots, the exact `test-slot` command, and the script hash.
+- Each held turn read its lock file and printed the owner pid, which equaled the pid of its own `test-slot` process.
+- The lock nonce matched the marker nonce, and the parent slot directory listing held that lock file.
+- The nested dispatch removed `AGENT_LOOP_TEST_SLOT_HELD`, and each child printed `child_slot_marker=<unset>`.
+- The saved fields are `child_slot_marker`, `TMP`, `TEMP`, `TMPDIR`, `runs`, `records`, `slots`, `marker_lock`, `slot_owner`, `slot_owner_pid`, `shell_ppid`, `owner_match`, `slot_files`, `test_slot_exit`, and `script_sha256`.
+- The CLIs were Claude Code 2.1.316, codex-cli 0.166.0, GitHub Copilot CLI 1.0.106-2, opencode v0.0.0-dev-466, and agy 1.4.12.
+- The models were `haiku`, `gpt-6-luna` at low effort, `mai-code-1.1-flash`, `opencode-go/deepseek-v4.1-flash`, and `gemini-3.8-flash` at low effort.
+- Copilot ran both turns, but the CLI refused each shell call with `Permission denied because no interactive user response was available`.
+- Both Copilot envelopes carried `shellDenied: true`, which ADR 0035 records as the shell limitation.
+- A comparison required the parent roots, a moved `TMPDIR`, no inherited marker, and a lock owned by the turn.
+- Mutants for a wrong runs root, a lock owned by another pid, and an inherited marker each failed all eight turns.
+- Eight of the ten turns matched, and the two Copilot turns did not run the probe.
+- No result contradicts this ADR, so no bug was opened.
+
 ## Alternatives
 
 1. **Render the wrapper command with an explicit `AGENT_LOOP_TEST_SLOTS_ROOT`.** Not taken. It covers the slot directory only, not the runs root or the session-record directory.
@@ -42,8 +62,10 @@ Andro Marces
 
 - [Issue #970](https://github.com/andromarces/agent-loops/issues/970)
 - [Issue #995](https://github.com/andromarces/agent-loops/issues/995)
+- [Issue #710: Verification checklist: live runs](https://github.com/andromarces/agent-loops/issues/710)
 - [PR #996](https://github.com/andromarces/agent-loops/pull/996)
 - [PR #973](https://github.com/andromarces/agent-loops/pull/973)
+- [PR #1338](https://github.com/andromarces/agent-loops/pull/1338)
 - Implementation: `rootPins` in `src/lib/root-pins.mjs`, `exec` and `withNpmLogSettings` in `src/lib/exec.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`; tests in `tests/lib/exec.test.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/reference/architecture.md`
 - [ADR 0039: Machine-wide test slot](0039-machine-wide-test-slot.md)
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
