@@ -30,9 +30,9 @@ The probe holds the shell rows `23328 14967 23328 sh ./check.sh` and `23329 2332
 
 - A command of an orchestrator turn can write to the work tree after a `SIGKILL` of the parent. The runtime reports nothing for it.
 - The probe recorded no transcript at the signal or at the end of the watch. The killed parent wrote no result, so no clean tree report preceded the write in that probe.
-- A `SIGINT` of the parent still runs `cancelOnSigInt`, and a second `SIGINT` still ends the live trees (ADR 0033). A `SIGTERM` of a Codex child still runs the ADR 0071 walk. An `opencode` child keeps the execa group signal.
+- A `SIGINT` of the parent still runs `cancelOnSigInt`, and a second `SIGINT` still ends the live trees (ADR 0033). A `SIGTERM` received by the parent still runs the ADR 0071 walk for the Codex child. An `opencode` child keeps the execa group signal.
 - Reopen this decision on one of three events. A portable parent-death signal exists for the adapters. The runtime starts a supervisor that ends with the parent. A probe records a live `opencode` command tree after a parent signal other than `SIGKILL`.
-- Not verified: Linux, Windows, a `SIGTERM` or `SIGINT` of an `opencode` parent with a shell tree, and the parent link of the opencode server.
+- Not verified: Linux, Windows, a `SIGTERM` or `SIGINT` received by an `opencode` parent with a shell tree, and the parent link of the opencode server. The issue #708 item `macOS or Linux: SIGTERM or SIGINT a live opencode orchestrator parent with a shell command tree` tracks the probe.
 
 ## Alternatives
 
@@ -42,7 +42,7 @@ The probe holds the shell rows `23328 14967 23328 sh ./check.sh` and `23329 2332
 4. **Detect and refuse the next run**: rejected. A stored group id can name a reused group. The next run can start after the late write, so the refusal adds no bound.
 5. **Kill the process group of the parent**: rejected. The probe tree led its own group, so a group signal never reaches it.
 6. **Use `PR_SET_PDEATHSIG` or a cgroup**: rejected. Node exposes neither. `PR_SET_PDEATHSIG` is Linux-only, and the probe host is macOS.
-7. **Extend the ADR 0071 walk to the `opencode` adapter**: deferred. The probe signal was `SIGKILL`, so the walk never runs on that path. The probe records no parent link from the opencode server to the CLI child. Reopen it with a probe of a `SIGTERM` or `SIGINT` of an `opencode` parent.
+7. **Extend the ADR 0071 walk to the `opencode` adapter**: deferred. The probe signal was `SIGKILL`, so the walk never runs on that path. The probe records no parent link from the opencode server to the CLI child. Reopen it with the issue #708 probe of an `opencode` parent signal and its server ancestry.
 
 ## Authors
 
