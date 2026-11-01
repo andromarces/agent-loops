@@ -32,16 +32,20 @@ The runs root, the test-slot directory, and the session-record directory default
 
 Issue #710 ran the live check on macOS 27.2 (26B123) at source head `5a33f11e03b4d7d5967c2ea6fdc41b7f5dee1788`, which includes `8f14f78`.
 
-- Each adapter ran one worker turn and one reviewer turn through `role dispatch` in a disposable Git repository.
-- Inside each turn the child set `TMP`, `TEMP`, and `TMPDIR` to another directory, then ran `test-slot --wait 120`.
+- Claude Code, Codex, OpenCode, and agy each ran one worker turn and one reviewer turn through `role dispatch` in a disposable Git repository.
+- Each of those eight turns set `TMP`, `TEMP`, and `TMPDIR` to one other existing directory, then ran `test-slot --wait 120`.
+- Each turn printed its TMP, TEMP, and TMPDIR values, the three parent roots, and the exact `test-slot` command it ran.
+- Each held turn read its lock file and printed the owner pid, which equaled the pid of its own `test-slot` process.
+- The lock nonce matched the marker nonce, and the parent slot directory listing held that lock file.
+- The nested dispatch removed `AGENT_LOOP_TEST_SLOT_HELD`, and each child printed `child_slot_marker=<unset>`.
+- The saved fields are `child_slot_marker`, `TMP`, `TEMP`, `TMPDIR`, `runs`, `records`, `slots`, `marker_lock`, `slot_owner`, `slot_owner_pid`, `shell_ppid`, `owner_match`, `slot_files`, and `test_slot_exit`.
 - The CLIs were Claude Code 2.1.316, codex-cli 0.166.0, GitHub Copilot CLI 1.0.106-2, opencode v0.0.0-dev-466, and agy 1.4.12.
 - The models were `haiku`, `gpt-6-luna` at low effort, `mai-code-1.1-flash`, `opencode-go/deepseek-v4.1-flash`, and `gemini-3.8-flash` at low effort.
-- Eight turns printed the parent runs, slot, and session-record roots, and listed a `slot-0.lock` entry in the parent slot directory.
-- Claude Code, Codex, OpenCode, and agy supplied those eight turns, one worker and one reviewer each.
 - Copilot ran both turns, but the CLI refused each shell call with `Permission denied because no interactive user response was available`.
 - Both Copilot envelopes carried `shellDenied: true`, which ADR 0035 records as the shell limitation.
-- A comparison script matched each printed root against the saved parent values.
-- A mutant expected runs root failed all eight matches.
+- A comparison required the parent roots, a moved `TMPDIR`, no inherited marker, and a lock owned by the turn.
+- Mutants for a wrong runs root, a lock owned by another pid, and an inherited marker each failed all eight turns.
+- Eight of the ten turns matched, and the two Copilot turns did not run the probe.
 - No result contradicts this ADR, so no bug was opened.
 
 ## Alternatives
