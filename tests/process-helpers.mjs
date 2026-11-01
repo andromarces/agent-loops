@@ -588,8 +588,8 @@ export async function withGitHangingAfter(passes, run) {
         // claims the first free number. A counter file loses updates and can be read half written.
         "n=0",
         // A number counts only when this call created the directory and its record names this call.
-        // A `mkdir` that reports success without the directory, and a directory lost before the
-        // record, both move to the next number (issue #1258).
+        // If `mkdir` reports success without a directory, or the record is lost, the call moves to
+        // the next number (issue #1258).
         "while :; do",
         `  if mkdir '${dir}/call-'$n 2>/dev/null; then`,
         `    if (set -C; echo "$n $$" > '${dir}/call-'$n/record) 2>/dev/null; then`,

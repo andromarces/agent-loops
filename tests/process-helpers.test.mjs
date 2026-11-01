@@ -484,8 +484,9 @@ test.skipIf(process.platform === "win32")(
   30_000,
 );
 
-// Usefulness: verifies a call counts a number only when its own directory and record exist, so a
-// `mkdir` that reports success without the directory cannot add an extra exit-0 call (issue #1258).
+// Usefulness: verifies a call counts a number only when its own directory and record exist. The
+// test injects one `mkdir` that reports success without the directory. An exit-0 call without its
+// record fails here (issue #1258).
 test.skipIf(process.platform === "win32")(
   "withGitHangingAfter claims a number only when its call directory holds its record",
   async () => {
