@@ -29,6 +29,13 @@ ADR 0058 removes the turn directory of a dispatch that died mid-turn, and record
 - A descendant that leaves the group of the child, with `setsid` for example, is not found.
   - Observed on 2026-11-01 with codex-cli 0.166.0 on macOS (issue #1318). The CLI pid 38377 led group 38377, and the `sh -c` wrapper pid 39025 led group 39025 with parent 38377. The `sleep 987` descendant pid 39026 ran in group 39025. After `SIGKILL` to the dispatch and the CLI tree, pid 39026 was alive and group 38377 was empty. The saved listing was `["al-MCmHAp"]` while the turn ran and `[]` after the next dispatch. That dispatch removed the directory and logged no turn-directory warning.
 - The group check runs on POSIX only. Its live check is open on issue #707 (Linux) and issue #708 (macOS).
+  - macOS live check (2026-11-01, issue #708). Host: macOS 27.2 (arm64), Node v27.0.0-alpha.0.0.0, Claude Code 2.1.316, codex-cli 0.166.0, and Git 2.56.0. Repository head `4145e480`.
+    - Codex turn (the item's configuration): a `role dispatch` worker turn under one fixed `TMPDIR` ran `sh -c 'sleep 60'`. The rows at the signal read `95648 95647 95643 ... role dispatch`, `95713 95648 95713 .../codex exec`, and `96875 95713 96875 sleep 60`.
+    - After the kill, the t+1.5 s line of the probe timeline records the descendant alive and the CLI group empty. The row read `96875 1 96875 sleep 60`. A signal 0 to group 95713 returned ESRCH. The listings were `[]` before the turn, `["al-p4nq2h"]` during it, and `[]` after the next call.
+    - The next call removed `al-p4nq2h` while pid 96875 ran, and warned only about the stale lock. The Codex child starts its shell command in its own group, so the group check does not name the descendant. The item that requires a descendant in the CLI group stays unticked.
+    - Group keep check (a Claude turn): the CLI started a configured MCP server in its own group. The rows read `97170 97104 97104 sleep 987`. After the kill, the t+1.5 s line of the probe timeline records the descendant alive and the CLI group alive. The row read `97170 1 97104 sleep 987`. A signal 0 to group 97104 succeeded.
+    - The next call kept `al-RpK3qR` and warned that a process in group 97104 can still run. The probe ended pid 97170 by exact pid, and a signal 0 to group 97104 then returned ESRCH. A later call ended with exit code 1 and listed `al-RpK3qR` again, so the kept directory stayed. Issue #1329 records that result.
+    - `tests/lib/turn-tmpdir.test.mjs` passed on this host (9 tests). The run used the test-slot wrapper with `--if-held`.
 - The dispatch that died in the unrecorded window leaves its directory for a person to delete by hand.
 
 ## Alternatives
@@ -46,6 +53,8 @@ Andro Marces
 - [PR #1230](https://github.com/andromarces/agent-loops/pull/1230)
 - [Issue #1318](https://github.com/andromarces/agent-loops/issues/1318)
 - [PR #1320](https://github.com/andromarces/agent-loops/pull/1320)
+- [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
+- [Issue #1329: Remove a kept turn directory after the group of the dead child ends](https://github.com/andromarces/agent-loops/issues/1329)
 - Supersedes (partially): [ADR 0058](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:

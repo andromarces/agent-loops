@@ -46,6 +46,12 @@ The issue leaves three options open: leave no such command after a parent end, d
   - Codex gains a pre-assigned session id, so a flag check can find the holder of a first turn.
   - A verified call exposes the working directory of a process on Windows and POSIX.
 - Not verified: a Codex reviewer that chooses to write, a write-capable Claude orchestrator, Linux, and the cause of the first-run descendants ending with the `SIGKILLed` parent.
+- Live `SIGTERM` probe on macOS (issue #708). Host: macOS 27.2 (arm64) and Node v27.0.0-alpha.0.0.0. CLI versions: codex-cli 0.166.0 and Claude Code 2.1.316. Tools: Git 2.56.0. Repository head: `4145e480`.
+  - The reviewer ran under `--reviewer-workspace-write` with `gpt-5.6-luna` and effort `low`. Its prompt ran the committed `check.sh`, with `sleep 60` and then `echo ORPHAN > orphan-write-rev.txt`. The driver sent `SIGTERM` to the headless parent 15341 ms after the spawn. No continued run followed.
+  - The parent exited with signal `SIGTERM` 6 ms after the call. The row of the trigger process read `5181 5175 5175 sh ./check.sh`. The other rows were the Codex CLI `4246 2414 4246`, the wrapper `5175`, and `5182 5181 5175 sleep 60`.
+  - The `after1_5s` entries of the probe log hold `alive: false` and `row: null` for the Codex CLI `4246` and its helper pids. Only `5175`, `5181`, and `5182` were alive, and the row of `5175` held parent pid 1.
+  - `orphan-write-rev.txt` appeared 60.157 s after the signal, with the content `ORPHAN`. The writer is the command tree in group 5175, outside the group of the Codex child. The Codex process did not survive to the write.
+  - The result meets the first reopen condition in the form of a surviving command outside the process group. Alternatives 2 and 3 stay deferred, because no Codex process survived to the write. Alternative 1 reopens, and a decision on a tree end that covers a descendant group is open in issue #1326. This decision stays in force until that decision, and no code changed here.
 
 ## Alternatives
 
@@ -79,6 +85,7 @@ Andro Marces
 - [Issue #712](https://github.com/andromarces/agent-loops/issues/712)
 - [Issue #692](https://github.com/andromarces/agent-loops/issues/692)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
+- [Issue #1326: End the Codex reviewer command tree on POSIX after a parent signal](https://github.com/andromarces/agent-loops/issues/1326)
 - [ADR 0019: Opt-in workspace-write sandbox for the Codex reviewer](0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0031: Refuse --continue-from and --resume-interrupted while a live process holds a Claude session](0031-refuse-continue-from-and-resume-interrupted-while-a-live-process-holds-a-claude-session.md)
