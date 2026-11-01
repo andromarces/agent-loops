@@ -434,6 +434,15 @@ while any of the session's runs is non-terminal.
 Every command for a run passes that run's `--cwd`. Each run ends with its own
 `finish` or `abort`, and the guard releases only after every run is terminal.
 
+Runs on one host share the test slot table, whose default count is 1 (ADR 0046).
+A targeted test run with `--if-held` waits while any slot is held (ADR 0044). A
+reviewer turn can then wait behind a full suite of another run. That wait, or
+exit 75 from the wrapper, can leave a reviewer turn with no local test run. The
+required CI checks are then its only test evidence, as
+[Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
+A parent that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the
+first dispatch, but 2 slots overloaded both measured hosts (ADR 0046).
+
 Workers of runs in one repository can each create the same shared tracking issue, or take the same
 sequential identifier, such as the next ADR number. Rules:
 [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md).
