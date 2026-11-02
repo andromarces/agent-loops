@@ -58,6 +58,7 @@ The probe records these results.
 5. **Kill the process group of the parent**: rejected. The probe tree led its own group, so a group signal never reaches it.
 6. **Use `PR_SET_PDEATHSIG` or a cgroup**: rejected. Node exposes neither. `PR_SET_PDEATHSIG` is Linux-only, and the probe host is macOS.
 7. **Extend the ADR 0071 walk to the `opencode` adapter**: deferred. The probe signal was `SIGKILL`, so the walk never runs on that path. The probe records no parent link from the opencode server to the CLI child. Reopen it with the issue #708 probe of an `opencode` parent signal and its server ancestry.
+   - Outcome (2026-11-02): the macOS probe of issue #1339 met the reopen condition. [Decision 6](#decision) rejects the extension on macOS and keeps the execa process-group end. The Linux item in issue #707 is `opencode orchestrator parent signal end on Linux (live)`. The Windows item in issue #709 is `opencode orchestrator parent Ctrl+C on Windows (live)`. Either item reopens this alternative if a tree outlives the parent.
 
 ## Authors
 
