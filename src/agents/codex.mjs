@@ -21,7 +21,7 @@ const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different 
 
 // A failed Codex turn reports the exit cause and the last failure message only. It never reports
 // the stream, so command output cannot reach the envelope or the state file (issue #1353). The
-// detail is bounded to 500 characters, and the whole message stays under 700.
+// detail is bounded to 500 characters including the ellipsis, and the whole message stays under 700.
 const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no Codex error event in the output";
 
@@ -67,12 +67,12 @@ function failureMessage(err, events, timeout) {
   return `codex exited with code ${err?.exitCode}: ${detail || NO_DETAIL} (${stdoutBytes} stdout bytes, ${stderrBytes} stderr bytes)`;
 }
 
-/** Flattens `text` to one line and keeps at most `DETAIL_LIMIT` characters of it. */
+/** Flattens `text` to one line and keeps at most `DETAIL_LIMIT` characters, including the ellipsis. */
 function boundedDetail(text) {
   const flat = String(text ?? "")
     .replace(/\s+/g, " ")
     .trim();
-  return flat.length > DETAIL_LIMIT ? `${flat.slice(0, DETAIL_LIMIT)}...` : flat;
+  return flat.length > DETAIL_LIMIT ? `${flat.slice(0, DETAIL_LIMIT - 3)}...` : flat;
 }
 
 export async function runCodex(state, prompt, options = {}) {
@@ -133,11 +133,17 @@ export async function runCodex(state, prompt, options = {}) {
     const failedEvents = parseJsonLines(err?.stdout ?? "");
     const started = failedEvents.find((event) => event?.type === "thread.started");
     keepFailedSessionId(state, started?.thread_id);
-    const failure = err instanceof Error ? err : new Error(String(err));
-    failure.message = failureMessage(err, failedEvents, options.timeout);
-    flagCapacityFailure(failure, failedEvents);
-    flagMissingSession(failure, requestedSessionId, missingSession);
-    throw failure;
+    if (!(err instanceof Error)) {
+      throw err;
+    }
+    flagCapacityFailure(err, failedEvents);
+    flagMissingSession(err, requestedSessionId, missingSession);
+    // Only an `exec` failure carries the message that this adapter bounds. Any other error, such
+    // as a failed turn-directory callback, reaches the caller unchanged (issue #1353).
+    if (err.name === "ExecError") {
+      err.message = failureMessage(err, failedEvents, options.timeout);
+    }
+    throw err;
   }
   const events = parseJsonLines(stdout).filter(isJsonObject);
 

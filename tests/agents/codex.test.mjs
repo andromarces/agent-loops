@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 import { runCodex } from "../../src/agents/codex.mjs";
-import { exec } from "../../src/lib/exec.mjs";
+import { ExecError, exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
 // Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.
@@ -602,7 +602,8 @@ const largeStream = (events) =>
 
 // The real `exec` error message carries the whole stream after the cause.
 const streamFailure = (stdout, overrides = {}) =>
-  Object.assign(new Error(`codex exited with code 1.\n\n${stdout}`), {
+  new ExecError(`codex exited with code 1.\n\n${stdout}`, {
+    command: "codex",
     exitCode: 1,
     stdout,
     stderr: "",
@@ -635,6 +636,8 @@ test("codex bounds a large last failure message", async () => {
   const state = { kind: "codex", sessionId: null, model: null, effort: null };
   const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
 
+  const detail = caught.message.match(/^codex exited with code 1: (.*) \(\d+ stdout bytes/)?.[1];
+  expect(detail).toHaveLength(500);
   expect(caught.message).toContain("failure detail");
   expect(caught.message.length).toBeLessThan(700);
 });
