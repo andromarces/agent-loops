@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -109,11 +109,14 @@ export function runInstalled(cli, args, env = {}, nodeArgs = []) {
   });
 }
 
-/** Copies the package into `store` and links each runtime dependency that package.json lists beside it. */
+/**
+ * Copies the package into `store` and links each runtime dependency that
+ * package.json lists beside it. The install renders the docs path without
+ * reading docs, so the fixture copies no file that a case does not read.
+ */
 export async function populateStore(store, omit = []) {
   await mkdir(store, { recursive: true });
   await cp(join(PACKAGE_ROOT, "src"), join(store, "src"), { recursive: true });
-  await cp(join(PACKAGE_ROOT, "docs"), join(store, "docs"), { recursive: true });
   await cp(join(PACKAGE_ROOT, "package.json"), join(store, "package.json"));
   const { dependencies } = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf8"));
   // Beside the package the way pnpm places each dependency.
@@ -126,32 +129,46 @@ export async function populateStore(store, omit = []) {
 }
 
 /**
+ * Moves a populated store entry to a new path, so an upgrade fixture copies the
+ * package once. A real upgrade writes the same package bytes into the new entry.
+ */
+export async function moveStore(from, to) {
+  await mkdir(dirname(to), { recursive: true });
+  await rename(from, to);
+}
+
+/**
  * Builds a pnpm global install directory, verified against a real `pnpm add -g`
  * with a temp PNPM_HOME: `<global>/v11/<id>` holds the virtual store, links the
  * package into its own `node_modules`, and pnpm 12 also links that whole
  * directory to `<global>/v11/<hash>`, the path the bin shim calls. An older pnpm
- * global layout has no such hash link, so `hash` is optional.
+ * global layout has no such hash link, so `hash` is optional. `from` moves an
+ * existing layout under the new id and version instead of copying it again.
  */
-export async function pnpmGlobal(v11, { id, hash, version, omit }) {
+export async function pnpmGlobal(v11, { id, hash, version, omit, from }) {
   const installDir = join(v11, id);
-  const store = join(
-    installDir,
-    "node_modules",
-    ".pnpm",
-    `@andromarces+agent-loops@${version}`,
-    "node_modules",
-    "@andromarces",
-    "agent-loops",
-  );
-  await populateStore(store, omit);
+  const storeDir = join(installDir, "node_modules", ".pnpm", `@andromarces+agent-loops@${version}`);
+  const store = join(storeDir, "node_modules", "@andromarces", "agent-loops");
+  if (from) {
+    await moveStore(
+      from.storeDir,
+      join(from.installDir, "node_modules", ".pnpm", `@andromarces+agent-loops@${version}`),
+    );
+    await moveStore(from.installDir, installDir);
+  } else {
+    await populateStore(store, omit);
+  }
   const linked = join(installDir, "node_modules", "@andromarces", "agent-loops");
+  if (from) {
+    await rm(linked, { force: true });
+  }
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
   const hashLink = hash && join(v11, hash);
   if (hashLink) {
     await symlink(installDir, hashLink, LINK_TYPE);
   }
-  return { hashLink, installDir, linked, store };
+  return { hashLink, installDir, linked, store, storeDir };
 }
 
 /**
@@ -160,27 +177,24 @@ export async function pnpmGlobal(v11, { id, hash, version, omit }) {
  * `store/v11/links/<name>/<version>/<hash>/node_modules/<name>`, and
  * `<project>/node_modules/.pnpm` holds only `lock.yaml` and `node_modules`, so no
  * `.pnpm` directory names a store entry. The bin shim calls the package through
- * the project link, which is the path the script is given.
+ * the project link, which is the path the script is given. `from` moves an
+ * existing version entry to the new version instead of copying it again.
  */
-export async function pnpm12Project(pnpmHome, project, { hash, version }) {
-  const store = join(
-    pnpmHome,
-    "store",
-    "v11",
-    "links",
-    "@andromarces",
-    "agent-loops",
-    version,
-    hash,
-    "node_modules",
-    "@andromarces",
-    "agent-loops",
-  );
-  await populateStore(store);
+export async function pnpm12Project(pnpmHome, project, { hash, version, from }) {
+  const storeDir = join(pnpmHome, "store", "v11", "links", "@andromarces", "agent-loops", version);
+  const store = join(storeDir, hash, "node_modules", "@andromarces", "agent-loops");
+  if (from) {
+    await moveStore(from.storeDir, storeDir);
+  } else {
+    await populateStore(store);
+  }
   const linked = join(project, "node_modules", "@andromarces", "agent-loops");
+  if (from) {
+    await rm(linked, { force: true });
+  }
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
   // The project virtual store holds no store entry of its own.
   await mkdir(join(project, "node_modules", ".pnpm", "node_modules"), { recursive: true });
-  return { linked, store };
+  return { linked, store, storeDir };
 }

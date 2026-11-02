@@ -9,6 +9,7 @@ import { removePath } from "../fs-helpers.mjs";
 import {
   LINK_TYPE,
   PACKAGE_ROOT as REPO_ROOT,
+  moveStore,
   pnpm12Project,
   pnpmGlobal,
   populateStore,
@@ -78,23 +79,24 @@ test("a pnpm 10 global layout renders its version-independent link", async () =>
  * `pnpm add` in a temp project: the virtual store is `<project>/node_modules/.pnpm`
  * and the package is linked under the project `node_modules`, which carries no
  * version. An upgrade adds a store entry and repoints the link. A global install is
- * the other pnpm 10 shape, and it places both differently.
+ * the other pnpm 10 shape, and it places both differently. `from` moves the
+ * existing store entry to the new version instead of copying it again.
  */
-async function pnpmProject(project, version) {
-  const store = join(
-    project,
-    "node_modules",
-    ".pnpm",
-    `@andromarces+agent-loops@${version}`,
-    "node_modules",
-    "@andromarces",
-    "agent-loops",
-  );
-  await populateStore(store);
+async function pnpmProject(project, version, from) {
+  const storeDir = join(project, "node_modules", ".pnpm", `@andromarces+agent-loops@${version}`);
+  const store = join(storeDir, "node_modules", "@andromarces", "agent-loops");
+  if (from) {
+    await moveStore(from.storeDir, storeDir);
+  } else {
+    await populateStore(store);
+  }
   const linked = join(project, "node_modules", "@andromarces", "agent-loops");
+  if (from) {
+    await rm(linked, { force: true });
+  }
   await mkdir(dirname(linked), { recursive: true });
   await symlink(store, linked, LINK_TYPE);
-  return { linked, store };
+  return { linked, store, storeDir };
 }
 
 // Usefulness: verifies the project install shape of #305, which the pnpm 10 global
@@ -125,7 +127,7 @@ test("hooks installed in a pnpm 10 project layout survive an upgrade", async () 
   // at it, and pnpm deletes the old store entry. The rendered path must still be
   // the link, not the store entry, or the install is stale again.
   await rm(before.linked, { force: true });
-  const after = await pnpmProject(project, "0.4.0");
+  const after = await pnpmProject(project, "0.4.0", before);
   await removePath(before.store);
   expect(existsSync(before.store)).toBe(false);
   expect(stablePackageRoot(after.store)).toBe(after.linked);
