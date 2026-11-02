@@ -36,7 +36,9 @@ async function lockField(cwd, path) {
   const { stdout } = await git(cwd, ["worktree", "list", "--porcelain", "-z"]);
   for (const record of stdout.split("\0\0")) {
     const fields = record.split("\0").filter(Boolean);
-    if (fields[0] !== `worktree ${wanted}`) continue;
+    const entry = fields[0]?.slice("worktree ".length);
+    // Git prints forward slashes on Windows, so both sides compare as canonical paths.
+    if (entry === undefined || (await realpath(entry).catch(() => entry)) !== wanted) continue;
     return fields.find((field) => field === "locked" || field.startsWith("locked ")) ?? null;
   }
   return null;
