@@ -50,10 +50,29 @@ test.each([
     fakeCodex(async () => {
       throw Object.assign(new Error("codex failed"), flags);
     });
-    await expect(withInheritedTmp(root, () => runTurn(), `${root}-runs`)).rejects.toThrow(
-      "codex failed",
-    );
+    await expect(withInheritedTmp(root, () => runTurn(), `${root}-runs`)).rejects.toThrow("codex");
     expect(await readdir(root)).toEqual([]);
+  } finally {
+    await removePath(root);
+    await removePath(`${root}-runs`);
+  }
+});
+
+// Usefulness: verifies a failed onTurnTmpdir callback keeps its own message, so an ENOSPC
+// persistence failure is not reported as "codex failed to start." (issue #1353).
+test("a codex turn keeps the message of a turn-tmpdir callback failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
+  try {
+    const failure = Object.assign(new Error("ENOSPC: no space left on device"), {
+      code: "ENOSPC",
+    });
+    const caught = await withInheritedTmp(
+      root,
+      () => runTurn({ onTurnTmpdir: () => Promise.reject(failure) }),
+      `${root}-runs`,
+    ).catch((err) => err);
+    expect(caught.message).toBe("ENOSPC: no space left on device");
+    expect(caught.code).toBe("ENOSPC");
   } finally {
     await removePath(root);
     await removePath(`${root}-runs`);

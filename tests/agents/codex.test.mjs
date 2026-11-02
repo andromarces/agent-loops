@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 import { runCodex } from "../../src/agents/codex.mjs";
-import { exec } from "../../src/lib/exec.mjs";
+import { ExecError, exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
 // Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.
@@ -179,7 +179,7 @@ test("codex keeps the thread id from a failed first turn", async () => {
     .map((e) => JSON.stringify(e))
     .join("\n");
   vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("codex exited with code 1."), { stdout, stderr: "" }),
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
   );
 
   const state = { kind: "codex", sessionId: null, model: null, effort: null };
@@ -191,7 +191,7 @@ test("codex keeps the thread id from a failed first turn", async () => {
 test("codex keeps the stored thread id when a resumed turn fails", async () => {
   const stdout = JSON.stringify({ type: "thread.started", thread_id: "th-other" });
   vi.mocked(exec).mockRejectedValueOnce(
-    Object.assign(new Error("codex exited with code 1."), { stdout, stderr: "" }),
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
   );
 
   const state = { kind: "codex", sessionId: "th-stored", model: null, effort: null };
@@ -581,4 +581,107 @@ test.each([
   const state = { kind: "codex", sessionId: null, model: null, effort: null };
   const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
   expect(caught.transient).toBeUndefined();
+});
+
+const AGGREGATED_SENTINEL = "AGGREGATED-OUTPUT-SENTINEL";
+
+const largeStream = (events) =>
+  [
+    { type: "thread.started", thread_id: "th-bounded" },
+    {
+      type: "item.completed",
+      item: {
+        type: "command_execution",
+        aggregated_output: AGGREGATED_SENTINEL + "x".repeat(100_000),
+      },
+    },
+    ...events,
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+
+// The real `exec` error message carries the whole stream after the cause.
+const streamFailure = (stdout, overrides = {}) =>
+  new ExecError(`codex exited with code 1.\n\n${stdout}`, {
+    command: "codex",
+    exitCode: 1,
+    stdout,
+    stderr: "",
+    ...overrides,
+  });
+
+// Usefulness: verifies requirement "a non-zero exit with a large JSONL stream gives a bounded error
+// that names the last failure message" (issue #1353). A failed turn therefore cannot put the stream
+// in the envelope.
+test("codex bounds a failed turn error and names the last failure message", async () => {
+  const stdout = largeStream([
+    { type: "turn.failed", error: { message: "The 'x' model is not supported" } },
+  ]);
+  vi.mocked(exec).mockRejectedValueOnce(streamFailure(stdout));
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.message).toContain("The 'x' model is not supported");
+  expect(caught.message).toContain(`${Buffer.byteLength(stdout)} stdout bytes`);
+  expect(caught.message.length).toBeLessThan(700);
+});
+
+// Usefulness: verifies the last failure message is itself bounded (issue #1353), because a provider
+// message can hold command output too.
+test("codex bounds a large last failure message", async () => {
+  const stdout = largeStream([{ type: "error", message: `failure detail ${"x".repeat(5000)}` }]);
+  vi.mocked(exec).mockRejectedValueOnce(streamFailure(stdout));
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+
+  const detail = caught.message.match(/^codex exited with code 1: (.*) \(\d+ stdout bytes/)?.[1];
+  expect(detail).toHaveLength(500);
+  expect(caught.message).toContain("failure detail");
+  expect(caught.message.length).toBeLessThan(700);
+});
+
+// Usefulness: verifies requirement "a capacity failure still carries transient capacity" while the
+// error text is bounded. The #1012 behavior therefore does not depend on the reported text.
+test("codex keeps the capacity mark on a bounded failure", async () => {
+  const stdout = largeStream([
+    { type: "error", message: CAPACITY },
+    { type: "turn.failed", error: { message: CAPACITY } },
+  ]);
+  vi.mocked(exec).mockRejectedValueOnce(streamFailure(stdout));
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+  expect(caught.message).toContain(CAPACITY);
+  expect(caught.message.length).toBeLessThan(700);
+});
+
+// Usefulness: verifies requirement "the error holds no aggregated_output text" (issue #1353).
+// Content that a turn read therefore cannot reach the envelope or the state file.
+test("codex keeps command output out of a failed turn error", async () => {
+  const stdout = largeStream([
+    { type: "turn.failed", error: { message: "The 'x' model is not supported" } },
+  ]);
+  vi.mocked(exec).mockRejectedValueOnce(streamFailure(stdout));
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.message).not.toContain(AGGREGATED_SENTINEL);
+});
+
+// Usefulness: verifies requirement "a stream with no error or turn.failed event still gives a
+// bounded error" (issue #1353). An unfamiliar failure therefore never leaks the stream.
+test("codex bounds an error when the stream names no failure event", async () => {
+  const stdout = largeStream([]);
+  vi.mocked(exec).mockRejectedValueOnce(streamFailure(stdout));
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.message.length).toBeLessThan(700);
+  expect(caught.message).not.toContain(AGGREGATED_SENTINEL);
 });
