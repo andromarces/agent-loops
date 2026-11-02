@@ -19,8 +19,11 @@ import {
 // The parent reads only this block, so each blocker must stand inside it (issue #434).
 // Deferred excludes the reviewer's own blockers and read-only rule (issue #1102).
 const reviewerReportBlock = `${reportBlock}
+
 State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above", because the reader sees only the block.
+
 Deferred never holds your own blockers or the fact that you apply no fix. An unfixed blocker stays only in Blockers.
+
 Verdict: accept or reject. One word, nothing else on the line.`;
 
 // Fixed review scope every reviewer turn carries, so a parent prompt that

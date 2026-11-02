@@ -28,6 +28,17 @@ test("reviewer prompt keeps the read-only guard and requires the closing report 
   expect(prompt).toContain("Deferred:");
 });
 
+// Usefulness: verifies the reviewer prompt states that the closing block holds no Markdown table
+// and puts tabular data in `- ` items, one row per item (issue #1359), so a table in a reviewer
+// response never makes the block unparseable.
+test("reviewer prompt states that the closing block holds no Markdown table", () => {
+  const prompt = reviewerPrompt("check the tests").replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "The block holds no Markdown table: a table can make it unparseable or drop its rows.",
+  );
+  expect(prompt).toContain("Put tabular data in `- ` items, one row per item.");
+});
+
 // Usefulness: verifies the reviewer block carries exactly one Checks line, so
 // the shared closing block and the reviewer block do not duplicate the label
 // after the worker block gained one (issue #310).

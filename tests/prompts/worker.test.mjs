@@ -8,16 +8,18 @@ import { NAMED_TARGET, commitTargets } from "./orchestrator-helpers.mjs";
 // `Checks: the commands that ran and their results, or "none". One line.`
 const LABEL_LINE = /^([A-Z][A-Za-z]*):\s/;
 
-// The closing block template the prompt renders: the blank-line separated
-// paragraph that opens with a `Conclusion:` label, which is where the parser
-// starts the block too. Only that paragraph is the block, so label text in the
-// role bullets or in the task cannot stand in for a label the block dropped.
+// The closing block template the prompt renders: the lines from the
+// `Conclusion:` label through `Deferred:`, including the blank line between
+// label groups. Label text in the role bullets or in the task cannot stand in
+// for a label the block dropped.
 function closingBlockTemplate(prompt) {
-  const block = prompt.split(/\n\s*\n/).find((text) => /^Conclusion:\s/m.test(text));
-  if (!block) {
+  const lines = prompt.split("\n");
+  const start = lines.findIndex((line) => /^Conclusion:\s/.test(line));
+  const end = lines.findLastIndex((line) => line.startsWith("Deferred:"));
+  if (start === -1 || end < start) {
     throw new Error("the worker prompt renders no closing block template");
   }
-  return block;
+  return lines.slice(start, end + 1).join("\n");
 }
 
 // A worker response written to the closing block: each label line holds the
@@ -130,6 +132,20 @@ test("later worker turns state the closing block format", () => {
   const report = parseReportBlock(workerResponse(block, { Deferred: "none" }));
   expect(report).not.toBeNull();
   expect(report.deferred).toBe("none");
+});
+
+// Usefulness: verifies requirement "a child prompt states that the closing block holds no Markdown
+// table and puts tabular data in `- ` items, one row per item" (issue #1359): a table in a child
+// block made the report null. It checks the first and later worker turns, so the rule reaches a
+// drifted conversation too.
+test("worker turns state that the closing block holds no Markdown table", () => {
+  for (const firstTurn of [true, false]) {
+    const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "The block holds no Markdown table: a table can make it unparseable or drop its rows.",
+    );
+    expect(prompt).toContain("Put tabular data in `- ` items, one row per item.");
+  }
 });
 
 // Usefulness: verifies requirement "a later worker turn names `Conclusion:` as the required first

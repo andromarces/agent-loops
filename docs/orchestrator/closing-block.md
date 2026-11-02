@@ -69,3 +69,5 @@ accepted gap).
 A child is told to write no block line that starts with `*`. Every other `*`
 line either is a list and blanks the block, for example `*item`, `* item`, or
 `*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
+
+A Markdown table in the block can make it unparseable or drop its rows: put tabular data in `- ` items, one row per item.
