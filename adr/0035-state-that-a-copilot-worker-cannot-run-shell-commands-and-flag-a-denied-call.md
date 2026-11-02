@@ -67,7 +67,7 @@ dispatch cleared the inherited test-slot marker, and `COPILOT_ALLOW_ALL` was uns
 `src/cli.mjs` at `55a8701b880f33f77cccbfb8638318075d7e430e`.
 
 - The envelope carried `"status": "ok"` and `"shellDenied": true`.
-- The Copilot event stream reported `"toolName": "bash"` with `"code": "denied"`.
+- The Copilot event stream reported `"toolName":"bash"` with `"code":"denied"`.
 - The state file held lifecycle `active` and `stepsUsed` 1 after the turn.
 - The record saved `copilot --version`, `sw_vers`, `uname -a`, `node --version`, and the work tree head before and after the probe. Copilot CLI 1.0.106-2 was reported inside the turn.
 - A saved copy of the envelope with `shellDenied` removed failed the check with exit 1.
