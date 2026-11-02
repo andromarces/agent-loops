@@ -48,6 +48,7 @@ Git already offers a lock on a linked work tree. A lock makes `git worktree remo
 ## Links
 
 - [Issue #1347](https://github.com/andromarces/agent-loops/issues/1347)
+- [PR #1349](https://github.com/andromarces/agent-loops/pull/1349)
 - [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [Removing a work tree](../docs/orchestrator/work-tree-removal.md)
 - [Role reference](../docs/reference/role.md)
