@@ -525,10 +525,14 @@ test("teardown ends a fake codex that is delayed before its first statement", as
   const scratch = scratches.at(-1);
   expect(await fakePid(scratch)).toBeNull();
   let running = [];
-  await vi.waitFor(async () => {
-    running = await fakeProcesses(scratch);
-    expect(running.length).toBeGreaterThan(0);
-  });
+  // A process-table read is bounded at 30 s, so the default 1 s wait can end before one returns.
+  await vi.waitFor(
+    async () => {
+      running = await fakeProcesses(scratch);
+      expect(running.length).toBeGreaterThan(0);
+    },
+    { timeout: 30_000 },
+  );
 
   await endSpawned();
 
