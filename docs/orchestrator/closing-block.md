@@ -32,11 +32,14 @@ ordered list there stays unparseable.
 
 The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
 loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
-`x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic
-space counts), `*`, `_`, a backtick, `>`, or `#`, must not be a list, and must not hold a report label name or `Verdict`, in
-any case, followed by any run of `*`, `_`, or backtick marks (or none), whitespace (or none), and a colon, anywhere in the line. So a
-`*` line (issue #275), a decorated or malformed label, and a `Verdict` line never introduce the
-list.
+`x; Design settled: a` (issue #898). A plain prose line starts with no whitespace (a nonbreaking or
+ideographic space counts), `*`, `_`, a backtick, `>`, or `#`. It is no list, and it holds no report
+label name or `Verdict` in any case. A whole-line bold heading is the one `*` exception (issue
+#1367). `**Reviewer notes.**` above `- a` reads `**Reviewer notes.**: a`.
+
+A report label name or `Verdict` in the line still blocks the fold, with any run of marks, optional
+whitespace, and a colon. A `**bold** note` line with trailing text is no heading. A `*` line (issue
+#275), a decorated or malformed label, and a `Verdict` line never introduce the list.
 
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label
@@ -45,14 +48,17 @@ makes the block unparseable. A prose line directly after the label with no blank
 a blank line between the prose and its list, a second prose line before the list, prose after
 the reviewer `Verdict:` line, and a later repeat of the label stay unparseable.
 
-Any other list in the closing block, for
-example bullets after the reviewer `Verdict:` line, a list outside any label,
-a bullet with no space after the marker (`-item`, `*item`) or a separator
-other than one space (a tab, a nonbreaking space, two spaces) even under an
-empty label, a `*` or `+` bullet, an `N)` item, an ordered item that a blank line or prose separates from its label, a bold heading line that groups a `- ` list with no label directly above it (the parent prompt may format its own blockers as an ordered list, and a child that mirrors that shape must still put the list under a label), an indented bullet that is
-not one nested level (no parent item, a second level, another indent width or
-marker), makes the block unparseable, so the list surfaces
-through `raw` instead of being dropped. An indented label or a decorated label
+Any other list in the closing block makes the block unparseable, so the list surfaces
+through `raw` instead of being dropped. Examples are bullets after the reviewer `Verdict:` line,
+a list outside any label, and a bullet with no space after the marker (`-item`, `*item`). A
+separator other than one space (a tab, a nonbreaking space, two spaces) also fails, even under
+an empty label. A `*` or `+` bullet, an `N)` item, and an ordered item under a blank line or
+prose fail too. An indented bullet that is not one nested level (no parent item, a second level,
+another indent width or marker) fails as well. A bold heading line that groups a `- ` list
+outside the fold rule above fails too.
+
+The parent prompt can format its own blockers as an ordered list. A child that mirrors that shape
+still puts the list under a label. An indented label or a decorated label
 does the same. This covers a label occurrence that a later repeat shadows, which
 also drops a list that the repeat shadows. A non-list line, for example a closing
 sentence, does not make the block unparseable.

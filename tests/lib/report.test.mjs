@@ -142,19 +142,13 @@ test("parseReportBlock folds an ordered list and its aligned sub-items under a l
   expect(parseReportBlock(`${REPORT}\nNotes: a\n1. b`)).toMatchObject({ notes: "a; b" });
 });
 
-// Usefulness: verifies the ordered and bold-heading shapes outside the #915 rule still fail closed
-// (a sub-item at the wrong indent, a `)` marker, a second space after the marker, an ordered list
-// separated from its label, and a bold heading line with a dash list and no label), so `raw`
-// carries the text instead of the parser dropping it.
-test("parseReportBlock returns null for an ordered or heading-list shape outside the fold", () => {
+// Usefulness: verifies the ordered shapes outside the #915 rule still fail closed.
+// They are a sub-item at the wrong indent, a `)` marker, a second space after the marker, and an
+// ordered list separated from its label. So `raw` carries the text.
+test("parseReportBlock returns null for an ordered-list shape outside the fold", () => {
   for (const list of ["\n1. a\n  - b", "\n1) a", "\n1.  a", "\n\n1. a"]) {
     expect(parseReportBlock(`${REPORT}\nNotes:${list}`)).toBeNull();
   }
-  expect(
-    parseReportBlock(
-      "Conclusion: done\n\n**1 and 2: allowlist.**\n- Both phases parse.\n\n**3: failed kill.**\n- After a timeout.\n\nBlockers: none.",
-    ),
-  ).toBeNull();
 });
 
 // Usefulness: verifies a non-list line after an empty optional label, for
@@ -827,6 +821,39 @@ test("parseReportBlock folds a prose heading and its list into the preceding lab
   expect(parseReportBlock(`${REPORT}\nNotes:\n\nHeading\n- a\n  - b`)).toMatchObject({
     notes: "Heading: a, b",
   });
+});
+
+// Usefulness: verifies a bold heading line and its dash list fold into the label above (issue
+// #1367). The bold item leads stay as text, so the observed worker shape yields a report instead
+// of null. No other test covers a bold heading.
+test("parseReportBlock folds a bold heading and its list into the preceding label", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: the checks pass\n- **Unit:** pass\n- **Lint:** clean\n\n**Reviewer notes.**\n- **Eight-page ceiling:** a\n- **Continuation:** b\n\nBlockers: none",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "the checks pass; **Unit:** pass; **Lint:** clean; **Reviewer notes.**: **Eight-page ceiling:** a; **Continuation:** b",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a bold heading outside the fold rule stays unparseable (issue #1367).
+// A later repeat of the folded label still wins, so no text drops without a `raw` signal.
+test("parseReportBlock returns null for a bold heading outside the fold rule", () => {
+  for (const tail of [
+    "Notes: x\n\n**Heading**\n- a\n\nNotes: later",
+    "Notes: x\n\n**Notes:** a\n- b",
+    "Notes: x\n\n**bold** note\n- a",
+    "Verdict: accept\n\n**Heading**\n- a",
+    "Notes: x\n\n**Heading**\n\n- a",
+    "Notes: x\n\n**Heading**\n1. a",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
+  }
 });
 
 // Usefulness: verifies one blank line does not break the fold of a `- ` list under a label.
