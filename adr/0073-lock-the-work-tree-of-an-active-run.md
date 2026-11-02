@@ -52,6 +52,7 @@ Issue #1351 records that the removal doc forbids a manual unlock, so a terminal 
 - [Issue #1347](https://github.com/andromarces/agent-loops/issues/1347)
 - [Issue #1351](https://github.com/andromarces/agent-loops/issues/1351)
 - [PR #1349](https://github.com/andromarces/agent-loops/pull/1349)
+- [PR #1355](https://github.com/andromarces/agent-loops/pull/1355)
 - [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [Removing a work tree](../docs/orchestrator/work-tree-removal.md)
 - [Role reference](../docs/reference/role.md)
