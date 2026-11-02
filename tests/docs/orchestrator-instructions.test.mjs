@@ -391,17 +391,30 @@ function textBetween(text, after, before) {
 }
 
 /**
- * The text from `startMarker` through the block that holds `endMarker`, up to the next blank
- * line. Appending text inside that block therefore changes the result.
+ * The text from the start of the first paragraph that holds `startMarker` through the end of the
+ * last paragraph that holds `endMarker`, across any split boundaries between them. Prepending or
+ * appending text inside those paragraphs therefore changes the result.
  */
-function passageThroughBlockEnd(text, startMarker, endMarker) {
-  const start = text.indexOf(startMarker);
-  expect(start, `no text holds: ${startMarker}`).toBeGreaterThanOrEqual(0);
-  const end = text.indexOf(endMarker, start);
-  expect(end, `no text holds: ${endMarker}`).toBeGreaterThanOrEqual(start);
-  const afterEnd = end + endMarker.length;
-  const blank = /\r?\n[ \t]*\r?\n/.exec(text.slice(afterEnd));
-  return blank ? text.slice(start, afterEnd + blank.index) : text.slice(start);
+function passageAcrossParagraphs(text, startMarker, endMarker) {
+  const markerStart = text.indexOf(startMarker);
+  expect(markerStart, `no text holds: ${startMarker}`).toBeGreaterThanOrEqual(0);
+  const markerEnd = text.indexOf(endMarker, markerStart);
+  expect(markerEnd, `no text holds: ${endMarker}`).toBeGreaterThanOrEqual(markerStart);
+
+  const blankLine = /\r?\n[ \t]*\r?\n/g;
+  let start = 0;
+  for (
+    let match = blankLine.exec(text);
+    match && match.index < markerStart;
+    match = blankLine.exec(text)
+  ) {
+    start = match.index + match[0].length;
+  }
+
+  const afterEnd = markerEnd + endMarker.length;
+  const next = /\r?\n[ \t]*\r?\n/.exec(text.slice(afterEnd));
+  const stop = next ? afterEnd + next.index : text.length;
+  return text.slice(start, stop);
 }
 
 // The refusal rule as each parent surface states it, from its fixed start to the end of its
@@ -429,7 +442,7 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const docsPassage = passageThroughBlockEnd(
+  const docsPassage = passageAcrossParagraphs(
     instructions,
     "When no source can state the required checks",
     "do not run `--all` for it.",
@@ -926,7 +939,7 @@ test("the moved work tree files are unchanged", async () => {
 // observe, and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
 // that strands a non-terminal run, or the parent waits for a `halted` envelope that never prints.
 test("instructions remove the work tree only after an observable terminal state, in a separate command", async () => {
-  const rule = passageThroughBlockEnd(
+  const rule = passageAcrossParagraphs(
     await readInstructions(),
     "Remove the work tree only after the run is terminal.",
     "Never chain it after `finish` or `abort` in one command.",
