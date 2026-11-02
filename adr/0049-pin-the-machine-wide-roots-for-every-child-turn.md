@@ -48,6 +48,26 @@ Issue #710 ran the live check on macOS 27.2 (26B123) at source head `5a33f11e03b
 - Eight of the ten turns matched, and the two Copilot turns did not run the probe.
 - No result contradicts this ADR, so no bug was opened.
 
+A second run on 2026-11-02 used source head `330a87bf`, which is after `8f14f78`. All five adapters ran one worker turn and one reviewer turn.
+
+- macOS 27.2 (26B123), Node v27.0.0-alpha.0.0.0, Claude Code 2.1.316, codex-cli 0.167.0-alpha.3, Copilot CLI 1.0.106-2, opencode v0.0.0-dev-481, and agy 1.4.12.
+- The requested models were `haiku`, `gpt-6-luna` at low effort, `mai-code-1.1-flash`, `opencode-go/deepseek-v4.1-flash`, and `gemini-3.8-flash` at low effort.
+- The recorded executed models were `claude-haiku-5-5` for the Claude worker and `claude-sonnet-5-5` for the Claude reviewer.
+- Both Codex turns recorded `gpt-6-luna`, and both Copilot turns recorded `mai-code-1.1-flash`.
+- The OpenCode export recorded `opencode-go/deepseek-v4.1-flash` for both turns.
+- No saved field recorded an agy model, so the executed agy model is not recorded.
+- Each nested dispatch ran with the three root variables and `AGENT_LOOP_TEST_SLOT_HELD` unset, and with `TMP`, `TEMP`, and `TMPDIR` set to one probe base directory.
+- The nested runtime resolved `<probe base>/agent-loops/runs`, `<probe base>/agent-loops/test-slots`, and `<probe base>/agent-loops/session-records`.
+- Each of the ten turns set `TMP`, `TEMP`, and `TMPDIR` to `<probe base>/child-tmp/<label>`, then ran `test-slot --wait 120`.
+- Every turn printed the three roots, `child_slot_marker=<unset>`, and a lock at `<probe base>/agent-loops/test-slots/slot-0.lock`, outside the outer host slot directory.
+- Every lock owner pid equaled the `PPID` of the turn's slot command, and all ten `test_slot_exit` values were 0.
+- The checker read `probe.txt` in each turn record, which is the probe block copied from that turn's CLI session log.
+- Copilot needed `COPILOT_ALLOW_ALL=1` and a shim that added `--allow-tool shell(sh)`, `--allow-tool shell(bash)`, and `--allow-all-paths`.
+- The shim log holds two calls and 28 argument lines, and the saved shim source is the one that ran.
+- A wrong `AGENT_LOOP_RUNS_ROOT` before a dispatch failed the check.
+- The saved fields are `child_runs`, `child_slots`, `child_records`, `child_slot_marker`, `child_TMP`, `child_TEMP`, `child_TMPDIR`, `slot_lock`, `slot_dir`, `slot_nonce`, `slot_owner`, `shell_ppid`, `slot_files`, and `test_slot_exit`.
+- No result contradicts this ADR, so no bug was opened.
+
 ## Alternatives
 
 1. **Render the wrapper command with an explicit `AGENT_LOOP_TEST_SLOTS_ROOT`.** Not taken. It covers the slot directory only, not the runs root or the session-record directory.
@@ -66,6 +86,7 @@ Andro Marces
 - [PR #996](https://github.com/andromarces/agent-loops/pull/996)
 - [PR #973](https://github.com/andromarces/agent-loops/pull/973)
 - [PR #1338](https://github.com/andromarces/agent-loops/pull/1338)
+- [PR #1365](https://github.com/andromarces/agent-loops/pull/1365)
 - Implementation: `rootPins` in `src/lib/root-pins.mjs`, `exec` and `withNpmLogSettings` in `src/lib/exec.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`; tests in `tests/lib/exec.test.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/reference/architecture.md`
 - [ADR 0039: Machine-wide test slot](0039-machine-wide-test-slot.md)
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
