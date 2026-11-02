@@ -30,8 +30,8 @@ The second shape has prose. A blank line follows the label line (or its folded l
 comes next, and a `- ` list directly under it folds too. The list takes dash items only, because an
 ordered list there stays unparseable.
 
-The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
-loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
+The prose and its list join the value of the label just above, as `; <prose>: <items>`. The prose
+drops a trailing colon first, so `Why: x`, a blank line, `Design settled:`, and `- a` read
 `x; Design settled: a` (issue #898). A plain prose line starts with no whitespace (a nonbreaking or
 ideographic space counts), `*`, `_`, a backtick, `>`, or `#`. It is no list, and it holds no report
 label name or `Verdict` before any run of marks, whitespace, and a colon. A
