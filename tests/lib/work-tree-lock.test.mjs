@@ -51,7 +51,7 @@ test("locks a linked work tree so a forced removal refuses it", async () => {
   expect(removed.stderr).toContain("cannot remove a locked working tree");
 });
 
-// Usefulness: verifies the main work tree case — Git refuses its lock, so the call reports a skip
+// Usefulness: verifies the main work tree case. Git refuses its lock, so the call reports a skip
 // instead of a failure and leaves no lock. Not redundant: the linked case above never reaches the
 // skip branch.
 test("skips a main work tree and leaves it unlocked", async () => {
@@ -77,7 +77,7 @@ test("locks the work tree root for a cwd below it", async () => {
   expect(await lockField(main, tree)).toBe(`locked ${workTreeLockReason("abc123")}`);
 });
 
-// Usefulness: verifies the existing-lock rule — a lock made by a user or another tool keeps its
+// Usefulness: verifies the existing-lock rule. A lock made by a user or another tool keeps its
 // reason through init and is never unlocked at the end. Not redundant: it covers the lock already
 // present before the call, which the other cases never create.
 test("keeps a lock of another owner and its reason", async () => {
@@ -104,7 +104,7 @@ test("unlocks its own lock and only that one", async () => {
   expect(await lockField(main, tree)).toBeNull();
 });
 
-// Usefulness: verifies the re-created-tree case — a work tree removed and added again at the same
+// Usefulness: verifies the re-created-tree case. A work tree removed and added again at the same
 // path holds no lock of this run, so the unlock leaves it alone. Not redundant: this is the one
 // case where an earlier lock vanished with the registration.
 test("leaves a work tree re-created at the same path alone", async () => {
@@ -119,7 +119,7 @@ test("leaves a work tree re-created at the same path alone", async () => {
   expect(await lockField(main, tree)).toBeNull();
 });
 
-// Usefulness: verifies the handled-failure rule — a refused Git command gives a warning and a
+// Usefulness: verifies the handled-failure rule. A refused Git command gives a warning and a
 // `failed` result, never a throw, so init and the terminal paths still succeed. Not redundant: the
 // real Git cases all succeed.
 test("warns and returns a failure when Git refuses the lock", async () => {

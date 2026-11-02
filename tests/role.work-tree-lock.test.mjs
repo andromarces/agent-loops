@@ -54,7 +54,7 @@ const finish = (tree) =>
 const abort = (tree, args = ["--reason", "done"]) =>
   executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", ...args], tree), {});
 
-// Usefulness: verifies acceptance 1 and 2 — init makes a forced removal refuse the work tree, and a
+// Usefulness: verifies acceptance 1 and 2. Init makes a forced removal refuse the work tree, and a
 // terminal finish makes the documented removal step work again. Not redundant: it runs the role
 // commands end to end over one linked work tree.
 test("init locks the work tree and a terminal finish unlocks it", async () => {
@@ -157,7 +157,7 @@ test("an interrupted run keeps the lock", async () => {
   expect(await lockField(main, tree)).toContain("agent-loop run ");
 });
 
-// Usefulness: verifies the main work tree case — init succeeds with no lock and a log line,
+// Usefulness: verifies the main work tree case. Init succeeds with no lock and a log line,
 // because Git refuses to lock the main work tree. Not redundant: the linked cases take a lock.
 test("init in the main work tree succeeds with no lock and a log line", async () => {
   const repo = await newRunRepo();
