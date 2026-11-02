@@ -58,6 +58,18 @@ The message added one retry instruction after that sentence.
 The runtime denial text is the prefix of that message.
 Decision 5 stays. An event-based flag needs the `tool.execution_complete` with `data.error.code` equal to `denied`. The adapter keeps the text match, because a model that quotes the text with no real denial is still flagged.
 
+### Live adapter turn denial (issue #710)
+
+The host was macOS 27.2 (arm64), Node v27.0.0-alpha.0.0.0, and GitHub Copilot CLI 1.0.106-2. The probe
+ran a live `role dispatch` init with `--worker copilot` in a disposable Git repository. The worker
+prompt asked for one shell command, and no allow flag reached the CLI. The dispatch cleared the
+inherited test-slot marker, and `COPILOT_ALLOW_ALL` was unset.
+
+- The envelope carried `"status": "ok"` and `"shellDenied": true`.
+- The report held the denial text `Permission denied because no interactive user response was available`.
+- The state file held lifecycle `active` and `stepsUsed` 1 after the turn.
+- A saved copy of the envelope with `shellDenied` removed failed the check with exit 1.
+
 ## Alternatives
 
 1. **`--allow-all-tools`**: rejected. It lifts every tool prompt, including write and network tools, and the issue asks for no broad flag.
