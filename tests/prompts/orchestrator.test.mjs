@@ -722,9 +722,9 @@ test("repairPrompt shows both finish forms with unresolvedCompare inside the obj
   );
 });
 
-// Usefulness: verifies the headless prompt routes the shared issue-body rule to each worker prompt,
-// so two concurrent headless runs do not drop an item when both write one body (#1360). The
-// interactive instructions test does not read the rendered headless prompt.
+// Usefulness: verifies the headless prompt routes the shared issue-body rule to each worker
+// prompt. The prompt also states that the rule narrows the race and does not remove it (#1360).
+// The interactive instructions test does not read the rendered headless prompt.
 test("initialPrompt puts the shared issue-body rule in each worker prompt", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   expectRule(prompt, /shared issue/i, /right before the write/i);
