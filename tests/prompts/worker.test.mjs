@@ -8,16 +8,18 @@ import { NAMED_TARGET, commitTargets } from "./orchestrator-helpers.mjs";
 // `Checks: the commands that ran and their results, or "none". One line.`
 const LABEL_LINE = /^([A-Z][A-Za-z]*):\s/;
 
-// The closing block template the prompt renders: the blank-line separated
-// paragraph that opens with a `Conclusion:` label, which is where the parser
-// starts the block too. Only that paragraph is the block, so label text in the
-// role bullets or in the task cannot stand in for a label the block dropped.
+// The closing block template the prompt renders: the lines from the
+// `Conclusion:` label through `Deferred:`, including the blank line between
+// label groups. Label text in the role bullets or in the task cannot stand in
+// for a label the block dropped.
 function closingBlockTemplate(prompt) {
-  const block = prompt.split(/\n\s*\n/).find((text) => /^Conclusion:\s/m.test(text));
-  if (!block) {
+  const lines = prompt.split("\n");
+  const start = lines.findIndex((line) => /^Conclusion:\s/.test(line));
+  const end = lines.findLastIndex((line) => /^Deferred:/.test(line));
+  if (start === -1 || end < start) {
     throw new Error("the worker prompt renders no closing block template");
   }
-  return block;
+  return lines.slice(start, end + 1).join("\n");
 }
 
 // A worker response written to the closing block: each label line holds the
