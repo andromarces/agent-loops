@@ -95,8 +95,8 @@ test("the closing-block rule states the heading and list fold", () => {
   );
 });
 
-// Usefulness: verifies the closing-block rule states the one-blank-line list fold of issue #1348,
-// so the prompt and the parser agree on the shape a Claude worker wrote. No other test pins it.
+// Usefulness: verifies the closing-block rule states the one-blank-line list fold of issue #1348.
+// The prompt and the parser then agree on the shape a Claude worker wrote. No other test pins it.
 test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
     /dash list under a label after one blank line[^.]*joins that label's value/,

@@ -857,7 +857,7 @@ test("parseReportBlock folds a dash list that one blank line sets apart from its
 
 // Usefulness: verifies the list shapes that stay unparseable around the one-blank-line fold.
 // It covers two blank lines, a blank line between items, a star bullet, an ordered list, and a
-// repeated label, so no text drops without a `raw` signal (issue #1348).
+// repeated label. Each shape keeps its text, so none drops without a `raw` signal (issue #1348).
 test("parseReportBlock returns null for a list outside the one-blank-line fold", () => {
   for (const tail of [
     "Notes: value\n\n\n- a",
