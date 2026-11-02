@@ -134,16 +134,12 @@ test("later worker turns state the closing block format", () => {
   expect(report.deferred).toBe("none");
 });
 
-// Usefulness: verifies requirement "a child prompt states that the closing block holds no Markdown
-// table and puts tabular data in `- ` items, one row per item" (issue #1359): a table in a child
-// block made the report null. It checks the first and later worker turns, so the rule reaches a
-// drifted conversation too.
+// Usefulness: verifies a worker prompt states that a table makes the block unparseable.
+// It checks the first and later turns, and keeps the tabular-data rule (issue #1359).
 test("worker turns state that the closing block holds no Markdown table", () => {
   for (const firstTurn of [true, false]) {
     const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
-    expect(prompt).toContain(
-      "The block holds no Markdown table: a table can make it unparseable or drop its rows.",
-    );
+    expect(prompt).toContain("The block holds no Markdown table: a table makes it unparseable.");
     expect(prompt).toContain("Put tabular data in `- ` items, one row per item.");
   }
 });

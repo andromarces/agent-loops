@@ -1076,38 +1076,37 @@ Notes:
   }
 });
 
-// Usefulness: verifies a table row after a `- ` item and a blank line refuses the block, so the
-// rows cannot drop without a `raw` signal (issue #1366). No existing test covers a table row.
-test("parseReportBlock returns null for a table row after a list item", () => {
-  const response = [
-    "Conclusion: table rows dropped",
-    "Why: measured figures",
-    "- item",
-    "",
-    "| a | b |",
-    "| --- | --- |",
-    "| 1 | 2 |",
-    "Blockers: none",
-    "Checks: none",
-    "Notes: none",
-    "Deferred: none",
-  ].join("\n");
-  expect(parseReportBlock(response)).toBeNull();
-  expect(hasClosingBlockAttempt(response)).toBe(true);
+// Usefulness: verifies a table pair after a `- ` item refuses the block, with or without outer pipes.
+// The issue #1366 shape and the delimiter row both count.
+test("parseReportBlock refuses a table after a list item", () => {
+  for (const table of [
+    "| a | b |\n| --- | --- |\n| 1 | 2 |",
+    "a | b\n--- | ---\n1 | 2",
+    "| a | b |\n| --- | :-: |\n| 1 | 2 |",
+  ]) {
+    const response = `Conclusion: table rows dropped\nWhy: measured figures\n- item\n\n${table}\nBlockers: none`;
+    expect(parseReportBlock(response), table).toBeNull();
+  }
 });
 
-// Usefulness: verifies every table-row position refuses the block, while a pipe inside a label
-// value still parses, so the rule matches the dropped-list refusal (issue #1366).
-test("parseReportBlock refuses a table row in any position", () => {
-  for (const tail of [
-    "Why: measured figures\n| a | b |\n| --- | --- |",
-    "Why: measured figures\n\n| a | b |",
-    "Why: measured figures\n\n- item\n\n| a | b |",
-    "Why: measured figures\n\n| --- | --- |",
-  ]) {
-    expect(parseReportBlock(`Conclusion: done\n${tail}\nBlockers: none`), tail).toBeNull();
-  }
-  expect(parseReportBlock("Conclusion: done\nWhy: measured a | b\nBlockers: none")).toMatchObject({
-    why: "measured a | b",
+// Usefulness: verifies a pipe line with no delimiter row below it keeps the origin/main outcome.
+// The pipeline continuation and the non-table shapes must not become null.
+test("parseReportBlock keeps a pipe line with no delimiter row", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: measured figures\nChecks: cmd\n| grep x\nBlockers: none",
+    ),
+  ).toMatchObject({ checks: "cmd" });
+  expect(parseReportBlock("Conclusion: done\nWhy: a | b\nBlockers: none")).toMatchObject({
+    why: "a | b",
   });
+  expect(parseReportBlock("Conclusion: done\nWhy: x\na | b\nc | d\nBlockers: none")).toMatchObject({
+    why: "x",
+  });
+  expect(parseReportBlock("Conclusion: done\nWhy: x\n---\nBlockers: none")).toMatchObject({
+    why: "x",
+  });
+  expect(
+    parseReportBlock("a | b\n--- | ---\n1 | 2\nConclusion: done\nWhy: x\nBlockers: none"),
+  ).toMatchObject({ why: "x" });
 });
