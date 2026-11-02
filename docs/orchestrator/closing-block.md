@@ -34,8 +34,9 @@ The prose and its list join the value of the label just above, as `; <prose>: <i
 loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
 `x; Design settled: a` (issue #898). A plain prose line starts with no whitespace (a nonbreaking or
 ideographic space counts), `*`, `_`, a backtick, `>`, or `#`. It is no list, and it holds no report
-label name or `Verdict` in any case. A whole-line bold heading is the one `*` exception (issue
-#1367). `**Reviewer notes.**` above `- a` reads `**Reviewer notes.**: a`.
+label name or `Verdict` before any run of marks, whitespace, and a colon. A
+whole-line bold heading is the one `*` exception (issue #1367). `**Reviewer notes.**` above `- a`
+reads `**Reviewer notes.**: a`.
 
 A report label name or `Verdict` in the line still blocks the fold, with any run of marks, optional
 whitespace, and a colon. A `**bold** note` line with trailing text is no heading. A `*` line (issue
