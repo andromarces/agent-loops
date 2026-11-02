@@ -58,6 +58,21 @@ The message added one retry instruction after that sentence.
 The runtime denial text is the prefix of that message.
 Decision 5 stays. An event-based flag needs the `tool.execution_complete` with `data.error.code` equal to `denied`. The adapter keeps the text match, because a model that quotes the text with no real denial is still flagged.
 
+### Live adapter turn denial (issue #710)
+
+The host was macOS 27.2 (build 26B123, arm64), Node v27.0.0-alpha.0.0.0, and GitHub Copilot CLI
+1.0.106-2. The probe ran a live `role dispatch` init with `--worker copilot` in a disposable Git
+repository. The worker prompt asked for one shell command, and no allow flag reached the CLI. The
+dispatch cleared the inherited test-slot marker, and `COPILOT_ALLOW_ALL` was unset. The runtime was
+`src/cli.mjs` at `55a8701b880f33f77cccbfb8638318075d7e430e`.
+
+- The envelope carried `"status": "ok"` and `"shellDenied": true`.
+- The Copilot event stream reported `"toolName":"bash"` with `"code":"denied"`.
+- The state file held lifecycle `active` and `stepsUsed` 1 after the turn.
+- The record saved `copilot --version`, `sw_vers`, `uname -a`, `node --version`, and the work tree head before and after the probe. Copilot CLI 1.0.106-2 was reported inside the turn.
+- A saved copy of the envelope with `shellDenied` removed failed the check with exit 1.
+- A saved copy with Copilot CLI 1.0.105-2 failed the version check with exit 1.
+
 ## Alternatives
 
 1. **`--allow-all-tools`**: rejected. It lifts every tool prompt, including write and network tools, and the issue asks for no broad flag.
