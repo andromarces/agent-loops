@@ -21,12 +21,14 @@ import { processStartTime } from "./lib/process-identity.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
+  cwdHash,
   readClaudeSessions,
   readState,
   statePaths,
   writeSessionEntry,
   writeState,
 } from "./lib/runstate.mjs";
+import { lockWorkTree, unlockWorkTree } from "./lib/work-tree-lock.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
@@ -377,6 +379,10 @@ async function dispatchLocked(
       stateFile: paths.stateFile,
       onEvent,
     });
+    // Only a terminal lifecycle drops the work tree lock; an interrupted run keeps it.
+    if (!canceled) {
+      await unlockWorkTree(args.cwd, { runId: cwdHash(args.cwd), signal });
+    }
     return {
       exitCode: canceled ? 130 : 1,
       payload: withLocalFiles(payload, localFiles, localFilesDiffer),
@@ -504,6 +510,8 @@ async function applyInitSideEffects(
   if (args.parentSession) {
     await writeSessionEntry(paths.sessionEntryFile, paths.stateFile);
   }
+  // The state file now names an active run, so the work tree holds its lock from here on.
+  await lockWorkTree(args.cwd, { runId: cwdHash(args.cwd), signal });
   logInfo(`initialized run state (mode: ${state.mode}, maxSteps: ${state.maxSteps})`);
   return localFiles;
 }

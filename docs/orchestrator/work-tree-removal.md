@@ -2,6 +2,8 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when you remove the work tree of a terminal run, after the core rule on the terminal state is met.
 
+The run holds a Git work tree lock while it is active. `role dispatch` locks a linked `--cwd` at init, with the reason `agent-loop run <id> active`. A terminal lifecycle unlocks it: `finished`, `aborted`, and `halted`. The documented removal command then succeeds. Init in the main work tree holds no lock, because Git refuses one. Do not pass `-f -f` to a locked work tree, and do not unlock it by hand.
+
 Remove the work tree with `git worktree remove --force "<work tree>"`,
 then check whether the folder still exists. On Windows, the remove can leave the
 folder when a turn ran `pnpm install`: it holds `node_modules` with junctions into

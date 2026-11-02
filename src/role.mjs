@@ -17,6 +17,7 @@ import {
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
+import { unlockWorkTree } from "./lib/work-tree-lock.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
 import {
@@ -85,6 +86,7 @@ async function abort(args) {
       state.lifecycle = "aborted";
       state.reason = args.reason;
       await writeState(paths.stateFile, state);
+      await unlockWorkTree(args.cwd, { runId: cwdHash(args.cwd) });
       logInfo(`run aborted: ${args.reason}`);
       return { exitCode: 0, payload: { status: "ok", lifecycle: "aborted" } };
     },
