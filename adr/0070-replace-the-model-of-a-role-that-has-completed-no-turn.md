@@ -25,9 +25,10 @@ The issue lists two approaches: check each model before the first child turn, or
 
 ## Consequences
 
-- A refused model costs one failed turn and one parent call, and the worker keeps its session.
+- A refused model costs one failed turn and one parent call.
 - The operation works the same for every adapter, because it reads no CLI output and calls no CLI.
-- Whether a resume of the kept session on the changed model works is verified for no adapter live. The runtime side is tested with fake adapters: the next dispatch hands the adapter the kept session id and the new model. The adapter side is read from source, and a mocked-argv test holds a stored session id and a model together only for agy (`--conversation` and `--model`) and Copilot (`--session-id` and `--model`). The Claude Code (`--resume` and `--model`), Codex (`exec resume` and `-m`), and OpenCode (`--session` and `--model`) tests hold the session id and the model apart. Copilot and agy are not verified live, and neither are Claude Code, Codex, or OpenCode: whether each CLI accepts the new model in the resumed session, or starts a new conversation, is unknown until the live check in issue #710.
+- The live check in issue #710 recorded a result for the five CLIs. Claude Code 2.1.316 and codex-cli 0.167.0-alpha.3 resumed the kept session on the new model. Copilot CLI 1.0.106-2, opencode v0.0.0-dev-481, and agy 1.4.12 kept no session id after the refused turn. Their next turn started a new conversation. OpenCode printed `"sessionID":""` on the refused turn. The executed model is not verified for agy, because its JSON output has no model field.
+- The runtime side is tested with fake adapters: the next dispatch hands the adapter the kept session id and the new model. The adapter side is read from source, and a mocked-argv test holds a stored session id and a model together only for agy (`--conversation` and `--model`) and Copilot (`--session-id` and `--model`). The Claude Code (`--resume` and `--model`), Codex (`exec resume` and `-m`), and OpenCode (`--session` and `--model`) tests hold the session id and the model apart.
 - A model that a CLI accepts and later rejects after an `ok` turn is not covered: that role needs `abort` and a new run.
 - The runtime does not tell a refused-model failure from another first-turn failure. The parent reads the error text and asks the user for the valid model.
 - The state file gains the optional field `modelChanges`. A state file without it stays valid.
