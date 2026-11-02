@@ -3,7 +3,7 @@ import { execa } from "execa";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { gitRead } from "../../src/lib/snapshot.mjs";
 import { lockWorkTree, unlockWorkTree, workTreeLockReason } from "../../src/lib/work-tree-lock.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import { createLinkedWorkTree } from "../git-helpers.mjs";
 
 const bases = [];
@@ -104,6 +104,40 @@ test("unlocks its own lock and only that one", async () => {
   expect(await lockField(main, tree)).toBeNull();
 });
 
+// Usefulness: verifies acceptance 2 and the exact-reason rule. An unlock keeps a lock with another
+// run id, a prefix id, an empty reason, and a foreign reason. Not redundant: the own-lock test
+// covers only an exact match.
+test.each([
+  ["another run id", workTreeLockReason("other123")],
+  ["a prefix id", workTreeLockReason("abc1234")],
+  ["an empty reason", ""],
+  ["a foreign reason", "maintainer debug"],
+])("keeps a lock with %s", async (_name, reason) => {
+  const { main, linked: tree } = await linked();
+  await git(main, ["worktree", "lock", "--reason", reason, tree]);
+
+  const result = await unlockWorkTree(tree, { runId: "abc123" });
+
+  expect(result).toMatchObject({ status: "kept" });
+  expect(await lockField(main, tree)).toBe(reason === "" ? "locked" : `locked ${reason}`);
+});
+
+// Usefulness: verifies the work tree path compare stays canonical. An unlock through a symlinked
+// parent component finds the work tree and releases its own lock. Not redundant: the other cases
+// pass the work tree path itself.
+test("unlocks its own lock through a symlinked parent component", async (ctx) => {
+  const { base, main, linked: tree } = await linked();
+  const linkBase = `${base}-link`;
+  await symlinkOrSkip(ctx, base, linkBase, process.platform === "win32" ? "junction" : "dir");
+  bases.push(linkBase);
+  await lockWorkTree(tree, { runId: "abc123" });
+
+  const result = await unlockWorkTree(`${linkBase}/linked`, { runId: "abc123" });
+
+  expect(result).toMatchObject({ status: "unlocked" });
+  expect(await lockField(main, tree)).toBeNull();
+});
+
 // Usefulness: verifies the re-created-tree case. A work tree removed and added again at the same
 // path holds no lock of this run, so the unlock leaves it alone. Not redundant: this is the one
 // case where an earlier lock vanished with the registration.
@@ -135,6 +169,28 @@ test("warns and returns a failure when Git refuses the lock", async () => {
 
     expect(result).toMatchObject({ status: "failed" });
     expect(warn.mock.calls.flat().join(" ")).toContain("work tree lock");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies a failed unlock only warns. The unlock reports `failed`, throws no error,
+// and leaves the lock in place. Not redundant: the lock-failure case never runs an unlock.
+test("warns and returns a failure when Git refuses the unlock", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const read = async (cwd, args, options) =>
+    args[0] === "worktree" && args[1] === "unlock"
+      ? { exitCode: 128, stdout: "", stderr: "" }
+      : gitRead(cwd, args, options);
+  try {
+    const { main, linked: tree } = await linked();
+    await lockWorkTree(tree, { runId: "abc123" });
+
+    const result = await unlockWorkTree(tree, { runId: "abc123", read });
+
+    expect(result).toMatchObject({ status: "failed" });
+    expect(warn.mock.calls.flat().join(" ")).toContain("work tree lock");
+    expect(await lockField(main, tree)).toBe(`locked ${workTreeLockReason("abc123")}`);
   } finally {
     warn.mockRestore();
   }
