@@ -21,7 +21,9 @@ The fixed review scope also sets what a blocker is. A weakened existing guard or
 documented contract stays a blocker. A finding that is not a defect against the
 task, not a weakened existing guard or documented contract, and not a regression
 from the base branch is hardening: it goes in `Notes`, not in `Blockers`
-(issue #1073). A blocker needs a concrete failure scenario. A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in `Notes`, not in `Blockers`, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers (issue #1194).
+(issue #1073).
+
+A blocker needs a concrete failure scenario. A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in `Notes`, not in `Blockers`, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers (issue #1194).
 
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
@@ -105,7 +107,9 @@ the commit the gate evaluates (the test merge commit when it carries a check,
 otherwise the head), so a PR head that moves away and back during the read cannot
 put the checks of another commit in the status. The required checks come from the
 same resolution the `--require-ci` gate uses, and a status never passes a state the
-gate refuses (issue #349). The envelope field is `prChecks`:
+gate refuses (issue #349).
+
+The envelope field is `prChecks`:
 `{ pr, head, status, checks, summary, advisory }`, where `status` is `pass`,
 `failing`, `pending`, or `unresolved`, `checks` names the checks in that state, and
 `summary` is the one-line form that the reviewer prompt carries. Every supplied status still carries
@@ -156,13 +160,15 @@ the flag is unchanged.
   slot count. The default is 1 slot on every CPU count (ADR 0046), and
   `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
   1800 seconds, read on each reviewer dispatch and separate from `--test-cmd-timeout`, which starts once the slot is
-  held. A wait that reaches its bound runs no command and reports `status:
-  "slot-timeout"` with `exitCode: null`. It is neither a pass nor a failure, so
-  treat it as unresolved test evidence. A slot that cannot be acquired runs no
-  command and reports `status: "error"`. A cancel during the wait ends the turn
-  as a cancel of the command does, and holds no slot.
+  held.
+  - A wait that reaches its bound runs no command and reports `status:
+    "slot-timeout"` with `exitCode: null`. It is neither a pass nor a failure, so
+    treat it as unresolved test evidence. A slot that cannot be acquired runs no
+    command and reports `status: "error"`. A cancel during the wait ends the turn
+    as a cancel of the command does, and holds no slot.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
-  bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows. A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
+  bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows.
+  - A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
 - A command that no kill ends settles 10 s after the bound or the cancel, with the same `timed-out` or `canceled` result fields.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
@@ -173,12 +179,13 @@ the flag is unchanged.
   `workTreeChanged` and `changedPaths`. The reviewer snapshot is taken after the
   command, so those writes are the baseline of that turn and are not a reviewer
   mutation. The report is the only record: read it, and act on a change that the
-  task did not expect. `lateChangedPaths` lists, at most 20, the paths that differ between the
-  after-command snapshot and that baseline, for example a write by a process that the
-  command left behind. That write is in the baseline, so it never halts the run with a
-  `MutationError`. The reviewer prompt shows it. It is advisory. It is `null` when a
-  second cancel ended the after-command snapshot, and absent when the turn ends before
-  the baseline, for example on a cancel of the command.
+  task did not expect.
+  - `lateChangedPaths` lists, at most 20, the paths that differ between the
+    after-command snapshot and that baseline, for example a write by a process that the
+    command left behind. That write is in the baseline, so it never halts the run with a
+    `MutationError`. The reviewer prompt shows it. It is advisory. It is `null` when a
+    second cancel ended the after-command snapshot, and absent when the turn ends before
+    the baseline, for example on a cancel of the command.
 - The result is advisory evidence with `advisory: true`. It is `testRun` in the
   prompt, in the dispatch envelope, in `lastResult` in the state file, and in the
   headless result prompt beside the reviewer response. Its fields are `command`,
@@ -186,10 +193,11 @@ the flag is unchanged.
   `truncated`, `tail`, `workTreeChanged`, `changedPaths`, `changedCount`, and
   `advisory`, plus `lateChangedPaths` once the reviewer baseline is taken. `status`
   is `pass`, `fail`, `timed-out`, `slot-timeout`, `error`, or `canceled`, and
-  `exitCode` is `null` for `timed-out`, `slot-timeout`, and `error`. A reviewer turn that ends
-  in an error still carries it, in the envelope, `lastResult`, and the transcript. Compare it with the
-  reviewer `Checks` line and act on a disagreement. A turn with no command
-  carries no `testRun`.
+  `exitCode` is `null` for `timed-out`, `slot-timeout`, and `error`.
+  - A reviewer turn that ends
+    in an error still carries it, in the envelope, `lastResult`, and the transcript. Compare it with the
+    reviewer `Checks` line and act on a disagreement. A turn with no command
+    carries no `testRun`.
 - Every worker and reviewer turn states the test-run rule (ADR 0044): run a
   targeted test file through the test slot wrapper with `--if-held`, and run a full
   suite only through the plain wrapper, or rely on the required CI checks. With
@@ -198,16 +206,18 @@ the flag is unchanged.
   no slot, so a slot holder can start beside it. A targeted run covers the test
   files that mirror the changed source files first, then the test files of the
   direct importers of a changed source file, at most 10 test files in total,
-  never a whole directory (issue #1078). Any broader
-  run is a full suite and goes through the plain wrapper. A run whose paths cannot
-  be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
-  binary and the CLI script of the run, so it works where `agent-loop` is not on
-  PATH. A run with or without `--test-cmd` gives the same rule, on the headless
-  and the interactive path. Exit code 75 from the wrapper means that the suite
-  did not run, which a child reports as unresolved. The rule also bars a CPU or
-  memory load generator, a busy loop, and a detached or background process that
-  can outlive the turn (issue #934). The required CI checks are the evidence under
-  load.
+  never a whole directory (issue #1078).
+  - Any broader
+    run is a full suite and goes through the plain wrapper. A run whose paths cannot
+    be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
+    binary and the CLI script of the run, so it works where `agent-loop` is not on
+    PATH. A run with or without `--test-cmd` gives the same rule, on the headless
+    and the interactive path.
+  - Exit code 75 from the wrapper means that the suite
+    did not run, which a child reports as unresolved. The rule also bars a CPU or
+    memory load generator, a busy loop, and a detached or background process that
+    can outlive the turn (issue #934). The required CI checks are the evidence under
+    load.
 - A reviewer in a sandboxed mode sees the result of the whole command only. It
   cannot run a targeted test, unless the run set `--reviewer-sandbox
   workspace-write` or runs with no sandbox ([Codex reviewer sandbox mode](reviewer-sandbox.md)).

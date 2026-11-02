@@ -20,7 +20,9 @@ A run that a new session resumes is therefore unguarded for that session (issue 
 call moves the stored id to the new session. The new session can run `dispatch`,
 `finish`, and `abort` by omitting `--parent-session`. It can run `extend` and
 `declare-pr` only by passing the stored id. Both compare the id only, so that call succeeds for
-any parent-side caller that holds the id, and it gives no guard coverage. A child
+any parent-side caller that holds the id, and it gives no guard coverage.
+
+A child
 role never runs `extend`, `declare-pr`, or `set-model`: the spawn-time marker refuses it, and the prompt rule
 backs the marker. To get a guard, call `abort` and start a new run with
 the new session id. A new run starts every role on a new session (ADR 0021).

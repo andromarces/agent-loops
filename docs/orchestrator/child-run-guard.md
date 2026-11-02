@@ -9,12 +9,15 @@ enclosing run and then the key of the dispatching run, in the environment of eve
 is the name of the run's state directory, the hash each subcommand uses to find
 the run state. A path spelled another way, such as a symlink alias, finds no
 state. A child that names the work tree as the run does is refused even when the
-work tree is gone. A
-process keeps a marker it inherited. A parent session that another run's child
+work tree is gone.
+
+A process keeps a marker it inherited. A parent session that another run's child
 started holds a different key for its own work tree and is not refused. A worker
 that a nested run starts holds the keys of the outer run and the nested run, so
 it is refused against both. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
-session id. The id check alone does not identify the caller, so a child that
+session id.
+
+The id check alone does not identify the caller, so a child that
 clears its environment passes, and so does a harness that filters the variable
 from shell commands. An orchestrator or parent that a child of the same
 run started, in that run's work tree, inherits the key and is refused. The prompt

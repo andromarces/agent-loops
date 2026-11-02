@@ -43,7 +43,9 @@ git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>
 `git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. A left
 count above 0 means the local branch is ahead of or diverged from the PR head. Then
 `-B` drops its local-only commits from the branch, so do not run the command:
-report to the user. A left count of 0 means the local branch equals or is behind the
+report to the user.
+
+A left count of 0 means the local branch equals or is behind the
 PR head, and the command is safe. The command fails when another work tree has the
 branch checked out. Then report to the user, and never remove that work tree.
 

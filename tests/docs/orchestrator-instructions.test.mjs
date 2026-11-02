@@ -381,13 +381,6 @@ const wordsOf = (text) =>
     .match(/[a-z0-9]+/g)
     .join(" ");
 
-/** The paragraph of `text` that holds `marker`, bounded by blank lines. */
-function paragraphAround(text, marker) {
-  const paragraph = text.split(/\r?\n[ \t]*\r?\n/).find((part) => part.includes(marker));
-  expect(paragraph, `no paragraph holds: ${marker}`).toBeDefined();
-  return paragraph;
-}
-
 /** The text of `text` between the end of `after` and the start of `before`. */
 function textBetween(text, after, before) {
   const start = text.indexOf(after);
@@ -422,7 +415,10 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const docsPassage = paragraphAround(instructions, "When no source can state the required checks");
+  const docsPassage =
+    instructions.match(
+      /When no source can state the required checks[\s\S]*?do not run `--all` for it\./,
+    )?.[0] ?? "";
   const promptPassage = textBetween(
     prompt,
     "as passed from the noRequiredChecks envelope.",
@@ -660,7 +656,7 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // Extracts the removal-wait paragraph of the raw text for its dedicated condition test. The
 // whole-section pin covers the same paragraph word for word, so this pattern exempts nothing.
 const REMOVAL_WAIT_PARAGRAPH_PATTERN =
-  /Remove the work tree only after the run is terminal\.(?:(?!\n[ \t]*\r?\n)[\s\S])*?Never chain it after `finish` or `abort` in one command\.\s*/;
+  /Remove the work tree only after the run is terminal\.[\s\S]*?Never chain it after `finish` or `abort` in one command\.\s*/;
 
 const REMOVAL_WAIT_PARAGRAPH =
   'Remove the work tree only after the run is terminal. A `finish` or `abort` envelope with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused `finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run `active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)): remove the work tree after it reads `halted`. Run the removal as a separate command after you read the result. Never chain it after `finish` or `abort` in one command.';

@@ -76,8 +76,9 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   `unresolvedCompare` is refused before any GitHub read. The transcript records the
   flag, but a continuation does not restore it: each invocation selects the flag
   again, as it selects `--require-ci`, and omitting it on a continuation disables
-  the runtime compare and leaves the marker path. The runtime declares no worker-opened
-  PR in such a run. The flag names a PR that exists at start.
+  the runtime compare and leaves the marker path.
+  - The runtime declares no worker-opened
+    PR in such a run. The flag names a PR that exists at start.
 - A PR that the worker opens on such a repository needs no flag (#1111). The runtime
   refuses to declare it, records it in a `pr-undeclared` event with `pr` and
   `stepsUsed`, and applies the same compare at finish with no operator choice: a
@@ -87,10 +88,11 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   the run exits `0`. A run with `--pr`, `--require-ci`, or `--compare-head` never
   records one. A later worker turn that declares a PR clears the undeclared PR, and
   one that refuses another PR replaces it. A PR that leaves the open list keeps
-  its place, and the compare refuses it as closed or merged. A continuation does not restore the
-  undeclared PR: it restores a PR from a `pr-declared` record only, so the
-  continuation resolves the worker-opened PR again after its own worker turn, and a
-  continuation with no worker turn keeps the marker path.
+  its place, and the compare refuses it as closed or merged.
+  - A continuation does not restore the
+    undeclared PR: it restores a PR from a `pr-declared` record only, so the
+    continuation resolves the worker-opened PR again after its own worker turn, and a
+    continuation with no worker turn keeps the marker path.
 - To gate a PR that exists at start, pass `--require-ci <n>`. Or use
   `agent-loop role` with `role declare-pr`, which takes the gate at `finish`.
 
@@ -132,7 +134,8 @@ GitHub. Declare the PR after the worker opens it:
   refuses unless the PR is open, it equals `reviewed.head`, and the reviewed tree is clean, reads no
   required-check source, and records `headCompare: "verified"` in place of the
   `unresolvedCompare` marker. Use the marker only when the PR head itself cannot be
-  read. Run
-  `wait-checks --all` once before each reviewer turn, because the required wait
-  refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
-  envelope that ends it at once.
+  read.
+  - Run
+    `wait-checks --all` once before each reviewer turn, because the required wait
+    refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
+    envelope that ends it at once.
