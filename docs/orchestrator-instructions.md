@@ -420,8 +420,9 @@ of this file.
   headless run passes `--compare-head`, when a run has no usable required-check source, and when
   a headless run finishes with a worker-opened PR.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
-  dispatch several runs in one repository, so no two runs create the same tracking issue or take
-  the same sequential identifier, such as an ADR number.
+  dispatch several runs in one repository. Two runs can create the same tracking issue or take the
+  same sequential identifier, such as an ADR number. Read it before concurrent runs can edit one
+  issue body, and put its read-write-read rule in each worker prompt.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
   tree for a repository with no remote or for a run on an existing PR, and when
   `extensions.worktreeConfig` is on.
@@ -461,6 +462,11 @@ first dispatch, but 2 slots overloaded both measured hosts (ADR 0046).
 Workers of runs in one repository can each create the same shared tracking issue, or take the same
 sequential identifier, such as the next ADR number. Rules:
 [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md).
+
+Workers of runs in one repository can also edit the body of the same issue at once, which drops an
+item when two writes overlap. Put the read-write-read rule of
+[Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md) in each worker prompt of a
+concurrent run, and state its limit there. That rule narrows the race and does not remove it.
 
 ## Loop policy
 

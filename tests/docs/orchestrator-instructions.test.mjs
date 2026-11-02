@@ -1413,6 +1413,36 @@ test("the shared-artifact rule covers a sequential identifier that concurrent ru
   expect(core).toContain("](orchestrator/shared-tracking-artifacts.md)");
 });
 
+// Usefulness: verifies the shared-artifact rule covers two workers that edit one issue body at once,
+// so the parent puts the read-write-read rule in each worker prompt and states its limit (#1360).
+// The creation and sequential-identifier tests do not reach a concurrent body edit.
+test("the shared-artifact rule covers concurrent edits of one issue body", async () => {
+  const section = (
+    await readFile(join(referenceSectionsDir, "shared-tracking-artifacts.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  expectRule(section, /two workers of concurrent runs/i, /same issue/i);
+  expectRule(section, /read the body right before the write/i);
+  expectRule(section, /reads the body again/i);
+  expectRule(section, /restores any item/i, /read before the write/i, /read after it lacks/i);
+  expectRule(section, /narrows the race/i, /does not remove it/i);
+  const core = await readFile(instructionsPath, "utf8");
+  const listing = core.slice(
+    core.indexOf("## Reference sections"),
+    core.indexOf("## Several runs"),
+  );
+  const entry = listing
+    .split("\n- [")
+    .find((part) => part.includes("(orchestrator/shared-tracking-artifacts.md)"))
+    .replace(/\s+/g, " ");
+  expectRule(entry, /concurrent runs/i, /one issue body/i, /worker prompt/i);
+  const runsAtOnce = core
+    .slice(core.indexOf("## Several runs"))
+    .replace(/\s+/g, " ")
+    .split("## Loop policy")[0];
+  expectRule(runsAtOnce, /worker prompt/i, /concurrent run/i);
+  expectRule(runsAtOnce, /narrows the race/i, /does not remove it/i);
+});
+
 /** Sentences of at least 30 characters, with code spans and whitespace flattened. */
 function flatSentences(text) {
   return text
