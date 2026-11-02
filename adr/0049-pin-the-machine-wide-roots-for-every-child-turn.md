@@ -48,6 +48,20 @@ Issue #710 ran the live check on macOS 27.2 (26B123) at source head `5a33f11e03b
 - Eight of the ten turns matched, and the two Copilot turns did not run the probe.
 - No result contradicts this ADR, so no bug was opened.
 
+A second run on 2026-11-02 used source head `1f82740c`, which is after `8f14f78`. All five adapters ran one worker turn and one reviewer turn.
+
+- macOS 27.2 (26B123), Node v27.0.0-alpha.0.0.0, Claude Code 2.1.316, codex-cli 0.167.0-alpha.3, Copilot CLI 1.0.106-2, opencode v0.0.0-dev-481, and agy 1.4.12.
+- The models were `haiku`, `gpt-6-luna` at low effort, `mai-code-1.1-flash`, `opencode-go/deepseek-v4.1-flash`, and `gemini-3.8-flash` at low effort.
+- Each nested dispatch ran with the three root variables and `AGENT_LOOP_TEST_SLOT_HELD` unset, and with `TMP`, `TEMP`, and `TMPDIR` set to one probe base directory.
+- The nested runtime resolved `<probe base>/agent-loops/runs`, `<probe base>/agent-loops/test-slots`, and `<probe base>/agent-loops/session-records`.
+- Each of the ten turns set `TMP`, `TEMP`, and `TMPDIR` to `<probe base>/child-tmp/<label>`, then ran `test-slot --wait 120`.
+- Every turn printed the three roots, `child_slot_marker=<unset>`, and a lock at `<probe base>/agent-loops/test-slots/slot-0.lock`, outside the outer host slot directory.
+- Every lock owner pid equaled the `PPID` of the turn's slot command, and all ten `test_slot_exit` values were 0.
+- Copilot needed `COPILOT_ALLOW_ALL=1` and a shim that added `--allow-tool shell(sh)`, `--allow-tool shell(bash)`, and `--allow-all-paths`.
+- The saved fields are `child_runs`, `child_slots`, `child_records`, `child_slot_marker`, `child_TMP`, `child_TEMP`, `child_TMPDIR`, `slot_lock`, `slot_dir`, `slot_nonce`, `slot_owner`, `shell_ppid`, `slot_files`, and `test_slot_exit`.
+- A wrong `AGENT_LOOP_RUNS_ROOT` before a dispatch failed the check. Three replayed records with a changed slot root, a marker, or an owner pid also failed.
+- No result contradicts this ADR, so no bug was opened.
+
 ## Alternatives
 
 1. **Render the wrapper command with an explicit `AGENT_LOOP_TEST_SLOTS_ROOT`.** Not taken. It covers the slot directory only, not the runs root or the session-record directory.
