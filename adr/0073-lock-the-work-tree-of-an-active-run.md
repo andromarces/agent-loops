@@ -14,6 +14,8 @@ Issue #1347 records an outside session that removed the linked work tree of an a
 
 Git already offers a lock on a linked work tree. A lock makes `git worktree remove`, a single `--force`, and `git worktree prune` refuse the path. Only a double `--force` of `git worktree remove` removes a locked work tree.
 
+Issue #1351 records that the removal doc forbids a manual unlock, so a terminal run that kept its lock had no permitted path.
+
 ## Decision
 
 1. `role dispatch` takes a Git work tree lock at init when `--cwd` is a linked work tree. The reason is `agent-loop run <id> active`, and the id is the run state directory name.
@@ -29,7 +31,7 @@ Git already offers a lock on a linked work tree. A lock makes `git worktree remo
 
 - A `git worktree remove --force` of an active run refuses with `cannot remove a locked working tree`, and names the run reason. A `git worktree prune` leaves the work tree alone.
 - The documented removal step works after `finished`, `aborted`, and `halted`.
-- A crash between the terminal state write and the unlock leaves a lock on a terminal run. The removal step then refuses, and a maintainer unlocks by hand.
+- A crash between the terminal state write and the unlock leaves a lock on a terminal run. The next `finish` or `abort` of that terminal run unlocks it, because its reason names the run. The removal step then succeeds.
 - Init over that terminal state keeps the lock, because the reason matches. The new run unlocks it at its own terminal lifecycle.
 - A process with write access to the main Git directory can still remove the lock. A double `--force` also removes it.
 - The lock is not verified on Windows in this change.
@@ -48,6 +50,7 @@ Git already offers a lock on a linked work tree. A lock makes `git worktree remo
 ## Links
 
 - [Issue #1347](https://github.com/andromarces/agent-loops/issues/1347)
+- [Issue #1351](https://github.com/andromarces/agent-loops/issues/1351)
 - [PR #1349](https://github.com/andromarces/agent-loops/pull/1349)
 - [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [Removing a work tree](../docs/orchestrator/work-tree-removal.md)

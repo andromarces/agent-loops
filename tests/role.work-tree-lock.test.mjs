@@ -3,6 +3,8 @@ import { realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ExecError } from "../src/lib/exec.mjs";
+import { cwdHash } from "../src/lib/runstate.mjs";
+import { workTreeLockReason } from "../src/lib/work-tree-lock.mjs";
 import { executeRoleCommand } from "../src/role.mjs";
 import {
   basicDeps,
@@ -70,6 +72,69 @@ test("init locks the work tree and a terminal finish unlocks it", async () => {
 
   const result = await finish(tree);
   expect(result.exitCode).toBe(0);
+  expect(await lockField(main, tree)).toBeNull();
+  expect((await removeForced(main, tree)).exitCode).toBe(0);
+});
+
+// Usefulness: verifies acceptance 1 for the crash window. A terminal run that still holds its
+// own lock releases it through a later finish, so removal works. Not redundant: the other
+// terminal cases never leave a lock on a terminal run.
+test("a later finish releases the lock of a terminal run", async () => {
+  const { main, linked: tree } = await linked();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), tree), basicDeps());
+  expect((await finish(tree)).exitCode).toBe(0);
+  // The lock that a crash between the state write and the unlock leaves behind.
+  await git(main, ["worktree", "lock", "--reason", workTreeLockReason(cwdHash(tree)), tree]);
+  expect((await removeForced(main, tree)).exitCode).not.toBe(0);
+
+  const result = await finish(tree);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("already finished");
+  expect(await lockField(main, tree)).toBeNull();
+  expect((await removeForced(main, tree)).exitCode).toBe(0);
+});
+
+// Usefulness: verifies acceptance 2 on the release path. A lock whose reason names another owner
+// stays through a later finish. Not redundant: the own-lock case releases the lock.
+test("a later finish keeps a lock that names another owner", async () => {
+  const { main, linked: tree } = await linked();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), tree), basicDeps());
+  expect((await finish(tree)).exitCode).toBe(0);
+  await git(main, ["worktree", "lock", "--reason", "maintainer debug", tree]);
+
+  const result = await finish(tree);
+
+  expect(result.exitCode).toBe(1);
+  expect(await lockField(main, tree)).toBe("locked maintainer debug");
+  expect((await removeForced(main, tree)).exitCode).not.toBe(0);
+});
+
+// Usefulness: verifies the release path needs a terminal run. A lock with no state file stays,
+// because no run id can match it. Not redundant: every other release case has a state file.
+test("a later finish with no state file keeps the lock", async () => {
+  const { main, linked: tree } = await linked();
+  const reason = workTreeLockReason(cwdHash(tree));
+  await git(main, ["worktree", "lock", "--reason", reason, tree]);
+
+  const result = await finish(tree);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("No run state");
+  expect(await lockField(main, tree)).toBe(`locked ${reason}`);
+});
+
+// Usefulness: verifies the abort branch of the release path. A terminal run that still holds its
+// own lock releases it through a later abort. Not redundant: the finish path never runs abort.
+test("a later abort releases the lock of a terminal run", async () => {
+  const { main, linked: tree } = await linked();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), tree), basicDeps());
+  expect((await abort(tree)).exitCode).toBe(0);
+  await git(main, ["worktree", "lock", "--reason", workTreeLockReason(cwdHash(tree)), tree]);
+
+  const result = await abort(tree);
+
+  expect(result.exitCode).toBe(1);
   expect(await lockField(main, tree)).toBeNull();
   expect((await removeForced(main, tree)).exitCode).toBe(0);
 });

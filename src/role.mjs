@@ -39,7 +39,8 @@ const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend", "declare-pr"
 /**
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
  * Rejects init-flag changes and a terminal lifecycle first. `requireOptions`
- * goes to `requireState`, and `allowed` to `rejectInitFlagChanges`. A set
+ * goes to `requireState`, except `releaseTerminalLock`, which releases a stale own lock on a
+ * terminal run. `allowed` goes to `rejectInitFlagChanges`. A set
  * `parentOperation` names a parent-edit operation: a missing `--parent-session` is refused
  * before the lock, and one that differs from the stored id is refused on the state between
  * `requireState` and the init-flag check, so that refusal wins over both.
@@ -52,6 +53,11 @@ function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = n
     if (parentOperation !== null) requireStoredParentSession(args, state);
     rejectInitFlagChanges(args, state, allowed);
     if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
+      // A crash between the terminal state write and the unlock leaves the run's own lock behind.
+      // A later finish or abort releases that lock, and keeps a lock that names another owner.
+      if (requireOptions.releaseTerminalLock) {
+        await unlockWorkTree(args.cwd, { runId: cwdHash(args.cwd) });
+      }
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }
     // A later call on an interrupted run re-checks the turn directory that the call which marked it
@@ -67,7 +73,7 @@ function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = n
 async function finish(args, { stdin = readStdin, gh, signal } = {}) {
   rejectMisplacedFlags(args, "finish");
 
-  return withOpenRun(args, { needsBudget: true }, (state, paths) =>
+  return withOpenRun(args, { needsBudget: true, releaseTerminalLock: true }, (state, paths) =>
     finishRun(args, state, paths, { stdin, gh, signal }),
   );
 }
@@ -81,7 +87,7 @@ async function abort(args) {
 
   return withOpenRun(
     args,
-    {},
+    { releaseTerminalLock: true },
     async (state, paths) => {
       state.lifecycle = "aborted";
       state.reason = args.reason;
