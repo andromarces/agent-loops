@@ -126,7 +126,7 @@ test("first worker turn keeps the closing block as the last message", () => {
 test("later worker turns state the closing block format", () => {
   const prompt = workerPrompt("fix the reviewer finding", false);
   const block = closingBlockTemplate(prompt);
-  expect(block).toContain("A bold heading line that groups a dash list");
+  expect(prompt).toContain("A bold heading line that groups a dash list");
   const report = parseReportBlock(workerResponse(block, { Deferred: "none" }));
   expect(report).not.toBeNull();
   expect(report.deferred).toBe("none");

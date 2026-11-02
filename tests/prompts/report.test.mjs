@@ -95,6 +95,16 @@ test("the closing-block rule states the heading and list fold", () => {
   );
 });
 
+// Usefulness: verifies the closing-block rule states the one-blank-line list fold of issue #1348.
+// The prompt and the parser then agree on the shape a Claude worker wrote. No other test pins it.
+test("the closing-block rule states the one-blank-line list fold", () => {
+  expect(reportBlock).toMatch(
+    /dash list under a label after one blank line[^.]*joins that label's value/,
+  );
+  expect(reportBlock).toMatch(/ordered list after a blank line stays unparseable/);
+  expect(reportBlock).toMatch(/Two blank lines under a label before a dash list[^.]*unparseable/);
+});
+
 // Usefulness: verifies the closing-block rule states that a bold label name opening a list item
 // is item text inside a run and unparseable outside one (issue #1006), so the prompt matches the parser.
 test("the closing-block rule states the bold label name list item", () => {
