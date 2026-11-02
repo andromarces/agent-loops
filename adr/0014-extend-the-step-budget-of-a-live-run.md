@@ -111,7 +111,7 @@ The worker turn was asked to run one shell command. The command printed whether
 | Claude Code | 2.1.296          | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 | Codex CLI   | 0.163.0-alpha.5  | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 | OpenCode    | v0.0.0-dev-20800 | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
-| Copilot CLI | 1.0.96-2         | not verified            | not verified              | observed: all three ran, exit 0    |
+| Copilot CLI | 1.0.106-2        | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 | Antigravity | 1.3.3 (`agy`)    | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 
 - The refusal text was `abort is refused for a child role; only the parent session runs it.`
@@ -127,6 +127,14 @@ The worker turn was asked to run one shell command. The command printed whether
 - Copilot CLI: the worker shell command was denied in both runs, so the marker and the child
   refusal are not verified. [ADR 0035](0035-state-that-a-copilot-worker-cannot-run-shell-commands-and-flag-a-denied-call.md)
   and [issue #713](https://github.com/andromarces/agent-loops/issues/713) record the denial and its decision.
+- 2026-11-02, macOS 27.2, Copilot CLI 1.0.106-2: a `copilot` shim on `PATH` added
+  `--allow-tool 'shell(bash)'` and kept the runtime arguments unchanged. The worker read
+  `AGENT_LOOP_SPAWNED_RUN=b20132fb7592,60cf9019972a` and `AGENT_LOOP_TEST_SLOT_HELD=unset`, and the
+  list held the run key `60cf9019972a`. The child `role abort` exited 1 with
+  `abort is refused for a child role; only the parent session runs it.` The state file held
+  lifecycle `active` after the turn. The probe script was inside the disposable repository; an
+  earlier run with an absolute script path outside it was refused. The parent shell ran `extend`
+  and `finish` on one run, and `abort` on another, each exit 0.
 - Windows: not verified. No Windows host was available.
 
 ## Alternatives
