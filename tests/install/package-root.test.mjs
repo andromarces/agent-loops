@@ -62,11 +62,11 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
   // The upgrade: a new install directory takes the new version, the hash symlink
   // is repointed at it, and pnpm deletes the old install directory.
   await rm(before.hashLink, { force: true });
-  await removePath(before.installDir);
   const after = await pnpmGlobal(v11, {
     id: "b796b151e5ddf3298f8c49f2312abd59-0",
     hash,
     version: "0.4.0",
+    from: before,
   });
   expect(existsSync(before.store)).toBe(false);
   expect(existsSync(after.store)).toBe(true);
@@ -103,7 +103,7 @@ test("hooks installed in a pnpm 12 project layout survive an upgrade", async () 
   // at it, and pnpm deletes the old store entry. The rendered path must still be
   // the link, not the store entry, or the install is stale again.
   await rm(before.linked, { force: true });
-  const after = await pnpm12Project(pnpmHome, project, { hash, version: "0.4.0" });
+  const after = await pnpm12Project(pnpmHome, project, { hash, version: "0.4.0", from: before });
   await removePath(before.store);
   expect(existsSync(before.store)).toBe(false);
   expect(existsSync(guardPath)).toBe(true);
@@ -111,7 +111,7 @@ test("hooks installed in a pnpm 12 project layout survive an upgrade", async () 
 });
 
 // Usefulness: verifies --version resolves in an installed pnpm layout, where the
-// package directory holds src, docs, and package.json and nothing else.
+// package directory holds src and package.json and nothing else.
 test("--version prints the package version from an installed layout", async () => {
   const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-version-global-"));
   paths.push(globalHome);
