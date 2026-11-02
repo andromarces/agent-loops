@@ -15,8 +15,16 @@ consecutive sub-items under one parent all fold into it, so the lines `- a`,
 two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
 An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, like a Markdown lazy continuation, so `- a`, `  - b`, and `  more` read `a, b more` (issue #1082). An indented line never folds when it reads as a label line: after NFKC normalization, it skips every leading character that is no letter or digit and one optional number, then holds a report label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace. Any colon variant (`:`, `：`, `∶`), any other separator, and any count or kind of markup around the name then refuse (`**Verdict:** x`, `Verdict***: x`, `1 Verdict: x`, and `> Verdict： x` after two spaces are examples), so the items after it stay unparseable lists. A label word that a letter follows (`Notes about x`), or whitespace and then a letter (`Why this matters:`), is prose and folds. An indented list line there is no continuation and stays unparseable.
 The run ends at the first line that is not a `- ` or `N. ` item, a sub-item of the item above it, or an indented continuation line of that item, so a blank line or unindented prose between
-the label and the list breaks it. One shape with prose folds too: a blank line after the label
-line (or after its folded list), then one prose line, then a `- ` list directly under that line (dash items only: an ordered list there stays unparseable).
+the label and the list breaks it. Two shapes with a blank line fold anyway.
+
+The first shape is one blank line after the label line, then a `- ` list directly under that blank
+line. The items join the label value with `; `, so `Why: x`, a blank line, and `- a` read `x; a`. An
+empty `Notes:` reads `a` (issue #1348). The list takes dash items only. Two blank lines under the
+label before the list, and an ordered list there, stay unparseable.
+
+The second shape has prose. A blank line follows the label line (or its folded list). One prose line
+comes next, and a `- ` list directly under it folds too. The list takes dash items only, because an
+ordered list there stays unparseable.
 The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
 loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
 `x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic

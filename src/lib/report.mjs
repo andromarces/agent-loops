@@ -143,11 +143,14 @@ function closingBlock(response) {
  * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
  * folds into that item with a space, unless it reads as a label line: after NFKC normalization, leading non-letter, non-digit characters and one optional number are skipped, then a label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
+ *
+ * One blank line between a report label line and a `- ` list also folds that list into the label
+ * value, joined with "; " (issue #1348). Two blank lines there keep the list unparseable.
  * Any other list line in the block, for example
  * bullets, instead makes the whole block unparseable, so the dispatch
  * layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
- * This covers a list outside any label, a list that a non-list line or a blank
- * line separates from its label, a bullet with no space after its
+ * This covers a list outside any label, a list that a non-list line or two blank lines separate
+ * from its label, a bullet with no space after its
  * marker even under an empty label (issue #243), a `*` or `+` bullet, an ordered item, an indented bullet that is not one nested level, and a list under an earlier occurrence that a later
  * repeat shadows or after the reviewer `Verdict:` line (issue #249), because the
  * scan covers every line, not only the winning last occurrence of each label. A
@@ -196,8 +199,9 @@ const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 // `+` bullet, and an `N)` item stay lists that hasDroppedList rejects.
 const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 
-// The item shape that folds under a prose heading (issue #898): a dash item only. An ordered item
-// after a prose line stays a list that hasDroppedList rejects.
+// The item shape that folds under a prose heading (issue #898) and after one blank line under a
+// label (issue #1348): a dash item only. An ordered item there stays a list that hasDroppedList
+// rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
 // The one nesting level that folds into its parent item: ASCII spaces up to the column where the
@@ -299,7 +303,8 @@ function isPlainProseLine(line) {
  * item absorbs the run of `  - ` sub-items right after it, joined to it with ", " (issue #870).
  * A prose line with a `- ` run (never an ordered run) directly under it folds into the preceding report label as
  * `<prose>: <items>` when one or more blank lines separate that prose from the label line (issue
- * #898). Every other list shape stays in the result for hasDroppedList. Returns null when a later
+ * #898). A `- ` run that one blank line sets apart from a label line joins that label (issue
+ * #1348). Every other list shape stays in the result for hasDroppedList. Returns null when a later
  * line repeats a folded label, because the repeat shadows the folded list and it would drop with
  * no `raw` signal.
  * @param {string[]} lines
@@ -311,7 +316,12 @@ function foldEmptyLabelLists(lines) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (LABEL_LINE.test(line)) {
-      const { items, end } = takeItems(lines, i, FOLDABLE_ITEM);
+      let { items, end } = takeItems(lines, i, FOLDABLE_ITEM);
+      if (items.length === 0 && lines[i + 1]?.trim() === "") {
+        // One blank line then a dash run under the same label folds too (issue #1348). Two blank
+        // lines, an ordered run here, and every other list shape stay for hasDroppedList.
+        ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
+      }
       if (items.length > 0) {
         const label = line.trim();
         folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });

@@ -79,12 +79,10 @@ test("parseReportBlock joins a list under an empty label into that label's value
   ).toMatchObject({ why: "**Tests:** pass; **Lint:** clean", blockers: "none" });
 });
 
-// Usefulness: verifies the list shapes outside the #846 rule still fail closed: a list
-// separated from its empty label, a list that follows a non-list line under the label, a
-// list that a later repeat of the label shadows, a list after an empty Verdict line, and a
-// list that resumes after a non-list line.
-test("parseReportBlock returns null for a list that is not directly under an empty label", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes:\n\n- item one`)).toBeNull();
+// Usefulness: verifies the list shapes outside the #846 rule still fail closed.
+// The test covers a list under a non-list line, after a repeat label, after an empty
+// Verdict line, and after prose.
+test("parseReportBlock returns null for a list that no fold shape owns", () => {
   expect(parseReportBlock(`${REPORT}\nNotes:\nsome prose\n- item one`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nNotes:\n- item one\nNotes: later`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nVerdict:\n- accept`)).toBeNull();
@@ -278,11 +276,10 @@ test("parseReportBlock returns null for a non-`- ` list under an empty label", (
   }
 });
 
-// Usefulness: verifies a list that a blank line separates from its label, and one under an
-// indented or decorated label, stays unparseable, while a `- ` list under an empty required
-// label folds (issue #846).
+// Usefulness: verifies a dash list under an indented or decorated label stays unparseable, while
+// a `- ` list under an empty required label folds (issue #846). The blank-line shape has its own
+// test in the same file.
 test("parseReportBlock returns null for a list under a hidden label", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes: none\n\n- item`)).toBeNull();
   expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers:\n- item")).toMatchObject({
     blockers: "item",
   });
@@ -832,6 +829,47 @@ test("parseReportBlock folds a prose heading and its list into the preceding lab
   });
 });
 
+// Usefulness: verifies one blank line does not break the fold of a `- ` list under a label.
+// This is the shape a Claude worker wrote, so the block yields a report instead of null.
+// No other test covers this shape (issue #1348).
+test("parseReportBlock folds a dash list that one blank line sets apart from its label", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\n- item two`)).toMatchObject({
+    notes: "keep this; item one; item two",
+  });
+  // An empty label takes the list alone, and the shape works on the last label.
+  expect(parseReportBlock(`${REPORT}\nNotes:\n\n- item one`)).toMatchObject({
+    notes: "item one",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one`)).toMatchObject({
+    notes: "keep this; item one",
+  });
+  // A later label ends the fold, a sub-item joins its parent, and a CRLF response folds.
+  expect(
+    parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\nDeferred: later`),
+  ).toMatchObject({ notes: "keep this; item one", deferred: "later" });
+  expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\n  - sub`)).toMatchObject({
+    notes: "keep this; item one, sub",
+  });
+  expect(
+    parseReportBlock("Conclusion: done\r\nWhy: keep this\r\n\r\n- item one\r\nBlockers: none"),
+  ).toMatchObject({ why: "keep this; item one", blockers: "none" });
+});
+
+// Usefulness: verifies the list shapes that stay unparseable around the one-blank-line fold.
+// It covers two blank lines, a blank line between items, a star bullet, an ordered list, and a
+// repeated label, so no text drops without a `raw` signal (issue #1348).
+test("parseReportBlock returns null for a list outside the one-blank-line fold", () => {
+  for (const tail of [
+    "Notes: value\n\n\n- a",
+    "Notes: value\n- a\n\n- b",
+    "Notes: value\n\n* a",
+    "Notes: value\n\n1. a",
+    "Notes: value\n\n- a\n\nNotes: later",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
+  }
+});
+
 // Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before
 // the prose, no prose heading, prose after another prose line, prose after the `Verdict:` line, and
 // a repeat of the label that took the heading list, so no list drops without a `raw` signal.
@@ -958,7 +996,7 @@ test("parseReportBlock folds a sub-item and a heading item that open with a labe
 // Usefulness: verifies a decorated label outside a list run still blanks the block when the same
 // shape folds inside a run (issue #1006), so the #243 refusal is not weakened.
 test("parseReportBlock returns null for a decorated label item outside a list run", () => {
-  expect(parseReportBlock(`${REPORT}\nNotes: x\n\n- **Checks:** ran`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n\n\n- **Checks:** ran`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nNotes: x\n- **Checks:** ran\n**Deferred:** y`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- **Checks:** ran`)).toBeNull();
 });
