@@ -381,13 +381,6 @@ const wordsOf = (text) =>
     .match(/[a-z0-9]+/g)
     .join(" ");
 
-/** The paragraph of `text` that holds `marker`, bounded by blank lines. */
-function paragraphAround(text, marker) {
-  const paragraph = text.split(/\r?\n[ \t]*\r?\n/).find((part) => part.includes(marker));
-  expect(paragraph, `no paragraph holds: ${marker}`).toBeDefined();
-  return paragraph;
-}
-
 /** The text of `text` between the end of `after` and the start of `before`. */
 function textBetween(text, after, before) {
   const start = text.indexOf(after);
@@ -395,6 +388,33 @@ function textBetween(text, after, before) {
   const end = text.indexOf(before, start);
   expect(end, `no text holds: ${before}`).toBeGreaterThan(start);
   return text.slice(start + after.length, end);
+}
+
+/**
+ * The text from the start of the first paragraph that holds `startMarker` through the end of the
+ * last paragraph that holds `endMarker`, across any split boundaries between them. Prepending or
+ * appending text inside those paragraphs therefore changes the result.
+ */
+function passageAcrossParagraphs(text, startMarker, endMarker) {
+  const markerStart = text.indexOf(startMarker);
+  expect(markerStart, `no text holds: ${startMarker}`).toBeGreaterThanOrEqual(0);
+  const markerEnd = text.indexOf(endMarker, markerStart);
+  expect(markerEnd, `no text holds: ${endMarker}`).toBeGreaterThanOrEqual(markerStart);
+
+  const blankLine = /\r?\n[ \t]*\r?\n/g;
+  let start = 0;
+  for (
+    let match = blankLine.exec(text);
+    match && match.index < markerStart;
+    match = blankLine.exec(text)
+  ) {
+    start = match.index + match[0].length;
+  }
+
+  const afterEnd = markerEnd + endMarker.length;
+  const next = /\r?\n[ \t]*\r?\n/.exec(text.slice(afterEnd));
+  const stop = next ? afterEnd + next.index : text.length;
+  return text.slice(start, stop);
 }
 
 // The refusal rule as each parent surface states it, from its fixed start to the end of its
@@ -422,7 +442,11 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const docsPassage = paragraphAround(instructions, "When no source can state the required checks");
+  const docsPassage = passageAcrossParagraphs(
+    instructions,
+    "When no source can state the required checks",
+    "do not run `--all` for it.",
+  );
   const promptPassage = textBetween(
     prompt,
     "as passed from the noRequiredChecks envelope.",
@@ -658,9 +682,7 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // dispatch now sit in work-tree-setup.md, which MOVED_WORK_TREE_FILES pins: no other test reads
 // those strings.
 // Extracts the removal-wait paragraph of the raw text for its dedicated condition test. The
-// whole-section pin covers the same paragraph word for word, so this pattern exempts nothing.
-const REMOVAL_WAIT_PARAGRAPH_PATTERN =
-  /Remove the work tree only after the run is terminal\.(?:(?!\n[ \t]*\r?\n)[\s\S])*?Never chain it after `finish` or `abort` in one command\.\s*/;
+// whole-section pin covers the same paragraph word for word, so this extraction exempts nothing.
 
 const REMOVAL_WAIT_PARAGRAPH =
   'Remove the work tree only after the run is terminal. A `finish` or `abort` envelope with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused `finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run `active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)): remove the work tree after it reads `halted`. Run the removal as a separate command after you read the result. Never chain it after `finish` or `abort` in one command.';
@@ -917,10 +939,15 @@ test("the moved work tree files are unchanged", async () => {
 // observe, and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
 // that strands a non-terminal run, or the parent waits for a `halted` envelope that never prints.
 test("instructions remove the work tree only after an observable terminal state, in a separate command", async () => {
-  const rule = ((await readInstructions()).match(REMOVAL_WAIT_PARAGRAPH_PATTERN)?.[0] ?? "")
+  const rule = passageAcrossParagraphs(
+    await readInstructions(),
+    "Remove the work tree only after the run is terminal.",
+    "Never chain it after `finish` or `abort` in one command.",
+  )
     .replace(/\s+/g, " ")
     .trim();
   expect(rule).not.toBe("");
+  expect(wordsOf(rule)).toBe(wordsOf(REMOVAL_WAIT_PARAGRAPH));
   // A successful finish or abort envelope ends the run.
   expect(rule).toContain('`status: "ok"`');
   expect(rule).toContain('`lifecycle: "finished"`');

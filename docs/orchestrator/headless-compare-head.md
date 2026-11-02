@@ -12,7 +12,9 @@ result, and it does not evaluate the merge state. A pass emits a `head-compare`
 transcript event and the run exits `0`, distinct from `unresolvedCompare` and its
 exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
 `--mode review-only`, and a finish that also sets `unresolvedCompare` is refused
-before any GitHub read. A continuation of a declared PR refuses the flag before any
+before any GitHub read.
+
+A continuation of a declared PR refuses the flag before any
 transcript write. The transcript records the flag, but a continuation does not
 restore it: each invocation selects `--compare-head` again, as it selects
 `--require-ci`, and omitting it on a continuation disables the runtime compare and

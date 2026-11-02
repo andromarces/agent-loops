@@ -39,7 +39,9 @@ entry point and guard for each selected harness. It is interactive; pass
 writes without changing anything. A second run with the same package makes no
 change. `agent-loop uninstall` removes only the files and settings entries the
 install recorded, and restores a file that install changed when the file is
-otherwise unchanged. Install applies a harness guard before its entry point, and
+otherwise unchanged.
+
+Install applies a harness guard before its entry point, and
 if a write fails part way through it records the writes that completed, so
 `uninstall` still removes or restores them. It leaves a target in place when it
 cannot remove or restore it safely; see [Uninstall skips](#uninstall-skips). If
@@ -54,7 +56,9 @@ A real `install` or `uninstall` holds the lock file `~/.agent-loops.lock` (besid
 contend whatever their `TMPDIR` or `TEMP` values are. The lock is released when the
 command ends, so a full `uninstall` leaves the home empty. A crash leaves a stale
 lock that the next command removes once its owner process is dead. A dry run takes
-no lock and writes nothing. If lstat of the home reports ENOENT, `uninstall`
+no lock and writes nothing.
+
+If lstat of the home reports ENOENT, `uninstall`
 returns at once without a lock, reports nothing to remove, writes nothing, and
 exits 0, so it never creates the home. This includes a Windows path that cannot
 name a directory, which now reports nothing to remove instead of an error. See [ADR 0025](https://github.com/andromarces/agent-loops/blob/main/adr/0025-lock-the-install-manifest-beside-the-home.md).
@@ -288,6 +292,7 @@ node "<repo>/src/cli.mjs" install --harness claude --yes
 repository Git hooks run formatting and linting on commit and push; they need
 `pnpm install` to have completed, because its `prepare` script installs the
 Vite+ hook dispatcher (`vp config`). The hook scripts live in `.vite-hooks/`.
+
 `prepare` exits 0 in CI, in production, with `VP_GIT_HOOKS=0`, and when
 `vite-plus` is absent. `prepare` writes nothing to stdout. When the dispatcher
 install fails, it writes one warning line to stderr and still exits 0. A clone set up under Husky has a local `core.hooksPath`

@@ -13,8 +13,9 @@ the shared pnpm store and no file. When the folder remains, check that it holds
 only links and directories. On Windows, run
 `Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"`
 in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each
-command includes hidden files and never descends into a link or a junction. Any
-path that it prints is a file: stop and leave the folder to a maintainer. When it
+command includes hidden files and never descends into a link or a junction.
+
+Any path that it prints is a file: stop and leave the folder to a maintainer. When it
 prints nothing, delete the folder without following links:
 `cmd.exe /c rmdir /s /q "$($wt.Replace('/', '\'))"` in PowerShell, with the work tree path in `$wt`,
 `cmd.exe /c rmdir /s /q "<work tree>"` in cmd.exe,
@@ -24,7 +25,9 @@ cmd.exe forms need a path with backslashes, because `cmd.exe` reads a forward sl
 as a switch and fails with `Invalid switch`. Git prints work tree paths with forward
 slashes on Windows, so the PowerShell form converts the path. A harness PowerShell
 tool has refused the PowerShell form with `Remove-Item on system path '/s' is blocked`.
-The cause is not confirmed. Claude Code 2.1.310 in the bypass-permissions mode ran the
+The cause is not confirmed.
+
+Claude Code 2.1.310 in the bypass-permissions mode ran the
 form with no refusal on 2026-10-25, so the refusal can depend on the version or the
 permission mode. When it refuses, run the Git Bash form instead. Run
 the Windows delete as `cmd.exe /c rmdir`, because Git Bash resolves a bare `rmdir`

@@ -130,7 +130,9 @@ mode is refused.
 
 Read the JSON envelope on stdout. The envelope is one JSON line, with no indent. A
 background task can merge stdout, child stderr logs, and a harness trailer such as
-`[exited with code 0]` into one output file. In that file, select the last line that
+`[exited with code 0]` into one output file.
+
+In that file, select the last line that
 starts with `{`, and parse only that line. Never search for a multi-line block.
 The example below is indented for display only. Example reviewer envelope:
 
@@ -162,15 +164,16 @@ The example below is indented for display only. Example reviewer envelope:
   fault. A turn is not marked when its last failure event carries another
   cause. Consecutive capacity failures stay marked. The runtime
   ignores a malformed or truncated final line, so an earlier capacity event stays
-  decisive then. The turn charged its step and gave no review result. Dispatch
-  the same turn again, after a short wait, without reading the `error` text. Raise the budget with `extend`
-  when no step is left. An error with no `transient` field is not known to be
-  transient. The Codex adapter marks the reply `Selected model is at capacity. Please
-  try a different model.`. The Claude Code adapter marks a `result` event with
-  `is_error: true` and `api_error_status: 529`. The OpenCode adapter marks a
-  `provider.internal` error with `status` 529. The Copilot adapter marks a
-  `session.error` event with `statusCode` 529. The agy adapter marks an
-  `AGY_ERROR` line whose `short_error` carries code 529.
+  decisive then. The turn charged its step and gave no review result.
+  - Dispatch the same turn again, after a short wait, without reading the `error` text. Raise the budget with `extend`
+    when no step is left. An error with no `transient` field is not known to be
+    transient.
+  - The Codex adapter marks the reply `Selected model is at capacity. Please
+    try a different model.`. The Claude Code adapter marks a `result` event with
+    `is_error: true` and `api_error_status: 529`. The OpenCode adapter marks a
+    `provider.internal` error with `status` 529. The Copilot adapter marks a
+    `session.error` event with `statusCode` 529. The agy adapter marks an
+    `AGY_ERROR` line whose `short_error` carries code 529.
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
@@ -201,7 +204,9 @@ A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
 branch and pushes it, so the PR head equals the reviewed head. The run supplies
 the PR number, and the head commit comes from that PR. In a headless run, the
-task names the PR number. After each push, when the branch has an open PR, the worker
+task names the PR number.
+
+After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
 revision log to the body or to a comment. The body describes only the committed
 or published repository state and names no untracked file, local-only change,
@@ -222,20 +227,24 @@ Apply these parent rules:
   the work tree: `core.hooksPath`, a file in the common `hooks/` directory, or a remote. The field
   names the items, such as `core.hooksPath`, `hooks/pre-push`, and `remote.origin`, and never a
   value or a URL. A change there affects the main work tree and every other linked work tree, and
-  `workTree` does not show it. Report it in the finish summary under `open`. A failed or canceled
-  worker turn carries the field too. A turn that changed none carries no field. A read of the
-  shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
-  the absent field then does not prove that no change happened. The runtime logs a warning for
-  such a read.
+  `workTree` does not show it.
+  - Report it in the finish summary under `open`. A failed or canceled
+    worker turn carries the field too. A turn that changed none carries no field.
+  - A read of the
+    shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
+    the absent field then does not prove that no change happened. The runtime logs a warning for
+    such a read.
 - A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
   tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
   lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts
-  as changed. When the runtime could not read the work tree root, the field names every lockfile,
-  which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
-  never installs, so the installed dependencies no longer match
-  the lockfile. When the field appears, run the lockfile install in that work tree, for example
-  `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
-  turn carries the field too. A turn that changed none carries no field.
+  as changed.
+  - When the runtime could not read the work tree root, the field names every lockfile,
+    which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
+    never installs, so the installed dependencies no longer match
+    the lockfile.
+  - When the field appears, run the lockfile install in that work tree, for example
+    `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
+    turn carries the field too. A turn that changed none carries no field.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
@@ -329,7 +338,9 @@ with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A
 `finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its
 lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation
 or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run
-`active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)):
+`active`.
+
+Read the state file ([Recovery](#recovery-after-compaction-or-restart)):
 remove the work tree after it reads `halted`. Run the removal as a separate command
 after you read the result. Never chain it after `finish` or `abort` in one command.
 
@@ -585,8 +596,9 @@ summary keys and `unresolvedCompare`. The headless finish action object allows
 only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
 object allows only the five summary keys. A finish with any other key in
 either object, such as a misspelled marker, is refused and the refusal names
-each unknown key; resend the finish with only the allowed keys (#1021). The
-envelope then carries
+each unknown key; resend the finish with only the allowed keys (#1021).
+
+The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
 `summary`, so a recorded unresolved compare never reads the same as a verified
 finish, which keeps the current envelope and state (#281). A finish with the
@@ -602,7 +614,9 @@ reviewed tree, and the merge state.
 A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a repository
 whose required-check sources are unreadable (#301, #1098). The runtime reads the PR head and
 state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
-reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged. The runtime
+reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged.
+
+The runtime
 reads no required-check source or check result and claims none, so `verified` still states what
 the checks showed. A finish that also sets `unresolvedCompare` is refused, because the compare
 resolves that head. Dispatch the reviewer again when the PR head moved, then repeat the finish. The
@@ -663,16 +677,18 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   a declared run there refuses every finish and can end only through `abort`.
   Init with `--pr`, `role declare-pr`, and the headless start read the required-check
   sources of the PR base once. They refuse when the rulesets read settled nothing,
-  before any state file is written or child spawns. A read that fails for another
-  reason, such as a transport failure, warns and does not refuse. A `--continue-from`
-  run that restored its PR makes no start read, because the earlier run read at the
-  start of its own `--pr` run or before it declared a worker-opened PR, and its
-  prompt states none. After a refusal, omit
-  `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
-  `reviewed.head` in the runtime and requires the PR to be open. Use the `"unresolvedCompare": true` marker only
-  when the PR head itself cannot be read. The headless `--require-ci` with no
-  `--pr` declares nothing, so the start does not read it and its gate refuses at
-  finish.
+  before any state file is written or child spawns.
+  - A read that fails for another
+    reason, such as a transport failure, warns and does not refuse. A `--continue-from`
+    run that restored its PR makes no start read, because the earlier run read at the
+    start of its own `--pr` run or before it declared a worker-opened PR, and its
+    prompt states none. After a refusal, omit
+    `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
+    `reviewed.head` in the runtime and requires the PR to be open.
+  - Use the `"unresolvedCompare": true` marker only
+    when the PR head itself cannot be read. The headless `--require-ci` with no
+    `--pr` declares nothing, so the start does not read it and its gate refuses at
+    finish.
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
@@ -730,7 +746,9 @@ characters of the sha256 of the resolved `--cwd`, with the Windows drive letter
 lowercased before hashing, so `c:\repo` and `C:\repo` share one directory.
 This state-file read is the one exception to the stdout-envelope rule. Honor
 the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
-`lastResult`. A resumed review-only task keeps its prohibition on worker
+`lastResult`.
+
+A resumed review-only task keeps its prohibition on worker
 dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
 `dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the
