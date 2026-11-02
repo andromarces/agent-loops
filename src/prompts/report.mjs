@@ -15,7 +15,8 @@ A bold heading line that groups a dash list, with no label directly above the li
 
 A blank line, then one plain prose line, then a dash list directly under it joins the label above as the prose, a colon, and the items. The prose line must not start with whitespace, an asterisk, an underscore, a backtick, a greater-than sign, or a hash, must not be a list, and must not hold a report label name or \`Verdict\`, in any case, followed by any run of asterisks, underscores, or backticks (or none), whitespace (or none), and a colon, anywhere in the line. Any other list or nesting, an indented label, or a decorated label makes the whole block unparseable. A line that starts with \`*\` either counts as a list or is dropped from the block, so write none:
 
-The block holds no Markdown table, because a table makes it unparseable. Put tabular data in \`- \` items, one row per item.
+The block holds no Markdown table: a table can make it unparseable or drop its rows. Put tabular data in \`- \` items, one row per item.
+
 Conclusion: one or two sentences.
 Why: the decisive evidence behind the conclusion.
 Blockers: anything unresolved that the next turn must know, or "none".

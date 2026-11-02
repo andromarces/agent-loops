@@ -140,7 +140,7 @@ test("worker turns state that the closing block holds no Markdown table", () => 
   for (const firstTurn of [true, false]) {
     const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
     expect(prompt).toContain(
-      "The block holds no Markdown table, because a table makes it unparseable.",
+      "The block holds no Markdown table: a table can make it unparseable or drop its rows.",
     );
     expect(prompt).toContain("Put tabular data in `- ` items, one row per item.");
   }
