@@ -16,6 +16,19 @@ worker turn to merge.
 - An artifact that already exists needs no assignment. Name it in each worker
   prompt, so no run creates another.
 
+## Concurrent edits of one issue body
+
+Two workers of concurrent runs in one repository can edit the body of the same issue.
+Each worker reads the body, adds an item, and writes the whole body back.
+A write replaces the whole body, so two writes that overlap can drop the item of one run.
+
+- Tell each worker of a concurrent run to read the body right before the write, with `gh issue view <n> --json body -q .body`.
+- The worker changes only the target lines, writes the body, then reads the body again.
+- The worker restores any item that the read before the write held and the read after it lacks.
+- State the limit in each worker prompt: this narrows the race and does not remove it.
+  A third write that lands between the two reads stays unseen.
+  Assign the body edit to one run when a loss must not happen.
+
 ## Sequential identifiers
 
 Workers of runs in one repository can each take the same sequential identifier, such as the next ADR number, a migration number, or a changelog entry. Each worker reads the base branch, finds the same next free number, and uses it. Each reviewer accepts its own branch, because each branch is consistent alone. The collision shows only at merge or in a later worker report.
