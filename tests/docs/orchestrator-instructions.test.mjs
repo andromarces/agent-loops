@@ -390,6 +390,20 @@ function textBetween(text, after, before) {
   return text.slice(start + after.length, end);
 }
 
+/**
+ * The text from `startMarker` through the block that holds `endMarker`, up to the next blank
+ * line. Appending text inside that block therefore changes the result.
+ */
+function passageThroughBlockEnd(text, startMarker, endMarker) {
+  const start = text.indexOf(startMarker);
+  expect(start, `no text holds: ${startMarker}`).toBeGreaterThanOrEqual(0);
+  const end = text.indexOf(endMarker, start);
+  expect(end, `no text holds: ${endMarker}`).toBeGreaterThanOrEqual(start);
+  const afterEnd = end + endMarker.length;
+  const blank = /\r?\n[ \t]*\r?\n/.exec(text.slice(afterEnd));
+  return blank ? text.slice(start, afterEnd + blank.index) : text.slice(start);
+}
+
 // The refusal rule as each parent surface states it, from its fixed start to the end of its
 // exclusion sentence. A reworded rule must update these passages.
 const DOCS_REFUSAL_PASSAGE =
@@ -415,10 +429,11 @@ test("the parent surfaces name the --all wait for a refusal of every required-ch
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const docsPassage =
-    instructions.match(
-      /When no source can state the required checks[\s\S]*?do not run `--all` for it\./,
-    )?.[0] ?? "";
+  const docsPassage = passageThroughBlockEnd(
+    instructions,
+    "When no source can state the required checks",
+    "do not run `--all` for it.",
+  );
   const promptPassage = textBetween(
     prompt,
     "as passed from the noRequiredChecks envelope.",
@@ -654,9 +669,7 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
 // dispatch now sit in work-tree-setup.md, which MOVED_WORK_TREE_FILES pins: no other test reads
 // those strings.
 // Extracts the removal-wait paragraph of the raw text for its dedicated condition test. The
-// whole-section pin covers the same paragraph word for word, so this pattern exempts nothing.
-const REMOVAL_WAIT_PARAGRAPH_PATTERN =
-  /Remove the work tree only after the run is terminal\.[\s\S]*?Never chain it after `finish` or `abort` in one command\.\s*/;
+// whole-section pin covers the same paragraph word for word, so this extraction exempts nothing.
 
 const REMOVAL_WAIT_PARAGRAPH =
   'Remove the work tree only after the run is terminal. A `finish` or `abort` envelope with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused `finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run `active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)): remove the work tree after it reads `halted`. Run the removal as a separate command after you read the result. Never chain it after `finish` or `abort` in one command.';
@@ -913,10 +926,15 @@ test("the moved work tree files are unchanged", async () => {
 // observe, and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
 // that strands a non-terminal run, or the parent waits for a `halted` envelope that never prints.
 test("instructions remove the work tree only after an observable terminal state, in a separate command", async () => {
-  const rule = ((await readInstructions()).match(REMOVAL_WAIT_PARAGRAPH_PATTERN)?.[0] ?? "")
+  const rule = passageThroughBlockEnd(
+    await readInstructions(),
+    "Remove the work tree only after the run is terminal.",
+    "Never chain it after `finish` or `abort` in one command.",
+  )
     .replace(/\s+/g, " ")
     .trim();
   expect(rule).not.toBe("");
+  expect(wordsOf(rule)).toBe(wordsOf(REMOVAL_WAIT_PARAGRAPH));
   // A successful finish or abort envelope ends the run.
   expect(rule).toContain('`status: "ok"`');
   expect(rule).toContain('`lifecycle: "finished"`');
