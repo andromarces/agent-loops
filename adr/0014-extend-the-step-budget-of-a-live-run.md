@@ -128,15 +128,14 @@ The worker turn was asked to run one shell command. The command printed whether
   refusal are not verified. [ADR 0035](0035-state-that-a-copilot-worker-cannot-run-shell-commands-and-flag-a-denied-call.md)
   and [issue #713](https://github.com/andromarces/agent-loops/issues/713) record the denial and its decision.
 - 2026-11-02, macOS 27.2 (build 26B123), Copilot CLI 1.0.106-2, agent-loop source
-  `55a8701b880f33f77cccbfb8638318075d7e430e`: a `copilot` shim on `PATH` added
+  `97d24a9ac1e3e1391890c1652dd501c5e37c3e12`: a `copilot` shim added
   `--allow-tool 'shell(bash)'` and kept the runtime arguments unchanged. The worker read
-  `AGENT_LOOP_SPAWNED_RUN=b20132fb7592,9cb0d32b82b6`, `AGENT_LOOP_TEST_SLOT_HELD=unset`, and
-  Copilot CLI 1.0.106-2 inside the turn, and the list held the run key `9cb0d32b82b6`. The child
-  `role abort` exited 1 with
-  `abort is refused for a child role; only the parent session runs it.` The state file held
-  lifecycle `active` after the turn. The parent shell ran `extend` and `finish` on one run, and
-  `abort` on another, each exit 0. The record saved `copilot --version`, `sw_vers`, `uname -a`,
-  `node --version`, and the work tree head before and after the probe.
+  `AGENT_LOOP_SPAWNED_RUN=b20132fb7592,1e2316479229`, `AGENT_LOOP_TEST_SLOT_HELD=unset`, and
+  Copilot CLI 1.0.106-2 inside the turn, and the list held the run key `1e2316479229`. The state
+  file held lifecycle `active` after the turn. The child `role abort` exited 1, and the parent
+  shell then ran `role abort`, exit 0. The record saved `copilot --version`, `sw_vers`, `uname -a`,
+  `node --version`, the work tree head, and the shim invocation log before and after the probe. The
+  refusal text was `abort is refused for a child role; only the parent session runs it.`
 - Windows: not verified. No Windows host was available.
 
 ## Alternatives
