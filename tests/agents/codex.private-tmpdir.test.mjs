@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rename, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
+import { ExecError } from "../../src/lib/exec.mjs";
 import { exists, removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import {
   TMP_VARS,
@@ -39,24 +40,29 @@ test.each([
 });
 
 // Usefulness: verifies the cleanup also runs when the CLI fails, times out, or is canceled, so
-// no failure path leaks the private directory.
+// no failure path leaks the private directory. Each case names its expected failure cause, so a
+// different Codex error fails the test.
 test.each([
-  ["a failure", {}],
-  ["a timeout", { timedOut: true }],
-  ["a cancel", { isCanceled: true }],
-])("a codex turn that ends with %s still removes its temporary directory", async (_n, flags) => {
-  const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
-  try {
-    fakeCodex(async () => {
-      throw Object.assign(new Error("codex failed"), flags);
-    });
-    await expect(withInheritedTmp(root, () => runTurn(), `${root}-runs`)).rejects.toThrow("codex");
-    expect(await readdir(root)).toEqual([]);
-  } finally {
-    await removePath(root);
-    await removePath(`${root}-runs`);
-  }
-});
+  ["a start failure", {}, "codex failed to start."],
+  ["a timeout", { timedOut: true }, "codex timed out."],
+  ["a cancel", { isCanceled: true }, "codex was canceled."],
+])(
+  "a codex turn that ends with %s still removes its temporary directory",
+  async (_n, flags, expectedMessage) => {
+    const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
+    try {
+      fakeCodex(async () => {
+        throw new ExecError("codex failed", { command: "codex", ...flags });
+      });
+      const caught = await withInheritedTmp(root, () => runTurn(), `${root}-runs`).catch((e) => e);
+      expect(caught.message).toBe(expectedMessage);
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      await removePath(root);
+      await removePath(`${root}-runs`);
+    }
+  },
+);
 
 // Usefulness: verifies a failed onTurnTmpdir callback keeps its own message, so an ENOSPC
 // persistence failure is not reported as "codex failed to start." (issue #1353).
