@@ -144,20 +144,25 @@ function closingBlock(response) {
  * folds into that item with a space, unless it reads as a label line: after NFKC normalization, leading non-letter, non-digit characters and one optional number are skipped, then a label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
  * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
  *
- * One blank line between a report label line and a `- ` list also folds that list into the label
- * value, joined with "; " (issue #1348). Two blank lines there keep the list unparseable.
- * Any other list line in the block, for example
- * bullets, instead makes the whole block unparseable, so the dispatch
- * layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
- * This covers a list outside any label, a list that a non-list line or two blank lines separate
- * from its label, a bullet with no space after its
- * marker even under an empty label (issue #243), a `*` or `+` bullet, an ordered item, an indented bullet that is not one nested level, and a list under an earlier occurrence that a later
- * repeat shadows or after the reviewer `Verdict:` line (issue #249), because the
- * scan covers every line, not only the winning last occurrence of each label. A
- * label that indentation or markdown decoration hides also makes the block
- * unparseable, so `raw` carries its value (issue #243). A `- ` item or sub-item that opens with a
- * bold label name, for example `- **Checks:** ran`, is item text when it folds into a label's list
- * run (issue #1006); the same line outside a run still blanks the block, because the decorated-label
+ * One blank line between a report label line and a `- ` list folds too.
+ * The list joins the label value with "; " (issue #1348).
+ *
+ * Two blank lines there keep the list unparseable.
+ * Any other list line in the block, for example bullets, instead makes the whole block unparseable.
+ * The dispatch layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
+ * This covers a list outside any label.
+ * It covers a list that a non-list line or two blank lines separate from its label.
+ *
+ * It covers a bullet with no space after its marker, even under an empty label (issue #243).
+ * It covers a `*` or `+` bullet, an ordered item, and an indented bullet that is not one nested level.
+ * It covers a list under an earlier occurrence when a later repeat shadows it, or after the reviewer `Verdict:` line (issue #249).
+ * The reason is that the scan covers every line, not only the winning last occurrence of each label.
+ * A label that indentation or markdown decoration hides also makes the block
+ * unparseable, so `raw` carries its value (issue #243).
+ *
+ * A `- ` item or sub-item that opens with a bold label name is item text inside a folded list run (issue #1006).
+ * One example is `- **Checks:** ran`.
+ * The same line outside a run still blanks the block, because the decorated-label
  * check runs again on the folded lines. Any other decorated form blanks the block, folded or not.
  * @param {string} response
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
@@ -199,9 +204,8 @@ const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 // `+` bullet, and an `N)` item stay lists that hasDroppedList rejects.
 const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 
-// The item shape that folds under a prose heading (issue #898) and after one blank line under a
-// label (issue #1348): a dash item only. An ordered item there stays a list that hasDroppedList
-// rejects.
+// A dash item only folds under a prose heading (issue #898) and after one blank line under a
+// label (issue #1348). An ordered item there stays a list that hasDroppedList rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
 // The one nesting level that folds into its parent item: ASCII spaces up to the column where the

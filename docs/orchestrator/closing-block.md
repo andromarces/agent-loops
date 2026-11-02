@@ -25,6 +25,7 @@ label before the list, and an ordered list there, stay unparseable.
 The second shape has prose. A blank line follows the label line (or its folded list). One prose line
 comes next, and a `- ` list directly under it folds too. The list takes dash items only, because an
 ordered list there stays unparseable.
+
 The prose and its list join the value of the label just above, as `; <prose>: <items>` (the prose
 loses a trailing colon first), so `Why: x`, a blank line, `Design settled:`, and `- a` read
 `x; Design settled: a` (issue #898). The prose line must not start with whitespace (a nonbreaking or ideographic
