@@ -15,7 +15,7 @@ const LABEL_LINE = /^([A-Z][A-Za-z]*):\s/;
 function closingBlockTemplate(prompt) {
   const lines = prompt.split("\n");
   const start = lines.findIndex((line) => /^Conclusion:\s/.test(line));
-  const end = lines.findLastIndex((line) => /^Deferred:/.test(line));
+  const end = lines.findLastIndex((line) => line.startsWith("Deferred:"));
   if (start === -1 || end < start) {
     throw new Error("the worker prompt renders no closing block template");
   }
