@@ -420,9 +420,9 @@ of this file.
   headless run passes `--compare-head`, when a run has no usable required-check source, and when
   a headless run finishes with a worker-opened PR.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
-  dispatch several runs in one repository, so no two runs create the same tracking issue or take
-  the same sequential identifier, such as an ADR number. Read it before concurrent runs can edit
-  one issue body, and put its read-write-read rule in each worker prompt.
+  dispatch several runs in one repository. Two runs can create the same tracking issue or take the
+  same sequential identifier, such as an ADR number. Read it before concurrent runs can edit one
+  issue body, and put its read-write-read rule in each worker prompt.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
   tree for a repository with no remote or for a run on an existing PR, and when
   `extensions.worktreeConfig` is on.
