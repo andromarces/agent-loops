@@ -204,8 +204,9 @@ const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 // `+` bullet, and an `N)` item stay lists that hasDroppedList rejects.
 const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 
-// A dash item only folds under a prose heading (issue #898) and after one blank line under a
-// label (issue #1348). An ordered item there stays a list that hasDroppedList rejects.
+// The item shape that folds under a prose heading (issue #898) and after one blank line under a
+// label (issue #1348): a dash item only. An ordered item there stays a list that hasDroppedList
+// rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
 // The one nesting level that folds into its parent item: ASCII spaces up to the column where the
