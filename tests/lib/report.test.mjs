@@ -1075,3 +1075,39 @@ Notes:
     });
   }
 });
+
+// Usefulness: verifies a table row after a `- ` item and a blank line refuses the block, so the
+// rows cannot drop without a `raw` signal (issue #1366). No existing test covers a table row.
+test("parseReportBlock returns null for a table row after a list item", () => {
+  const response = [
+    "Conclusion: table rows dropped",
+    "Why: measured figures",
+    "- item",
+    "",
+    "| a | b |",
+    "| --- | --- |",
+    "| 1 | 2 |",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+  expect(hasClosingBlockAttempt(response)).toBe(true);
+});
+
+// Usefulness: verifies every table-row position refuses the block, while a pipe inside a label
+// value still parses, so the rule matches the dropped-list refusal (issue #1366).
+test("parseReportBlock refuses a table row in any position", () => {
+  for (const tail of [
+    "Why: measured figures\n| a | b |\n| --- | --- |",
+    "Why: measured figures\n\n| a | b |",
+    "Why: measured figures\n\n- item\n\n| a | b |",
+    "Why: measured figures\n\n| --- | --- |",
+  ]) {
+    expect(parseReportBlock(`Conclusion: done\n${tail}\nBlockers: none`), tail).toBeNull();
+  }
+  expect(parseReportBlock("Conclusion: done\nWhy: measured a | b\nBlockers: none")).toMatchObject({
+    why: "measured a | b",
+  });
+});

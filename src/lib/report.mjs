@@ -42,6 +42,10 @@ const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d\-*+])
 // list pattern but carries no item, so it does not drop text.
 const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
+// A Markdown table row is a line whose first non-space character is `|`. The parser models no
+// table, so a row drops with no `raw` signal. The whole block is unparseable instead (issue #1366).
+const TABLE_ROW = /^\s*\|/;
+
 // An emphasis run at line start, for example `*emphasis* note`. A leading `*`
 // is also a spaceless bullet marker (`*item`, issue #243), but a `*` pair whose
 // close a letter precedes and a non-word, non-`*` character or end of line
@@ -160,6 +164,8 @@ function closingBlock(response) {
  * A label that indentation or markdown decoration hides also makes the block
  * unparseable, so `raw` carries its value (issue #243).
  *
+ * A Markdown table row also makes the block unparseable, so its text reaches `raw` (issue #1366).
+ *
  * A `- ` item or sub-item that opens with a bold label name is item text inside a folded list run (issue #1006).
  * One example is `- **Checks:** ran`.
  * The same line outside a run still blanks the block, because the decorated-label
@@ -176,7 +182,12 @@ export function parseReportBlock(response) {
     return null;
   }
   const lines = foldEmptyLabelLists(block);
-  if (!lines || lines.some((line) => DECORATED_LABEL_LINE.test(line)) || hasDroppedList(lines)) {
+  if (
+    !lines ||
+    lines.some((line) => DECORATED_LABEL_LINE.test(line)) ||
+    hasDroppedList(lines) ||
+    lines.some((line) => TABLE_ROW.test(line))
+  ) {
     return null;
   }
   const report = {};
