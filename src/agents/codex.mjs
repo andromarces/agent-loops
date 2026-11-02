@@ -1,5 +1,5 @@
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
-import { exec } from "../lib/exec.mjs";
+import { exec, execFailureCause } from "../lib/exec.mjs";
 import { withTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
   asSessionId,
@@ -19,6 +19,24 @@ const missingSession = (id) =>
 // Codex reports this model capacity reply in an `error` event and a `turn.failed` event (issue #1012).
 const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
 
+// A failed Codex turn reports the exit cause and the last failure message only. It never reports
+// the stream, so command output cannot reach the envelope or the state file (issue #1353). The
+// detail is bounded to 500 characters, and the whole message stays under 700.
+const DETAIL_LIMIT = 500;
+const NO_DETAIL = "no Codex error event in the output";
+
+/**
+ * Returns the message of the last `error` or `turn.failed` event, or an empty string. That event
+ * decides the capacity mark and the reported detail, so both read it here.
+ */
+function terminalFailureMessage(events) {
+  const terminal = events.findLast(
+    (event) => event?.type === "error" || event?.type === "turn.failed",
+  );
+  const message = terminal?.type === "error" ? terminal.message : terminal?.error?.message;
+  return typeof message === "string" ? message : "";
+}
+
 /**
  * Marks a failed turn whose terminal failure is the model capacity reply, so a parent can tell the
  * transient failure from a reviewer fault without reading the error text. The terminal failure is
@@ -27,13 +45,34 @@ const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different 
  * it is never marked either.
  */
 function flagCapacityFailure(err, events) {
-  const terminal = events.findLast(
-    (event) => event?.type === "error" || event?.type === "turn.failed",
-  );
-  const message = terminal?.type === "error" ? terminal.message : terminal?.error?.message;
-  if (message === CAPACITY_MESSAGE) {
+  if (terminalFailureMessage(events) === CAPACITY_MESSAGE) {
     markCapacityFailure(err);
   }
+}
+
+/**
+ * Builds the message for a failed turn. A killed, timed-out, or cut turn reports the cause alone,
+ * because a stream it left behind names a failure that is not why it died. An ordinary non-zero
+ * exit reports the last failure message and the stream byte counts, both bounded.
+ */
+function failureMessage(err, events, timeout) {
+  const cause = execFailureCause("codex", err, timeout);
+  if (cause) {
+    return cause;
+  }
+
+  const detail = boundedDetail(terminalFailureMessage(events));
+  const stdoutBytes = Buffer.byteLength(err?.stdout ?? "");
+  const stderrBytes = Buffer.byteLength(err?.stderr ?? "");
+  return `codex exited with code ${err?.exitCode}: ${detail || NO_DETAIL} (${stdoutBytes} stdout bytes, ${stderrBytes} stderr bytes)`;
+}
+
+/** Flattens `text` to one line and keeps at most `DETAIL_LIMIT` characters of it. */
+function boundedDetail(text) {
+  const flat = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return flat.length > DETAIL_LIMIT ? `${flat.slice(0, DETAIL_LIMIT)}...` : flat;
 }
 
 export async function runCodex(state, prompt, options = {}) {
@@ -94,9 +133,11 @@ export async function runCodex(state, prompt, options = {}) {
     const failedEvents = parseJsonLines(err?.stdout ?? "");
     const started = failedEvents.find((event) => event?.type === "thread.started");
     keepFailedSessionId(state, started?.thread_id);
-    flagCapacityFailure(err, failedEvents);
-    flagMissingSession(err, requestedSessionId, missingSession);
-    throw err;
+    const failure = err instanceof Error ? err : new Error(String(err));
+    failure.message = failureMessage(err, failedEvents, options.timeout);
+    flagCapacityFailure(failure, failedEvents);
+    flagMissingSession(failure, requestedSessionId, missingSession);
+    throw failure;
   }
   const events = parseJsonLines(stdout).filter(isJsonObject);
 

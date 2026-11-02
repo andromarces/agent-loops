@@ -50,9 +50,7 @@ test.each([
     fakeCodex(async () => {
       throw Object.assign(new Error("codex failed"), flags);
     });
-    await expect(withInheritedTmp(root, () => runTurn(), `${root}-runs`)).rejects.toThrow(
-      "codex failed",
-    );
+    await expect(withInheritedTmp(root, () => runTurn(), `${root}-runs`)).rejects.toThrow("codex");
     expect(await readdir(root)).toEqual([]);
   } finally {
     await removePath(root);
