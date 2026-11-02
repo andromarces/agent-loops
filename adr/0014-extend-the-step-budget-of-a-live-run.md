@@ -111,7 +111,7 @@ The worker turn was asked to run one shell command. The command printed whether
 | Claude Code | 2.1.296          | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 | Codex CLI   | 0.163.0-alpha.5  | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 | OpenCode    | v0.0.0-dev-20800 | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
-| Copilot CLI | 1.0.106-2        | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
+| Copilot CLI | 1.0.106-2        | observed: set, key held | observed: refused, exit 1 | observed: abort, exit 0            |
 | Antigravity | 1.3.3 (`agy`)    | observed: set, key held | observed: refused, exit 1 | observed: all three ran, exit 0    |
 
 - The refusal text was `abort is refused for a child role; only the parent session runs it.`
@@ -132,8 +132,9 @@ The worker turn was asked to run one shell command. The command printed whether
   `--allow-tool 'shell(bash)'` and kept the runtime arguments unchanged. The worker read
   `AGENT_LOOP_SPAWNED_RUN=b20132fb7592,1e2316479229`, `AGENT_LOOP_TEST_SLOT_HELD=unset`, and
   Copilot CLI 1.0.106-2 inside the turn, and the list held the run key `1e2316479229`. The state
-  file held lifecycle `active` after the turn. The child `role abort` exited 1, and the parent
-  shell then ran `role abort`, exit 0. The record saved `copilot --version`, `sw_vers`, `uname -a`,
+  file held lifecycle `active` after the turn. The child `role abort` exited 1, the parent shell then
+  ran `role abort`, exit 0, and `extend` and `finish` did not run in this probe. The record saved
+  `copilot --version`, `sw_vers`, `uname -a`,
   `node --version`, the work tree head, and the shim invocation log before and after the probe. The
   refusal text was `abort is refused for a child role; only the parent session runs it.`
 - Windows: not verified. No Windows host was available.
