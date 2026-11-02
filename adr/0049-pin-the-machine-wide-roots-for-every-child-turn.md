@@ -80,6 +80,7 @@ Andro Marces
 - [PR #996](https://github.com/andromarces/agent-loops/pull/996)
 - [PR #973](https://github.com/andromarces/agent-loops/pull/973)
 - [PR #1338](https://github.com/andromarces/agent-loops/pull/1338)
+- [PR #1365](https://github.com/andromarces/agent-loops/pull/1365)
 - Implementation: `rootPins` in `src/lib/root-pins.mjs`, `exec` and `withNpmLogSettings` in `src/lib/exec.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`; tests in `tests/lib/exec.test.mjs`; documented in `docs/orchestrator-instructions.md` and `docs/reference/architecture.md`
 - [ADR 0039: Machine-wide test slot](0039-machine-wide-test-slot.md)
 - [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md)
