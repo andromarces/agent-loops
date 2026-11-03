@@ -113,8 +113,8 @@ test("the closing-block rule states the bold label name list item", () => {
 });
 
 // Usefulness: verifies the closing-block rule states the whole-line bold heading exception of
-// issue #1367 and scopes the grouping rule outside it, so the prompt and parser agree on the fold
-// that yields a report instead of null.
+// issue #1367. It also scopes the grouping rule outside that fold. The prompt and parser then
+// agree on the fold that yields a report instead of null.
 test("the closing-block rule states the whole-line bold heading exception", () => {
   expect(reportBlock).toMatch(/whole-line bold heading is the one `\*` exception/);
   expect(reportBlock).toMatch(
