@@ -30,13 +30,16 @@ const isSharedConfigKey = (key) => {
  * on their own: the effective value of `core.hooksPath` would hide a change to the scope that the
  * other one overrides. The result holds digests only, so a config value or a URL never leaves this
  * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
- * a change. The read starts two `git` processes at once, because every worker turn reads twice and
+ * a change.
+ *
+ * The read starts two `git` processes at once, because every worker turn reads twice and
  * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`,
  * and `deadlineMs`, which stops the whole read: the `git` processes, the directory read, and the
  * hashing. The deadline joins `signal`, so either one stops the read. After it, no new file system
  * request starts, the `git` processes end (SIGTERM, then SIGKILL after 1 s), and the read rejects
  * with a `SnapshotError` that names the deadline. A read that needs no turn signal, such as the one
  * after a cancel, sets the deadline.
+ *
  * known-limit: a file system request already in flight cannot be stopped. The read stops waiting
  * for it, and it can stay pending in the background when the file system stalls. Between the
  * requests of one hook hash, the read checks the signal, so no new request starts after the stop.
