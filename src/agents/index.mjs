@@ -21,6 +21,7 @@ export { normalizeAgent };
  * - `sessionUnconfirmed`: the session id is not yet confirmed by CLI output.
  * - `shellDenied`: the turn reported a refused shell call.
  * - `resolvedModel`: the model the CLI reported (see `reportsResolvedModel` in `src/lib/agent-kinds.mjs`).
+ * - `resolvedModelSource`: the evidence that named a resolved model, `init` or `modelUsage`.
  *
  * An adapter throws an error with `transient` set to a class name, such as `capacity`, when the
  * provider is expected to clear the failure, so the envelope names the class (issue #1012).

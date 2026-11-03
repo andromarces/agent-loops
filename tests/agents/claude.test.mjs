@@ -891,9 +891,11 @@ const resolved = async (result, state = { kind: "claude", sessionId: null, model
 // Usefulness: --continue-from compares the model Claude Code resolved, so a result that names
 // exactly one well-formed model in `modelUsage` records it.
 test("claude records the one model its result reports as resolvedModel", async () => {
-  expect(await resolved({ modelUsage: { "claude-opus-5-5": { inputTokens: 1 } } })).toBe(
+  const state = { kind: "claude", sessionId: null, model: null };
+  expect(await resolved({ modelUsage: { "claude-opus-5-5": { inputTokens: 1 } } }, state)).toBe(
     "claude-opus-5-5",
   );
+  expect(state.resolvedModelSource).toBe("modelUsage");
 });
 
 // Usefulness: a false resolved model would refuse or pass a continuation wrongly, so several
@@ -1220,6 +1222,7 @@ test("claude records the modelUsage model when the single init model differs", a
   const state = { ...failedState(), sessionId: "s-kept" };
   await runClaude(state, "p", { cwd: "/path" });
   expect(state.resolvedModel).toBe("claude-sonnet-5-5");
+  expect(state.resolvedModelSource).toBe("modelUsage");
 });
 
 // Usefulness: issue #1376 keeps the init rule for every other modelUsage shape, and a failed turn
@@ -1240,6 +1243,7 @@ test.each([
   const state = { ...failedState(), sessionId: "s-kept" };
   await runClaude(state, "p", { cwd: "/path" });
   expect(state.resolvedModel).toBe("claude-opus-5-6");
+  expect(state.resolvedModelSource).toBe("init");
 });
 
 test("claude takes the init model over several modelUsage keys, on a failed turn too", async () => {

@@ -8,7 +8,9 @@ import {
   restoreSessions,
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
+import { runProbeTurn } from "../../src/child-turn.mjs";
 import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
@@ -338,6 +340,81 @@ function probeWith(resolvedByRole) {
     if (resolvedByRole[role] !== undefined) state.resolvedModel = resolvedByRole[role];
   });
 }
+
+// A probe that emulates Claude Code: plan mode answers a requested haiku turn on sonnet while
+// `init` names haiku, and default mode answers on haiku. An old record holds the `init` model.
+function claudeProbe(repo, modes) {
+  return async (state, role) =>
+    runProbeTurn({
+      agents: {
+        claude: {
+          async run(probeState, _prompt, options) {
+            modes.push(options.readOnly);
+            probeState.initModel = "claude-haiku-5-5";
+            probeState.resolvedModel = options.readOnly ? "claude-sonnet-5-5" : "claude-haiku-5-5";
+            return "OK";
+          },
+        },
+      },
+      state,
+      roleName: role,
+      cwd: repo,
+    });
+}
+
+// Usefulness: issue #1376. An old reviewer record holds the init model, and a plan-mode probe
+// answers on another model, so the continuation must not refuse an unchanged configuration.
+test("verifyResolvedModels accepts an old init-model record on a plan-mode probe", async () => {
+  const repo = await createTempRepo();
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.reviewer = {
+      kind: "claude",
+      model: "haiku",
+      effort: null,
+      sessionId: null,
+      resolvedModel: "claude-haiku-5-5",
+    };
+    const modes = [];
+    await expect(
+      verifyResolvedModels(next, { probe: claudeProbe(repo, modes) }),
+    ).resolves.toBeUndefined();
+    expect(modes).toEqual([true]);
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: issue #1376. A worker turn does not use plan mode, so its probe must use that mode
+// and record haiku, not a plan-mode substitution.
+test("verifyResolvedModels accepts an old init-model record on a worker probe", async () => {
+  const repo = await createTempRepo();
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.worker = {
+      kind: "claude",
+      model: "haiku",
+      effort: null,
+      sessionId: null,
+      resolvedModel: "claude-haiku-5-5",
+    };
+    const modes = [];
+    await expect(
+      verifyResolvedModels(next, { probe: claudeProbe(repo, modes) }),
+    ).resolves.toBeUndefined();
+    expect(modes).toEqual([false]);
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+    await removePath(repo);
+  }
+});
 
 // Usefulness: a CLI default that changed between the runs is refused before any turn, and the
 // refusal names the role and both models. A new --model flag is refused by the flag rule, so the

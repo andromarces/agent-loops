@@ -80,8 +80,9 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 }
 
 /**
- * Runs one read-only probe turn in a new session and reads `state.resolvedModel` from it (#394). The
- * probe is a child turn, so it runs under the same mutation check as a reviewer turn: a probe that
+ * Runs one probe turn in the permission mode of the role's real turn and reads `state.resolvedModel`
+ * from it (#394). A worker probe is not read-only, because a worker turn is not read-only. The
+ * probe is a child turn, so it runs under the same mutation check as a reviewer turn. A probe that
  * changes the work tree throws `MutationError`, a failed snapshot throws `SnapshotError`, and
  * `signal` cancels the CLI call. Every error is thrown, never returned as a result, because the
  * caller refuses the continuation on any failure.
@@ -104,7 +105,15 @@ export async function runProbeTurn({
         state,
         roleName,
         prompt: "Reply with the single word OK.",
-        opts: { cwd, readOnly: true, timeout, signal },
+        opts: {
+          cwd,
+          readOnly: roleName !== "worker",
+          timeout,
+          signal,
+          onInitModel: (model) => {
+            if (model) state.initModel = model;
+          },
+        },
         onEvent: () => {},
         stepsUsed: 0,
       }),
