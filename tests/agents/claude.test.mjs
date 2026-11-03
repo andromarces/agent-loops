@@ -75,18 +75,38 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
   );
 });
 
-// Usefulness: issue #1376. A read-only worker probe uses `--tools ""` and no plan mode, so it
-// keeps the requested model. A reviewer probe keeps plan mode, as its real turn does.
-test("claude runs a worker probe without tools and without plan mode", async () => {
+// Usefulness: issue #1376. A read-only worker probe keeps the origin/main plan-mode arguments,
+// so the probe write guard is unchanged. A reviewer probe keeps plan mode too.
+test("claude runs a worker probe with the origin/main plan-mode arguments", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
     stderr: "",
   });
   const state = { kind: "claude", sessionId: null, model: "haiku", effort: null };
   await runClaude(state, "p", { cwd: "/path", readOnly: true, role: "worker" });
-  const args = vi.mocked(exec).mock.calls.at(-1)[1];
-  expect(args).toEqual(expect.arrayContaining(["--tools", ""]));
-  expect(args).not.toContain("--permission-mode");
+  expect(exec).toHaveBeenLastCalledWith(
+    "claude",
+    [
+      "-p",
+      "--session-id",
+      preassignedId(),
+      "--permission-mode",
+      "plan",
+      "--model",
+      "haiku",
+      "--output-format",
+      "json",
+      "--verbose",
+    ],
+    {
+      cwd: "/path",
+      input: expect.stringMatching(/^p\n\n\[agent-loop session [0-9a-f-]{36} role worker\]$/),
+      timeout: undefined,
+      signal: undefined,
+      role: "worker",
+      env: { CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" },
+    },
+  );
 });
 
 test("claude runs a reviewer probe with plan mode", async () => {

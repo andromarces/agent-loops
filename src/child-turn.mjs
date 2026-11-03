@@ -80,12 +80,11 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 }
 
 /**
- * Runs one read-only probe turn in a new session and reads `state.resolvedModel` from it (#394).
- * A Claude worker probe uses `--tools ""` in the adapter, so it keeps the requested model. The
- * probe is a child turn, so it runs under the same mutation check as a reviewer turn. A probe that
- * changes the work tree throws `MutationError`, a failed snapshot throws `SnapshotError`, and
- * `signal` cancels the CLI call. Every error is thrown, never returned as a result, because the
- * caller refuses the continuation on any failure.
+ * Runs one read-only probe turn in a new session and reads `state.resolvedModel` and
+ * `state.initModel` from it (#394). The probe is a child turn, so it runs under the same mutation
+ * check as a reviewer turn. A probe that changes the work tree throws `MutationError`, a failed
+ * snapshot throws `SnapshotError`, and `signal` cancels the CLI call. Every error is thrown, never
+ * returned as a result, because the caller refuses the continuation on any failure.
  * @param {{ agents?: object, state: object, roleName: string, cwd: string, timeout?: number | null, signal?: AbortSignal }} options
  */
 export async function runProbeTurn({
