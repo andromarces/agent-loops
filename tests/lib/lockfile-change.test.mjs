@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearTimeout as realClearTimeout, setTimeout as realSetTimeout } from "node:timers";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
@@ -49,15 +50,37 @@ afterEach(async () => {
   await removePath(repo);
 });
 
+// Bounds the wait for the first hash read, so a stalled start fails by name, not at the test timeout.
+const START_GUARD_MS = 10_000;
+
 // Holds the bound until the first hash read starts, so a slow root read cannot end it before a
-// signal is recorded.
+// signal is recorded. A read that settles first, or a start past the guard, fails with the cause.
 async function startHashRead() {
   vi.useFakeTimers();
   const firstStart = new Promise((resolve) => {
     hashing.releaseFirstStart = resolve;
   });
   const pending = readLockfiles(repo, { boundMs: 200 });
-  await firstStart;
+  let guard;
+  const guardExpired = new Promise((resolve) => {
+    guard = realSetTimeout(() => resolve("stalled"), START_GUARD_MS);
+  });
+  let outcome;
+  try {
+    outcome = await Promise.race([
+      firstStart.then(() => "started"),
+      pending.then(() => "settled"),
+      guardExpired,
+    ]);
+  } finally {
+    realClearTimeout(guard);
+  }
+  if (outcome === "settled") {
+    throw new Error("the lockfile read ended before any hash read started");
+  }
+  if (outcome === "stalled") {
+    throw new Error(`no hash read started within ${START_GUARD_MS} ms`);
+  }
   return {
     releaseBound: async () => {
       await vi.advanceTimersByTimeAsync(200);
