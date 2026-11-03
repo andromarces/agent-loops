@@ -301,6 +301,20 @@ function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
+// A bold prose line that can introduce a folded list, for example `**Reviewer notes.**`
+// (issue #1367). The bold must wrap the whole line, so a `*` bullet and a `**bold** note` line
+// with trailing text stay out.
+const BOLD_PROSE_LINE = /^\*\*[^*]+\*\*$/;
+
+/**
+ * True when the line is a whole-line bold prose heading that can introduce a folded list (issue
+ * #1367). Examples are `**Reviewer notes.**`. A `*` bullet and `**bold** note` with trailing text
+ * are no heading.
+ */
+function isBoldProseLine(line) {
+  return BOLD_PROSE_LINE.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
+}
+
 /**
  * Folds an unbroken run of `- ` items that directly follows a report label line into that label's
  * value: markers stripped, items joined with "; ", and joined to a value the label line already
@@ -334,7 +348,11 @@ function foldEmptyLabelLists(lines) {
         i = end;
         continue;
       }
-    } else if (isPlainProseLine(line) && out.length > 0 && out.at(-1).trim() === "") {
+    } else if (
+      (isPlainProseLine(line) || isBoldProseLine(line)) &&
+      out.length > 0 &&
+      out.at(-1).trim() === ""
+    ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
       const { items, end } = takeItems(lines, i, HEADING_ITEM);
       if (items.length > 0 && at >= 0 && LABEL_LINE.test(out[at])) {
