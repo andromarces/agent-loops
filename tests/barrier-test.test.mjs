@@ -1,10 +1,14 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { afterAll, afterEach, describe, expect, test } from "vite-plus/test";
+import { afterAll, afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { createBarrierTest } from "./barrier-test.mjs";
 import { createBodyBarrier } from "./body-barrier.mjs";
 
+// The default bound is a safety net for the regression pair. Its timed-out body ends on demand.
+// A loaded runner cannot stretch its 10 ms delay to 50 s. The naming test drives this clock itself.
+const WAIT_MS = 50_000;
+
 describe("createBarrierTest names the hung test", () => {
-  const barrier = createBodyBarrier({ waitMs: 50 });
+  const barrier = createBodyBarrier({ waitMs: WAIT_MS });
   describe("a file with a test body that never ends", () => {
     const barrierTest = createBarrierTest({ barrier });
     barrierTest.fails("hung plain test", { timeout: 20 }, () => new Promise(() => {}));
@@ -12,7 +16,18 @@ describe("createBarrierTest names the hung test", () => {
 
   // Usefulness: acceptance (#949) — a wait that reaches its bound names the hung test, not an anonymous body.
   test("the wait that reaches its bound names the hung test", async () => {
-    await expect(barrier.settled()).rejects.toThrow(/hung plain test/);
+    // Fake timers reach the bound at once, so runner load cannot decide whether the body ends first.
+    vi.useFakeTimers();
+    try {
+      const outcome = barrier.settled().then(
+        () => undefined,
+        (error) => error,
+      );
+      await vi.advanceTimersByTimeAsync(WAIT_MS);
+      expect((await outcome)?.message).toMatch(/hung plain test/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
