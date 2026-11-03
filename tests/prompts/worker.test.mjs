@@ -147,6 +147,20 @@ test("worker turns repeat the indented-list and single-label rule", () => {
   }
 });
 
+// Usefulness: verifies the issue #1386 rule reaches the first worker turn and every later one. A
+// Claude worker wrote a bold-lead paragraph with its own dash list between `Why:` and `Blockers:`,
+// and the block parsed to null. The later turn repeats reportBlock, so the next prompt to that
+// child carries the rule again (issue #1118).
+test("worker turns repeat the bold-lead paragraph rule", () => {
+  for (const firstTurn of [true, false]) {
+    const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
+    expect(prompt).toContain("A paragraph holds a bold lead and more prose on the same line.");
+    expect(prompt).toContain(
+      "With its own dash list between two labels it makes the block unparseable: put the paragraph and its list under one label.",
+    );
+  }
+});
+
 // Usefulness: verifies a worker prompt states that a table makes the block unparseable.
 // It checks the first and later turns, and keeps the tabular-data rule (issue #1359).
 test("worker turns state that the closing block holds no Markdown table", () => {
