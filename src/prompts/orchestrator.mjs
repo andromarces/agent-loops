@@ -301,10 +301,20 @@ const PR_HEAD_COMPARE =
  * The `--compare-head` line: the runtime compares the PR head at finish and reads no required-check
  * source, for a repository whose sources are unreadable (#1104).
  */
-function compareHeadBlock(compareHead) {
+function compareHeadBlock(
+  compareHead,
+  { orchestratorKind = null, timeout = null, waitCommand = null } = {},
+) {
   if (compareHead === null) return "";
+  const canWait =
+    agentHas(orchestratorKind, "waitsForChecks") &&
+    waitCommand !== null &&
+    headlessWaitSeconds(timeout) !== null;
+  const waitRule = canWait
+    ? `\n- Before you finish, wait for every check of the reviewed head with \`role wait-checks --all --pr ${compareHead} --head <reviewed.head>\`. A pending or failing check goes into notDone or blocks the finish. The wait reads status only and changes nothing.`
+    : "\n- Before you finish, require a full test suite through the test slot wrapper. Require a read of every check on the reviewed head instead. A pending or failing check goes into notDone or blocks the finish. This run cannot wait for the checks.";
   return `
-- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. ${NO_CHECK_CLAIM} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.`;
+- This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. ${NO_CHECK_CLAIM} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.${waitRule}`;
 }
 
 /**
@@ -442,7 +452,7 @@ export function initialPrompt({
     `
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
-You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a gated run allows; the PR gate block below states it.
+You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a run that ends with a PR gate or a compare-head finish allows. The block below states it.
 ${REMOTE_WRITE_RULE}
 
 You have two child roles:
@@ -479,7 +489,7 @@ When you dispatch the reviewer, name the guards and contracts that the change pu
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.
-- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, startRead)}${compareHeadBlock(compareHead)}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
+- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, startRead)}${compareHeadBlock(compareHead, { orchestratorKind, timeout, waitCommand })}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.

@@ -26,9 +26,14 @@ Deferred never holds your own blockers or the fact that you apply no fix. An unf
 
 Verdict: accept or reject. One word, nothing else on the line.`;
 
+// A run whose required-check status is unreadable or absent must not accept on a targeted test
+// run alone. No CI result backs that run (issue #1391).
+const NO_READABLE_CHECKS_RULE =
+  "When no readable required-check status covers the reviewed head, an accept needs more than a targeted test run. Run a full test suite through the test slot wrapper, or read every check on the reviewed head. A targeted test run alone does not support an accept. Report CI that is pending in Checks.";
+
 // Fixed review scope every reviewer turn carries, so a parent prompt that
 // restates the spec does not hide a weakened guard or contract (issue #216).
-const reviewerRules = `Review scope, in addition to the task below:
+const reviewerRules = (noReadableChecks) => `Review scope, in addition to the task below:
 - Trace each changed input, flag, or code path through the existing validators and guards that consume it.
 - Report a change that weakens an existing guard or documented contract as a blocker, unless the task explicitly approves that change.
 - Explicit approval names the guard or the contract. A general requirement that weakens a guard as a side effect is not approval.
@@ -36,7 +41,7 @@ const reviewerRules = `Review scope, in addition to the task below:
 - A finding that is not a defect against the task, not a weakened existing guard or documented contract, and not a regression from the base branch goes in Notes, not in Blockers. A blocker needs a concrete failure scenario.
 - A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers.
 - A criterion that needs a check this turn cannot run, such as a live run against a production service, a device, or a manual step, goes in Checks as unverified and in Deferred. It is a blocker only when the task states that the check must pass in this run.
-- When the task names a pull request, read the required checks for the reviewed head with gh pr checks <pr> --required. The command reads status only. It changes nothing. The rules below it apply only then.
+${noReadableChecks ? `- ${NO_READABLE_CHECKS_RULE}\n` : ""}- When the task names a pull request, read the required checks for the reviewed head with gh pr checks <pr> --required. The command reads status only. It changes nothing. The rules below it apply only then.
   - Report a failing required check as a blocker. Exit code 8 means a check is pending: report it in Checks, not as a blocker.
   - Exit code 1 covers a failing check, a repository with no required check, and a read error. Report a blocker only when the output lists a failing required check. Report any other exit 1 as unresolved in Checks.
   - The command omits a check that has not started, so a read pass covers only the listed checks.
@@ -189,6 +194,7 @@ export function reviewerPrompt(
   scratchDir = null,
 ) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
+  const noReadableChecks = prChecks === null || prChecks.status === "unresolved";
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   const sandbox =
     sandboxMode === null
@@ -203,7 +209,7 @@ ${processRule}
 ${secretFileRule}
 ${testSlotRule()}
 
-${reviewerRules}${supplied}${tests}${sandbox}
+${reviewerRules(noReadableChecks)}${supplied}${tests}${sandbox}
 
 ${reviewerReportBlock}
 

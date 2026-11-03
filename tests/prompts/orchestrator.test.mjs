@@ -1225,6 +1225,30 @@ describe("compare-head run prompt", () => {
   });
 });
 
+// Usefulness: verifies a compare-head run waits for every check of the reviewed head. An
+// orchestrator that cannot wait requires a full suite (issue #1391).
+test("compare-head prompt names the all-checks wait or a full-suite requirement", () => {
+  const waiting = initialPrompt({
+    task: "t",
+    maxSteps: 3,
+    compareHead: 42,
+    orchestratorKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  expect(waiting).toContain("role wait-checks --all --pr 42 --head <reviewed.head>");
+  expect(waiting).toContain("A pending or failing check goes into notDone or blocks the finish.");
+  const fallback = initialPrompt({
+    task: "t",
+    maxSteps: 3,
+    compareHead: 42,
+    orchestratorKind: "codex",
+  });
+  expect(fallback).toContain("require a full test suite through the test slot wrapper.");
+  expect(fallback).toContain("Require a read of every check on the reviewed head instead.");
+  expect(fallback).toContain("A pending or failing check goes into notDone or blocks the finish.");
+  expect(initialPrompt({ task: "t", maxSteps: 3 })).not.toContain("all-checks wait");
+});
+
 // Usefulness: verifies requirement "each child prompt rule has one wording" (issue #1185). A rule
 // that two prompt surfaces state in two wordings lets a child read them as two rules, and a later
 // edit to one copy leaves the other stale. The scan renders every surface that states the rule.

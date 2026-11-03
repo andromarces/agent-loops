@@ -301,6 +301,25 @@ test("reviewer prompt carries no status line without a read", () => {
   expect(reviewerPrompt("review the change")).not.toContain(FAILING_READ.summary);
 });
 
+// Usefulness: verifies a reviewer turn with no readable required-check status must not accept on a
+// targeted test alone. The turn needs a full suite or an all-check read (issue #1391).
+test("reviewer prompt requires full-suite or all-check evidence when no readable status exists", () => {
+  for (const status of [null, UNREADABLE_READ]) {
+    const prompt = reviewerPrompt("check the fix", status);
+    expect(prompt).toContain(
+      "When no readable required-check status covers the reviewed head, an accept needs more than a targeted test run.",
+    );
+    expect(prompt).toContain(
+      "Run a full test suite through the test slot wrapper, or read every check on the reviewed head.",
+    );
+    expect(prompt).toContain("A targeted test run alone does not support an accept.");
+  }
+  const readable = { pr: 42, status: "pass", checks: ["ci"], summary: "passing required checks" };
+  expect(reviewerPrompt("check the fix", readable)).not.toContain(
+    "When no readable required-check status covers the reviewed head",
+  );
+});
+
 // Usefulness: verifies a supplied status is marked advisory with the finish gate
 // named as the enforcement point, because the runtime reads the head and the
 // checks in separate calls, so a head that advances and returns between them

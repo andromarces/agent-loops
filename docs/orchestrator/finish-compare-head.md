@@ -13,3 +13,8 @@ envelope then carries `"headCompare": "verified"` and the state file records the
 `summary`. That record differs from `unresolvedCompare`, which says no one resolved the head. The
 flag is refused together with `--require-ci` and with `unresolvedCompare`, and a run that declares
 its PR still needs its `--require-ci` gate.
+
+Before a finish with `--compare-head`, wait for every check of the reviewed head with
+`agent-loop role wait-checks --all`. A pending or failing check goes into `notDone` or
+blocks the finish. The runtime reads no check result for that finish, so the wait is the
+only check evidence.
