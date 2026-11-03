@@ -69,10 +69,10 @@ const PNPM_DEPS_CHECK_NAME = /^pnpm_config_verify_deps_before_run$/i;
 /**
  * Returns `env`, the complete child environment, with `pnpm_config_verify_deps_before_run` set to
  * `warn` in one spelling, so pnpm never installs from its dependency check before `pnpm run` or
- * `pnpm exec` (issue #1145). The default `install` can write to the `node_modules` of the work tree
- * and to the shared pnpm store, outside the reach of the mutation check. The environment overrides
- * a `verifyDepsBeforeRun` workspace setting. An inherited value of any case is dropped, and `warn`
- * wins over a user value.
+ * `pnpm exec` (issues #1145, #1385). The default `install` can write to the `node_modules` of the
+ * work tree and to the shared pnpm store, outside the reach of the mutation check. The environment
+ * overrides a `verifyDepsBeforeRun` workspace setting. An inherited value of any case is dropped,
+ * and `warn` wins over a user value.
  */
 function withPnpmDepsCheckWarn(env) {
   const out = Object.fromEntries(
@@ -248,8 +248,8 @@ export function execFailureCause(command, failure, timeout) {
  * `options.role` labels the log lines. The roles `worker` and `reviewer` also rebuild the child
  * environment with `extendEnv: false`. It holds `env` over the process environment, the run marker
  * `SPAWNED_RUN_ENV`, the root pins from `rootPins`, and the npm log settings from
- * `withNpmLogSettings`. A reviewer also gets the pnpm deps check set to `warn`. Any other role
- * keeps the inherited environment, with `env` over it.
+ * `withNpmLogSettings`. A worker and a reviewer also get the pnpm deps check set to `warn`. Any
+ * other role keeps the inherited environment, with `env` over it.
  * `options.onSpawn(pid)` is called once, right after the child starts and only when it has a pid.
  * It runs beside the child and is awaited before `exec` returns or throws. A rejection warns and
  * never changes the outcome of the child.
@@ -287,7 +287,7 @@ export async function exec(command, args = [], options = {}) {
     };
     if (marked) {
       const markedEnv = withNpmLogSettings({ ...process.env, ...childEnv }, env);
-      execaOptions.env = role === "reviewer" ? withPnpmDepsCheckWarn(markedEnv) : markedEnv;
+      execaOptions.env = withPnpmDepsCheckWarn(markedEnv);
       execaOptions.extendEnv = false;
     } else {
       execaOptions.env = childEnv;

@@ -30,6 +30,11 @@ const matchingPushNote =
 const probeCopyRule =
   "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there. A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write. Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly, because pnpm installs from its dependency check by default.";
 
+// The pnpm dependency check also defaults to install in the run work tree, so a worker command there
+// can run the project lifecycle scripts (issue #1385).
+const pnpmRunRule =
+  "A `pnpm run` or `pnpm exec` in the run work tree must not install. Set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` for the command, or call the installed binary directly.";
+
 // A junction to another checkout's `node_modules` lets `vp` rewrite that checkout's links
 // (issue #1057).
 const ownNodeModulesRule =
@@ -77,6 +82,7 @@ Your role:
 - ${testSlotRule()}
 - ${ownNodeModulesRule}
 - ${probeCopyRule}
+- ${pnpmRunRule}
 - For PR work, the dispatcher names the PR branch. Commit your change on that
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
