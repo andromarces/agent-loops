@@ -111,3 +111,14 @@ test("the closing-block rule states the bold label name list item", () => {
   expect(reportBlock).toMatch(/dash item or sub-item[^.]*bold report label name[^.]*item text/);
   expect(reportBlock).toMatch(/outside a list under a label[^.]*unparseable/);
 });
+
+// Usefulness: verifies the closing-block rule states the whole-line bold heading exception of
+// issue #1367 and scopes the grouping rule outside it, so the prompt and parser agree on the fold
+// that yields a report instead of null.
+test("the closing-block rule states the whole-line bold heading exception", () => {
+  expect(reportBlock).toMatch(/whole-line bold heading is the one `\*` exception/);
+  expect(reportBlock).toMatch(
+    /\*\*Reviewer notes\.\*\*` above `- a` reads `\*\*Reviewer notes\.\*\*: a`/,
+  );
+  expect(reportBlock).toMatch(/bold heading line that groups a dash list outside the prose fold/);
+});
