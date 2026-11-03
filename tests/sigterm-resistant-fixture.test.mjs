@@ -3,14 +3,25 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vite-plus/test";
+import { afterEach, expect, test } from "vite-plus/test";
 
+import { execBounded } from "../src/lib/exec.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { endOwnedProcess, processExists } from "./process-helpers.mjs";
 import { HOLD_ENV, RESISTANT_CHILD, RESISTANT_TREE } from "./sigterm-resistant-fixture.mjs";
 import { pollUntil } from "./wait-helpers.mjs";
 
 const SIGNAL_WAIT_MS = 10_000;
+
+// Every child a case started. The teardown runs after the case, also when a runner timeout ends it.
+const started = [];
+
+afterEach(async () => {
+  for (const tree of started.splice(0).reverse()) {
+    await endTree(tree);
+    await removePath(tree.scratch);
+  }
+});
 
 function watchExit(child) {
   return new Promise((resolve) => {
@@ -51,27 +62,55 @@ async function expectSurvived(gone, marker, label) {
   );
 }
 
-// Ends every process of the tree, also one that a failed or timed-out startup never read a pid for.
-async function endTree(child, pidFiles, marker) {
-  const pids = [];
-  for (const file of pidFiles) {
-    const pid = await readPid(file);
-    if (pid !== undefined) pids.push(pid);
+// Records a started tree, so the teardown sees every pid that the case learned.
+function track(child, scratch, pidFiles) {
+  const tree = { child, scratch, pidFiles, marker: scratch, pids: new Set() };
+  started.push(tree);
+  return tree;
+}
+
+function remember(tree, pid) {
+  tree.pids.add(pid);
+  return pid;
+}
+
+// True while the group that the direct child leads still holds a process of this test. The leader
+// proves the group while it lives. After its exit, a member must carry the unique scratch path.
+async function ownsGroup(tree) {
+  if (tree.child.exitCode === null && tree.child.signalCode === null) {
+    return true;
   }
-  for (const pid of pids.reverse()) {
-    if (pid !== child.pid && processExists(pid)) {
-      await endOwnedProcess(pid, marker);
+  const read = await execBounded("ps", ["-A", "-ww", "-o", "pgid=,command="]);
+  if (typeof read.stdout !== "string") {
+    return false;
+  }
+  return read.stdout.split("\n").some((line) => {
+    const [group, ...command] = line.trim().split(/\s+/);
+    return Number(group) === tree.child.pid && command.join(" ").includes(tree.marker);
+  });
+}
+
+// Ends every process of the tree, also one that a failed or timed-out startup never read a pid for.
+async function endTree(tree) {
+  const pids = new Set(tree.pids);
+  for (const file of tree.pidFiles) {
+    const pid = await readPid(file);
+    if (pid !== undefined) pids.add(pid);
+  }
+  for (const pid of [...pids].reverse()) {
+    if (pid !== tree.child.pid && processExists(pid)) {
+      await endOwnedProcess(pid, tree.marker);
     }
   }
-  // The direct child leads the process group this test created, so the group signal ends a member
-  // whose pid file no read reached. The group id stays allocated while the group has members.
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    // The group is already empty.
+  if (await ownsGroup(tree)) {
+    try {
+      process.kill(-tree.child.pid, "SIGKILL");
+    } catch {
+      // The group is already empty.
+    }
   }
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
+  if (tree.child.exitCode === null && tree.child.signalCode === null) {
+    tree.child.kill("SIGKILL");
   }
 }
 
@@ -82,24 +121,18 @@ test.skipIf(process.platform === "win32")(
     const scratch = await mkdtemp(join(tmpdir(), "sigterm-order-"));
     const pidFile = join(scratch, "child.pid");
     const holdPrefix = join(scratch, "release");
-    let child;
-    let pid;
-    try {
-      child = spawn(process.execPath, ["-e", RESISTANT_CHILD, pidFile], {
-        stdio: "ignore",
-        detached: true,
-        env: { ...process.env, [HOLD_ENV]: holdPrefix },
-      });
-      const ended = watchExit(child);
-      pid = await waitForPid(pidFile);
-      child.kill("SIGTERM");
-      const marker = await releaseHold(holdPrefix, pid);
-      await expectSurvived(ended, marker, `the child ${pid}`);
-      expect(processExists(pid)).toBe(true);
-    } finally {
-      if (child) await endTree(child, [pidFile], scratch);
-      await removePath(scratch);
-    }
+    const child = spawn(process.execPath, ["-e", RESISTANT_CHILD, pidFile], {
+      stdio: "ignore",
+      detached: true,
+      env: { ...process.env, [HOLD_ENV]: holdPrefix },
+    });
+    const tree = track(child, scratch, [pidFile]);
+    const ended = watchExit(child);
+    const pid = remember(tree, await waitForPid(pidFile));
+    child.kill("SIGTERM");
+    const marker = await releaseHold(holdPrefix, pid);
+    await expectSurvived(ended, marker, `the child ${pid}`);
+    expect(processExists(pid)).toBe(true);
   },
   60_000,
 );
@@ -112,34 +145,24 @@ test.skipIf(process.platform === "win32")(
     const pidFile = join(scratch, "tree.pid");
     const grandPidFile = `${pidFile}.grand`;
     const holdPrefix = join(scratch, "release");
-    let child;
-    let pid;
-    let grandPid;
-    try {
-      child = spawn(process.execPath, ["-e", RESISTANT_TREE, pidFile, "", RESISTANT_TREE], {
-        stdio: "ignore",
-        detached: true,
-        env: { ...process.env, [HOLD_ENV]: holdPrefix },
-      });
-      const ended = watchExit(child);
-      pid = await waitForPid(pidFile);
-      child.kill("SIGTERM");
-      const marker = await releaseHold(holdPrefix, pid);
-      await expectSurvived(ended, marker, `the child ${pid}`);
-      grandPid = await waitForPid(grandPidFile);
-      const grandGone = pollUntil(
-        () => (processExists(grandPid) ? undefined : true),
-        SIGNAL_WAIT_MS,
-      );
-      process.kill(grandPid, "SIGTERM");
-      const grandMarker = await releaseHold(holdPrefix, grandPid);
-      await expectSurvived(grandGone, grandMarker, `the grandchild ${grandPid}`);
-      expect(processExists(pid)).toBe(true);
-      expect(processExists(grandPid)).toBe(true);
-    } finally {
-      if (child) await endTree(child, [pidFile, grandPidFile], scratch);
-      await removePath(scratch);
-    }
+    const child = spawn(process.execPath, ["-e", RESISTANT_TREE, pidFile, "", RESISTANT_TREE], {
+      stdio: "ignore",
+      detached: true,
+      env: { ...process.env, [HOLD_ENV]: holdPrefix },
+    });
+    const tree = track(child, scratch, [pidFile, grandPidFile]);
+    const ended = watchExit(child);
+    const pid = remember(tree, await waitForPid(pidFile));
+    child.kill("SIGTERM");
+    const marker = await releaseHold(holdPrefix, pid);
+    await expectSurvived(ended, marker, `the child ${pid}`);
+    const grandPid = remember(tree, await waitForPid(grandPidFile));
+    const grandGone = pollUntil(() => (processExists(grandPid) ? undefined : true), SIGNAL_WAIT_MS);
+    process.kill(grandPid, "SIGTERM");
+    const grandMarker = await releaseHold(holdPrefix, grandPid);
+    await expectSurvived(grandGone, grandMarker, `the grandchild ${grandPid}`);
+    expect(processExists(pid)).toBe(true);
+    expect(processExists(grandPid)).toBe(true);
   },
   60_000,
 );

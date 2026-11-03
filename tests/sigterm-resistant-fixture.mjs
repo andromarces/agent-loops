@@ -14,9 +14,10 @@ const HOLD = `function hold(prefix) {
 const CHILD = [
   'const fs = require("fs");',
   'process.on("SIGTERM", () => {});',
-  "fs.writeFileSync(process.argv[1], String(process.pid));",
+  // The hold call stays on the pid write statement. A swap of this statement with the handler
+  // install then leaves the hold between the write and the handler: the old order.
+  "fs.writeFileSync(process.argv[1], String(process.pid)); hold(process.env.SIGTERM_FIXTURE_HOLD);",
   HOLD,
-  "hold(process.env.SIGTERM_FIXTURE_HOLD);",
 ];
 
 /** The script for one child. */
