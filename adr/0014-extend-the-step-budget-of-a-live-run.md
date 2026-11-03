@@ -146,7 +146,7 @@ Node v27.0.0-alpha.0.0.0. Source `869fbbbce82598db0517d01a49bb1b8f03a9d86f`.
 The CLI versions before and after the probes were identical: Claude Code 2.1.317,
 codex-cli 0.167.0-alpha.3, opencode v0.0.0-dev-533.
 
-Each harness ran two nested live sessions in a disposable Git repository with no remote.
+Each harness ran two nested live sessions in disposable Git repositories with no remote.
 Each session ran `role dispatch` init, then the parent operations, through its own shell tool.
 The launch cleared `AGENT_LOOP_SPAWNED_RUN` and `AGENT_LOOP_TEST_SLOT_HELD`.
 Each nested shell printed both as `unset`. Run 1 ran init, `role extend --max-steps 30`, then
