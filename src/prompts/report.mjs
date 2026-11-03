@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
  * response, so the block carries the reasoning and open items it would otherwise re-derive.
  */
 export const reportBlock = `
-End your response with this block, kept short. Each label takes one line, plain at column 0, so write no list. A list of dash-plus-one-space items (\`- item\`) directly under a label, empty or not, joins into that label's value.
+End your response with this block, kept short. Each label appears once, plain at column 0. An indented dash list directly under a label with no parent item above it makes the block unparseable. A list directly under a label starts at column 0. A list of dash-plus-one-space items (\`- item\`) directly under a label, empty or not, joins into that label's value.
 
 One level of sub-items under such an item, each a line of two spaces, a hyphen, one space, then the text, folds into that item with a comma. An ordered list (\`1. item\`) directly under a label joins into that label's value the same way, and its sub-items are dash lines indented to the column where the item text starts. A dash list under a label after one blank line joins that label's value too, with \`; \` when the label holds text. An ordered list after a blank line stays unparseable. Two blank lines under a label before a dash list make the block unparseable.
 

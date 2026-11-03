@@ -122,3 +122,27 @@ test("the closing-block rule states the whole-line bold heading exception", () =
   );
   expect(reportBlock).toMatch(/bold heading line that groups a dash list outside the prose fold/);
 });
+
+// Usefulness: verifies the rule names both issue #1380 shapes: an indented dash list under a label
+// with no parent item, and a repeated label. The rule lives in reportBlock, which every later worker
+// and reviewer turn repeats.
+test("the closing-block rule names an indented list under a label and a repeated label", () => {
+  expect(reportBlock).toMatch(/Each label appears once/);
+  expect(reportBlock).toMatch(/list directly under a label starts at column 0/i);
+  expect(reportBlock).toMatch(/indented dash list[^.]*no parent item above it[^.]*unparseable/);
+});
+
+// Usefulness: verifies the issue #1380 rule forbids only the two observed shapes. A general
+// one-line label rule fails the test. So does a prompt that drops a documented fold.
+test("the closing-block rule forbids only the two observed shapes", () => {
+  expect(reportBlock).not.toMatch(/label[^.]{0,60}\bon (?:its|one|the same) line\b/i);
+  for (const fold of [
+    /dash-plus-one-space items[^.]*directly under a label[^.]*joins into that label's value/,
+    /sub-items[^.]*folds into that item with a comma/,
+    /indented prose line directly after an item or its sub-items folds/,
+    /dash list under a label after one blank line[^.]*joins/,
+    /blank line[^.]*one plain prose line[^.]*list directly under it joins/,
+  ]) {
+    expect(reportBlock, fold.source).toMatch(fold);
+  }
+});
