@@ -68,11 +68,11 @@ const PNPM_DEPS_CHECK_NAME = /^pnpm_config_verify_deps_before_run$/i;
 
 /**
  * Returns `env`, the complete child environment, with `pnpm_config_verify_deps_before_run` set to
- * `warn` in one spelling, so pnpm never installs from its dependency check before `pnpm run` or
- * `pnpm exec` (issues #1145, #1385). The default `install` can write to the `node_modules` of the
- * work tree and to the shared pnpm store, outside the reach of the mutation check. The environment
- * overrides a `verifyDepsBeforeRun` workspace setting. An inherited value of any case is dropped,
- * and `warn` wins over a user value.
+ * `warn` in one spelling. That stops pnpm from installing from its dependency check before
+ * `pnpm run` or `pnpm exec` (issues #1145, #1385). The default `install` can write to the
+ * `node_modules` of the work tree and to the shared pnpm store, outside the reach of the mutation
+ * check. The environment overrides a `verifyDepsBeforeRun` workspace setting. An inherited value
+ * of any case is dropped, and `warn` wins over a user value.
  */
 function withPnpmDepsCheckWarn(env) {
   const out = Object.fromEntries(
