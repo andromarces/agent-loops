@@ -249,6 +249,39 @@ test("a worker turn whose post-turn shared Git read fails reports no shared Git 
   });
 });
 
+// Usefulness: verifies requirement "a Git without --show-scope warns and reports no shared Git
+// change" (issue #1387): a failed scoped read must warn and leave the field absent, never report a
+// false change.
+test("a git without --show-scope warns and reports no shared Git change", async () => {
+  await withLinkedWorkTree(async (linked) => {
+    const { execa: realExeca } = await vi.importActual("execa");
+    const worker = recordingAdapter([
+      async () => {
+        gitDouble.answer = (command, args, options) =>
+          args[0] === "config" && args.includes("--show-scope")
+            ? { exitCode: 129, stdout: "", stderr: "error: unknown option `show-scope'" }
+            : realExeca(command, args, options);
+        return WORKER_REPLY;
+      },
+    ]);
+    const agents = { fake1: worker, fake2: recordingAdapter([]) };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+        agents,
+        stdin: stdinPrompt,
+      });
+      const warnings = errorSpy.mock.calls.map((call) => call.join(" "));
+      expect(warnings.some((line) => line.includes("shared Git state read failed"))).toBe(true);
+      expect(warnings.join("\n")).not.toContain("show-scope");
+      expect(result.payload.status).toBe("ok");
+      expect(result.payload).not.toHaveProperty("sharedGitChanged");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
 // Usefulness: verifies requirement "an interrupted worker dispatch reports the shared Git change in
 // the envelope and `lastResult`" (issue #1224): a canceled turn that changed `core.hooksPath` or a
 // remote leaves no other trace, and the change affects every work tree of the repository.

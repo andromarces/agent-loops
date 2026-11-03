@@ -8,6 +8,15 @@ import { withTimeBound } from "./time-bound.mjs";
 // Item name of the hooks path setting in a shared Git state diff.
 const HOOKS_PATH_ITEM = "core.hooksPath";
 
+// Shared config keys that change how Git treats the main work tree. The read names a key only.
+const SHARED_CONFIG_KEYS = new Set(["core.bare", "core.worktree"]);
+
+const isSharedConfigKey = (key) => {
+  // A name with three parts is a subsection, and a subsection can hold a URL.
+  if (key.split(".").length !== 2) return false;
+  return SHARED_CONFIG_KEYS.has(key) || key.startsWith("extensions.");
+};
+
 /**
  * Reads the Git state that every work tree of a repository shares and that a turn can change from
  * a linked work tree: `core.hooksPath`, the hook files in the common `hooks/` directory, and the
@@ -25,7 +34,10 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
  * known-limit: a file system request already in flight cannot be stopped. The read stops waiting
  * for it, and it can stay pending in the background when the file system stalls. Between the
  * requests of one hook hash, the read checks the signal, so no new request starts after the stop.
- * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string> }>}
+ *
+ * The read also covers the shared `core.bare`, `core.worktree`, and `extensions.*` config keys.
+ * It names each changed key only, never a value.
+ * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, string> }>}
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
   if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
@@ -56,9 +68,14 @@ async function readWithin(cwd, bound) {
   const [commonResult, listResult] = settled.map((outcome) => outcome.value);
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
-  const { hooksPath, remotes } = readConfigState(listResult.stdout);
+  const { hooksPath, remotes, sharedKeys } = readConfigState(listResult.stdout);
 
-  return { hooksPath, hooks: await readHooks(join(commonPath, "hooks"), bound.signal), remotes };
+  return {
+    hooksPath,
+    hooks: await readHooks(join(commonPath, "hooks"), bound.signal),
+    remotes,
+    sharedKeys,
+  };
 }
 
 // Names the failed `git` operation and the exit code only: git stderr can carry a config value,
@@ -78,6 +95,7 @@ function readFailure(reason, { args, timeoutMs, result }) {
 function readConfigState(listing) {
   const hooksPath = { local: [], worktree: [] };
   const remotes = new Map();
+  const sharedKeys = new Map();
   const tokens = listing.split("\0");
   for (let i = 0; i + 1 < tokens.length; i += 2) {
     const scope = tokens[i];
@@ -86,11 +104,16 @@ function readConfigState(listing) {
     const newline = entry.indexOf("\n");
     const key = newline === -1 ? entry : entry.slice(0, newline);
     const value = newline === -1 ? null : entry.slice(newline + 1);
+    const lowerKey = key.toLowerCase();
     if (key === "core.hookspath") {
       hooksPath[scope].push(value);
     } else if (key.startsWith("remote.")) {
-      const name = key.slice("remote.".length, key.lastIndexOf("."));
-      remotes.set(name, [...(remotes.get(name) ?? []), [scope, entry]]);
+      const remoteName = key.slice("remote.".length, key.lastIndexOf("."));
+      remotes.set(remoteName, [...(remotes.get(remoteName) ?? []), [scope, entry]]);
+    } else if (isSharedConfigKey(lowerKey)) {
+      // The value list, never the key spelling, is the state: Git prints the name in lower case,
+      // and a value list that keeps its order but changes a value is still a change.
+      sharedKeys.set(lowerKey, [...(sharedKeys.get(lowerKey) ?? []), [scope, value]]);
     }
   }
   return {
@@ -98,6 +121,9 @@ function readConfigState(listing) {
     remotes: Object.fromEntries(
       // The list keeps git's order: the first URL of a remote is the one `git remote get-url` returns.
       [...remotes].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
+    ),
+    sharedKeys: Object.fromEntries(
+      [...sharedKeys].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
     ),
   };
 }
@@ -173,13 +199,15 @@ async function readHooks(hooksDir, signal) {
 
 /**
  * Names the shared Git items that differ between two `readSharedGit` results: `core.hooksPath`,
- * `hooks/<file>`, and `remote.<name>`. Never a value. Returns a sorted list, empty when none changed.
+ * `hooks/<file>`, `remote.<name>`, and a shared config key such as `core.bare`. Never a value.
+ * Returns a sorted list, empty when none changed.
  */
 export function diffSharedGit(before, after) {
   const changed = [];
   if (before.hooksPath !== after.hooksPath) changed.push(HOOKS_PATH_ITEM);
   for (const name of differing(before.hooks, after.hooks)) changed.push(`hooks/${name}`);
   for (const name of differing(before.remotes, after.remotes)) changed.push(`remote.${name}`);
+  for (const name of differing(before.sharedKeys, after.sharedKeys)) changed.push(name);
   return changed.sort();
 }
 

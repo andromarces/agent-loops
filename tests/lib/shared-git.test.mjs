@@ -130,6 +130,94 @@ test("an unset core.hooksPath is reported", async () => {
   expect(changed).toEqual(["core.hooksPath"]);
 });
 
+// Usefulness: verifies "a core.bare change in the shared config is reported by name from a linked
+// work tree" (issue #1387): the main work tree then reads as bare, and no other watched item covers
+// it.
+test("a core.bare change in the shared config is reported by name from a linked work tree", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "core.bare", "true"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["core.bare"]);
+});
+
+// Usefulness: verifies the other minimum key of issue #1387, `core.worktree`, so a change that
+// points Git at another work tree is named too.
+test("a core.worktree change is reported by name", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "core.worktree", "/another/work-tree"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["core.worktree"]);
+});
+
+// Usefulness: verifies an `extensions.*` key of issue #1387 is reported by name.
+test("an extensions key change is reported by name", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["extensions.worktreeconfig"]);
+});
+
+// Usefulness: verifies a watched key that is set and restored in the same turn reports nothing, so
+// the envelope keeps no field (issue #1387 acceptance).
+test("a watched key set and restored reports nothing", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const changed = await changedBy(linked, async () => {
+    await execa("git", ["config", "core.bare", "true"], { cwd: linked });
+    await execa("git", ["config", "core.bare", "false"], { cwd: linked });
+  });
+  expect(changed).toEqual([]);
+});
+
+// Usefulness: verifies a name case change alone reports nothing, because Git prints section and
+// key names in lower case.
+test("a key whose name changes case only reports nothing", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const before = await readSharedGit(linked);
+  await execa("git", ["config", "Core.Bare", "false"], { cwd: linked });
+  expect(diffSharedGit(before, await readSharedGit(linked))).toEqual([]);
+});
+
+// Usefulness: verifies a multi-valued watched key is compared by all its values, not by the
+// effective one, so a changed value list is reported.
+test("a changed value list of a watched key is reported by key name", async () => {
+  const { linked } = await createLinkedWorkTree();
+  await execa("git", ["config", "--add", "core.bare", "false"], { cwd: linked });
+  await execa("git", ["config", "--add", "core.bare", "false"], { cwd: linked });
+  const before = await readSharedGit(linked);
+  await execa("git", ["config", "--unset-all", "core.bare"], { cwd: linked });
+  await execa("git", ["config", "--add", "core.bare", "false"], { cwd: linked });
+  expect(diffSharedGit(before, await readSharedGit(linked))).toEqual(["core.bare"]);
+});
+
+// Usefulness: verifies a config subsection that can hold a URL is neither reported nor leaked, so
+// no credential reaches the envelope.
+test("a URL subsection key is not reported and its value never leaves the read", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "credential.https://user:token-8@example.test.helper", "store"], {
+      cwd: linked,
+    }),
+  );
+  expect(changed).toEqual([]);
+  expect(JSON.stringify(await readSharedGit(linked))).not.toContain("token-8");
+});
+
+// Usefulness: verifies a config subsection under a watched section is not reported either, because
+// a subsection name can hold a URL (issue #1387).
+test("an extensions subsection key is not reported and never leaks its URL", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "extensions.https://user:token-8@example.test.flag", "true"], {
+      cwd: linked,
+    }),
+  );
+  expect(changed).toEqual([]);
+  expect(JSON.stringify(await readSharedGit(linked))).not.toContain("token-8");
+});
+
 // Usefulness: verifies "a hook file written, edited, or removed in the common hooks directory is
 // reported by its file name".
 test("an added, edited, and removed hook file is reported by name", async () => {
@@ -283,6 +371,14 @@ test("a canceled turn signal stops a read that also has a deadline", async () =>
 test("a git config read that exits unexpectedly rejects", async () => {
   const { linked } = await createLinkedWorkTree();
   configExit.code = 128;
+  await expect(readSharedGit(linked)).rejects.toThrow(/config/);
+});
+
+// Usefulness: verifies "a Git without `--show-scope` fails the read", so the caller warns and
+// reports no change instead of a false one (issue #1387).
+test("a git without --show-scope rejects the read", async () => {
+  const { linked } = await createLinkedWorkTree();
+  configExit.code = 129;
   await expect(readSharedGit(linked)).rejects.toThrow(/config/);
 });
 

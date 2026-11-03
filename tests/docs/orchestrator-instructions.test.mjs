@@ -110,6 +110,7 @@ const SHARED_PARENT_RULES = [
   // the parent reports it.
   (text) =>
     expectRule(text, /sharedGitChanged/, /core\.hooksPath/, /hooks\//, /remote/i, /outside/i),
+  (text) => expectRule(text, /sharedGitChanged/, /core\.bare/, /extensions/),
   (text) => expectRule(text, /never a value/i, /URL/),
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),
