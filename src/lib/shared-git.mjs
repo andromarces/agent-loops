@@ -111,8 +111,8 @@ function readConfigState(listing) {
       const remoteName = key.slice("remote.".length, key.lastIndexOf("."));
       remotes.set(remoteName, [...(remotes.get(remoteName) ?? []), [scope, entry]]);
     } else if (isSharedConfigKey(lowerKey)) {
-      // The value list, never the key spelling, is the state: Git prints the name in lower case,
-      // and a value list that keeps its order but changes a value is still a change.
+      // The value list, never the key spelling, is the state. Git prints the name in lower case.
+      // A value list that keeps its order but changes a value is still a change.
       sharedKeys.set(lowerKey, [...(sharedKeys.get(lowerKey) ?? []), [scope, value]]);
     }
   }

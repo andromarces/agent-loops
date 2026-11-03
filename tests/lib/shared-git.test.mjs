@@ -131,8 +131,8 @@ test("an unset core.hooksPath is reported", async () => {
 });
 
 // Usefulness: verifies "a core.bare change in the shared config is reported by name from a linked
-// work tree" (issue #1387): the main work tree then reads as bare, and no other watched item covers
-// it.
+// work tree" (issue #1387). The main work tree then reads as bare, and no other watched item
+// covers it.
 test("a core.bare change in the shared config is reported by name from a linked work tree", async () => {
   const { linked } = await createLinkedWorkTree();
   const changed = await changedBy(linked, () =>

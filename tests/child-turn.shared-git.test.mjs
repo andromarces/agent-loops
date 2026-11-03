@@ -44,7 +44,7 @@ const turn = (act, signal, extra = {}) =>
   });
 
 // Usefulness: verifies requirement "a worker turn that sets core.bare in the shared config reports
-// core.bare" (issue #1387): no other watched item names a change that makes the main work tree read
+// core.bare" (issue #1387). No other watched item names a change that makes the main work tree read
 // as bare.
 test("a worker turn that sets core.bare carries the key name", async () => {
   const result = await turn(async () => {
@@ -54,7 +54,7 @@ test("a worker turn that sets core.bare carries the key name", async () => {
 });
 
 // Usefulness: verifies requirement "a turn that changes no shared key carries no field" (issue
-// #1387): a key set and restored in one turn leaves the envelope without the field.
+// #1387). A key set and restored in one turn leaves the envelope without the field.
 test("a worker turn that sets and restores core.bare carries no field", async () => {
   const result = await turn(async () => {
     await execa("git", ["config", "core.bare", "true"], { cwd: repo });

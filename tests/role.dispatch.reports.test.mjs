@@ -250,7 +250,7 @@ test("a worker turn whose post-turn shared Git read fails reports no shared Git 
 });
 
 // Usefulness: verifies requirement "a Git without --show-scope warns and reports no shared Git
-// change" (issue #1387): a failed scoped read must warn and leave the field absent, never report a
+// change" (issue #1387). A failed scoped read must warn and leave the field absent, never report a
 // false change.
 test("a git without --show-scope warns and reports no shared Git change", async () => {
   await withLinkedWorkTree(async (linked) => {
