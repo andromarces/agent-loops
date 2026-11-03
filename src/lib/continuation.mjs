@@ -162,15 +162,15 @@ export function restoreSessions(roles, earlier, cwd) {
  * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
  * recorded in `resolvedModel` (#394, ADR 0026). A recorded model id gets one probe turn in a new
  * session, and the probe sets `resolvedModel` and `initModel` on the state it receives. A Claude
- * worker record compares with the probe's `init` model, because the worker turn runs outside plan
- * mode. A Claude reviewer or orchestrator record compares with the probe's `resolvedModel`, because
- * that turn runs in plan mode. An old record with no source is accepted when the recorded model
- * equals the probe's `init` model, and any present source compares strictly. A probe that names no
- * model, or a recorded `null`, skips the comparison with a warning.
- * known-limit: each probe is a real model call.
+ * worker record compares with the probe's `init` model when it exists, and with `resolvedModel`
+ * otherwise. A Claude reviewer or orchestrator record compares with the probe's `resolvedModel`,
+ * because that turn runs in plan mode. An old record with no source is accepted when the recorded
+ * model equals the probe's `init` model, and any present source compares strictly. A probe that
+ * names no model, or a recorded `null`, skips the comparison with a warning.
  * @param {object} roles new run roles after `restoreSessions`; not mutated
  * @param {{ probe: (state: object, role: string) => Promise<void> }} options
  */
+// known-limit: each probe is a real model call.
 export async function verifyResolvedModels(roles, { probe }) {
   for (const role of ROLE_KINDS) {
     const {
@@ -212,14 +212,13 @@ export async function verifyResolvedModels(roles, { probe }) {
       throw new Error(`--continue-from: ${role} model probe failed: ${readableErrorText(err)}`);
     }
     const workerInit = normalizeAgent(kind) === "claude" && role === "worker";
-    const probeModel = workerInit ? state.initModel : state.resolvedModel;
+    const probeModel =
+      workerInit && typeof state.initModel === "string" && state.initModel
+        ? state.initModel
+        : state.resolvedModel;
     if (typeof state.resolvedModel !== "string" || !state.resolvedModel) {
       logWarn(
         `--continue-from: the default-model check did not run for ${role} (${kind}), because the probe did not name one model.`,
-      );
-    } else if (typeof probeModel !== "string" || !probeModel) {
-      logWarn(
-        `--continue-from: the default-model check did not run for ${role} (${kind}), because the probe did not name the init model.`,
       );
     } else if (probeModel !== recorded) {
       const compatible = role !== "worker" && source === undefined && state.initModel === recorded;

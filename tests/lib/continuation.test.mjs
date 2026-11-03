@@ -447,6 +447,63 @@ test("verifyResolvedModels accepts an old init-model record on a worker probe", 
   }
 });
 
+// Usefulness: issue #1376. A worker probe without an init event still has a resolved modelUsage
+// model. The comparison must use it and refuse a changed model for old and new records.
+test.each([
+  ["old", undefined],
+  ["new", "init"],
+])(
+  "verifyResolvedModels refuses a changed worker model without a probe init (%s record)",
+  async (_label, source) => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const next = roles();
+      next.worker = {
+        kind: "claude",
+        model: "haiku",
+        effort: null,
+        sessionId: null,
+        resolvedModel: "claude-haiku-5-5",
+      };
+      if (source !== undefined) next.worker.resolvedModelSource = source;
+      const probe = vi.fn(async (state) => {
+        state.resolvedModel = "claude-haiku-6-5";
+      });
+      await expect(verifyResolvedModels(next, { probe })).rejects.toThrow(
+        'worker resolved to "claude-haiku-5-5" in the earlier run, not "claude-haiku-6-5"',
+      );
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  },
+);
+
+// Usefulness: issue #1376. A worker probe without an init event compares its resolved model, so an
+// unchanged model passes.
+test("verifyResolvedModels accepts an unchanged worker model without a probe init", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.worker = {
+      kind: "claude",
+      model: "haiku",
+      effort: null,
+      sessionId: null,
+      resolvedModel: "claude-haiku-5-5",
+    };
+    const probe = vi.fn(async (state) => {
+      state.resolvedModel = "claude-haiku-5-5";
+    });
+    await expect(verifyResolvedModels(next, { probe })).resolves.toBeUndefined();
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});
+
 // Usefulness: issue #1376. A real default-model change is refused for a worker and a reviewer,
 // for an old record and a new record. The probe value is like for like with the real turn.
 test.each([
