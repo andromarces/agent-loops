@@ -35,6 +35,7 @@ import { main } from "../src/cli.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createTempRepo, createWithContinueRepo } from "./git-helpers.mjs";
 import { processExists } from "./process-helpers.mjs";
+import { RESISTANT_TREE } from "./sigterm-resistant-fixture.mjs";
 import { within } from "./wait-helpers.mjs";
 import { createBarrierTest } from "./barrier-test.mjs";
 
@@ -72,16 +73,11 @@ test.skipIf(process.platform === "win32")(
     const scratch = await mkdtemp(join(tmpdir(), "cli-sigint-pids-"));
     const pidFile = join(scratch, "child.pid");
     const pidFiles = [pidFile, `${pidFile}.grand`];
-    // The child records its pid, ignores SIGTERM, and starts a grandchild that does the same.
-    const resistant =
-      'const fs = require("fs"); fs.writeFileSync(process.argv[1], String(process.pid));' +
-      'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);' +
-      'if (!process.argv[2]) require("child_process").spawn(process.execPath, ["-e", process.argv[3], process.argv[1] + ".grand", "grand", process.argv[3]], { stdio: "ignore" });';
     const runner = [
       `import { main } from ${JSON.stringify(pathToFileURL(CLI).href)};`,
       `import { exec } from ${JSON.stringify(pathToFileURL(CLI.replace("cli.mjs", "lib/exec.mjs")).href)};`,
       "const stall = { async run(_state, _prompt, { signal }) {",
-      `  await exec(process.execPath, ["-e", ${JSON.stringify(resistant)}, ${JSON.stringify(pidFile)}, "", ${JSON.stringify(resistant)}], { signal });`,
+      `  await exec(process.execPath, ["-e", ${JSON.stringify(RESISTANT_TREE)}, ${JSON.stringify(pidFile)}, "", ${JSON.stringify(RESISTANT_TREE)}], { signal });`,
       "} };",
       "const ok = { async run() { return 'ok'; } };",
       "await main(process.argv.slice(1), { codex: stall, claude: ok, agy: ok });",

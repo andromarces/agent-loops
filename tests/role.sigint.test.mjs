@@ -34,6 +34,7 @@ import { restoreRunsRoot } from "./env-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
 import { processExists } from "./process-helpers.mjs";
+import { RESISTANT_CHILD } from "./sigterm-resistant-fixture.mjs";
 import { within } from "./wait-helpers.mjs";
 import {
   basicDeps,
@@ -69,14 +70,11 @@ test.skipIf(process.platform === "win32")(
     const pidFile = join(scratch, "child.pid");
     const promptFile = join(scratch, "prompt.txt");
     await writeFile(promptFile, "work it", "utf8");
-    const resistant =
-      'require("fs").writeFileSync(process.argv[1], String(process.pid));' +
-      'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);';
     const runner = [
       `import { main } from ${JSON.stringify(pathToFileURL(ROLE).href)};`,
       `import { exec } from ${JSON.stringify(pathToFileURL(EXEC).href)};`,
       "const stall = { async run(_state, _prompt, { signal }) {",
-      `  await exec(process.execPath, ["-e", ${JSON.stringify(resistant)}, ${JSON.stringify(pidFile)}], { signal });`,
+      `  await exec(process.execPath, ["-e", ${JSON.stringify(RESISTANT_CHILD)}, ${JSON.stringify(pidFile)}], { signal });`,
       "} };",
       "const ok = { async run() { return 'ok'; } };",
       "await main(process.argv.slice(1), { agents: { fake1: stall, fake2: ok } });",
