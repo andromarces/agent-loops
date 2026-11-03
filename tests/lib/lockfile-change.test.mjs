@@ -52,6 +52,25 @@ afterEach(async () => {
 
 // Bounds the wait for the first hash read, so a stalled start fails by name, not at the test timeout.
 const START_GUARD_MS = 10_000;
+// Bounds the cleanup of a failed start: the released bound aborts its wait, and the read settles.
+const SETTLE_GUARD_MS = 5_000;
+
+// Releases the bound of a failed start and waits, with a bound, for the read to settle.
+async function releasePendingRead(pending) {
+  await vi.advanceTimersByTimeAsync(200);
+  let timer;
+  const expired = new Promise((resolve) => {
+    timer = realSetTimeout(() => resolve("unsettled"), SETTLE_GUARD_MS);
+  });
+  try {
+    const outcome = await Promise.race([pending.then(() => "settled"), expired]);
+    if (outcome !== "settled") {
+      throw new Error(`the lockfile read did not settle within ${SETTLE_GUARD_MS} ms`);
+    }
+  } finally {
+    realClearTimeout(timer);
+  }
+}
 
 // Holds the bound until the first hash read starts, so a slow root read cannot end it before a
 // signal is recorded. A read that settles first, or a start past the guard, fails with the cause.
@@ -76,9 +95,11 @@ async function startHashRead() {
     realClearTimeout(guard);
   }
   if (outcome === "settled") {
+    await releasePendingRead(pending);
     throw new Error("the lockfile read ended before any hash read started");
   }
   if (outcome === "stalled") {
+    await releasePendingRead(pending);
     throw new Error(`no hash read started within ${START_GUARD_MS} ms`);
   }
   return {
