@@ -134,6 +134,19 @@ test("later worker turns state the closing block format", () => {
   expect(report.deferred).toBe("none");
 });
 
+// Usefulness: verifies the issue #1380 rule reaches the first worker turn and every later one. A
+// Claude worker indented a list under a label and repeated the label, so the block parsed to null.
+// The later turn repeats reportBlock, so the next prompt to that child carries the rule again.
+test("worker turns repeat the indented-list and single-label rule", () => {
+  for (const firstTurn of [true, false]) {
+    const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
+    expect(prompt).toContain("Each label appears once");
+    expect(prompt).toContain(
+      "an indented dash list with no parent item above it makes the block unparseable",
+    );
+  }
+});
+
 // Usefulness: verifies a worker prompt states that a table makes the block unparseable.
 // It checks the first and later turns, and keeps the tabular-data rule (issue #1359).
 test("worker turns state that the closing block holds no Markdown table", () => {
