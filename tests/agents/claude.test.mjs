@@ -75,6 +75,52 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
   );
 });
 
+// Usefulness: issue #1376. A read-only worker probe keeps the origin/main plan-mode arguments,
+// so the probe write guard is unchanged. A reviewer probe keeps plan mode too.
+test("claude runs a worker probe with the origin/main plan-mode arguments", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: "haiku", effort: null };
+  await runClaude(state, "p", { cwd: "/path", readOnly: true, role: "worker" });
+  expect(exec).toHaveBeenLastCalledWith(
+    "claude",
+    [
+      "-p",
+      "--session-id",
+      preassignedId(),
+      "--permission-mode",
+      "plan",
+      "--model",
+      "haiku",
+      "--output-format",
+      "json",
+      "--verbose",
+    ],
+    {
+      cwd: "/path",
+      input: expect.stringMatching(/^p\n\n\[agent-loop session [0-9a-f-]{36} role worker\]$/),
+      timeout: undefined,
+      signal: undefined,
+      role: "worker",
+      env: { CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" },
+    },
+  );
+});
+
+test("claude runs a reviewer probe with plan mode", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: "haiku", effort: null };
+  await runClaude(state, "p", { cwd: "/path", readOnly: true, role: "reviewer" });
+  const args = vi.mocked(exec).mock.calls.at(-1)[1];
+  expect(args).toEqual(expect.arrayContaining(["--permission-mode", "plan"]));
+  expect(args).not.toContain("--tools");
+});
+
 // Usefulness: verifies claude adapter passes --resume and effort on resume turn, and leaves the worker
 // environment untouched so the worker keeps its research subagents.
 test("claude resumes session with effort and readOnly false", async () => {
@@ -891,9 +937,11 @@ const resolved = async (result, state = { kind: "claude", sessionId: null, model
 // Usefulness: --continue-from compares the model Claude Code resolved, so a result that names
 // exactly one well-formed model in `modelUsage` records it.
 test("claude records the one model its result reports as resolvedModel", async () => {
-  expect(await resolved({ modelUsage: { "claude-opus-5-5": { inputTokens: 1 } } })).toBe(
+  const state = { kind: "claude", sessionId: null, model: null };
+  expect(await resolved({ modelUsage: { "claude-opus-5-5": { inputTokens: 1 } } }, state)).toBe(
     "claude-opus-5-5",
   );
+  expect(state.resolvedModelSource).toBe("modelUsage");
 });
 
 // Usefulness: a false resolved model would refuse or pass a continuation wrongly, so several
@@ -1208,19 +1256,43 @@ test("claude records the init model for a turn whose modelUsage names several mo
   expect(state.resolvedModel).toBe("claude-sonnet-5-5");
 });
 
-// Usefulness: the init model governs even when the result lists only a helper model, and a failed turn
-// that printed the events follows the same source.
-test("claude takes the init model over modelUsage, on a failed turn too", async () => {
+// Usefulness: issue #1376. Plan mode answers a requested haiku turn on another model. The
+// `init` event still names haiku, so the one `modelUsage` model is the model that answered.
+test("claude records the modelUsage model when the single init model differs", async () => {
   vi.mocked(exec).mockResolvedValueOnce(
     eventsOf(
-      initEvent("s-kept", "claude-opus-5-6"),
-      resultEvent("s-kept", { "claude-haiku-5-5": {} }),
+      initEvent("s-kept", "claude-haiku-5-5"),
+      resultEvent("s-kept", { "claude-sonnet-5-5": {} }),
     ),
   );
   const state = { ...failedState(), sessionId: "s-kept" };
   await runClaude(state, "p", { cwd: "/path" });
-  expect(state.resolvedModel).toBe("claude-opus-5-6");
+  expect(state.resolvedModel).toBe("claude-sonnet-5-5");
+  expect(state.resolvedModelSource).toBe("modelUsage");
+});
 
+// Usefulness: issue #1376 keeps the init rule for every other modelUsage shape, and a failed turn
+// that printed the events follows the same source.
+test.each([
+  ["one key equal to init", { "claude-opus-5-6": {} }],
+  ["no modelUsage", null],
+  ["an empty modelUsage", {}],
+  ["a malformed modelUsage", "x"],
+  ["several keys that include init", { "claude-opus-5-6": {}, "claude-haiku-5-5": {} }],
+  ["several keys that exclude init", { a: {}, b: {} }],
+])("claude records the init model for %s", async (_label, modelUsage) => {
+  const result =
+    modelUsage === null
+      ? { type: "result", session_id: "s-kept", result: "ok" }
+      : resultEvent("s-kept", modelUsage);
+  vi.mocked(exec).mockResolvedValueOnce(eventsOf(initEvent("s-kept", "claude-opus-5-6"), result));
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+  expect(state.resolvedModelSource).toBe("init");
+});
+
+test("claude takes the init model over several modelUsage keys, on a failed turn too", async () => {
   vi.mocked(exec).mockRejectedValueOnce(
     execFailure({
       stdout: JSON.stringify([

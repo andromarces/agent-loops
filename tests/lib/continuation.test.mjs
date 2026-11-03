@@ -8,7 +8,9 @@ import {
   restoreSessions,
   verifyResolvedModels,
 } from "../../src/lib/continuation.mjs";
+import { runProbeTurn } from "../../src/child-turn.mjs";
 import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
 const readControl = vi.hoisted(() => ({ active: false, value: undefined }));
@@ -335,9 +337,270 @@ test("restoreSessions carries an unresolved resolvedModel as null", () => {
 // The injected probe stands in for the guarded turn that the CLI runs (`runProbeTurn`).
 function probeWith(resolvedByRole) {
   return vi.fn(async (state, role) => {
-    if (resolvedByRole[role] !== undefined) state.resolvedModel = resolvedByRole[role];
+    if (resolvedByRole[role] !== undefined) {
+      state.resolvedModel = resolvedByRole[role];
+      state.initModel = resolvedByRole[role];
+    }
   });
 }
+
+// A probe that emulates Claude Code. Plan mode answers a requested haiku turn on sonnet while
+// `init` names haiku. An old record holds the `init` model.
+function claudeProbe(repo, modes) {
+  return async (state, role) =>
+    runProbeTurn({
+      agents: {
+        claude: {
+          async run(probeState, _prompt, options) {
+            modes.push(options.readOnly);
+            probeState.initModel = "claude-haiku-5-5";
+            probeState.resolvedModel = options.readOnly ? "claude-sonnet-5-5" : "claude-haiku-5-5";
+            return "OK";
+          },
+        },
+      },
+      state,
+      roleName: role,
+      cwd: repo,
+    });
+}
+
+// Usefulness: issue #1376. An old reviewer record holds the init model, and a plan-mode probe
+// answers on another model, so the continuation must not refuse an unchanged configuration.
+test("verifyResolvedModels accepts an old init-model record on a plan-mode probe", async () => {
+  const repo = await createTempRepo();
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.reviewer = {
+      kind: "claude",
+      model: "haiku",
+      effort: null,
+      sessionId: null,
+      resolvedModel: "claude-haiku-5-5",
+    };
+    const modes = [];
+    await expect(
+      verifyResolvedModels(next, { probe: claudeProbe(repo, modes) }),
+    ).resolves.toBeUndefined();
+    expect(modes).toEqual([true]);
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: issue #1376. Only an absent source is a legacy record. A present value that is not
+// a known source fails closed, so a Haiku-to-Sonnet difference is still refused.
+test.each([
+  ["null", null],
+  ["a number", 7],
+  ["an unknown string", "future-source"],
+])("verifyResolvedModels refuses a changed model when the source is %s", async (_label, source) => {
+  const earlier = transcript();
+  earlier.roles.reviewer = {
+    kind: "claude",
+    model: "haiku",
+    effort: null,
+    sessionId: null,
+    resolvedModel: "claude-haiku-5-5",
+    resolvedModelSource: source,
+  };
+  const next = roles();
+  next.reviewer = { kind: "claude", model: "haiku", effort: null, sessionId: null };
+  restoreSessions(next, earlier, CWD);
+  const probe = vi.fn(async (state) => {
+    state.initModel = "claude-haiku-5-5";
+    state.resolvedModel = "claude-sonnet-5-5";
+  });
+  await expect(verifyResolvedModels(next, { probe })).rejects.toThrow(
+    'reviewer resolved to "claude-haiku-5-5" in the earlier run, not "claude-sonnet-5-5"',
+  );
+});
+
+// Usefulness: issue #1376. A worker turn runs outside plan mode, so its record compares with the
+// probe's init model.
+test("verifyResolvedModels accepts an old init-model record on a worker probe", async () => {
+  const repo = await createTempRepo();
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.worker = {
+      kind: "claude",
+      model: "haiku",
+      effort: null,
+      sessionId: null,
+      resolvedModel: "claude-haiku-5-5",
+    };
+    const modes = [];
+    await expect(
+      verifyResolvedModels(next, { probe: claudeProbe(repo, modes) }),
+    ).resolves.toBeUndefined();
+    expect(modes).toEqual([true]);
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: issue #1376. A worker probe without an init event still has a resolved modelUsage
+// model. The comparison must use it and refuse a changed model for old and new records.
+test.each([
+  ["old", undefined],
+  ["new", "init"],
+])(
+  "verifyResolvedModels refuses a changed worker model without a probe init (%s record)",
+  async (_label, source) => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const next = roles();
+      next.worker = {
+        kind: "claude",
+        model: "haiku",
+        effort: null,
+        sessionId: null,
+        resolvedModel: "claude-haiku-5-5",
+      };
+      if (source !== undefined) next.worker.resolvedModelSource = source;
+      const probe = vi.fn(async (state) => {
+        state.resolvedModel = "claude-haiku-6-5";
+      });
+      await expect(verifyResolvedModels(next, { probe })).rejects.toThrow(
+        'worker resolved to "claude-haiku-5-5" in the earlier run, not "claude-haiku-6-5"',
+      );
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  },
+);
+
+// Usefulness: issue #1376. A worker probe without an init event compares its resolved model, so an
+// unchanged model passes.
+test("verifyResolvedModels accepts an unchanged worker model without a probe init", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const info = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const next = roles();
+    next.worker = {
+      kind: "claude",
+      model: "haiku",
+      effort: null,
+      sessionId: null,
+      resolvedModel: "claude-haiku-5-5",
+    };
+    const probe = vi.fn(async (state) => {
+      state.resolvedModel = "claude-haiku-5-5";
+    });
+    await expect(verifyResolvedModels(next, { probe })).resolves.toBeUndefined();
+  } finally {
+    warn.mockRestore();
+    info.mockRestore();
+  }
+});
+
+// Usefulness: issue #1376. A real default-model change is refused for a worker and a reviewer,
+// for an old record and a new record. The probe value is like for like with the real turn.
+test.each([
+  [
+    "worker old",
+    "worker",
+    undefined,
+    "claude-haiku-5-5",
+    "claude-haiku-6-5",
+    "claude-sonnet-5-5",
+    'worker resolved to "claude-haiku-5-5" in the earlier run, not "claude-haiku-6-5"',
+  ],
+  [
+    "worker new",
+    "worker",
+    "init",
+    "claude-haiku-5-5",
+    "claude-haiku-6-5",
+    "claude-sonnet-5-5",
+    'worker resolved to "claude-haiku-5-5" in the earlier run, not "claude-haiku-6-5"',
+  ],
+  [
+    "reviewer old",
+    "reviewer",
+    undefined,
+    "claude-haiku-5-5",
+    "claude-haiku-6-5",
+    "claude-sonnet-5-5",
+    'reviewer resolved to "claude-haiku-5-5" in the earlier run, not "claude-sonnet-5-5"',
+  ],
+  [
+    "reviewer new",
+    "reviewer",
+    "modelUsage",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-opus-5-5",
+    'reviewer resolved to "claude-sonnet-5-5" in the earlier run, not "claude-opus-5-5"',
+  ],
+])(
+  "verifyResolvedModels refuses a changed %s record",
+  async (_label, role, source, recorded, initModel, resolvedModel, message) => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const next = roles();
+      next[role] = {
+        kind: "claude",
+        model: "haiku",
+        effort: null,
+        sessionId: null,
+        resolvedModel: recorded,
+      };
+      if (source !== undefined) next[role].resolvedModelSource = source;
+      const probe = vi.fn(async (state) => {
+        state.initModel = initModel;
+        state.resolvedModel = resolvedModel;
+      });
+      await expect(verifyResolvedModels(next, { probe })).rejects.toThrow(message);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  },
+);
+
+// Usefulness: issue #1376. An unchanged new record passes with the probe value of its role, so the
+// per-role comparison does not refuse a session that changed nothing.
+test.each([
+  ["worker", "init", "claude-haiku-5-5", "claude-haiku-5-5", "claude-sonnet-5-5"],
+  ["reviewer", "modelUsage", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-5-5"],
+])(
+  "verifyResolvedModels accepts an unchanged new %s record",
+  async (role, source, recorded, initModel, resolvedModel) => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const info = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const next = roles();
+      next[role] = {
+        kind: "claude",
+        model: "haiku",
+        effort: null,
+        sessionId: null,
+        resolvedModel: recorded,
+        resolvedModelSource: source,
+      };
+      const probe = vi.fn(async (state) => {
+        state.initModel = initModel;
+        state.resolvedModel = resolvedModel;
+      });
+      await expect(verifyResolvedModels(next, { probe })).resolves.toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  },
+);
 
 // Usefulness: a CLI default that changed between the runs is refused before any turn, and the
 // refusal names the role and both models. A new --model flag is refused by the flag rule, so the

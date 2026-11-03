@@ -641,6 +641,7 @@ test("--continue-from refuses a changed resolved model and keeps the transcript"
       const run = agents.claude.run;
       agents.claude.run = async (state, prompt, options) => {
         state.resolvedModel = model;
+        state.initModel = model;
         return run(state, prompt, options);
       };
       return agents;

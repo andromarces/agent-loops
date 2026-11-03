@@ -13,6 +13,7 @@ import {
   recordResolvedModel,
   failedWithLine,
   flagMissingSession,
+  isModelId,
   keepFailedSessionId,
   markCapacityFailure,
   readSessionHead,
@@ -114,7 +115,7 @@ async function ownsSession(id, cwd, role) {
  * `sessionMissing` error before any CLI starts, so the runtime reruns the turn as a first turn.
  */
 export async function runClaude(state, prompt, options = {}) {
-  const { cwd, readOnly, role, onSessionAssigned, env } = options;
+  const { cwd, readOnly, role, onSessionAssigned, onInitModel, env } = options;
   const args = ["-p"];
   const execOptions = turnExecOptions(options, prompt);
   const requestedSessionId = state.sessionId;
@@ -178,7 +179,7 @@ export async function runClaude(state, prompt, options = {}) {
     setUsage(state, findResultEvent(failed));
     // The kept session ran on whatever the failed output names for it, or on an unknown model, so
     // the record follows that unless the process never started.
-    if (childRan(err)) recordTurnModel(state, failed, requestedSessionId);
+    if (childRan(err)) recordTurnModel(state, failed, requestedSessionId, onInitModel);
     // An id the CLI printed wins. Otherwise the pre-assigned id stays: a kill before the CLI
     // saved a session leaves an id that names none, and the next resume then reaches the
     // missing-session fallback below. An id that the CLI rejects as in use names another
@@ -207,14 +208,14 @@ export async function runClaude(state, prompt, options = {}) {
   try {
     parsed = parseJson(stdout, "Claude Code");
   } catch (err) {
-    recordTurnModel(state, undefined, requestedSessionId);
+    recordTurnModel(state, undefined, requestedSessionId, onInitModel);
     throw err;
   }
   const resultEvent = findResultEvent(parsed);
   const sessionId = findSessionId(parsed);
   // Set before the session checks below, so a turn that fails them records unresolved when its
   // output is not the session the role keeps.
-  recordTurnModel(state, parsed, requestedSessionId);
+  recordTurnModel(state, parsed, requestedSessionId, onInitModel);
 
   if (!sessionId) {
     throw new Error("Claude Code did not return a session_id.");
@@ -273,28 +274,51 @@ function reportedModels(resultEvent) {
 }
 
 /**
- * True for a `system` `init` event. It names the main-loop model, whatever subagent or helper model
- * ran later, so its model takes the place of `modelUsage`. An `init` event without a model reports
+ * True for a `system` `init` event. It names the main-loop model, and a helper or subagent model
+ * beside it in `modelUsage` does not replace it. An `init` event without a model reports
  * `undefined`, which is malformed evidence and is unresolved.
  */
 const isInitEvent = (event) =>
   isJsonObject(event) && event.type === "system" && event.subtype === "init";
 
 /**
+ * The model values and source that one Claude output names. An `init` event names the main-loop
+ * model, and a helper or subagent model beside it in a multi-key `modelUsage` does not change that.
+ * When `modelUsage` names exactly one valid model that differs from the single `init` model, that
+ * model answered, so it is recorded. An output with no `init` event reads `modelUsage`. The source
+ * names the evidence for a resolved model.
+ * @param {object[]} inits the `init` events of the output
+ * @param {object[]} results the result events of the output
+ */
+function turnModels(inits, results) {
+  const usage = results.flatMap(reportedModels);
+  if (inits.length === 0) return { models: usage, source: "modelUsage" };
+  const initModels = inits.map((event) => event.model);
+  const [init] = initModels;
+  if (
+    initModels.length === 1 &&
+    isModelId(init) &&
+    usage.length === 1 &&
+    isModelId(usage[0]) &&
+    usage[0] !== init
+  ) {
+    return { models: usage, source: "modelUsage" };
+  }
+  return { models: initModels, source: "init" };
+}
+
+/**
  * Records the resolved model of a turn that ran, from one consistent source. The model is the one
- * the `init` event names, or the one key of `modelUsage` when the output has no `init` event. The
- * session and the model come from the same events: the output must name exactly one valid session across all its
- * events, and every result event that carries model evidence must name that session itself. An
- * array of events that names more than one session, a malformed session, or a result event with no
- * session cannot tie the model to the session the role keeps, so the turn is unresolved. Every
- * place this adapter reads a session id (`findSessionId`, for the id the role adopts or checks)
- * or a model (`reportedModels`) is covered: `recordResolvedModel` then requires that session to be
- * the one the role keeps.
+ * `init` event names, or the one key of `modelUsage` when no `init` event exists. A single `init`
+ * model that differs from the one `modelUsage` model records the `modelUsage` model (issue #1376).
+ * The record also names the source of a resolved model. The output must name exactly one valid
+ * session, and every result and `init` event must name it. Otherwise the turn records unresolved.
  * @param {object} state role state; mutated
  * @param {unknown} parsed the parsed output: one result object, an array of events, or nothing
  * @param {string | null} requestedSessionId the session id the turn asked the CLI to resume
+ * @param {((model: string | undefined) => void) | undefined} onInitModel receives the valid `init` model
  */
-function recordTurnModel(state, parsed, requestedSessionId) {
+function recordTurnModel(state, parsed, requestedSessionId, onInitModel) {
   const events = Array.isArray(parsed) ? parsed : [parsed];
   const named = events.filter((event) => isJsonObject(event) && event.session_id !== undefined);
   const ids = new Set(named.map((event) => asSessionId(event.session_id) ?? null));
@@ -308,10 +332,14 @@ function recordTurnModel(state, parsed, requestedSessionId) {
     results.length > 0 &&
     results.every((e) => asSessionId(e.session_id) === session) &&
     inits.every((e) => asSessionId(e.session_id) === session);
-  recordResolvedModel(
-    state,
-    sourced ? (inits.length > 0 ? inits.map((e) => e.model) : results.flatMap(reportedModels)) : [],
-    requestedSessionId,
-    sourced ? session : null,
+  onInitModel?.(
+    sourced && inits.length === 1 && isModelId(inits[0].model) ? inits[0].model : undefined,
   );
+  const evidence = sourced ? turnModels(inits, results) : { models: [], source: undefined };
+  recordResolvedModel(state, evidence.models, requestedSessionId, sourced ? session : null);
+  if (typeof state.resolvedModel === "string") {
+    state.resolvedModelSource = evidence.source;
+  } else {
+    delete state.resolvedModelSource;
+  }
 }

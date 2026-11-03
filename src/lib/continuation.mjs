@@ -94,16 +94,13 @@ async function applySessionRecord(path, bytes, transcript) {
 }
 
 /**
- * Copies the earlier session ids onto the new roles after checking that each
- * session can resume: the role kind, the recorded model, the recorded effort, and
- * the work tree must equal the earlier run's, because a session id is valid only
- * for the CLI that created it and a provider keeps a session per project
- * directory. One rule covers every adapter: model and effort compare exactly, so
- * an omitted value matches only an omitted value. The model each CLI resolved
- * (`resolvedModel`, where its output names one) carries over to the new role;
- * `verifyResolvedModels` compares it with the current default.
- * Changes no role when it throws. A role that never ran keeps a null id and
- * starts a new session.
+ * Copies the earlier session ids onto the new roles after checking that each session can resume.
+ * The role kind, recorded model, recorded effort, and work tree must equal the earlier run's.
+ * A session id is valid only for the CLI that created it, and a provider keeps a session per
+ * project directory. Model and effort compare exactly, so an omitted value matches only an omitted
+ * value. The resolved model and its source carry over, and `verifyResolvedModels` compares the
+ * model with the current default. A role that never ran keeps a null id and starts a new session,
+ * and a throw changes no role.
  * @param {object} roles new run roles keyed by role name; mutated on success
  * @param {{ cwd: string, roles: object }} earlier
  * @param {string} cwd
@@ -151,33 +148,38 @@ export function restoreSessions(roles, earlier, cwd) {
     const resolved = earlier.roles[role].resolvedModel;
     if (resolved === null || (typeof resolved === "string" && resolved)) {
       roles[role].resolvedModel = resolved;
+      if (typeof resolved === "string") {
+        const before = earlier.roles[role];
+        if (Object.hasOwn(before, "resolvedModelSource")) {
+          roles[role].resolvedModelSource = before.resolvedModelSource ?? null;
+        }
+      }
     }
   }
 }
 
 /**
  * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
- * recorded in `resolvedModel` (#394, ADR 0026). The transcript holds the requested model, and an
- * omitted model or an alias resolves inside the CLI, so a changed CLI default or alias target is
- * visible only in the output. `resolvedModel` holds the state of the latest turn of the role that
- * ran, failed or not, for the session the role keeps: a model id, `null` (unresolved: that turn named
- * no single model, or its output was not the kept session), or absent (not reported:
- * a CLI that never reports a model, or a record written before this change).
- * Only a recorded model id is compared. For it, `probe` runs one read-only turn in a new session
- * (never the continued one), before any turn of the run, and sets `resolvedModel` on the state it
- * receives. A probe that does not name one model (`null` or absent) skips the comparison with a
- * warning. A recorded `null` skips the probe and the comparison with a warning, and never compares
- * against an older model. An absent record warns for a CLI that can report a model and logs an info
- * line for one that never does. The caller owns the guards of the probe turn (mutation check,
- * cancel), and an error of theirs (`MutationError`, `SnapshotError`, a cancel) is rethrown
- * unchanged. Any other probe failure refuses, because the model is then unverified.
- * known-limit: each probe is a real model call.
+ * recorded in `resolvedModel` (#394, ADR 0026). A recorded model id gets one probe turn in a new
+ * session, and the probe sets `resolvedModel` and `initModel` on the state it receives. A Claude
+ * worker record compares with the probe's `init` model when it exists, and with `resolvedModel`
+ * otherwise. A Claude reviewer or orchestrator record compares with the probe's `resolvedModel`,
+ * because that turn runs in plan mode. An old record with no source is accepted when the recorded
+ * model equals the probe's `init` model, and any present source compares strictly. A probe that
+ * names no model, or a recorded `null`, skips the comparison with a warning.
  * @param {object} roles new run roles after `restoreSessions`; not mutated
  * @param {{ probe: (state: object, role: string) => Promise<void> }} options
  */
+// known-limit: each probe is a real model call.
 export async function verifyResolvedModels(roles, { probe }) {
   for (const role of ROLE_KINDS) {
-    const { kind, model, effort, resolvedModel: recorded } = roles[role];
+    const {
+      kind,
+      model,
+      effort,
+      resolvedModel: recorded,
+      resolvedModelSource: source,
+    } = roles[role];
     if (recorded === null) {
       logWarn(
         `--continue-from: the default-model check did not run for ${role} (${kind}), because the latest turn of the earlier run did not name one model.`,
@@ -209,13 +211,24 @@ export async function verifyResolvedModels(roles, { probe }) {
       }
       throw new Error(`--continue-from: ${role} model probe failed: ${readableErrorText(err)}`);
     }
+    const workerInit = normalizeAgent(kind) === "claude" && role === "worker";
+    const probeModel =
+      workerInit && typeof state.initModel === "string" && state.initModel
+        ? state.initModel
+        : state.resolvedModel;
     if (typeof state.resolvedModel !== "string" || !state.resolvedModel) {
       logWarn(
         `--continue-from: the default-model check did not run for ${role} (${kind}), because the probe did not name one model.`,
       );
-    } else if (state.resolvedModel !== recorded) {
-      throw new Error(
-        `--continue-from: ${role} resolved to ${JSON.stringify(recorded)} in the earlier run, not ${JSON.stringify(state.resolvedModel)}. The CLI default or alias changed, and a session continues under the model that created it. The model flags must equal the earlier run's, so a new --${role}-model value is refused too. Restore the earlier default in the CLI, or start a new run without --continue-from.`,
+    } else if (probeModel !== recorded) {
+      const compatible = role !== "worker" && source === undefined && state.initModel === recorded;
+      if (!compatible) {
+        throw new Error(
+          `--continue-from: ${role} resolved to ${JSON.stringify(recorded)} in the earlier run, not ${JSON.stringify(probeModel)}. The CLI default or alias changed, and a session continues under the model that created it. The model flags must equal the earlier run's, so a new --${role}-model value is refused too. Restore the earlier default in the CLI, or start a new run without --continue-from.`,
+        );
+      }
+      logWarn(
+        `--continue-from: ${role} (${kind}) recorded ${JSON.stringify(recorded)} from the init event, and the probe answered on ${JSON.stringify(state.resolvedModel)}. The comparison used the init model.`,
       );
     }
   }

@@ -259,6 +259,21 @@ test("a probe turn that changes the work tree is a fatal mutation", async () => 
     await runProbeTurn({ agents: { rev: clean }, state, roleName: "reviewer", cwd: repo });
     expect(seen[0]).toMatchObject({ readOnly: true, role: "reviewer", cwd: repo });
 
+    // A continuation probe is read-only for every role, so a worker probe keeps the write guard.
+    const worker = scripted([
+      async (_state, _prompt, options) => {
+        seen.push(options);
+        return "OK";
+      },
+    ]);
+    await runProbeTurn({
+      agents: { rev: worker },
+      state: { kind: "rev", sessionId: null },
+      roleName: "worker",
+      cwd: repo,
+    });
+    expect(seen[1]).toMatchObject({ readOnly: true, role: "worker", cwd: repo });
+
     const leak = scripted([
       async () => {
         await writeFile(join(repo, "probe-leak.txt"), "leak\n");
@@ -268,6 +283,32 @@ test("a probe turn that changes the work tree is a fatal mutation", async () => 
     await expect(
       runProbeTurn({ agents: { rev: leak }, state, roleName: "reviewer", cwd: repo }),
     ).rejects.toThrow(MutationError);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: issue #1376. A continuation probe is read-only on every adapter, so a CLI startup
+// action cannot write to the work tree.
+test("a continuation probe is read-only on every adapter", async () => {
+  const repo = await createTempRepo();
+  try {
+    for (const kind of ["claude", "codex", "agy", "opencode", "copilot"]) {
+      const seen = [];
+      const agent = {
+        async run(_state, _prompt, options) {
+          seen.push(options);
+          return "OK";
+        },
+      };
+      await runProbeTurn({
+        agents: { [kind]: agent },
+        state: { kind, sessionId: null },
+        roleName: "worker",
+        cwd: repo,
+      });
+      expect(seen[0]).toMatchObject({ readOnly: true });
+    }
   } finally {
     await removePath(repo);
   }
