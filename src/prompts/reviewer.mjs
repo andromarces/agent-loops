@@ -192,9 +192,10 @@ export function reviewerPrompt(
   sandboxMode = null,
   task = null,
   scratchDir = null,
+  requiredCheckSourceUnreadable = false,
 ) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
-  const noReadableChecks = prChecks === null || prChecks.status === "unresolved";
+  const noReadableChecks = requiredCheckSourceUnreadable || prChecks?.status === "unresolved";
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   const sandbox =
     sandboxMode === null

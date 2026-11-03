@@ -243,6 +243,7 @@ export async function runChild(options) {
     pr = null,
     testCmd = null,
     reviewerSandbox = null,
+    requiredCheckSourceUnreadable = false,
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
@@ -384,7 +385,16 @@ export async function runChild(options) {
         () =>
           invokeWithTask(
             true,
-            (first, turnTask) => reviewerPrompt(TASK_ONLY_REVIEW, null, null, sandbox, turnTask),
+            (first, turnTask) =>
+              reviewerPrompt(
+                TASK_ONLY_REVIEW,
+                null,
+                null,
+                sandbox,
+                turnTask,
+                null,
+                requiredCheckSourceUnreadable,
+              ),
             { countFailure: false },
           ),
         { signal },
@@ -584,7 +594,15 @@ export async function runChild(options) {
               if (testRun) reportLateChangedPaths(testRun, before);
               prChecks = await readStatus(reviewed);
               return runFn((first, turnTask) =>
-                reviewerPrompt(prompt, prChecks, testRun, sandbox, turnTask, scratchDir),
+                reviewerPrompt(
+                  prompt,
+                  prChecks,
+                  testRun,
+                  sandbox,
+                  turnTask,
+                  scratchDir,
+                  requiredCheckSourceUnreadable,
+                ),
               );
             },
             { signal },

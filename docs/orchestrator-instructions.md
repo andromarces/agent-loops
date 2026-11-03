@@ -628,10 +628,11 @@ whose required-check sources are unreadable (#301, #1098). The runtime reads the
 state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
 reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged.
 
-Before a finish with `--compare-head`, wait for every check of the reviewed head with
-`agent-loop role wait-checks --all`. A pending or failing check goes into `notDone` or
-blocks the finish. The runtime reads no check result for that finish, so the wait is the
-only check evidence.
+Before a finish with `--compare-head`, run the required wait on the reviewed head first.
+When that wait refuses because no source can state the required checks, run
+`agent-loop role wait-checks --all` on the same head. A pending or failing check goes into
+`notDone` or blocks the finish. The runtime reads no check result for that finish, so the
+wait is the only check evidence.
 
 The runtime
 reads no required-check source or check result and claims none, so `verified` still states what

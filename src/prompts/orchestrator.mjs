@@ -306,12 +306,27 @@ function compareHeadBlock(
   { orchestratorKind = null, timeout = null, waitCommand = null } = {},
 ) {
   if (compareHead === null) return "";
+  const bound = headlessWaitSeconds(timeout);
   const canWait =
-    agentHas(orchestratorKind, "waitsForChecks") &&
-    waitCommand !== null &&
-    headlessWaitSeconds(timeout) !== null;
+    agentHas(orchestratorKind, "waitsForChecks") && waitCommand !== null && bound !== null;
+  const requiredWait = canWait
+    ? waitCommand
+        .map(
+          ({ shell, command }) =>
+            `${shell}: ${command} --pr ${compareHead} --head <reviewed.head> --timeout ${bound}`,
+        )
+        .join(" ; ")
+    : "";
+  const allWait = canWait
+    ? waitCommand
+        .map(
+          ({ shell, command }) =>
+            `${shell}: ${command} --all --pr ${compareHead} --head <reviewed.head> --timeout ${bound}`,
+        )
+        .join(" ; ")
+    : "";
   const waitRule = canWait
-    ? `\n- Before you finish, wait for every check of the reviewed head with \`role wait-checks --all --pr ${compareHead} --head <reviewed.head>\`. A pending or failing check goes into notDone or blocks the finish. The wait reads status only and changes nothing.`
+    ? `\n- Before you finish, run the required wait on the reviewed head first: ${requiredWait}. When that wait refuses because no source can state the required checks, run the all-checks wait on the same head: ${allWait}. A pending or failing check goes into notDone or blocks the finish. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus ${CEILING_WORD}, before this turn ends.`
     : "\n- Before you finish, require a full test suite through the test slot wrapper. Require a read of every check on the reviewed head instead. A pending or failing check goes into notDone or blocks the finish. This run cannot wait for the checks.";
   return `
 - This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. ${NO_CHECK_CLAIM} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.${waitRule}`;

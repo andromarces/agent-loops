@@ -1225,17 +1225,26 @@ describe("compare-head run prompt", () => {
   });
 });
 
-// Usefulness: verifies a compare-head run waits for every check of the reviewed head. An
+// Usefulness: verifies a compare-head run renders the bounded required and all-checks waits. An
 // orchestrator that cannot wait requires a full suite (issue #1391).
-test("compare-head prompt names the all-checks wait or a full-suite requirement", () => {
+test("compare-head prompt renders bounded wait commands or a full-suite requirement", () => {
   const waiting = initialPrompt({
     task: "t",
     maxSteps: 3,
     compareHead: 42,
     orchestratorKind: "claude",
+    timeout: 30,
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
-  expect(waiting).toContain("role wait-checks --all --pr 42 --head <reviewed.head>");
+  expect(waiting).toContain(
+    "agent-loop role wait-checks --cwd work --pr 42 --head <reviewed.head> --timeout 10",
+  );
+  expect(waiting).toContain(
+    "agent-loop role wait-checks --cwd work --all --pr 42 --head <reviewed.head> --timeout 10",
+  );
+  expect(waiting).not.toContain("--timeout 300");
+  expect(waiting).toContain("run the required wait on the reviewed head first");
+  expect(waiting).toContain("run the all-checks wait on the same head");
   expect(waiting).toContain("A pending or failing check goes into notDone or blocks the finish.");
   const fallback = initialPrompt({
     task: "t",
