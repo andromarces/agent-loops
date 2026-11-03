@@ -151,6 +151,7 @@ Each session ran `role dispatch` init, then the parent operations, through its o
 The launch cleared `AGENT_LOOP_SPAWNED_RUN` and `AGENT_LOOP_TEST_SLOT_HELD`.
 Each nested shell printed both as `unset`. Run 1 ran init, `role extend --max-steps 30`, then
 `role finish`. Run 2 ran init in a second repository, then `role abort`.
+
 Each init ran one reviewer turn on `claude` with `--reviewer-model haiku`.
 The state files held `roles.reviewer.model` `haiku`.
 The checker read each envelope from the tool-output field of the saved stream.
