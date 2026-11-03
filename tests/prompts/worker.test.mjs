@@ -142,7 +142,7 @@ test("worker turns repeat the indented-list and single-label rule", () => {
     const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
     expect(prompt).toContain("Each label appears once");
     expect(prompt).toContain(
-      "an indented dash list with no parent item above it makes the block unparseable",
+      "An indented dash list directly under a label with no parent item above it makes the block unparseable",
     );
   }
 });
