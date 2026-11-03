@@ -10,6 +10,7 @@ const hashing = vi.hoisted(() => ({
   failing: new Set(),
   captureSignal: false,
   signals: [],
+  releaseFirstStart: null,
 }));
 vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
   const actual = await importOriginal();
@@ -18,6 +19,8 @@ vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
     sha256File: (path, options) => {
       if (hashing.captureSignal) {
         hashing.signals.push(options?.signal);
+        hashing.releaseFirstStart?.();
+        hashing.releaseFirstStart = null;
         return new Promise(() => {});
       }
       if (hashing.stall) return new Promise(() => {});
@@ -40,9 +43,28 @@ afterEach(async () => {
   hashing.captureSignal = false;
   hashing.signals.length = 0;
   hashing.failing.clear();
+  hashing.releaseFirstStart = null;
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await removePath(repo);
 });
+
+// Holds the bound until the first hash read starts, so a slow root read cannot end it before a
+// signal is recorded.
+async function startHashRead() {
+  vi.useFakeTimers();
+  const firstStart = new Promise((resolve) => {
+    hashing.releaseFirstStart = resolve;
+  });
+  const pending = readLockfiles(repo, { boundMs: 200 });
+  await firstStart;
+  return {
+    releaseBound: async () => {
+      await vi.advanceTimersByTimeAsync(200);
+      await pending;
+    },
+  };
+}
 
 // Usefulness: verifies requirement "a stalled lockfile read ends at the bound" (issue #1180): a hang
 // would hold the worker turn after a cancel. A lockfile whose hash did not end in time is reported,
@@ -64,8 +86,9 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
 test("a hash read still pending at the bound receives an aborted signal", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
-  await readLockfiles(repo, { boundMs: 200 });
+  const read = await startHashRead();
   expect(hashing.signals.length).toBeGreaterThan(0);
+  await read.releaseBound();
   expect(hashing.signals.every((signal) => signal?.aborted === true)).toBe(true);
 });
 
@@ -74,7 +97,9 @@ test("a hash read still pending at the bound receives an aborted signal", async 
 test("the bound aborts a pending hash read with the lockfile read reason", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
-  await readLockfiles(repo, { boundMs: 200 });
+  const read = await startHashRead();
+  expect(hashing.signals.length).toBeGreaterThan(0);
+  await read.releaseBound();
   const reason = hashing.signals[0].reason;
   expect(reason).toBeInstanceOf(Error);
   expect(reason.message).toBe("lockfile read took over 200 ms");
