@@ -42,6 +42,9 @@ A report label name or `Verdict` in the line still blocks the fold, with any run
 whitespace, and a colon. A `**bold** note` line with trailing text is no heading. A `*` line (issue
 #275), a decorated or malformed label, and a `Verdict` line never introduce the list.
 
+A paragraph holds a bold lead and more prose on the same line. With its own dash list between two
+labels it makes the block unparseable: put the paragraph and its list under one label (issue #1386).
+
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label
 (issue #1006). The same line outside such a run, and any other decorated label,

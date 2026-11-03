@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 export const reportBlock = `
 End your response with this block, kept short. Each label appears once, plain at column 0. An indented dash list directly under a label with no parent item above it makes the block unparseable. A list directly under a label starts at column 0. A list of dash-plus-one-space items (\`- item\`) directly under a label, empty or not, joins into that label's value.
 
+A paragraph holds a bold lead and more prose on the same line. With its own dash list between two labels it makes the block unparseable: put the paragraph and its list under one label.
+
 One level of sub-items under such an item, each a line of two spaces, a hyphen, one space, then the text, folds into that item with a comma. An ordered list (\`1. item\`) directly under a label joins into that label's value the same way, and its sub-items are dash lines indented to the column where the item text starts. A dash list under a label after one blank line joins that label's value too, with \`; \` when the label holds text. An ordered list after a blank line stays unparseable. Two blank lines under a label before a dash list make the block unparseable.
 
 An indented prose line directly after an item or its sub-items folds into that item with a space, unless it reads as a label line: after Unicode NFKC normalization, skip every leading character that is no letter or digit and one optional number, then a report label name or \`Verdict\`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow. Any colon variant, separator, or markup count therefore refuses, and a label word that a letter, or whitespace and a letter, follows is prose.

@@ -1,5 +1,6 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
+import { parseReportBlock } from "../../src/lib/report.mjs";
 import { reportBlock, testSlotRule } from "../../src/prompts/report.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
@@ -130,6 +131,32 @@ test("the closing-block rule names an indented list under a label and a repeated
   expect(reportBlock).toMatch(/Each label appears once/);
   expect(reportBlock).toMatch(/list directly under a label starts at column 0/i);
   expect(reportBlock).toMatch(/indented dash list[^.]*no parent item above it[^.]*unparseable/);
+});
+
+// Usefulness: verifies the closing-block rule names the issue #1386 shape, a bold-lead paragraph
+// with its own dash list between two labels. The exact observed response stays unparseable, so the
+// prompt forbids the shape that produced a null report. No other test covers this shape.
+test("the closing-block rule names a bold-lead paragraph with its own dash list", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: one line",
+    "",
+    "**Shared Git config incident.** The proxy read a stale config.",
+    "- **What changed:** a",
+    "- **Restored:** b",
+    "- **If you need to check:** c",
+    "- **After that:** d",
+    "",
+    "Blockers: none.",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+  expect(reportBlock).toMatch(/paragraph holds a bold lead and more prose on the same line/);
+  expect(reportBlock).toMatch(
+    /own dash list between two labels[^.]*unparseable[^.]*put the paragraph and its list under one label/,
+  );
 });
 
 // Usefulness: verifies the issue #1380 rule forbids only the two observed shapes. A general
