@@ -1102,3 +1102,38 @@ Notes:
     });
   }
 });
+
+// Usefulness: verifies a table pair after a `- ` item refuses the block, with or without outer pipes.
+// The issue #1366 shape and the delimiter row both count.
+test("parseReportBlock refuses a table after a list item", () => {
+  for (const table of [
+    "| a | b |\n| --- | --- |\n| 1 | 2 |",
+    "a | b\n--- | ---\n1 | 2",
+    "| a | b |\n| --- | :-: |\n| 1 | 2 |",
+  ]) {
+    const response = `Conclusion: table rows dropped\nWhy: measured figures\n- item\n\n${table}\nBlockers: none`;
+    expect(parseReportBlock(response), table).toBeNull();
+  }
+});
+
+// Usefulness: verifies a pipe line with no delimiter row below it keeps the origin/main outcome.
+// The pipeline continuation and the non-table shapes must not become null.
+test("parseReportBlock keeps a pipe line with no delimiter row", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: measured figures\nChecks: cmd\n| grep x\nBlockers: none",
+    ),
+  ).toMatchObject({ checks: "cmd" });
+  expect(parseReportBlock("Conclusion: done\nWhy: a | b\nBlockers: none")).toMatchObject({
+    why: "a | b",
+  });
+  expect(parseReportBlock("Conclusion: done\nWhy: x\na | b\nc | d\nBlockers: none")).toMatchObject({
+    why: "x",
+  });
+  expect(parseReportBlock("Conclusion: done\nWhy: x\n---\nBlockers: none")).toMatchObject({
+    why: "x",
+  });
+  expect(
+    parseReportBlock("a | b\n--- | ---\n1 | 2\nConclusion: done\nWhy: x\nBlockers: none"),
+  ).toMatchObject({ why: "x" });
+});

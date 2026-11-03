@@ -42,6 +42,35 @@ const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d\-*+])
 // list pattern but carries no item, so it does not drop text.
 const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
+// A Markdown table delimiter row: cells of only dashes with optional colons, separated by `|`,
+// with or without outer pipes. A line with no `|` is no delimiter row (issue #1366).
+const TABLE_DELIMITER = /^:?-+:?$/;
+
+/** True when the line is a Markdown table delimiter row: cells of only dashes with optional colons, separated by `|`, with or without outer pipes. */
+function isTableDelimiter(line) {
+  if (!line.includes("|")) {
+    return false;
+  }
+  const cells = line.trim().split("|");
+  if (cells[0].trim() === "") {
+    cells.shift();
+  }
+  if (cells.at(-1)?.trim() === "") {
+    cells.pop();
+  }
+  return cells.length > 0 && cells.every((cell) => TABLE_DELIMITER.test(cell.trim()));
+}
+
+/** True when the block holds a table pair: a line with a `|` and a delimiter row directly below it. */
+function hasTablePair(lines) {
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (lines[i].includes("|") && isTableDelimiter(lines[i + 1])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // An emphasis run at line start, for example `*emphasis* note`. A leading `*`
 // is also a spaceless bullet marker (`*item`, issue #243), but a `*` pair whose
 // close a letter precedes and a non-word, non-`*` character or end of line
@@ -160,6 +189,9 @@ function closingBlock(response) {
  * A label that indentation or markdown decoration hides also makes the block
  * unparseable, so `raw` carries its value (issue #243).
  *
+ * A Markdown table pair makes the block unparseable, so its text reaches `raw` (issue #1366).
+ * A pair is a line with a `|` and a delimiter row directly below it.
+ *
  * A `- ` item or sub-item that opens with a bold label name is item text inside a folded list run (issue #1006).
  * One example is `- **Checks:** ran`.
  * The same line outside a run still blanks the block, because the decorated-label
@@ -176,7 +208,12 @@ export function parseReportBlock(response) {
     return null;
   }
   const lines = foldEmptyLabelLists(block);
-  if (!lines || lines.some((line) => DECORATED_LABEL_LINE.test(line)) || hasDroppedList(lines)) {
+  if (
+    !lines ||
+    lines.some((line) => DECORATED_LABEL_LINE.test(line)) ||
+    hasDroppedList(lines) ||
+    hasTablePair(lines)
+  ) {
     return null;
   }
   const report = {};
