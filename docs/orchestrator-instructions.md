@@ -230,6 +230,12 @@ Apply these parent rules:
   `workTree` does not show it.
   - Report it in the finish summary under `open`. A failed or canceled
     worker turn carries the field too. A turn that changed none carries no field.
+  - The `sharedGitChanged` field also names the shared `core.bare`, `core.worktree`, and
+    `extensions.*` config keys. It names a key only, never a value.
+  - The read covers the local (shared) scope and the run work tree's own worktree scope. A
+    `core.worktree` change in the linked work tree's own file reports a field without affecting the
+    main work tree. A change to the main work tree's worktree config stays unseen by the linked
+    read.
   - A read of the
     shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
     the absent field then does not prove that no change happened. The runtime logs a warning for

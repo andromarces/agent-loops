@@ -456,9 +456,10 @@ export async function runChild(options) {
   };
 
   /**
-   * Reads the shared Git state (hooks path, common hook files, remotes) of a worker turn. A failed
-   * read warns and returns null, so the turn reports no shared Git change rather than a guess. A
-   * read that takes the turn signal throws on a cancel.
+   * Reads the shared Git state (hooks path, common hook files, remotes, and shared config keys) of a
+   * worker turn. The shared config keys are `core.bare`, `core.worktree`, and `extensions.*`. A
+   * failed read warns and returns null, so the turn reports no shared Git change rather than a
+   * guess. A read that takes the turn signal throws on a cancel.
    */
   const readShared = async (bound = { signal }) => {
     try {
