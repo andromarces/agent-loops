@@ -139,6 +139,55 @@ The worker turn was asked to run one shell command. The command printed whether
   refusal text was `abort is refused for a child role; only the parent session runs it.`
 - Windows: not verified. No Windows host was available.
 
+#### Live parent session
+
+Date: 2026-11-03. OS: macOS 27.2 (build 26B123), Darwin 27.2.0, arm64.
+Node v27.0.0-alpha.0.0.0. Source `869fbbbce82598db0517d01a49bb1b8f03a9d86f`.
+The CLI versions before and after the probes were identical: Claude Code 2.1.317,
+codex-cli 0.167.0-alpha.3, opencode v0.0.0-dev-533.
+
+Each harness ran two nested live sessions in a disposable Git repository with no remote.
+Each session ran `role dispatch` init, then the parent operations, through its own shell tool.
+The launch cleared `AGENT_LOOP_SPAWNED_RUN` and `AGENT_LOOP_TEST_SLOT_HELD`.
+Each nested shell printed both as `unset`. Run 1 ran init, `role extend --max-steps 30`, then
+`role finish`. Run 2 ran init in a second repository, then `role abort`.
+Each init ran one reviewer turn on `claude` with `--reviewer-model haiku`.
+The state files held `roles.reviewer.model` `haiku`.
+The checker read each envelope from the tool-output field of the saved stream.
+The checker never read the model reply.
+
+- Claude Code 2.1.317: `--session-id` preassigned `c9aa96e8-d94b-440f-8072-8eab2db5e0a0`.
+  The saved stream held that id. `extend` exited 0 with
+  `{"status":"ok","lifecycle":"active","maxSteps":30,"stepsUsed":1}`.
+  The state held one `budgetChanges` entry from 20 to 30 at `stepsUsed` 1.
+  `finish` exited 0 with `{"status":"ok","lifecycle":"finished"}`.
+  `abort` exited 0 with `{"status":"ok","lifecycle":"aborted"}`.
+- Codex CLI 0.167.0-alpha.3: the saved stream held a thread id, which `codex exec` prints after
+  the turn starts. The probe used the new UUID `4184c12e-39aa-421c-af23-7a15d4514f39` as
+  `--parent-session`. The saved stream held thread id `01a1a0f9-1a01-71f0-aa28-bf5712691236` for
+  run 1. It held `01a1a0f9-c05e-7e90-a2cd-a55a0b696c66` for run 2.
+  `extend`, `finish`, and `abort` returned the same `status` and `lifecycle` values as the
+  Claude Code run.
+- OpenCode v0.0.0-dev-533: `--session` preassigned `ses_liveparent710opencodrun1a0001`.
+  The saved stream held that session id.
+  The probe used `--standalone`, and the tool shell printed both markers `unset`.
+  `extend`, `finish`, and `abort` returned the same `status` and `lifecycle` values as the
+  Claude Code run.
+- Wrong-id mutants: in each harness, `extend` with another `--parent-session` exited 1 with
+  `--parent-session does not match the run's parent session.`.
+  `finish` and `abort` with another id exited 1 with `--parent-session cannot be changed after init`.
+  The state stayed `active` with `maxSteps` 20 after each mutant.
+- Marker mutant: in each harness, `abort` with `AGENT_LOOP_SPAWNED_RUN` set to the run key
+  exited 1. The refusal read `abort is refused for a child role; only the parent session runs it.`.
+  The state stayed `active`. A separate OpenCode session launched with
+  `AGENT_LOOP_SPAWNED_RUN=deadbeefcafe` printed `AGENT_LOOP_SPAWNED_RUN=set`.
+  The presence check fails on that value.
+- The checker passed 150 assertions. Seven changed-evidence mutants each failed one named check:
+  presence marker, init parent session, extend envelope, finish lifecycle, wrong-id refusal,
+  marker refusal, and abort lifecycle.
+- Copilot CLI 1.0.106-5 and agy 1.4.12: not run.
+  The item named Claude Code, Codex CLI, and OpenCode.
+
 ## Alternatives
 
 1. **Abort and start a new run**: this is the only route without `extend`. It sets every role to `sessionId: null`, so each role loses its history and prompt cache. Rejected.
