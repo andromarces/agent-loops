@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 
@@ -16,7 +19,7 @@ import { ExecError } from "../src/lib/exec.mjs";
 import { failedSharedGitChanged } from "../src/lib/shared-git.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { createLinkedWorkTree, createTempRepo } from "./git-helpers.mjs";
 
 let repo;
 beforeEach(async () => {
@@ -39,7 +42,7 @@ const turn = (act, signal, extra = {}) =>
     role: { kind: "fake", sessionId: null },
     roleName: "worker",
     prompt: "go",
-    cwd: repo,
+    cwd: extra.cwd ?? repo,
     signal,
   });
 
@@ -61,6 +64,50 @@ test("a worker turn that sets and restores core.bare carries no field", async ()
     await execa("git", ["config", "core.bare", "false"], { cwd: repo });
   });
   expect(result).not.toHaveProperty("sharedGitChanged");
+});
+
+// Usefulness: verifies requirement "a worker turn that sets core.bare in the main work tree's
+// worktree config reports core.bare" (issue #1392). The turn runs in a linked work tree, as a real
+// turn does, so the linked read alone cannot see the change.
+test("a worker turn that sets the main work tree's worktree core.bare carries the key name", async () => {
+  const tree = await createLinkedWorkTree();
+  try {
+    await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: tree.main });
+    const result = await turn(
+      async () => {
+        await execa("git", ["config", "--worktree", "core.bare", "true"], { cwd: tree.main });
+      },
+      undefined,
+      { cwd: tree.linked },
+    );
+    expect(result.sharedGitChanged).toEqual(["core.bare"]);
+  } finally {
+    await removePath(tree.base);
+  }
+});
+
+// Usefulness: verifies requirement "a worker turn that sets the global core.hooksPath reports it by
+// name" (issue #1392). `GIT_CONFIG_GLOBAL` points at a temporary file, so no user config changes.
+test("a worker turn that sets the global core.hooksPath carries the key name", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-global-turn-"));
+  const previous = {
+    global: process.env.GIT_CONFIG_GLOBAL,
+    nosystem: process.env.GIT_CONFIG_NOSYSTEM,
+  };
+  process.env.GIT_CONFIG_GLOBAL = join(dir, "config");
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
+  try {
+    const result = await turn(async () => {
+      await execa("git", ["config", "--global", "core.hooksPath", ".global-hooks"], { cwd: repo });
+    });
+    expect(result.sharedGitChanged).toEqual(["core.hooksPath"]);
+  } finally {
+    if (previous.global === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = previous.global;
+    if (previous.nosystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM;
+    else process.env.GIT_CONFIG_NOSYSTEM = previous.nosystem;
+    await removePath(dir);
+  }
 });
 
 // Usefulness: verifies requirement "a canceled worker turn keeps the shared Git report" (issue #1224):
