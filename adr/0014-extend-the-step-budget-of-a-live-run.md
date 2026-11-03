@@ -231,9 +231,9 @@ The checker never read the model reply.
 - Marker mutant: in each harness, `abort` with `AGENT_LOOP_SPAWNED_RUN` set to the run key
   exited 1. The refusal read `abort is refused for a child role; only the parent session runs it.`.
   The state stayed `active`.
-- The checker passed 188 assertions. Seven changed-evidence mutants each failed one named check:
-  marker text, marker refusal, final lifecycle, extend `maxSteps`, run key, parent session id,
-  and extend exit code.
+- The checker passed 188 assertions. Five changed-evidence mutants each failed one assertion:
+  marker text, final lifecycle, extend `maxSteps`, run key, and parent session id.
+  The marker-refusal and extend-exit mutants each failed two assertions.
 
 ## Alternatives
 
