@@ -134,10 +134,16 @@ export async function runClaude(state, prompt, options = {}) {
   );
 
   if (readOnly) {
-    args.push("--permission-mode", "plan");
+    if (role === "worker") {
+      // A worker probe is read-only without plan mode, which keeps the requested model.
+      args.push("--tools", "");
+    } else {
+      args.push("--permission-mode", "plan");
+    }
     // Plan mode is a write guard here, not a planning workflow. Without this variable it
     // delegates research to the built-in Explore and Plan subagents, which inherit the role
-    // model (Explore capped at Opus on the Claude API). Requires Claude Code v2.1.198+.
+    // model. Explore is capped at Opus on the Claude API. A worker probe uses no tools instead.
+    // Requires Claude Code v2.1.198+.
     execOptions.env = { ...env, CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS: "1" };
   }
 

@@ -149,9 +149,9 @@ export function restoreSessions(roles, earlier, cwd) {
     if (resolved === null || (typeof resolved === "string" && resolved)) {
       roles[role].resolvedModel = resolved;
       if (typeof resolved === "string") {
-        const source = earlier.roles[role].resolvedModelSource;
-        if (source === "init" || source === "modelUsage") {
-          roles[role].resolvedModelSource = source;
+        const before = earlier.roles[role];
+        if (Object.hasOwn(before, "resolvedModelSource")) {
+          roles[role].resolvedModelSource = before.resolvedModelSource ?? null;
         }
       }
     }
@@ -163,8 +163,8 @@ export function restoreSessions(roles, earlier, cwd) {
  * recorded in `resolvedModel` (#394, ADR 0026). A recorded model id gets one probe turn in a new
  * session, and the probe sets `resolvedModel` and `initModel` on the state it receives. A probe
  * that names no model, or a recorded `null`, skips the comparison with a warning. An old plan-mode
- * record is accepted when the recorded model equals the probe's `init` model. A record with the
- * `modelUsage` source compares strictly, and any other probe failure refuses.
+ * record with no source is accepted when the recorded model equals the probe's `init` model. Any
+ * present source compares strictly, and an unknown value fails closed.
  * known-limit: each probe is a real model call.
  * @param {object} roles new run roles after `restoreSessions`; not mutated
  * @param {{ probe: (state: object, role: string) => Promise<void> }} options

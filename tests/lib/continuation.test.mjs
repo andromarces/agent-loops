@@ -341,8 +341,9 @@ function probeWith(resolvedByRole) {
   });
 }
 
-// A probe that emulates Claude Code: plan mode answers a requested haiku turn on sonnet while
-// `init` names haiku, and default mode answers on haiku. An old record holds the `init` model.
+// A probe that emulates Claude Code. Plan mode answers a requested haiku turn on sonnet while
+// `init` names haiku. A worker probe uses no tools and answers on haiku. An old record holds the
+// `init` model.
 function claudeProbe(repo, modes) {
   return async (state, role) =>
     runProbeTurn({
@@ -351,7 +352,10 @@ function claudeProbe(repo, modes) {
           async run(probeState, _prompt, options) {
             modes.push(options.readOnly);
             probeState.initModel = "claude-haiku-5-5";
-            probeState.resolvedModel = options.readOnly ? "claude-sonnet-5-5" : "claude-haiku-5-5";
+            probeState.resolvedModel =
+              options.readOnly && options.role !== "worker"
+                ? "claude-sonnet-5-5"
+                : "claude-haiku-5-5";
             return "OK";
           },
         },
@@ -389,8 +393,36 @@ test("verifyResolvedModels accepts an old init-model record on a plan-mode probe
   }
 });
 
-// Usefulness: issue #1376. A worker turn does not use plan mode, so its probe must use that mode
-// and record haiku, not a plan-mode substitution.
+// Usefulness: issue #1376. Only an absent source is a legacy record. A present value that is not
+// a known source fails closed, so a Haiku-to-Sonnet difference is still refused.
+test.each([
+  ["null", null],
+  ["a number", 7],
+  ["an unknown string", "future-source"],
+])("verifyResolvedModels refuses a changed model when the source is %s", async (_label, source) => {
+  const earlier = transcript();
+  earlier.roles.reviewer = {
+    kind: "claude",
+    model: "haiku",
+    effort: null,
+    sessionId: null,
+    resolvedModel: "claude-haiku-5-5",
+    resolvedModelSource: source,
+  };
+  const next = roles();
+  next.reviewer = { kind: "claude", model: "haiku", effort: null, sessionId: null };
+  restoreSessions(next, earlier, CWD);
+  const probe = vi.fn(async (state) => {
+    state.initModel = "claude-haiku-5-5";
+    state.resolvedModel = "claude-sonnet-5-5";
+  });
+  await expect(verifyResolvedModels(next, { probe })).rejects.toThrow(
+    'reviewer resolved to "claude-haiku-5-5" in the earlier run, not "claude-sonnet-5-5"',
+  );
+});
+
+// Usefulness: issue #1376. A worker probe is read-only without plan mode, so it records haiku,
+// not a plan-mode substitution.
 test("verifyResolvedModels accepts an old init-model record on a worker probe", async () => {
   const repo = await createTempRepo();
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -408,7 +440,7 @@ test("verifyResolvedModels accepts an old init-model record on a worker probe", 
     await expect(
       verifyResolvedModels(next, { probe: claudeProbe(repo, modes) }),
     ).resolves.toBeUndefined();
-    expect(modes).toEqual([false]);
+    expect(modes).toEqual([true]);
   } finally {
     warn.mockRestore();
     info.mockRestore();

@@ -75,6 +75,32 @@ test("claude sends correct argv for initial turn with readOnly", async () => {
   );
 });
 
+// Usefulness: issue #1376. A read-only worker probe uses `--tools ""` and no plan mode, so it
+// keeps the requested model. A reviewer probe keeps plan mode, as its real turn does.
+test("claude runs a worker probe without tools and without plan mode", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: "haiku", effort: null };
+  await runClaude(state, "p", { cwd: "/path", readOnly: true, role: "worker" });
+  const args = vi.mocked(exec).mock.calls.at(-1)[1];
+  expect(args).toEqual(expect.arrayContaining(["--tools", ""]));
+  expect(args).not.toContain("--permission-mode");
+});
+
+test("claude runs a reviewer probe with plan mode", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({
+    stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
+    stderr: "",
+  });
+  const state = { kind: "claude", sessionId: null, model: "haiku", effort: null };
+  await runClaude(state, "p", { cwd: "/path", readOnly: true, role: "reviewer" });
+  const args = vi.mocked(exec).mock.calls.at(-1)[1];
+  expect(args).toEqual(expect.arrayContaining(["--permission-mode", "plan"]));
+  expect(args).not.toContain("--tools");
+});
+
 // Usefulness: verifies claude adapter passes --resume and effort on resume turn, and leaves the worker
 // environment untouched so the worker keeps its research subagents.
 test("claude resumes session with effort and readOnly false", async () => {
@@ -1210,7 +1236,7 @@ test("claude records the init model for a turn whose modelUsage names several mo
   expect(state.resolvedModel).toBe("claude-sonnet-5-5");
 });
 
-// Usefulness: issue #1376. Plan mode answers a requested haiku turn on another model while the
+// Usefulness: issue #1376. Plan mode answers a requested haiku turn on another model. The
 // `init` event still names haiku, so the one `modelUsage` model is the model that answered.
 test("claude records the modelUsage model when the single init model differs", async () => {
   vi.mocked(exec).mockResolvedValueOnce(
