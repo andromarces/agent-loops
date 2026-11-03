@@ -13,6 +13,7 @@ import {
   recordResolvedModel,
   failedWithLine,
   flagMissingSession,
+  isModelId,
   keepFailedSessionId,
   markCapacityFailure,
   readSessionHead,
@@ -273,16 +274,43 @@ function reportedModels(resultEvent) {
 }
 
 /**
- * True for a `system` `init` event. It names the main-loop model, whatever subagent or helper model
- * ran later, so its model takes the place of `modelUsage`. An `init` event without a model reports
+ * True for a `system` `init` event. It names the main-loop model, and a helper or subagent model
+ * beside it in `modelUsage` does not replace it. An `init` event without a model reports
  * `undefined`, which is malformed evidence and is unresolved.
  */
 const isInitEvent = (event) =>
   isJsonObject(event) && event.type === "system" && event.subtype === "init";
 
 /**
+ * The model values one Claude output names. An `init` event names the main-loop model, and a helper
+ * or subagent model beside it in a multi-key `modelUsage` does not change that. When `modelUsage`
+ * names exactly one valid model and the single `init` model is another valid model, `init` did not
+ * answer. The `modelUsage` model is then recorded. An output with no `init` event reads `modelUsage`.
+ * @param {object[]} inits the `init` events of the output
+ * @param {object[]} results the result events of the output
+ */
+function turnModels(inits, results) {
+  const usage = results.flatMap(reportedModels);
+  if (inits.length === 0) return usage;
+  const initModels = inits.map((event) => event.model);
+  const [init] = initModels;
+  if (
+    initModels.length === 1 &&
+    isModelId(init) &&
+    usage.length === 1 &&
+    isModelId(usage[0]) &&
+    usage[0] !== init
+  ) {
+    return usage;
+  }
+  return initModels;
+}
+
+/**
  * Records the resolved model of a turn that ran, from one consistent source. The model is the one
- * the `init` event names, or the one key of `modelUsage` when the output has no `init` event. The
+ * the `init` event names, or the one key of `modelUsage` when the output has no `init` event. A
+ * single `init` model that differs from the one `modelUsage` model yields the `modelUsage` model.
+ * Plan mode answers a requested model on another model (issue #1376). The
  * session and the model come from the same events: the output must name exactly one valid session across all its
  * events, and every result event that carries model evidence must name that session itself. An
  * array of events that names more than one session, a malformed session, or a result event with no
@@ -310,7 +338,7 @@ function recordTurnModel(state, parsed, requestedSessionId) {
     inits.every((e) => asSessionId(e.session_id) === session);
   recordResolvedModel(
     state,
-    sourced ? (inits.length > 0 ? inits.map((e) => e.model) : results.flatMap(reportedModels)) : [],
+    sourced ? turnModels(inits, results) : [],
     requestedSessionId,
     sourced ? session : null,
   );

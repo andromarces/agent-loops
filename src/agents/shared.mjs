@@ -6,6 +6,11 @@ import { hasClosingBlockAttempt } from "../lib/report.mjs";
 // A model id has no whitespace or control character, so a sentence or a blank is not one.
 const MODEL_ID = /^[^\s\p{Cc}]+$/u;
 
+/** True for a model id: a non-empty string with no whitespace or control character. */
+export function isModelId(value) {
+  return typeof value === "string" && MODEL_ID.test(value);
+}
+
 const SESSION_HEAD_BYTES = 256 * 1024;
 
 /**
@@ -220,8 +225,7 @@ export function closingText(messages) {
  */
 export function setResolvedModel(state, reported) {
   const [first] = reported;
-  const named =
-    typeof first === "string" && MODEL_ID.test(first) && reported.every((m) => m === first);
+  const named = isModelId(first) && reported.every((m) => m === first);
   state.resolvedModel = named ? first : null;
 }
 

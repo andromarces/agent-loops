@@ -1208,19 +1208,41 @@ test("claude records the init model for a turn whose modelUsage names several mo
   expect(state.resolvedModel).toBe("claude-sonnet-5-5");
 });
 
-// Usefulness: the init model governs even when the result lists only a helper model, and a failed turn
-// that printed the events follows the same source.
-test("claude takes the init model over modelUsage, on a failed turn too", async () => {
+// Usefulness: issue #1376. Plan mode answers a requested haiku turn on another model while the
+// `init` event still names haiku, so the one `modelUsage` model is the model that answered.
+test("claude records the modelUsage model when the single init model differs", async () => {
   vi.mocked(exec).mockResolvedValueOnce(
     eventsOf(
-      initEvent("s-kept", "claude-opus-5-6"),
-      resultEvent("s-kept", { "claude-haiku-5-5": {} }),
+      initEvent("s-kept", "claude-haiku-5-5"),
+      resultEvent("s-kept", { "claude-sonnet-5-5": {} }),
     ),
   );
   const state = { ...failedState(), sessionId: "s-kept" };
   await runClaude(state, "p", { cwd: "/path" });
-  expect(state.resolvedModel).toBe("claude-opus-5-6");
+  expect(state.resolvedModel).toBe("claude-sonnet-5-5");
+});
 
+// Usefulness: issue #1376 keeps the init rule for every other modelUsage shape, and a failed turn
+// that printed the events follows the same source.
+test.each([
+  ["one key equal to init", { "claude-opus-5-6": {} }],
+  ["no modelUsage", null],
+  ["an empty modelUsage", {}],
+  ["a malformed modelUsage", "x"],
+  ["several keys that include init", { "claude-opus-5-6": {}, "claude-haiku-5-5": {} }],
+  ["several keys that exclude init", { a: {}, b: {} }],
+])("claude records the init model for %s", async (_label, modelUsage) => {
+  const result =
+    modelUsage === null
+      ? { type: "result", session_id: "s-kept", result: "ok" }
+      : resultEvent("s-kept", modelUsage);
+  vi.mocked(exec).mockResolvedValueOnce(eventsOf(initEvent("s-kept", "claude-opus-5-6"), result));
+  const state = { ...failedState(), sessionId: "s-kept" };
+  await runClaude(state, "p", { cwd: "/path" });
+  expect(state.resolvedModel).toBe("claude-opus-5-6");
+});
+
+test("claude takes the init model over several modelUsage keys, on a failed turn too", async () => {
   vi.mocked(exec).mockRejectedValueOnce(
     execFailure({
       stdout: JSON.stringify([
