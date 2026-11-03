@@ -43,8 +43,9 @@ const isSharedConfigKey = (key) => {
  *
  * The read also covers the global config, the main work tree's worktree config, and the shared
  * `core.bare`, `core.worktree`, and `extensions.*` keys. It names each changed key only, never a
- * value. A third `git` process reads the main work tree's worktree config after the common
- * directory resolves.
+ * value. The field reports a change observed between the two reads and does not prove the turn
+ * made it. A global change can come from another process or another run on the host. A third
+ * `git` process reads the main work tree's worktree config after the common directory resolves.
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, string> }>}
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {

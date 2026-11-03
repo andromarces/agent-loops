@@ -115,6 +115,11 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /core\.worktree/, /linked work tree/i, /main work tree/i),
   (text) => expectRule(text, /global config/i, /worktree scope/i),
   (text) => expectRule(text, /main work tree's worktree config/i, /names only that key/i),
+  // Issue #1392 review: the field reports a change between the two reads only. A global change
+  // can come from another process on the host, so the field proves no author.
+  (text) => expectRule(text, /change observed between the two reads/i),
+  (text) => expectRule(text, /does not prove/i, /turn made/i),
+  (text) => expectRule(text, /another process/i, /another run/i, /host/i),
   (text) => expectRule(text, /never a value/i, /URL/),
   (text) => expectRule(text, /main work tree/i, /linked work tree/i),
   (text) => expectRule(text, /Report it/i, /finish summary/i),

@@ -237,6 +237,8 @@ Apply these parent rules:
     tree's own file reports a field without affecting the main work tree. A watched key in the
     main work tree's worktree config names only that key. A global change affects every repository
     of the user.
+  - The field reports a change observed between the two reads. It does not prove the turn made the
+    change. A global change can come from another process or another run on the host.
   - A read of the
     shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
     the absent field then does not prove that no change happened. The runtime logs a warning for
