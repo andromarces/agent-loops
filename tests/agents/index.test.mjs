@@ -106,6 +106,17 @@ const OK_OUTPUT = {
   opencode: JSON.stringify({ type: "text", sessionID: SESSION, part: { text: "done" } }),
 };
 
+// Usefulness: verifies every adapter passes the worker role to the central spawn, which sets the pnpm dependency check to warn (issue #1385). An adapter that drops the role leaves pnpm on install.
+test.each(["claude", "codex", "copilot", "agy", "opencode"])(
+  "%s passes the worker role to its spawn",
+  async (kind) => {
+    vi.mocked(exec).mockResolvedValueOnce({ stdout: OK_OUTPUT[kind], stderr: "" });
+    const before = vi.mocked(exec).mock.calls.length;
+    await runAgent({ kind, sessionId: null }, "task", { cwd: "/path", role: "worker" });
+    expect(vi.mocked(exec).mock.calls[before][2]?.role).toBe("worker");
+  },
+);
+
 // Requirement (#1178, ADR 0068): a Claude, agy, Copilot, or opencode turn runs with a private
 // temporary directory, so a file that the CLI writes through `TMPDIR` never lands in the inherited
 // directory, and the runtime removes the private one on a clean turn and on a failed one. Not

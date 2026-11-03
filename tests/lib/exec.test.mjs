@@ -436,32 +436,34 @@ const clearPnpmDepsCheck = () => {
   }
 };
 
-// Usefulness: verifies a reviewer child cannot make pnpm install from its dependency check before `pnpm run` or `pnpm exec` (issue #1145); other spawns stay unchanged.
-test("exec sets the pnpm dependency check to warn for a reviewer spawn only", async () => {
+// Usefulness: verifies a worker or reviewer child cannot make pnpm install from its dependency check before `pnpm run` or `pnpm exec` (issue #1145, issue #1385). Other spawns stay unchanged.
+test("exec sets the pnpm dependency check to warn for a worker and reviewer spawn", async () => {
   clearPnpmDepsCheck();
-  expect(await pnpmDepsCheckOf({ role: "reviewer", cwd: tmpdir() })).toEqual([
-    ["pnpm_config_verify_deps_before_run", "warn"],
-  ]);
-  expect(await pnpmDepsCheckOf({ role: "worker", cwd: tmpdir() })).toEqual([]);
+  const warn = [["pnpm_config_verify_deps_before_run", "warn"]];
+  expect(await pnpmDepsCheckOf({ role: "worker", cwd: tmpdir() })).toEqual(warn);
+  expect(await pnpmDepsCheckOf({ role: "reviewer", cwd: tmpdir() })).toEqual(warn);
   expect(await pnpmDepsCheckOf({ role: "orchestrator", cwd: tmpdir() })).toEqual([]);
   expect(await pnpmDepsCheckOf({ cwd: tmpdir() })).toEqual([]);
 });
 
-// Usefulness: verifies an inherited or caller `install` value, in any spelling, never reaches a reviewer child, and that exactly one spelling is left because Windows treats names that differ in case as one name.
-test("exec replaces an inherited pnpm dependency check install for a reviewer spawn", async () => {
-  clearPnpmDepsCheck();
-  const warn = [["pnpm_config_verify_deps_before_run", "warn"]];
-  vi.stubEnv("PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN", "install");
-  expect(await pnpmDepsCheckOf({ role: "reviewer", cwd: tmpdir() })).toEqual(warn);
-  clearPnpmDepsCheck();
-  expect(
-    await pnpmDepsCheckOf({
-      role: "reviewer",
-      cwd: tmpdir(),
-      env: { pnpm_config_verify_deps_before_run: "install" },
-    }),
-  ).toEqual(warn);
-});
+// Usefulness: verifies an inherited or caller `install` value, in any spelling, never reaches a worker or reviewer child. Exactly one spelling is left because Windows treats names that differ in case as one name.
+test.each(["worker", "reviewer"])(
+  "exec replaces an inherited pnpm dependency check install for a %s spawn",
+  async (role) => {
+    clearPnpmDepsCheck();
+    const warn = [["pnpm_config_verify_deps_before_run", "warn"]];
+    vi.stubEnv("PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN", "install");
+    expect(await pnpmDepsCheckOf({ role, cwd: tmpdir() })).toEqual(warn);
+    clearPnpmDepsCheck();
+    expect(
+      await pnpmDepsCheckOf({
+        role,
+        cwd: tmpdir(),
+        env: { pnpm_config_verify_deps_before_run: "install" },
+      }),
+    ).toEqual(warn);
+  },
+);
 
 // Usefulness: verifies the spawn hook gets the pid of the child while it runs, and that a hook which
 // rejects never changes the outcome of the child.

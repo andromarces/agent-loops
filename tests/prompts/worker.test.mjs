@@ -350,6 +350,14 @@ test("first worker turn tells a probe copy to avoid the pnpm dependency check in
   );
 });
 
+// Usefulness: verifies acceptance #1385: a worker command in the run work tree never installs. The rule names the setting or a direct call of the installed binary.
+test("first worker turn bars a pnpm install in the run work tree", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "A `pnpm run` or `pnpm exec` in the run work tree must not install. Set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` for the command, or call the installed binary directly.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker pushes only with a named refspec" (issue #1226): under
 // `push.default=matching` a plain `git push` also pushes a shared local default branch, and the
 // push wording alone ("push it") leaves the refspec to the worker. Every turn that can push carries it.
