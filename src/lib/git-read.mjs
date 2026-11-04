@@ -8,7 +8,7 @@ export const GIT_READ_TIMEOUT_MS = 120_000;
 // Milliseconds that one work tree `git` read waits before it ends the child.
 export const WORK_TREE_READ_TIMEOUT_MS = 60_000;
 
-// Snapshot failure: a turn's mutation state could not be determined, so no verdict exists.
+// Snapshot failure: a turn's mutation state is unknown, so no verdict exists.
 // SnapshotError wins when a canceled turn's post-turn snapshot also fails. The caller then exits 1,
 // not 130.
 export class SnapshotError extends Error {
