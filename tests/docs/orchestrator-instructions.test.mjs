@@ -106,10 +106,11 @@ const SHARED_PARENT_RULES = [
       /dispatch (?:a|the) worker/i,
       /not (?:a|the) reviewer/i,
     ),
-  // Issue #1448: a change to the main work tree of a linked run is reported by path, the field
-  // states its read limits, and the parent stops the run and leaves the change to the user.
+  // Issue #1448: the field reports a main work tree change by path. It states its read limits, and
+  // the parent stops the run and leaves the change to the user.
   (text) => expectRule(text, /mainWorkTreeChanged/, /linked run/i),
-  (text) => expectRule(text, /mainWorkTreeChanged/, /tracked/i, /untracked/i, /content/i),
+  (text) =>
+    expectRule(text, /mainWorkTreeChanged/, /dirty/i, /untracked/i, /committed/i, /content/i),
   (text) => expectRule(text, /mainWorkTreeChanged/, /failed or canceled/i),
   (text) => expectRule(text, /mainWorkTreeChanged/, /deadline/i, /proves nothing/i),
   (text) => expectRule(text, /mainWorkTreeChanged/, /change observed between two reads/i),

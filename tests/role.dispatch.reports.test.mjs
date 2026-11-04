@@ -116,9 +116,9 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
   }
 });
 
-// Usefulness: verifies requirement "a worker turn that writes a tracked file of the main work tree
-// reports that path in the envelope, and a turn that leaves it unchanged carries no field" (issue
-// #1448). The linked work tree stays clean, so no other envelope field shows the change.
+// Usefulness: verifies requirement "a worker turn that writes a tracked main work tree file reports
+// that path in the envelope" (issue #1448). A turn that leaves the main work tree unchanged carries
+// no field. The linked work tree stays clean, so no other envelope field shows the change.
 test("worker dispatch reports a main work tree change by path and omits the field otherwise", async () => {
   const repo = await newRunRepo();
   const parent = await mkdtemp(join(tmpdir(), "role-dispatch-main-"));

@@ -243,8 +243,8 @@ async function locateWorkTrees(cwd, read, { quiet = false } = {}) {
 }
 
 /**
- * Returns the canonical path of the main work tree for a linked `cwd`, or null when `cwd` is the
- * main work tree or the layout has none. The resolution matches the local-file copy.
+ * Returns the canonical path of the main work tree for a linked `cwd`. The result is null when `cwd`
+ * is the main work tree or the layout has none. The resolution matches the local-file copy.
  */
 export async function mainWorkTreePath(cwd, { signal } = {}) {
   const located = await locateWorkTrees(

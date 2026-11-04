@@ -254,8 +254,8 @@ Apply these parent rules:
     the absent field then does not prove that no change happened. The runtime logs a warning for
     such a read.
 - A worker envelope carries `mainWorkTreeChanged` only when the turn changed the main work tree of
-  a linked run. The `mainWorkTreeChanged` field names the tracked and untracked, unignored paths
-  relative to that work tree, at most 20, and never content. A failed or canceled worker turn
+  a linked run. The `mainWorkTreeChanged` field names dirty, untracked, unignored, and committed
+  paths relative to that work tree, at most 20, and never content. A failed or canceled worker turn
   carries `mainWorkTreeChanged` too, and a turn that changed none carries no field. A read of the
   main work tree that fails or passes its 10 second deadline reports no `mainWorkTreeChanged`, so
   the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed

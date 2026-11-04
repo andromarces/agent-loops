@@ -1,5 +1,6 @@
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { gitRead, stripLf } from "./git-read.mjs";
 import { mainWorkTreePath } from "./local-files.mjs";
 import { logWarn } from "./log.mjs";
 import { snapshot } from "./snapshot.mjs";
@@ -10,14 +11,16 @@ const READ_BOUND_MS = 10_000;
 
 /**
  * Reads the tracked and untracked, unignored state of the main work tree that a linked `cwd` belongs
- * to. Returns a map of path to status and content hash. The map is null when `cwd` is the main work
- * tree, the layout has none, or the read fails or passes its bound. The read takes no optional Git
- * lock, so it never writes the index. A failed read warns, and an absent map then proves nothing.
+ * to. The result holds the HEAD commit, the checked-out branch, and a map of path to status and
+ * content hash. With `since`, a changed HEAD or branch adds the paths of `git diff --name-only`
+ * between the two commits. The result is null when `cwd` is the main work tree, the layout has none,
+ * or the read fails or passes its bound. A failed read warns, and an absent result then proves
+ * nothing.
  * @param {string} cwd
- * @param {{ deadlineMs?: number }} [options]
- * @returns {Promise<Map<string, string> | null>}
+ * @param {{ deadlineMs?: number, since?: object | null }} [options]
+ * @returns {Promise<object | null>}
  */
-export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS } = {}) {
+export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since = null } = {}) {
   try {
     return await withTimeBound(
       deadlineMs,
@@ -25,11 +28,24 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS } = {})
       async ({ signal, stopped }) => {
         const main = await Promise.race([mainWorkTreePath(cwd, { signal }), stopped]);
         if (main === null) return null;
-        const snap = await Promise.race([
-          snapshot(main, { signal, timeoutMs: deadlineMs, env: { GIT_OPTIONAL_LOCKS: "0" } }),
-          stopped,
+        // The read takes no optional Git lock, so it never writes the main work tree index.
+        const bound = { signal, timeoutMs: deadlineMs };
+        const [snap, branch] = await Promise.all([
+          Promise.race([snapshot(main, { ...bound, env: { GIT_OPTIONAL_LOCKS: "0" } }), stopped]),
+          Promise.race([readBranch(main, bound), stopped]),
         ]);
-        return new Map(snap.workTree.map((entry) => [entry.path, stateOf(entry)]));
+        const state = {
+          entries: new Map(snap.workTree.map((entry) => [entry.path, stateOf(entry)])),
+          head: snap.head,
+          branch,
+        };
+        if (since && (since.head !== state.head || since.branch !== state.branch)) {
+          state.commitPaths = await Promise.race([
+            readCommitPaths(main, since.head, state.head, bound),
+            stopped,
+          ]);
+        }
+        return state;
       },
     );
   } catch (err) {
@@ -42,22 +58,49 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS } = {})
 
 const stateOf = (entry) => `${entry.status}\0${entry.hash ?? ""}`;
 
+/** Reads the checked-out branch of `main`, or null for a detached HEAD. */
+async function readBranch(main, bound) {
+  const result = await gitRead(main, ["symbolic-ref", "--short", "-q", "HEAD"], {
+    ...bound,
+    allowExit: [0, 1],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
+    stripFinalNewline: false,
+  });
+  return result.exitCode === 0 ? stripLf(result.stdout) : null;
+}
+
+/** Reads the paths that differ between two commits, or [] when either is unborn. */
+async function readCommitPaths(main, beforeHead, afterHead, bound) {
+  if (beforeHead === afterHead || beforeHead === "unborn" || afterHead === "unborn") return [];
+  const result = await gitRead(
+    main,
+    ["diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", beforeHead, afterHead],
+    {
+      ...bound,
+      allowExit: [0],
+      env: { GIT_OPTIONAL_LOCKS: "0" },
+      stripFinalNewline: false,
+    },
+  );
+  return result.stdout.split("\0").filter(Boolean);
+}
+
 /**
- * Names the paths that differ between two `readMainWorkTree` maps, by path relative to the main work
- * tree. A dirty path that changes again differs, and one left unchanged does not. Returns [] when
- * either read is missing, at most 20 names, and never content.
- * @param {Map<string, string> | null} before
- * @param {Map<string, string> | null} after
+ * Names the paths that differ between two `readMainWorkTree` results, by path relative to the main
+ * work tree. It includes dirty entries and paths from a changed HEAD commit. Returns [] when either
+ * read is missing, at most 20 names, and never content.
+ * @param {object | null} before
+ * @param {object | null} after
  * @returns {string[]}
  */
 export function diffMainWorkTree(before, after) {
   if (!before || !after) return [];
-  const changed = [];
-  for (const [path, state] of before) {
-    if (after.get(path) !== state) changed.push(path);
+  const changed = new Set(after.commitPaths ?? []);
+  for (const [path, state] of before.entries) {
+    if (after.entries.get(path) !== state) changed.add(path);
   }
-  for (const path of after.keys()) {
-    if (!before.has(path)) changed.push(path);
+  for (const path of after.entries.keys()) {
+    if (!before.entries.has(path)) changed.add(path);
   }
   return reportedEntryNames(changed);
 }

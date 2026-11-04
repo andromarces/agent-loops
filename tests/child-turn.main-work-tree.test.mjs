@@ -25,7 +25,14 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
 
 let tree;
 beforeEach(async () => {
-  tree = await createLinkedWorkTree();
+  tree = await createLinkedWorkTree({
+    seed: async (main) => {
+      await writeFile(join(main, "init.txt"), "second\n");
+      await execa("git", ["commit", "-am", "second"], { cwd: main });
+      await execa("git", ["branch", "other"], { cwd: main });
+      await execa("git", ["reset", "--hard", "HEAD~1"], { cwd: main });
+    },
+  });
 });
 afterEach(async () => {
   resolution.fail = false;
@@ -59,7 +66,7 @@ test("a worker turn that leaves the main work tree unchanged carries no field", 
 });
 
 // Usefulness: verifies requirement "a deletion of a tracked main work tree file is reported"
-// (issue #1448). A deleted path has no content hash, so a hash-only compare would miss it.
+// (issue #1448). A deleted path has no content hash, so a hash-only compare misses it.
 test("a worker turn that deletes a tracked main work tree file reports its path", async () => {
   const result = await turn(async () => {
     await execa("git", ["rm", "init.txt"], { cwd: tree.main });
@@ -86,7 +93,7 @@ test("a worker turn that renames a tracked main work tree file reports its path"
 });
 
 // Usefulness: verifies requirement "a file that was already dirty and changes again is reported"
-// (issue #1448). A compare against a clean baseline alone would miss it.
+// (issue #1448). A compare against a clean baseline alone misses it.
 test("a worker turn that changes an already dirty main work tree file reports it", async () => {
   await writeFile(join(tree.main, "init.txt"), "dirty\n");
   const result = await turn(async () => {
@@ -96,7 +103,7 @@ test("a worker turn that changes an already dirty main work tree file reports it
 });
 
 // Usefulness: verifies requirement "a dirty file left unchanged is not reported" (issue #1448).
-// A compare that reports every dirty path would name this one.
+// A compare that reports every dirty path names this one.
 test("a worker turn that leaves an already dirty main work tree file unchanged reports nothing", async () => {
   await writeFile(join(tree.main, "init.txt"), "dirty\n");
   const result = await turn(async () => {});
@@ -124,6 +131,44 @@ test("a canceled worker turn carries the main work tree change", async () => {
   expect(failedMainWorkTreeChanged(error)).toEqual(["init.txt"]);
 });
 
+// Usefulness: verifies requirement "a commit of a tracked main work tree file is reported"
+// (issue #1448). The work tree is clean after the commit, so the dirty compare alone misses it.
+test("a worker turn that commits a tracked main work tree file reports its path", async () => {
+  const result = await turn(async () => {
+    await writeFile(join(tree.main, "init.txt"), "committed\n");
+    await execa("git", ["commit", "-am", "change"], { cwd: tree.main });
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies requirement "an amend of a main work tree commit is reported" (issue
+// #1448). The amended commit has a new head, so the commit range names the changed file.
+test("a worker turn that amends a main work tree commit reports its path", async () => {
+  const result = await turn(async () => {
+    await writeFile(join(tree.main, "init.txt"), "amended\n");
+    await execa("git", ["commit", "--amend", "--no-edit", "-a"], { cwd: tree.main });
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies requirement "a reset to another main work tree commit is reported" (issue
+// #1448). A reset leaves a clean work tree, so only the commit range shows the change.
+test("a worker turn that resets the main work tree to another commit reports its path", async () => {
+  const result = await turn(async () => {
+    await execa("git", ["reset", "--hard", "other"], { cwd: tree.main });
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies requirement "a branch switch in the main work tree is reported" (issue
+// #1448). The checked-out branch and the head commit change, and the commit range names the file.
+test("a worker turn that switches the main work tree branch reports its path", async () => {
+  const result = await turn(async () => {
+    await execa("git", ["checkout", "other"], { cwd: tree.main });
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
 // Usefulness: verifies requirement "a failed worker turn carries the main work tree change"
 // (issue #1448), as sharedGitChanged does. The handled error result is the turn's only record.
 test("a failed worker turn carries the main work tree change", async () => {
@@ -146,8 +191,19 @@ test("the field names at most 20 main work tree paths", async () => {
   expect(result.mainWorkTreeChanged).toHaveLength(20);
 });
 
+// Usefulness: verifies requirement "a failed commit diff warns and carries no state" (issue #1448
+// review). A missing commit must not read as an unchanged main work tree.
+test("a failed main work tree commit diff warns and returns no state", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const state = await readMainWorkTree(tree.linked, {
+    since: { head: "0".repeat(40), branch: "main" },
+  });
+  expect(state).toBeNull();
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree"))).toBe(true);
+});
+
 // Usefulness: verifies requirement "a main work tree read that fails logs a warning and carries no
-// field" (issue #1448), so an absent field is never a false claim of no change.
+// field" (issue #1448). An absent field is never a false claim of no change.
 test("a worker turn whose main work tree read fails warns and carries no field", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   resolution.fail = true;

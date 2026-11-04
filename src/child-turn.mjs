@@ -408,7 +408,7 @@ export async function runChild(options) {
   /** Paths of the main work tree that differ from the pre-turn read, or [] when none or unread. */
   const readMainWorkTreeChanged = async () => {
     if (mainPaths === null) {
-      const after = mainBefore ? await readMainWorkTree(cwd) : null;
+      const after = mainBefore ? await readMainWorkTree(cwd, { since: mainBefore }) : null;
       mainPaths = diffMainWorkTree(mainBefore, after);
       if (mainPaths.length > 0) {
         logWarn(`worker: the main work tree changed: ${mainPaths.join(", ")}`);
@@ -473,7 +473,7 @@ export async function runChild(options) {
   /**
    * Reads the shared Git change, the lockfile change, the main work tree change, and both advisory
    * lists together for a turn that failed. A rejected read throws in the order shared Git, lockfile,
-   * main work tree, advisory, which is the order the reads ran in before they ran together.
+   * main work tree, advisory. That is the order the reads ran in before they ran together.
    */
   const readFailedTurnEvidence = async () => {
     const [sharedRead, lockfileRead, mainWorkTreeRead, advisoryRead] = await Promise.allSettled([
@@ -555,8 +555,7 @@ export async function runChild(options) {
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     // The four reads are independent, so they run together. All settle before a failure throws, so
-    // a cancel in the work tree read keeps the shared Git items, the main work tree paths, and the
-    // lockfile paths for the catch path.
+    // a cancel in the work tree read keeps the other values for the catch path.
     const [workTreeRead, sharedRead, lockfileRead, mainWorkTreeRead] = await Promise.allSettled([
       roleName === "worker" ? readWorkTree() : null,
       readSharedGitChanged(),

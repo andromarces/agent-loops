@@ -162,12 +162,13 @@ function statusEntries(stdout) {
 
 /**
  * Hashes the files of `entries` in batches of `HASH_BATCH_SIZE`. Entries keep their order, and the
- * first failure in that order throws, as the sequential hashes did.
+ * first failure in that order throws, as the sequential hashes did. `signal` stops a hash at the
+ * caller's deadline.
  */
-const hashEntries = (root, entries) =>
+const hashEntries = (root, entries, signal) =>
   mapInBatches(entries, HASH_BATCH_SIZE, async (entry) => {
     try {
-      return { ...entry, hash: await sha256File(join(root, entry.path)) };
+      return { ...entry, hash: await sha256File(join(root, entry.path), { signal }) };
     } catch (err) {
       throw new SnapshotError(`failed to hash ${entry.path}: ${readableErrorText(err)}`, {
         cause: err,
@@ -193,7 +194,7 @@ export async function snapshot(cwd, bound) {
   const index = gitIn(root, ["ls-files", "--stage", "-z"], scoped);
   // HEAD; exit 1 here means a repository without commits, so "unborn" is correct.
   const headRead = gitRead(root, ["rev-parse", "--verify", "-q", "HEAD"], scoped);
-  const hashes = status.then((result) => hashEntries(root, statusEntries(result.stdout)));
+  const hashes = status.then((result) => hashEntries(root, statusEntries(result.stdout), signal));
   const reads = [status, hashes, index, headRead];
   for (const read of reads) {
     read.catch(() => {});
