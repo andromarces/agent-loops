@@ -24,24 +24,28 @@ const isSharedConfigKey = (key) => {
 };
 
 // A local key is reported by name. A `branch.<name>.*` key stays out because a normal `git push -u`
-// writes it. A subsection can hold a URL, so a key whose subsection has `://` stays out.
+// writes it. `remote.<name>.*` is reported as `remote.<name>`, so it stays out here.
 function isLocalReportKey(key) {
   const first = key.indexOf(".");
   const last = key.lastIndexOf(".");
   const section = key.slice(0, first).toLowerCase();
   if (section === "branch") return false;
-  // `remote.<name>.*` is reported as `remote.<name>`, so its subsection keys stay out.
   if (section === "remote" && first !== last) return false;
   const lower = key.toLowerCase();
   if (
     lower === "core.hookspath" ||
     lower === "core.bare" ||
     lower === "core.worktree" ||
-    lower.startsWith("extensions.")
+    (first === last && lower.startsWith("extensions."))
   ) {
     return false;
   }
-  return first === last || !key.slice(first + 1, last).includes("://");
+  return true;
+}
+
+// The userinfo of a URL in a key name can hold a credential, so it becomes `<redacted>`.
+function redactKeyName(key) {
+  return key.replace(/(:\/\/)[^/]*@/g, "$1<redacted>@");
 }
 
 /**
@@ -49,9 +53,9 @@ function isLocalReportKey(key) {
  * a linked work tree: `core.hooksPath`, the hook files in the common `hooks/` directory, and the
  * configured remotes. `core.hooksPath` and the remotes come from the local and the worktree scope
  * on their own: the effective value of `core.hooksPath` would hide a change to the scope that the
- * other one overrides. The result holds digests only, so a config value or a URL never leaves this
- * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
- * a change.
+ * other one overrides. The result holds digests and redacted key names, so a config value or a URL
+ * credential never leaves this function. An unexpected `git` exit throws a `SnapshotError`, because
+ * an empty state would read as a change.
  *
  * The read starts two `git` processes at once, because every worker turn reads twice and
  * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`,
@@ -70,7 +74,7 @@ function isLocalReportKey(key) {
  * value. The field reports a change observed between the two reads and does not prove the turn
  * made it. A global change can come from another process or another run on the host. A third
  * `git` process reads the main work tree's worktree config after the common directory resolves.
- * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, string> }>}
+ * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, { name: string, digest: string }> }>}
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
   if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
@@ -175,7 +179,11 @@ function hashConfigState({ hooksPath, remotes, sharedKeys }) {
       [...remotes].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
     ),
     sharedKeys: Object.fromEntries(
-      [...sharedKeys].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
+      // The digest key keeps two names that differ only in redacted userinfo apart.
+      [...sharedKeys].map(([name, list]) => [
+        sha256(name),
+        { name: redactKeyName(name), digest: sha256(JSON.stringify(list)) },
+      ]),
     ),
   };
 }
@@ -259,7 +267,9 @@ export function diffSharedGit(before, after) {
   if (before.hooksPath !== after.hooksPath) changed.push(HOOKS_PATH_ITEM);
   for (const name of differing(before.hooks, after.hooks)) changed.push(`hooks/${name}`);
   for (const name of differing(before.remotes, after.remotes)) changed.push(`remote.${name}`);
-  for (const name of differing(before.sharedKeys, after.sharedKeys)) changed.push(name);
+  for (const id of differingEntries(before.sharedKeys, after.sharedKeys)) {
+    changed.push((after.sharedKeys[id] ?? before.sharedKeys[id]).name);
+  }
   return changed.sort();
 }
 
@@ -277,5 +287,11 @@ export const failedSharedGitChanged = carrier.failed;
 function differing(before, after) {
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
     (name) => before[name] !== after[name],
+  );
+}
+
+function differingEntries(before, after) {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
+    (id) => before[id]?.digest !== after[id]?.digest,
   );
 }

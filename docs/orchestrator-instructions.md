@@ -234,7 +234,9 @@ Apply these parent rules:
     `extensions.*` config keys. It names every other local (shared) config key that the turn
     added, changed, or removed, including `user.*`, `commit.gpgsign`, `gpg.*`, and `includeIf.*`.
     It names a key only, never a value. It leaves out `branch.<name>.*`, because a normal
-    `git push -u` writes those keys.
+    `git push -u` writes those keys. The userinfo of a URL in a key name becomes `<redacted>`, so a
+    credential never appears. Two keys that differ only in that userinfo stay two entries with the
+    same redacted name.
   - The read covers the global config, the local (shared) scope, the run work tree's own worktree
     scope, and the main work tree's worktree scope. A `core.worktree` change in the linked work
     tree's own file reports a field without affecting the main work tree. A watched key in the

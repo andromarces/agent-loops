@@ -443,29 +443,80 @@ test("a local value with a newline names the key and never the value", async () 
   expect(JSON.stringify(await readSharedGit(linked))).not.toContain("first");
 });
 
-// Usefulness: verifies a config subsection that can hold a URL is neither reported nor leaked, so
-// no credential reaches the envelope.
-test("a URL subsection key is not reported and its value never leaves the read", async () => {
+// Usefulness: verifies requirement "a removed local key with a URL subsection is reported" (issue
+// #1442). The key can change which remote URL gains a credential helper.
+test("a removed local key with a URL subsection is reported", async () => {
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
+  const key = "includeIf.hasconfig:remote.*.url:https://example.test/**.path";
+  await execa("git", ["config", "--local", key, "include-file"], { cwd: repo });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--local", "--unset", key], { cwd: linked }),
+  );
+  expect(changed).toEqual(["includeif.hasconfig:remote.*.url:https://example.test/**.path"]);
+});
+
+// Usefulness: verifies requirement "a changed key with userinfo in its subsection is redacted"
+// (issue #1442). The userinfo can hold a credential, and the key name stays visible.
+test("a changed local key with userinfo in its subsection is redacted", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    execa(
+      "git",
+      ["config", "--local", "http.https://user:token-8@example.test/.extraheader", "value"],
+      { cwd: linked },
+    ),
+  );
+  expect(changed).toEqual(["http.https://<redacted>@example.test/.extraheader"]);
+  expect(JSON.stringify(await readSharedGit(linked))).not.toContain("token-8");
+});
+
+// Usefulness: verifies requirement "two keys that differ only in userinfo stay two entries" (issue
+// #1442). Their redacted names are equal, and the report keeps both changes.
+test("two local keys that differ only in userinfo keep two entries", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  const changed = await changedBy(linked, async () => {
+    await execa(
+      "git",
+      ["config", "--local", "http.https://alice:one@example.test/.extraheader", "a"],
+      {
+        cwd: linked,
+      },
+    );
+    await execa(
+      "git",
+      ["config", "--local", "http.https://bob:two@example.test/.extraheader", "b"],
+      {
+        cwd: linked,
+      },
+    );
+  });
+  const name = "http.https://<redacted>@example.test/.extraheader";
+  expect(changed).toEqual([name, name]);
+});
+
+// Usefulness: verifies a config subsection that can hold a URL is reported with redacted userinfo,
+// so no credential reaches the envelope.
+test("a URL subsection key is reported with redacted userinfo", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "credential.https://user:token-8@example.test.helper", "store"], {
       cwd: linked,
     }),
   );
-  expect(changed).toEqual([]);
+  expect(changed).toEqual(["credential.https://<redacted>@example.test.helper"]);
   expect(JSON.stringify(await readSharedGit(linked))).not.toContain("token-8");
 });
 
-// Usefulness: verifies a config subsection under a watched section is not reported either, because
-// a subsection name can hold a URL (issue #1387).
-test("an extensions subsection key is not reported and never leaks its URL", async () => {
+// Usefulness: verifies a config subsection under a watched section is reported with redacted
+// userinfo, because every local key counts (issue #1442).
+test("an extensions subsection key is reported with redacted userinfo", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "extensions.https://user:token-8@example.test.flag", "true"], {
       cwd: linked,
     }),
   );
-  expect(changed).toEqual([]);
+  expect(changed).toEqual(["extensions.https://<redacted>@example.test.flag"]);
   expect(JSON.stringify(await readSharedGit(linked))).not.toContain("token-8");
 });
 

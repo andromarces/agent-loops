@@ -115,6 +115,9 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /local \(shared\) config key/i, /user\.\*/, /commit\.gpgsign/),
   // Issue #1442: branch.<name>.* stays out, because a normal `git push -u` writes those keys.
   (text) => expectRule(text, /branch\.<name>\.\*/, /git push -u/, /writes/),
+  // Issue #1442: a URL userinfo in a key name is redacted, and two keys can share the redacted name.
+  (text) => expectRule(text, /<redacted>/, /credential/i),
+  (text) => expectRule(text, /two entries/i, /redacted name/i),
   (text) => expectRule(text, /local \(shared\) scope/i, /worktree scope/i),
   (text) => expectRule(text, /core\.worktree/, /linked work tree/i, /main work tree/i),
   (text) => expectRule(text, /global config/i, /worktree scope/i),
