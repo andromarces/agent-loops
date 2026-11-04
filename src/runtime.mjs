@@ -348,6 +348,7 @@ export async function runLoop(options) {
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
         testCmd: testCmdInput(testCmdText, testCmdTimeout),
         reviewerSandbox: sandboxMode,
+        requiredCheckSourceUnreadable: compareHead !== null || undeclaredPr !== null,
         ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
         gh,
         readTimeoutMs,

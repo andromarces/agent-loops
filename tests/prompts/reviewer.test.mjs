@@ -301,6 +301,23 @@ test("reviewer prompt carries no status line without a read", () => {
   expect(reviewerPrompt("review the change")).not.toContain(FAILING_READ.summary);
 });
 
+// Usefulness: verifies a named PR with no readable status must not accept on a targeted test
+// alone. A run with no PR, and a readable status, stay unchanged (issue #1391).
+test("reviewer prompt requires full-suite evidence only when a named PR status is unreadable", () => {
+  const rule = "When no readable required-check status covers the reviewed head";
+  expect(reviewerPrompt("check the fix")).not.toContain(rule);
+  const readable = { pr: 42, status: "pass", checks: ["ci"], summary: "passing required checks" };
+  expect(reviewerPrompt("check the fix", readable)).not.toContain(rule);
+  const unreadable = reviewerPrompt("check the fix", UNREADABLE_READ);
+  expect(unreadable).toContain(rule);
+  expect(unreadable).toContain(
+    "Run a full test suite through the test slot wrapper, or read every check on the reviewed head.",
+  );
+  expect(unreadable).toContain("A targeted test run alone does not support an accept.");
+  const compareHead = reviewerPrompt("check the fix", null, null, null, null, null, true);
+  expect(compareHead).toContain(rule);
+});
+
 // Usefulness: verifies a supplied status is marked advisory with the finish gate
 // named as the enforcement point, because the runtime reads the head and the
 // checks in separate calls, so a head that advances and returns between them

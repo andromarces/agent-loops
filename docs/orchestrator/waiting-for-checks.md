@@ -1,6 +1,6 @@
 # Waiting for required checks
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before a run that ends with `--require-ci` dispatches its reviewer, and when a reviewer reports a pending required check. Read it when a required check fails on a known flaky test. Read it when `wait-checks` returns an error, `noRequiredChecks`, or `noCheckSource`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before a run that ends with `--require-ci` or `--compare-head` waits for checks, and when a reviewer reports a pending required check. Read it when a required check fails on a known flaky test. Read it when `wait-checks` returns an error, `noRequiredChecks`, or `noCheckSource`.
 
 ## Waiting for required checks
 
@@ -265,11 +265,17 @@ returns `timedOut: true` and an empty `checks`, which is never a pass. A
 repository with no CI workflow therefore waits the full `--timeout` before it
 returns, unless `noCheckSource` ends the wait, as stated below.
 
+An empty `checks` list with `timedOut: true` on a PR with a merge conflict does not
+mean the repository has no CI. GitHub runs no `pull_request` workflow for a conflicted
+PR, so no check reports and the wait reaches its bound. Resolve the conflict, then run
+the `--all` wait again on the new head.
+
 Exit 1 with `no required checks reported on the '<branch>' branch` stays
 unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`
-or after the refusal above that no source states the required checks; when the
-required wait reads a required check, it stays the one to run. `--all` is
+or after the refusal above that no source states the required checks. A
+`--compare-head` run takes the same path, so it runs `--all` after that refusal.
+When the required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 

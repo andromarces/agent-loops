@@ -17,7 +17,7 @@ Reference sections list below names each file and when to read it.
 - Never implement changes, never review code yourself, never run tests, never
   open child transcripts.
 - The one exception is a pull request check status read, which a run that ends
-  with `--require-ci` allows, as the [waiting rules](orchestrator/waiting-for-checks.md) state. A status read is
+  with `--require-ci` or `--compare-head` allows, as the [waiting rules](orchestrator/waiting-for-checks.md) state. A status read is
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
@@ -411,7 +411,7 @@ of this file.
 - [Codex reviewer sandbox mode](orchestrator/reviewer-sandbox.md): read it when the run uses a
   Codex reviewer, sets `--reviewer-sandbox`, or halts on a reviewer mutation.
 - [Waiting for required checks](orchestrator/waiting-for-checks.md): read it before a run that ends
-  with `--require-ci` dispatches its reviewer, and when a reviewer reports a pending required check.
+  with `--require-ci` or `--compare-head` waits for checks, and when a reviewer reports a pending required check.
   Read it when a required check fails on a known flaky test. Read it when `wait-checks` returns an
   error, `noRequiredChecks`, or `noCheckSource`.
 - [Declaring the PR when a worker opens it](orchestrator/pr-declaration.md): read it when the PR
@@ -630,6 +630,12 @@ A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a 
 whose required-check sources are unreadable (#301, #1098). The runtime reads the PR head and
 state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
 reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged.
+
+Before a finish with `--compare-head`, run the required wait on the reviewed head first.
+When that wait refuses because no source can state the required checks, run
+`agent-loop role wait-checks --all` on the same head. A pending or failing check goes into
+`notDone` or blocks the finish. The runtime reads no check result for that finish, so the
+wait is the only check evidence.
 
 The runtime
 reads no required-check source or check result and claims none, so `verified` still states what
