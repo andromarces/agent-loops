@@ -162,6 +162,42 @@ export function initTaskBlock(task) {
 export const tempPathRule = (place, literalExample = "") =>
   `When a temporary path outside the ${place} is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory${literalExample}, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.`;
 
+/**
+ * The temporary-file removal rule of the worker and reviewer prompts. `place` names the tree that
+ * the temporary path lies outside of, and `example` optionally adds one example sentence.
+ */
+export const tempRemovalRule = (place, example = "") =>
+  `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}, and name in Notes any that you could not remove.${example}`;
+
+// Shared clauses of the probe-copy rule. Each clause appears once, and both variants interpolate it.
+const PROBE_JUNCTION = "with a junction on Windows or a symlink elsewhere";
+const PROBE_UNRESOLVED = "report the probe as unresolved in Checks.";
+const INSTALLED_BINARY = "call the installed binary directly";
+const NO_DEPENDENCY_INSTALL = "dependency install, repair, or update";
+const SHARED_PACKAGE_STORE = "the shared package store";
+
+// The dependency directory name is the only place-dependent word in the link sentence.
+const PROBE_DEPENDENCY = {
+  "work tree": "`node_modules`",
+  repository: "dependency directory",
+};
+
+const probeLink = (place) =>
+  `link the ${PROBE_DEPENDENCY[place]} of the work tree into the copy, ${PROBE_JUNCTION}`;
+
+const probeCopyText = {
+  "work tree": (place) =>
+    `When a probe copies the repository, for example to run old source, ${probeLink(place)}, and run no ${NO_DEPENDENCY_INSTALL} there. A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`, and every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}, because pnpm installs from its dependency check by default.`,
+  repository: (place) =>
+    `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: ${probeLink(place)}, before a tool runs there. When the copy cannot link it, ${PROBE_UNRESOLVED} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
+};
+
+/**
+ * The probe-copy dependency rule of the worker and reviewer prompts. `place` selects the wording
+ * that the prompt for that tree carries.
+ */
+export const probeCopyRule = (place) => probeCopyText[place](place);
+
 /** What a pull request body describes. The worker and orchestrator prompts share it. */
 export const PR_BODY_SCOPE =
   "The body describes only the committed or published repository state and names no untracked file, local-only change, local probe, or machine-specific path.";

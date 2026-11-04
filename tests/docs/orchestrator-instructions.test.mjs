@@ -1154,7 +1154,7 @@ test.each([
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
-  ["reviewer prompt", async () => reviewerPrompt("x", null, null, "workspace-write")],
+  ["reviewer prompt", async () => reviewerPrompt({ prompt: "x", sandboxMode: "workspace-write" })],
   [
     "orchestrator prompt",
     async () => initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "workspace-write" }),
@@ -1199,12 +1199,15 @@ test.each([
   ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
-  ["no-mode reviewer prompt", async () => reviewerPrompt("x", null, null, null)],
-  ["no-sandbox reviewer prompt", async () => reviewerPrompt("x", null, null, "none")],
-  ["read-only reviewer prompt", async () => reviewerPrompt("x", null, null, "read-only")],
+  ["no-mode reviewer prompt", async () => reviewerPrompt({ prompt: "x", sandboxMode: null })],
+  ["no-sandbox reviewer prompt", async () => reviewerPrompt({ prompt: "x", sandboxMode: "none" })],
+  [
+    "read-only reviewer prompt",
+    async () => reviewerPrompt({ prompt: "x", sandboxMode: "read-only" }),
+  ],
   [
     "workspace-write reviewer prompt",
-    async () => reviewerPrompt("x", null, null, "workspace-write"),
+    async () => reviewerPrompt({ prompt: "x", sandboxMode: "workspace-write" }),
   ],
 ])("%s qualifies every network denial", async (_name, load) => {
   expect(unqualifiedDenials(await load())).toEqual([]);
@@ -1344,7 +1347,7 @@ test("every copy of the constructed-input bar states the same classification and
   // supply the sentence for another.
   const { prompt } = await readParentTexts();
   const texts = {
-    reviewer: reviewerPrompt("check the fix"),
+    reviewer: reviewerPrompt({ prompt: "check the fix" }),
     "docs/orchestrator-instructions.md": await readFile(instructionsPath, "utf8"),
     "docs/orchestrator/reviewer-evidence.md": await readFile(
       join(referenceSectionsDir, "reviewer-evidence.md"),

@@ -290,15 +290,12 @@ export async function runChild(options) {
           invokeWithTask(
             true,
             (first, turnTask) =>
-              reviewerPrompt(
-                TASK_ONLY_REVIEW,
-                null,
-                null,
-                sandbox,
-                turnTask,
-                null,
+              reviewerPrompt({
+                prompt: TASK_ONLY_REVIEW,
+                sandboxMode: sandbox,
+                task: turnTask,
                 requiredCheckSourceUnreadable,
-              ),
+              }),
             { countFailure: false },
           ),
         { signal },
@@ -518,15 +515,15 @@ export async function runChild(options) {
               if (testRun) reportLateChangedPaths(testRun, before);
               prChecks = await readStatus(reviewed);
               return runFn((first, turnTask) =>
-                reviewerPrompt(
+                reviewerPrompt({
                   prompt,
                   prChecks,
                   testRun,
-                  sandbox,
-                  turnTask,
+                  sandboxMode: sandbox,
+                  task: turnTask,
                   scratchDir,
                   requiredCheckSourceUnreadable,
-                ),
+                }),
               );
             },
             { signal },
