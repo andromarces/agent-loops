@@ -364,7 +364,7 @@ After that worker turn, run `wait-checks` again for the same head before the rev
 ## Headless loop waits
 
 The headless `agent-loop` command runs its own orchestrator and renders its own wait
-prompt ([ADR 0013](../../adr/0013-bound-the-headless-required-check-wait.md)). A `role` parent does not follow that prompt. It follows the wait
+prompt ([ADR 0013](https://github.com/andromarces/agent-loops/blob/main/adr/0013-bound-the-headless-required-check-wait.md)). A `role` parent does not follow that prompt. It follows the wait
 rules above, and it runs the wait itself.
 
 The `--require-ci` finish gate is the only check read that enforces; the advisory status read of a named PR does not. The gate refuses a finish while a required check is pending. A reviewer dispatch corrects that refusal.

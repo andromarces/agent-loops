@@ -123,7 +123,7 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   settles nothing, such as the Free-plan 403 (#301), the run stays undeclared and the
   runtime logs a warning that names the reason. The runtime then records the PR in
   a `pr-undeclared` transcript event and compares its head at finish, as
-  `--compare-head` does (#1111, [ADR 0053](../../adr/0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)): see the headless compare
+  `--compare-head` does (#1111, [ADR 0053](https://github.com/andromarces/agent-loops/blob/main/adr/0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)): see the headless compare
   below. A finish with `unresolvedCompare` is refused, because the compare resolves
   that head. A read that fails for another reason, such as a transport failure, warns
   and still declares the PR (#1097).

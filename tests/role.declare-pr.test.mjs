@@ -1,23 +1,69 @@
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the tests that switch it on, so no test here
+// starts a `git` process.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
 import { snapshot } from "../src/lib/snapshot.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
 import {
+  ACCEPT,
   cleanup,
   dispatchArgv,
+  dispatchReviewer,
+  finishCall,
+  initPrRun,
   readRepoState,
   recordingAdapter,
+  repos,
+  setup,
   startRun as startRunWith,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
-import { freePlanGh, PASSING_RUN, prGateGh, unreachableGh } from "./gh-doubles.mjs";
+import {
+  freePlanGh,
+  PASSING_RUN,
+  noRequiredCheckGh,
+  pagedApiArgs,
+  prChecksArgs,
+  prGateGh,
+  unreachableGh,
+} from "./gh-doubles.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit } from "./git-helpers.mjs";
 import { SUMMARY } from "./run-fixtures.mjs";
 
 afterEach(cleanup);
 afterEach(() => {
   vi.unstubAllEnvs();
 });
+afterEach(() => {
+  gitDouble.answer = null;
+});
+
+// A directory with a `.git` entry stands in for a repo, and `git` is answered
+// from memory. The test starts no `git` process.
+async function useCleanRepo() {
+  const repo = await mkdtemp(join(tmpdir(), "role-test-clean-repo-"));
+  await mkdir(join(repo, ".git"));
+  repos.push(repo);
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+}
 
 const declareArgv = (pr, ...flags) => [
   "declare-pr",
@@ -190,4 +236,100 @@ test("declare-pr proceeds on a readable repository and on a failed read", async 
   const failed = await startRun();
   expect((await declareWith(failed.repo, unreachableGh())).exitCode).toBe(0);
   expect((await readRepoState(failed.repo)).pr).toBe(42);
+});
+
+// The finishes below run on a repo whose `git` is answered from memory. A
+// declared run with one accepted reviewer turn takes about twenty `git`
+// processes to reach the finish: a repo, then a snapshot around each turn. A
+// loaded Windows runner outlasted a test limit on that before the finish under
+// test started (issue #385). The `role` code is real: the double replaces only
+// the `git` child. Thus the dispatches, the snapshots, and the finish gate all
+// run over the answers.
+
+// Snapshot behavior against a real repo keeps its own tests. A directory stands
+// in for the repo: the double answers for it, so it needs no `git` setup.
+async function useDeclaredPrRun() {
+  const repo = await useCleanRepo();
+  await initPrRun(repo, 42);
+  return { repo, head: CLEAN_REPO_HEAD };
+}
+
+async function useAcceptedPrRun() {
+  const run = await useDeclaredPrRun();
+  await dispatchReviewer(run.repo, ACCEPT);
+  return run;
+}
+
+describe("finish on a run that declares a PR", () => {
+  // Usefulness: verifies a declared run finishes on a base branch with no required
+  // check, and records the absence in the envelope and the state file. Thus a
+  // finish that verified no check stays distinguishable from one that verified a
+  // check (issue #336).
+  test("a declared PR finishes on a base branch with no required check", async () => {
+    await setup();
+    const { repo, head } = await useAcceptedPrRun();
+
+    const calls = [];
+    const result = await finishCall(repo, ["--require-ci", "42"], {
+      gh: noRequiredCheckGh(head, calls),
+    });
+    expect(result.exitCode).toBe(0);
+    // The absence rests on the two fixtures this double names, so a route that
+    // stops matching fails here instead of passing on a fallback.
+    expect(calls).toEqual([
+      pagedApiArgs("repos/owner/repo/rules/branches/main").join(" "),
+      prChecksArgs(42).join(" "),
+    ]);
+    expect(result.payload).toMatchObject({ noRequiredChecks: true });
+    const state = await readRepoState(repo);
+    expect(state.lifecycle).toBe("finished");
+    expect(state.noRequiredChecks).toBe(true);
+  });
+
+  // Usefulness: verifies a gated finish on a base branch that does require a check
+  // records no absence. Thus the field means the branch had none rather than that
+  // the gate ran (issue #336).
+  test("a gated finish records no absence when the base branch requires a check", async () => {
+    await setup();
+    const { repo, head } = await useAcceptedPrRun();
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
+    expect(result.exitCode).toBe(0);
+    expect(result.payload.noRequiredChecks).toBeUndefined();
+    expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
+  });
+
+  // Usefulness: verifies the same collect-then-report rule covers the completion
+  // rule. Thus a declared PR run learns about the unmet reviewer turn and the
+  // missing gate from one `finish` call (#302).
+  test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
+    await setup();
+    const { repo } = await useDeclaredPrRun();
+
+    const result = await finishCall(repo, ["--require-accept"], {
+      gh: async () => {
+        throw new Error("gh must not run: no gate was requested.");
+      },
+    });
+
+    const gate =
+      "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toBe(
+      `Finish refused: no reviewer turn after the latest worker turn; ${gate}.`,
+    );
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies a run that declares a PR and gates the same PR behaves as
+  // a gated run does today. Thus the declaration adds no second enforcement path
+  // (#302).
+  test("a declared PR with a matching gate finishes as the gate allows", async () => {
+    await setup();
+    const { repo, head } = await useAcceptedPrRun();
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
+    expect(result.exitCode).toBe(0);
+    expect((await readRepoState(repo)).lifecycle).toBe("finished");
+  });
 });

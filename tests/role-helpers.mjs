@@ -128,6 +128,56 @@ export async function startRun(options = {}) {
   return { repo, agents: await initRun(repo, options) };
 }
 
+export const GATE_SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
+export const ACCEPT =
+  "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\nVerdict: accept";
+export const REVIEW_ONLY_OVERRIDES = [
+  "--task",
+  "Review only.",
+  "--mode",
+  "review-only",
+  "--parent-session",
+  "parent-sess-1",
+  "--worker",
+  "fake1",
+  "--reviewer",
+  "fake2",
+];
+export const UNRESOLVED_SUMMARY = {
+  ...GATE_SUMMARY,
+  notDone: "PR head unresolved",
+  open: "PR head unresolved",
+  unresolvedCompare: true,
+};
+
+/** Finishes `repo` with a gate summary, optionally with extra flags and deps. */
+export function finishCall(repo, extra = [], deps = {}) {
+  return executeRoleCommand(withRepo(["finish", "--cwd", "<repo>", ...extra], repo), {
+    stdin: async () => JSON.stringify(GATE_SUMMARY),
+    ...deps,
+  });
+}
+
+/** Dispatches one reviewer turn in `repo` with `reply` as its answer. */
+export async function dispatchReviewer(repo, reply) {
+  return executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([reply]) },
+    stdin: stdinPrompt,
+  });
+}
+
+/** Initializes the standard worker run in `repo`. */
+export async function initWorkerRun(repo) {
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+}
+
+/** Initializes a worker run in `repo` that declares PR `pr`. */
+export async function initPrRun(repo, pr) {
+  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", String(pr)]), repo), {
+    ...basicDeps(),
+  });
+}
+
 const defaultAgents = () => ({ fake1: recordingAdapter([]), fake2: recordingAdapter([]) });
 
 export async function cleanup() {

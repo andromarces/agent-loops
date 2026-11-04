@@ -10,7 +10,7 @@ import {
   cliCommandForms,
 } from "./report.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
-import { pickTurnEvidence } from "../child-turn.mjs";
+import { turnResultFields, TURN_EVIDENCE_FIELDS } from "../lib/turn-evidence.mjs";
 import { agentHas } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
@@ -583,21 +583,21 @@ export function resultPrompt({
     role: result.role,
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
-    // A failure the provider is expected to clear, such as a model capacity reply (issue #1012).
-    ...(result.transient ? { transient: result.transient } : {}),
-    ...(result.reviewed ? { reviewed: result.reviewed } : {}),
-    ...(result.workTree ? { workTree: result.workTree } : {}),
-    // The status the runtime read for a declared PR, so the orchestrator holds
-    // both it and the reviewer `Checks` line in one prompt and can compare them
-    // (#320). A result with no read carries no field, so a turn that made no
-    // read cannot be read as one that did.
-    ...(result.prChecks ? { prChecks: result.prChecks } : {}),
-    // The evidence fields, among them the test command result the runtime ran before the reviewer
-    // turn (ADR 0017), beside the reviewer response for the same comparison.
-    ...pickTurnEvidence(result),
-    // A child turn whose adapter saw a refused tool call (ADR 0035), so a headless parent
-    // holds what a `role dispatch` envelope carries. A turn with no denial carries no field.
-    ...(result.shellDenied ? { shellDenied: true } : {}),
+    // The common turn-result fields follow, in prompt order. They are a transient failure the
+    // provider is expected to clear (issue #1012), the reviewer state, and the work tree state.
+    // They also carry the PR check status (#320), the evidence fields (ADR 0017), and a refused
+    // tool call (ADR 0035). A result with no read carries no field, so a turn that made no read
+    // cannot be read as one that did. The evidence fields include the test command result the
+    // runtime ran before the reviewer turn, beside the reviewer response for the same comparison.
+    // A headless parent holds what a `role dispatch` envelope carries.
+    ...turnResultFields(result, [
+      "transient",
+      "reviewed",
+      "workTree",
+      "prChecks",
+      ...TURN_EVIDENCE_FIELDS,
+      "shellDenied",
+    ]),
     ...(declaredPr === null ? {} : { declaredPr }),
     ...(undeclaredPr === null ? {} : { undeclaredPr }),
     stepsUsed,

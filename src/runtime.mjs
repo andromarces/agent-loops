@@ -7,7 +7,8 @@ import {
   unreadableGateRefusal,
 } from "./lib/args.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, unreadableGateReason } from "./lib/ci-gate.mjs";
+import { unreadableGateReason } from "./lib/ci-gate.mjs";
+import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
 import { evaluateFinish } from "./finish-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn, logWarnFull } from "./lib/log.mjs";
@@ -20,13 +21,12 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
+import { invoke, runChild } from "./child-turn.mjs";
 import {
   failedTurnEvidence,
-  invoke,
   pickTurnEvidence,
-  runChild,
   TURN_EVIDENCE_EVENTS,
-} from "./child-turn.mjs";
+} from "./lib/turn-evidence.mjs";
 import { decide } from "./orchestrator.mjs";
 import { testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";

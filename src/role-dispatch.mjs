@@ -33,7 +33,12 @@ import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
 import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
-import { failedTurnEvidence, pickTurnEvidence, runChild } from "./child-turn.mjs";
+import { runChild } from "./child-turn.mjs";
+import {
+  failedTurnEvidence,
+  turnResultFields,
+  TURN_EVIDENCE_FIELDS,
+} from "./lib/turn-evidence.mjs";
 import {
   normalizedLocalPaths,
   rejectInitFlagChanges,
@@ -618,33 +623,24 @@ function dispatchPayload(roleName, result) {
       role: roleName,
       status: "error",
       error: result.error,
-      ...(result.transient ? { transient: result.transient } : {}),
-      ...pickTurnEvidence(result),
+      ...turnResultFields(result, ["transient", ...TURN_EVIDENCE_FIELDS]),
     };
   }
   const report = parseReportBlock(result.response);
-  const payload = { role: roleName, status: "ok", report };
-  if (result.shellDenied) {
-    payload.shellDenied = true;
-  }
-  // The work tree state the runtime read after a worker turn (issue #910). It is not the reviewer
-  // `reviewed` field, which the finish gate reads.
-  if (result.workTree) {
-    payload.workTree = result.workTree;
-  }
-  Object.assign(payload, pickTurnEvidence(result));
+  // The fields the dispatch envelope shares with the result prompt. `workTree` is the worker state
+  // the runtime read after the turn (#910), not the reviewer `reviewed` field. A reviewer
+  // `prChecks` is the status the runtime read for a declared PR (#320). The state file keeps it
+  // beside the response in `lastResult`. The turn history entry keeps its fixed shape (ADR 0008),
+  // so the status is not recorded there.
+  const payload = {
+    role: roleName,
+    status: "ok",
+    report,
+    ...turnResultFields(result, ["shellDenied", "workTree", ...TURN_EVIDENCE_FIELDS]),
+  };
   if (roleName === "reviewer") {
     payload.verdict = parseVerdict(result.response);
-    if (result.reviewed) {
-      payload.reviewed = result.reviewed;
-    }
-    // The required-check status the runtime read for a declared PR, so the
-    // parent can compare it with the reviewer Checks line (#320). The state file
-    // keeps it beside the response in `lastResult`. The turn history entry keeps
-    // its fixed shape (ADR 0008), so the status is not recorded there.
-    if (result.prChecks) {
-      payload.prChecks = result.prChecks;
-    }
+    Object.assign(payload, turnResultFields(result, ["reviewed", "prChecks"]));
   }
   if (!report) {
     payload.raw = result.response;
