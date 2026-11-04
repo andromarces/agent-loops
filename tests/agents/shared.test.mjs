@@ -47,6 +47,19 @@ test("boundedDetail flattens to one line and counts the ellipsis inside the limi
   expect(boundedDetail("short\n text", limit)).toBe("short text");
 });
 
+// Usefulness: verifies the bound holds below the ellipsis length too (issue #1407), so a small
+// limit cannot produce output longer than the limit it names.
+test("boundedDetail never exceeds a limit shorter than the ellipsis", () => {
+  expect(boundedDetail("abcd", 3)).toBe("...");
+  expect(boundedDetail("abcd", 2)).toBe("..");
+  expect(boundedDetail("abcd", 1)).toBe(".");
+  expect(boundedDetail("abcd", 0)).toBe("");
+
+  for (const limit of [0, 1, 2, 3, 4, 5]) {
+    expect(boundedDetail("abcdef", limit).length).toBeLessThanOrEqual(limit);
+  }
+});
+
 const CLOSING = "Conclusion: c.\nWhy: w.\nBlockers: none";
 
 // Usefulness: pins the selection rule the Codex and Copilot adapters share (issue #449): the last message that holds a closing block attempt wins, parseable or not, and a turn with none keeps the last message.

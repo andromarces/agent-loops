@@ -196,13 +196,22 @@ export function asSessionId(value) {
 
 /**
  * Flattens `text` to one line and keeps at most `limit` characters, the ellipsis included, so the
- * result never exceeds the limit.
+ * result never exceeds the limit. A limit below the ellipsis length keeps a prefix of the ellipsis.
  */
 export function boundedDetail(text, limit) {
   const flat = String(text ?? "")
     .replace(/\s+/g, " ")
     .trim();
-  return flat.length > limit ? `${flat.slice(0, limit - 3)}...` : flat;
+  if (flat.length <= limit) {
+    return flat;
+  }
+  if (limit <= 0) {
+    return "";
+  }
+  if (limit < 3) {
+    return "...".slice(0, limit);
+  }
+  return `${flat.slice(0, limit - 3)}...`;
 }
 
 /**
