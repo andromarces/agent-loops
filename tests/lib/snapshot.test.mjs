@@ -23,6 +23,7 @@ import {
   BOUND_KILL_TEST_TIMEOUT_MS,
   expectAbortKillsShim,
   expectBoundKillsShim,
+  processExists,
   withGitHangingAfter,
 } from "../process-helpers.mjs";
 
@@ -190,7 +191,7 @@ test.skipIf(process.platform === "win32")(
         expect(error).toBeInstanceOf(SnapshotError);
         expect(error.isCanceled).toBe(true);
         expect(error.message).toMatch(/not captured/);
-        expect(() => process.kill(pid, 0)).toThrow();
+        expect(processExists(pid)).toBe(false);
       });
     } finally {
       await removePath(repo);

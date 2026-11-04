@@ -1,6 +1,10 @@
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
-import { cleanRepoGit, untrackedFilesGit } from "./git-helpers.mjs";
+import { exists, removePath } from "./fs-helpers.mjs";
+import { cleanRepoGit, createTempRepo, untrackedFilesGit } from "./git-helpers.mjs";
 
 const options = { cwd: tmpdir() };
 const expected = ["rev-parse", "--verify", "-q", "HEAD"];
@@ -26,4 +30,33 @@ test("untrackedFilesGit error for a merged-argument call differs from the expect
   const error = await untrackedFilesGit("git", merged, options).catch((caught) => caught);
   expect(error.message).toContain("unexpected git call");
   expect(error.message).not.toBe(`unexpected git call: ${expected.join(" ")}`);
+});
+
+// Usefulness: (#1417) a copy owns its `.git`; a changed config, hook, or ref in one case
+// reaches no other copy.
+test("a change in one temporary repository reaches no other copy", async () => {
+  const first = await createTempRepo();
+  const second = await createTempRepo();
+  let third;
+  try {
+    await execa("git", ["config", "user.name", "Changed"], { cwd: first });
+    await writeFile(join(first, ".git", "hooks", "pre-commit"), "#!/bin/sh\n");
+    await writeFile(join(first, "extra.txt"), "x\n");
+    await execa("git", ["add", "extra.txt"], { cwd: first });
+    await execa("git", ["commit", "-m", "extra"], { cwd: first });
+    third = await createTempRepo();
+
+    for (const repo of [second, third]) {
+      expect(await exists(join(repo, ".git", "objects", "info", "alternates"))).toBe(false);
+      expect(await exists(join(repo, "extra.txt"))).toBe(false);
+      expect(await exists(join(repo, ".git", "hooks", "pre-commit"))).toBe(false);
+      expect((await execa("git", ["config", "user.name"], { cwd: repo })).stdout).toBe("Tester");
+      expect((await execa("git", ["log", "--format=%s"], { cwd: repo })).stdout).toBe("init");
+      expect(await readFile(join(repo, ".git", "config"), "utf8")).not.toContain(first);
+    }
+  } finally {
+    await removePath(first);
+    await removePath(second);
+    if (third !== undefined) await removePath(third);
+  }
 });

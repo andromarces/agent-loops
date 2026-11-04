@@ -158,7 +158,7 @@ test.each([
       process.emit("SIGINT");
       process.emit("SIGINT");
       expect(order).toEqual(["write", "exit 130"]);
-      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), {
+      await vi.waitFor(() => expect(processExists(pid)).toBe(false), {
         timeout: 5000,
         interval: 100,
       });

@@ -1,11 +1,14 @@
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
 import { redactEnvSecrets } from "../lib/redact.mjs";
-import { exec, execFailureCause } from "../lib/exec.mjs";
+import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import {
   asSessionId,
   assertResumedSession,
+  boundedDetail,
   childRan,
+  failureMessage as sharedFailureMessage,
+  isNonEmptyString,
   keepFailedSessionId,
   markCapacityFailure,
   recordResolvedModel,
@@ -14,7 +17,7 @@ import {
   throwIfCanceled,
   turnExecOptions,
 } from "./shared.mjs";
-import { isNonEmptyString, joinTextParts } from "./opencode-text.mjs";
+import { joinTextParts } from "./opencode-text.mjs";
 
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
@@ -338,13 +341,13 @@ function setUsage(state, events) {
  * left behind names a provider error that is not why the turn died (#326).
  */
 function failureMessage(err, events, timeout) {
-  const cause = execFailureCause("opencode", err, timeout);
-
-  if (cause) {
-    return cause;
-  }
-
-  return `opencode exited with code ${err.exitCode}: ${lastErrorDetail(events) || NO_DETAIL}`;
+  return sharedFailureMessage({
+    agent: "opencode",
+    err,
+    timeout,
+    detail: lastErrorDetail(events),
+    noDetail: NO_DETAIL,
+  });
 }
 
 /** Returns whether a stream value is a token count or a cost: a finite, non-negative number. */
@@ -399,22 +402,13 @@ function providerDetail(error) {
   }
 
   const detail = [type, message].filter(Boolean).join(": ");
-  return boundedLine(status === undefined ? detail : `${detail} (status ${status})`, DETAIL_LIMIT);
+  return boundedDetail(
+    status === undefined ? detail : `${detail} (status ${status})`,
+    DETAIL_LIMIT,
+  );
 }
 
 /** Returns the byte count of a stream, for a debug line that carries size and not content. */
 function byteLength(text) {
   return Buffer.byteLength(text ?? "");
-}
-
-/**
- * Flattens `text` to one line and keeps at most `limit` characters of it. The bound is what stops a
- * long provider message from reaching the envelope.
- */
-function boundedLine(text, limit) {
-  const flat = String(text ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return flat.length > limit ? `${flat.slice(0, limit)}...` : flat;
 }

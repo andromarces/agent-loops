@@ -1,19 +1,28 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { vi } from "vite-plus/test";
+import { afterAll, vi } from "vite-plus/test";
 import { removePath } from "./fs-helpers.mjs";
 
-/**
- * Creates a temporary git repository with one initial commit (`init.txt`).
- * Side effect: leaves a directory in the OS temp dir; callers must remove it
- * with `removePath`.
- */
-export async function createTempRepo() {
-  const dir = await mkdtemp(join(tmpdir(), "runtime-test-repo-"));
+// One seeded repository per test file, copied for each case. Vitest isolates modules per
+// file, so a module-level template gives one seed per file. A copy holds its own `.git`,
+// with no alternates file and no path to the template. A change in a copy therefore
+// reaches neither the template nor another copy. The file's `afterAll` removes the
+// template.
+let templatePromise;
+const templateDirs = [];
+
+function templateRepo() {
+  templatePromise ??= seedTemplate();
+  return templatePromise;
+}
+
+async function seedTemplate() {
+  const dir = await mkdtemp(join(tmpdir(), "runtime-test-template-"));
+  templateDirs.push(dir);
   await execa("git", ["init"], { cwd: dir });
   await execa("git", ["config", "user.name", "Tester"], { cwd: dir });
   await execa("git", ["config", "user.email", "test@example.com"], { cwd: dir });
@@ -23,12 +32,32 @@ export async function createTempRepo() {
   return dir;
 }
 
+afterAll(async () => {
+  templatePromise = undefined;
+  for (const dir of templateDirs.splice(0)) {
+    await removePath(dir);
+  }
+});
+
+/**
+ * Creates a temporary git repository with one initial commit (`init.txt`). Copies the
+ * seeded template of this test file. Side effect: leaves a directory in the OS temp dir;
+ * callers must remove it with `removePath`.
+ */
+export async function createTempRepo() {
+  const template = await templateRepo();
+  const dir = await mkdtemp(join(tmpdir(), "runtime-test-repo-"));
+  await cp(template, dir, { recursive: true });
+  return dir;
+}
+
 /**
  * Creates a main work tree with one commit and a linked work tree on a new
- * branch `run`, both under one temp directory. `ignore` lines go to the shared
- * `.git/info/exclude`. `seed(main)` runs after the first commit and before the
- * linked work tree exists. `mainName` and `linkedName` name the two directories.
- * Callers remove `base` with `removePath`.
+ * branch `run`, both under one temp directory. Copies the seeded template of this
+ * test file, then adds the linked work tree per case, because its `.git` file holds an
+ * absolute path. `ignore` lines go to the shared `.git/info/exclude`. `seed(main)` runs
+ * after the first commit and before the linked work tree exists. `mainName` and
+ * `linkedName` name the two directories. Callers remove `base` with `removePath`.
  */
 export async function createLinkedWorkTree({
   ignore = [],
@@ -36,16 +65,11 @@ export async function createLinkedWorkTree({
   mainName = "main",
   linkedName = "linked",
 } = {}) {
+  const template = await templateRepo();
   const base = await mkdtemp(join(tmpdir(), "linked-test-"));
   const main = join(base, mainName);
   const linked = join(base, linkedName);
-  await mkdir(main);
-  await execa("git", ["init"], { cwd: main });
-  await execa("git", ["config", "user.name", "Tester"], { cwd: main });
-  await execa("git", ["config", "user.email", "test@example.com"], { cwd: main });
-  await writeFile(join(main, "init.txt"), "hello\n");
-  await execa("git", ["add", "init.txt"], { cwd: main });
-  await execa("git", ["commit", "-m", "init"], { cwd: main });
+  await cp(template, main, { recursive: true });
   await writeFile(join(main, ".git", "info", "exclude"), `${ignore.join("\n")}\n`);
   await seed(main);
   await execa("git", ["worktree", "add", linked, "-b", "run"], { cwd: main });

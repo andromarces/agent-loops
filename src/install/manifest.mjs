@@ -201,10 +201,19 @@ export async function readManifest(home) {
   return { version: MANIFEST_VERSION, harnesses: value.harnesses };
 }
 
+/**
+ * Writes the manifest unless the file already holds the same serialized bytes.
+ * The caller must hold the manifest lock: a compare-then-write outside the lock
+ * could drop a concurrent update.
+ */
 export async function writeManifest(home, manifest) {
   const path = manifestPath(home);
+  const text = `${JSON.stringify(manifest, null, 2)}\n`;
+  if ((await readTextOrNull(path)) === text) {
+    return;
+  }
   await mkdir(dirname(path), { recursive: true });
-  await writeTextAtomic(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeTextAtomic(path, text);
 }
 
 /** Deletes the manifest and its now-empty directory once no harness is recorded. */

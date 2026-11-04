@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
@@ -198,6 +198,30 @@ test("a malformed manifest stops install and uninstall with no file change", asy
     expect(await readText(manifestPath(home)), label).toBe(manifestBefore);
     expect(await readText(sentinel), label).toBe("keep\n");
   }
+});
+
+// Usefulness: verifies #1410 — a first install records ownership by writing the
+// manifest, and an identical reinstall leaves that file untouched, so its
+// modification time still names the first install.
+test("an identical reinstall leaves the manifest modification time unchanged", async () => {
+  const home = await makeHome();
+  const path = manifestPath(home);
+  const options = { harnesses: ["claude"], home, packageRoot: PACKAGE_ROOT };
+
+  await install(options);
+  expect(existsSync(path)).toBe(true);
+  const installed = await readText(path);
+
+  // A timestamp no second install can produce tells a skipped write apart from a
+  // rewrite that lands in the same clock tick.
+  const settled = new Date("2000-01-01T00:00:00.000Z");
+  await utimes(path, settled, settled);
+  const before = (await stat(path)).mtimeMs;
+
+  await install(options);
+
+  expect(await readText(path)).toBe(installed);
+  expect((await stat(path)).mtimeMs).toBe(before);
 });
 
 // Usefulness: verifies #157 — the uninstall CLI reports a clear manifest error

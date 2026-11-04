@@ -45,7 +45,7 @@ Issue #1351 records that the removal doc forbids a manual unlock, so a terminal 
 
 ## Authors
 
-- andromarces
+- Andro Marces
 
 ## Links
 

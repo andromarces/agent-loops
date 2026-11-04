@@ -21,13 +21,12 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
+import { invoke, runChild } from "./child-turn.mjs";
 import {
   failedTurnEvidence,
-  invoke,
   pickTurnEvidence,
-  runChild,
   TURN_EVIDENCE_EVENTS,
-} from "./child-turn.mjs";
+} from "./lib/turn-evidence.mjs";
 import { decide } from "./orchestrator.mjs";
 import { testCmdInput } from "./lib/test-cmd.mjs";
 import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
