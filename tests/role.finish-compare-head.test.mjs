@@ -86,8 +86,8 @@ describe("finish --compare-head", () => {
     };
 
   // Usefulness: verifies requirement "a matching clean head records a verified compare that differs
-  // from unresolvedCompare" (#1098), and that the compare reads the PR head and no required-check
-  // source, so it works where those sources are unreadable.
+  // from unresolvedCompare" (#1098). It also verifies that the compare reads the PR head and no
+  // required-check source, so it works where those sources are unreadable.
   test("a matching clean head records headCompare verified after one PR read", async () => {
     await setup();
     const repo = await useCleanRepo();
@@ -129,8 +129,8 @@ describe("finish --compare-head", () => {
     expect(state).not.toHaveProperty("headCompare");
   });
 
-  // Usefulness: verifies a closed PR with an unchanged head refuses the compare (#1111), because the
-  // head alone cannot tell an open PR from one that left the open list.
+  // Usefulness: verifies a closed PR with an unchanged head refuses the compare (#1111). The head
+  // alone cannot tell an open PR from one that left the open list.
   test("a closed PR with a matching head refuses and keeps the run active", async () => {
     await setup();
     const repo = await useCleanRepo();

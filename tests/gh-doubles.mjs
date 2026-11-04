@@ -66,12 +66,13 @@ export const gateReadCalls = (head) => [
 ];
 
 // The GitHub state reads the shared `checkCi` gate makes, named by the argument
-// that identifies each one. A refused finish must read none of them, so the
+// that identifies each one. A refused finish must read none of them. The
 // assertion names the gate's own reads rather than subtracting whatever else the
 // run happens to call. The runtime status read makes the same reads for the
 // reviewed commit (issue #349).
 // Matched as a prefix of the call, because the gate passes extra arguments to
-// several of them (`api repos/{slug}/...` and the field list on its PR view).
+// several of them. Those arguments are `api repos/{slug}/...` and the field list
+// on its PR view.
 const GATE_READ_PREFIXES = [
   "repo view",
   "rules/branches",

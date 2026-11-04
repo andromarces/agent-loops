@@ -1347,8 +1347,8 @@ test("initialPrompt tells the worker to push only with a named refspec", () => {
 });
 
 // Usefulness: verifies the headless wait bound follows the turn --timeout the run
-// was started with, so a wait the orchestrator runs ends before the turn does and
-// the run cannot end on exit 1 with no action (issue #348).
+// was started with. Thus a wait the orchestrator runs ends before the turn does,
+// and the run cannot end on exit 1 with no action (issue #348).
 test("the orchestrator prompt states a wait bound below the run's turn timeout", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -1379,8 +1379,8 @@ test("the orchestrator prompt states a wait bound below the run's turn timeout",
 });
 
 // Usefulness: verifies a run whose turn --timeout is too short for any bounded
-// wait tells the orchestrator not to wait, instead of a wait the turn cannot
-// hold (issue #348).
+// wait tells the orchestrator not to wait. Such a run gets no wait the turn
+// cannot hold (issue #348).
 test("the orchestrator prompt names no wait when the turn timeout is too short", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();

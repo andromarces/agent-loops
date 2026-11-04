@@ -240,13 +240,14 @@ test("declare-pr proceeds on a readable repository and on a failed read", async 
 
 // The finishes below run on a repo whose `git` is answered from memory. A
 // declared run with one accepted reviewer turn takes about twenty `git`
-// processes to reach the finish (a repo, then a snapshot around each turn), and a
+// processes to reach the finish: a repo, then a snapshot around each turn. A
 // loaded Windows runner outlasted a test limit on that before the finish under
 // test started (issue #385). The `role` code is real: the double replaces only
-// the `git` child, so the dispatches, the snapshots, and the finish gate all run
-// over the answers. Snapshot behavior against a real repo keeps its own tests.
-// A directory stands in for the repo: the double answers for it, so it needs no
-// `git` setup.
+// the `git` child. Thus the dispatches, the snapshots, and the finish gate all
+// run over the answers.
+
+// Snapshot behavior against a real repo keeps its own tests. A directory stands
+// in for the repo: the double answers for it, so it needs no `git` setup.
 async function useDeclaredPrRun() {
   const repo = await useCleanRepo();
   await initPrRun(repo, 42);
@@ -261,9 +262,9 @@ async function useAcceptedPrRun() {
 
 describe("finish on a run that declares a PR", () => {
   // Usefulness: verifies a declared run finishes on a base branch with no required
-  // check, and records the absence in the envelope and the state file, so a finish
-  // that verified no check stays distinguishable from one that verified a check
-  // (issue #336).
+  // check, and records the absence in the envelope and the state file. Thus a
+  // finish that verified no check stays distinguishable from one that verified a
+  // check (issue #336).
   test("a declared PR finishes on a base branch with no required check", async () => {
     await setup();
     const { repo, head } = await useAcceptedPrRun();
@@ -286,8 +287,8 @@ describe("finish on a run that declares a PR", () => {
   });
 
   // Usefulness: verifies a gated finish on a base branch that does require a check
-  // records no absence, so the field means the branch had none rather than that the
-  // gate ran (issue #336).
+  // records no absence. Thus the field means the branch had none rather than that
+  // the gate ran (issue #336).
   test("a gated finish records no absence when the base branch requires a check", async () => {
     await setup();
     const { repo, head } = await useAcceptedPrRun();
@@ -299,8 +300,8 @@ describe("finish on a run that declares a PR", () => {
   });
 
   // Usefulness: verifies the same collect-then-report rule covers the completion
-  // rule, so a declared PR run learns about the unmet reviewer turn and the missing
-  // gate from one `finish` call (#302).
+  // rule. Thus a declared PR run learns about the unmet reviewer turn and the
+  // missing gate from one `finish` call (#302).
   test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
     await setup();
     const { repo } = await useDeclaredPrRun();
@@ -321,7 +322,7 @@ describe("finish on a run that declares a PR", () => {
   });
 
   // Usefulness: verifies a run that declares a PR and gates the same PR behaves as
-  // a gated run does today, so the declaration adds no second enforcement path
+  // a gated run does today. Thus the declaration adds no second enforcement path
   // (#302).
   test("a declared PR with a matching gate finishes as the gate allows", async () => {
     await setup();

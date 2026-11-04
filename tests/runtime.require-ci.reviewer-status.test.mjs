@@ -30,13 +30,13 @@ import { equalsArgs, gateReads, pagedApiArgs, PASSING_RUN, prGateGh } from "./gh
 import { gateRoles, REVIEW_ACCEPT, SUMMARY } from "./run-fixtures.mjs";
 
 // Answers the runtime read of the required checks for PR 42 and the finish gate
-// from the shared gate fixture, with `runs` as the check runs of every commit.
+// from the shared gate fixture. `runs` is the check runs of every commit.
 const reviewerReadGh = (headRefOid, runs) => prGateGh(headRefOid, [], runs);
 
 // Usefulness: verifies a run that declares a PR supplies the required-check
-// status the runtime read to the reviewer turn and records that read in the
+// status the runtime read to the reviewer turn. It records that read in the
 // result, so a reviewer whose turn cannot reach the network still sees the
-// failing check and the parent can compare it with the reviewer Checks line
+// failing check. The parent can compare it with the reviewer Checks line
 // (issue #320).
 test("a declared PR supplies the runtime-read required-check status to the reviewer", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -53,7 +53,7 @@ test("a declared PR supplies the runtime-read required-check status to the revie
       pr: 42,
       requireCi: 42,
       // The check fails for the status read before the turn and passes for the finish
-      // gate after it, so the run can finish while the reviewer holds the failure.
+      // gate after it. Thus the run can finish while the reviewer holds the failure.
       gh: (args, cwd, options) =>
         reviewerReadGh(head, [
           rev.recorded.length === 0 ? { ...PASSING_RUN, conclusion: "failure" } : PASSING_RUN,
@@ -83,8 +83,8 @@ test("a declared PR supplies the runtime-read required-check status to the revie
 });
 
 // Usefulness: verifies a headless run that takes only `--require-ci <pr>` supplies
-// the status for that PR to the reviewer, because a sandboxed reviewer cannot make
-// the read itself and the PR number is already a run input (issue #350).
+// the status for that PR to the reviewer. A sandboxed reviewer cannot make the
+// read itself, and the PR number is already a run input (issue #350).
 test("a gate-only run supplies the required-check status for the gated PR", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -125,8 +125,8 @@ test("a gate-only run supplies the required-check status for the gated PR", asyn
 });
 
 // Usefulness: verifies the supplied status is not a pass for a reviewed work tree
-// that is not clean, because `--require-ci` refuses that tree, so the runtime must
-// hand the status read the clean flag of the reviewed snapshot (issue #349).
+// that is not clean, because `--require-ci` refuses that tree. Thus the runtime
+// must hand the status read the clean flag of the reviewed snapshot (issue #349).
 test("a declared PR supplies no pass for a reviewed work tree that is not clean", async () => {
   const repo = await createTempRepo();
   try {
@@ -167,7 +167,7 @@ test("a declared PR supplies no pass for a reviewed work tree that is not clean"
 });
 
 // Usefulness: verifies a run that declares no PR reads no status and records
-// none, so the reviewer prompt never carries a read the runtime did not make
+// none. Thus the reviewer prompt never carries a read the runtime did not make
 // (issue #320).
 test("a run with no PR input reads no required-check status", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -209,9 +209,9 @@ test("a run with no PR input reads no required-check status", async () => {
 });
 
 // Usefulness: verifies a hung required-check read does not fail or halt the
-// dispatch, because the status is supplied evidence and the reviewer keeps its
-// own read, so a stalled `gh` must yield an unresolved status and a completed
-// reviewer turn (issue #320 review).
+// dispatch. The status is supplied evidence and the reviewer keeps its own read.
+// Thus a stalled `gh` must yield an unresolved status and a completed reviewer
+// turn (issue #320 review).
 test("a hung required-check read yields an unresolved status and a completed turn", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -230,7 +230,7 @@ test("a hung required-check read yields an unresolved status and a completed tur
       readTimeoutMs: 25,
       gh: (args, cwd, options) => {
         // Only the ruleset read stalls: the head resolves, so the read reaches the
-        // call a hung `gh` would hold open.
+        // call a hung `gh` holds open.
         if (
           rev.recorded.length === 0 &&
           equalsArgs(args, pagedApiArgs("repos/owner/repo/rules/branches/main"))
@@ -270,9 +270,9 @@ test("a hung required-check read yields an unresolved status and a completed tur
 });
 
 // Usefulness: verifies the gate-endpoint list the refusal assertions use covers
-// every endpoint the finish gate actually reads, because a list that omits one
-// lets a refused finish pass a GitHub read it should never make while the test
-// still reports no reads (issue #320 review, second round).
+// every endpoint the finish gate actually reads. A list that omits one lets a
+// refused finish pass a GitHub read it must never make. The test still reports no
+// reads in that case (issue #320 review, second round).
 test("the refusal assertion covers every endpoint the finish gate reads", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -299,8 +299,8 @@ test("the refusal assertion covers every endpoint the finish gate reads", async 
       },
     });
 
-    // Every call the run made is covered by the list the refusal tests assert on,
-    // so a refused finish cannot slip a gate read past them.
+    // Every call the run made is covered by the list the refusal tests assert on.
+    // Thus a refused finish cannot slip a gate read past them.
     const uncovered = calls.filter((key) => gateReads([key]).length === 0);
     expect(uncovered).toEqual([]);
     // The gate really does read several endpoints, so the list is not vacuous.

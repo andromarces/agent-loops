@@ -567,7 +567,7 @@ test.each([
 );
 
 // 52. Usefulness: verifies a run that declares a PR refuses a finish with no
-// `--require-ci` gate, so a declared PR run cannot finish through a field the
+// `--require-ci` gate. Thus a declared PR run cannot finish through a field the
 // parent set. A run without the declaration keeps the marker-only gap (#302).
 test("a run that declares a PR refuses a finish with no --require-ci gate", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -604,8 +604,8 @@ test("a run that declares a PR refuses a finish with no --require-ci gate", asyn
 
 // 53. Usefulness: verifies the same declaration refuses a finish that records the
 // unresolved compare, because the gate is what the declaration requires. A
-// recorded marker on a declared PR run would read as an accepted gap, so the
-// finish is refused instead (#302).
+// recorded marker on a declared PR run reads as an accepted gap, so the finish is
+// refused instead (#302).
 test("a run that declares a PR refuses a finish that carries unresolvedCompare", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -647,7 +647,7 @@ test("a run that declares a PR refuses a finish that carries unresolvedCompare",
 
 // 54. Usefulness: verifies the marker refusal fires on a declared PR run with no
 // gate, and that one refusal names both conditions in the existing order. The
-// finish breaks two rules and the run grants one corrective turn, so a refusal
+// finish breaks two rules and the run grants one corrective turn. Thus a refusal
 // that names one of them spends it on the condition the next refusal names
 // instead (#302).
 test("a declared PR with no gate reports the marker and the gate in one refusal", async () => {
@@ -691,7 +691,7 @@ test("a declared PR with no gate reports the marker and the gate in one refusal"
 });
 
 // 55. Usefulness: verifies the declared-PR refusal is reported with the completion
-// rule in the existing order, so one refusal names every condition the finish
+// rule in the existing order. Thus one refusal names every condition the finish
 // breaks (#302).
 test("the missing-gate refusal is reported with the other refusals in order", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -725,7 +725,7 @@ test("the missing-gate refusal is reported with the other refusals in order", as
 });
 
 // 55. Usefulness: verifies a run that declares a PR and also carries the gate
-// behaves exactly as a gated run does today, so the declaration adds no second
+// behaves exactly as a gated run does today. Thus the declaration adds no second
 // enforcement path and no new refusal (#302).
 test("a declared PR with a matching gate runs the gate and nothing else", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -759,10 +759,10 @@ test("a declared PR with a matching gate runs the gate and nothing else", async 
 });
 
 // Usefulness: verifies a headless declared run finishes on a base branch with no
-// required check and emits a `no-required-checks` event, so the recorded run says
-// it verified no check instead of reading as a pass on a checked branch (issue
-// #336).
-//
+// required check and emits a `no-required-checks` event. Thus the recorded run
+// says it verified no check instead of reading as a pass on a checked branch
+// (issue #336).
+
 // `git` is answered from memory, not spawned. Run alone, the test started 34 `git`
 // processes: a repo and the snapshots around its turns. The same cost made the
 // finish tests in role.finish-abort.test.mjs time out under load (issue #385). This
@@ -803,7 +803,7 @@ test("a declared PR finishes on a base branch with no required check", async () 
     expect(calls).toContain(pagedApiArgs("repos/owner/repo/rules/branches/main").join(" "));
     expect(calls).toContain(prChecksArgs(42).join(" "));
     expect(events.filter((e) => e.type === "no-required-checks")).toHaveLength(1);
-    // A finish on a checked branch records no such event, so the event means the
+    // A finish on a checked branch records no such event. Thus the event means the
     // base branch had no required check rather than that the gate ran.
     expect(events.filter((e) => e.type === "refusal")).toEqual([]);
   } finally {
@@ -811,7 +811,7 @@ test("a declared PR finishes on a base branch with no required check", async () 
   }
 });
 
-// Usefulness: verifies a refused finish emits no absence event, so the event
+// Usefulness: verifies a refused finish emits no absence event. Thus the event
 // cannot report that a run verified no check when the run did not finish at all
 // (issue #336 review).
 test("a refused finish emits no absence event", async () => {
@@ -852,7 +852,7 @@ test("a refused finish emits no absence event", async () => {
 });
 
 // Usefulness: verifies a headless gated run on a base branch that does require a
-// check emits no absence event, so the field on the event cannot read as a
+// check emits no absence event. Thus the field on the event cannot read as a
 // statement about every gated run (issue #336).
 test("a gated run on a checked base branch emits no absence event", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -887,7 +887,7 @@ test("a gated run on a checked base branch emits no absence event", async () => 
 });
 
 // 56. Usefulness: verifies a run that declares PR 42 and gates a different PR is
-// refused, so the gate cannot read one pull request while the run declares
+// refused. Thus the gate cannot read one pull request while the run declares
 // another (#302).
 test("a run that declares a PR refuses a gate for a different PR", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -917,8 +917,8 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("declares PR 42");
     // The gate for PR 7 is never read. The reviewer status read names the declared
-    // PR 42 and makes the gate's reads for it (#320, #349), so the assertion is that
-    // no call names PR 7.
+    // PR 42 and makes the gate's reads for it (#320, #349). Thus the assertion is
+    // that no call names PR 7.
     expect(calls.filter((key) => /\b7\b/.test(key))).toEqual([]);
     expect(calls.some((key) => key.includes("pr view 42"))).toBe(true);
   } finally {
@@ -928,8 +928,8 @@ test("a run that declares a PR refuses a gate for a different PR", async () => {
 });
 
 // 57. Usefulness: pins the exact refusal a declared run gives when the gate names
-// another PR, and that the gate for that other PR is never read. A prompt or a
-// consumer that reads the reason as a gate verdict would otherwise expect a gate
+// another PR. It also pins that the gate for that other PR is never read. A prompt
+// or a consumer that reads the reason as a gate verdict otherwise expects a gate
 // result the runtime never produced (#302).
 test("a mismatched-gate refusal names the declaration and reads no gate", async () => {
   gitDouble.answer = cleanRepoGit;
@@ -959,11 +959,12 @@ test("a mismatched-gate refusal names the declaration and reads no gate", async 
     expect(result.reason).toBe(
       "Finish refused: this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run gates PR 7 instead.",
     );
-    // Asserted on the gate's own endpoints, so the claim "a refused finish reads
-    // no GitHub state" is the assertion and not a side effect of which other
+    // Asserted on the gate's own endpoints. Thus the claim "a refused finish reads
+    // no GitHub state" is the assertion. It is not a side effect of which other
     // calls the run happens to make (#320 review). The four reads are the source
-    // check of the declared PR 42 at start (#1092, #1182): the PR view, the repository view, the rulesets,
-    // and the protection read that runs beside them; the refused finish adds none.
+    // check of the declared PR 42 at start (#1092, #1182). They are the PR view,
+    // the repository view, the rulesets, and the protection read that runs beside
+    // them. The refused finish adds none.
     expect(gateReads(calls)).toHaveLength(4);
   } finally {
     gitDouble.answer = null;
@@ -973,8 +974,8 @@ test("a mismatched-gate refusal names the declaration and reads no gate", async 
 
 // 58. Usefulness: pins the exact refusal for a declared run whose gate matches and
 // whose finish breaks the marker condition and a gate condition together. The gate
-// has its own conditions, so the marker is not the only broken one, and a prompt
-// that claimed otherwise would send the run after the wrong fix (#302).
+// has its own conditions, so the marker is not the only broken one. A prompt that
+// claims otherwise sends the run after the wrong fix (#302).
 test("a matching-gate refusal names the marker and the gate condition together", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -1018,7 +1019,7 @@ test("a matching-gate refusal names the marker and the gate condition together",
 
 // 57. Usefulness: verifies the missing-gate prompt tells the orchestrator what
 // the run needs, because no turn in the run can add a flag. A prompt that only
-// said "finish again" would end the run on exit 1 with no recovery named (#302).
+// says "finish again" ends the run on exit 1 with no recovery named (#302).
 test("the missing-gate refusal prompt names the gate the run needs", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
@@ -1048,7 +1049,7 @@ test("the missing-gate refusal prompt names the gate the run needs", async () =>
 
 // 58. Usefulness: verifies the marked-finish prompt names a missing gate only when
 // the gate is missing. A declared run whose gate matches loses the gate condition
-// once the marker is removed, so a prompt that names a missing gate there tells
+// once the marker is removed. Thus a prompt that names a missing gate there tells
 // the orchestrator to abort a run it can finish. A declared run with no gate keeps
 // both conditions and the gate is named (#302).
 test("the marked-finish prompt names a missing gate only when the gate is missing", async () => {
@@ -1092,7 +1093,7 @@ test("the marked-finish prompt names a missing gate only when the gate is missin
     expect(withGatePrompt).not.toContain("missing --require-ci 42 gate");
     expect(withGateResult.exitCode).toBe(0);
 
-    // The gate is absent, so removing the marker leaves the missing gate, and the
+    // The gate is absent, so removing the marker leaves the missing gate. The
     // prompt must name it rather than send the orchestrator back to finish.
     const noGate = scripted([markedFinish, JSON.stringify({ action: "abort", reason: "no gate" })]);
     await runLoop({
@@ -1114,7 +1115,7 @@ test("the marked-finish prompt names a missing gate only when the gate is missin
 });
 
 // 58. Usefulness: verifies a run that declares no PR keeps the marker-only
-// behavior it has today, so the new declaration changes nothing for an ungated
+// behavior it has today. Thus the new declaration changes nothing for an ungated
 // run that is not PR work (#302).
 test("a run that declares no PR still records a marked finish", async () => {
   gitDouble.answer = cleanRepoGit;
