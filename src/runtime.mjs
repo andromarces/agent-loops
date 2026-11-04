@@ -7,7 +7,8 @@ import {
   unreadableGateRefusal,
 } from "./lib/args.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, unreadableGateReason } from "./lib/ci-gate.mjs";
+import { unreadableGateReason } from "./lib/ci-gate.mjs";
+import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
 import { evaluateFinish } from "./finish-gate.mjs";
 import { copyLocalFiles as copyIntoWorkTree } from "./lib/local-files.mjs";
 import { logError, logInfo, logWarn, logWarnFull } from "./lib/log.mjs";

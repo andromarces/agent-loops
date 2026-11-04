@@ -5,16 +5,18 @@
 import { setTimeout as delay } from "node:timers/promises";
 import {
   canceledError,
+  requiredAbsence,
+  requiredNamesRefusal,
+  requiredResolutionRefusal,
+} from "./ci-gate.mjs";
+import {
   commitEntries,
   evaluateContext,
   latestBy,
   matchingEntries,
-  requiredAbsence,
-  requiredNamesRefusal,
-  requiredResolutionRefusal,
   RUN_TIME_FIELDS,
   STATUS_TIME_FIELDS,
-} from "./ci-gate.mjs";
+} from "./commit-entries.mjs";
 import {
   NO_CHECKS_YET,
   NO_REQUIRED_CHECKS,

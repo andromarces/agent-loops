@@ -3,6 +3,13 @@
 import { execBounded } from "./exec.mjs";
 import { isJsonObject } from "./json.mjs";
 
+/**
+ * The default bound on a status read. The read sits in front of a child turn
+ * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
+ * that hangs must not hold the dispatch open (#320).
+ */
+export const DEFAULT_READ_TIMEOUT_MS = 60_000;
+
 // `gh` reads these two names and then writes a debug log to stderr, which breaks the exact stderr
 // match of the protection read (#1047). Compared in upper case, because Windows names are case-blind.
 const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);

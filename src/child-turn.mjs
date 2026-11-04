@@ -1,7 +1,8 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
+import { readRequiredChecks } from "./lib/ci-gate.mjs";
+import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import {
   appearedInInheritedTmpdir,
