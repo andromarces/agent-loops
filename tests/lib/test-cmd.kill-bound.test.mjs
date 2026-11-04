@@ -1,7 +1,5 @@
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+import { trackedTempDir } from "../fs-helpers.mjs";
 
 // The mocked child never exits after the runtime kill, so only the kill bound can settle the run
 // (issue #1307). Git reads still go to the real execa, so the snapshots run against a real repo.
@@ -82,8 +80,8 @@ afterEach(async () => {
 // A work tree and a slot directory of this test, with the command child in the stuck mode.
 async function setup() {
   const cwd = await createTempRepo();
-  const slotsRoot = await mkdtemp(join(tmpdir(), "test-cmd-kill-bound-slots-"));
-  dirs.push(cwd, slotsRoot);
+  const slotsRoot = await trackedTempDir("test-cmd-kill-bound-slots-", dirs);
+  dirs.push(cwd);
   process.env.AGENT_LOOP_TEST_SLOTS_ROOT = slotsRoot;
   process.env.AGENT_LOOP_TEST_SLOTS = "1";
   delete process.env.AGENT_LOOP_TEST_SLOT_HELD;

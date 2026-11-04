@@ -1,17 +1,7 @@
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  stat,
-  symlink,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
+import { trackedTempDir } from "../fs-helpers.mjs";
 
 const hooks = vi.hoisted(() => ({ afterStat: null }));
 
@@ -42,8 +32,7 @@ afterEach(async () => {
 // Usefulness: verifies the mode lookup and the write use the same resolved file, so a parent link
 // that is retargeted between the two cannot make the writer apply one file's mode to another.
 test("writeTextAtomic replaces the file whose mode it read when a parent link is retargeted", async (ctx) => {
-  const root = await mkdtemp(join(tmpdir(), "agent-loop-retarget-"));
-  dirs.push(root);
+  const root = await trackedTempDir("agent-loop-retarget-", dirs);
   const first = join(root, "first");
   const second = join(root, "second");
   const link = join(root, "link");

@@ -1,11 +1,10 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { exists, removePath } from "../fs-helpers.mjs";
+import { exists, removePath, trackedTempDir } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 
 // The `--test-cmd` run inside a machine-wide test slot (issue #848, ADR 0040). Each test points
@@ -43,8 +42,8 @@ const slash = (path) => path.replaceAll("\\", "/");
 // A work tree, a scratch directory with the helper scripts, and one slot.
 async function setup() {
   const cwd = await createTempRepo();
-  const scratch = await mkdtemp(join(tmpdir(), "test-cmd-slot-"));
-  dirs.push(cwd, scratch);
+  const scratch = await trackedTempDir("test-cmd-slot-", dirs);
+  dirs.push(cwd);
   // Creates the file named by its first argument, or exits 9 when it exists, then removes it
   // after the given time: two commands that overlap make one of them exit 9.
   await writeFile(

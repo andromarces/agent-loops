@@ -26,7 +26,7 @@ import { removePath, symlinkOrSkip } from "./fs-helpers.mjs";
 import { createTempRepo, createWithContinueRepo } from "./git-helpers.mjs";
 import { createPsShim } from "./process-helpers.mjs";
 import { within } from "./wait-helpers.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

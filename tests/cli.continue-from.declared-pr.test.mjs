@@ -24,7 +24,8 @@ import {
   cleanRepoGit,
   createWithContinueRepo,
 } from "./git-helpers.mjs";
-import { prGateGh, SUMMARY } from "./gh-doubles.mjs";
+import { prGateGh } from "./gh-doubles.mjs";
+import { SUMMARY } from "./run-fixtures.mjs";
 
 const withContinueRepo = createWithContinueRepo(doubles);
 const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "agy", "--task", "t"];

@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
@@ -8,7 +7,7 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 import { execa } from "execa";
 import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
-import { removePath } from "./fs-helpers.mjs";
+import { removePath, trackedTempDir } from "./fs-helpers.mjs";
 import { cleanRepoGit } from "./git-helpers.mjs";
 
 const dirs = [];
@@ -27,8 +26,7 @@ afterEach(async () => {
 // Nothing here depends on a real repository: the behavior under test is the
 // runtime's finish rule, and the snapshot code has its own tests on real repos.
 async function expectFinishAcceptedAfterReviewerTurn(what, reply) {
-  const cwd = await mkdtemp(join(tmpdir(), "review-only-finish-"));
-  dirs.push(cwd);
+  const cwd = await trackedTempDir("review-only-finish-", dirs);
   await mkdir(join(cwd, ".git"));
   execa.mockReset().mockImplementation(cleanRepoGit);
   const orchAdapter = scripted([

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -7,7 +7,7 @@ import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
 import { redactAndClean } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
@@ -75,8 +75,7 @@ test("the command runs in the given work tree", async () => {
 // the command, and no walk of the parent links finds it. `trapTerm` makes the command
 // exit 0 on SIGTERM, the shape of a runner that cleans up and exits.
 async function hangingTree({ orphan = false, trapTerm = false }) {
-  const dir = await mkdtemp(join(tmpdir(), "test-cmd-hang-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("test-cmd-hang-", dirs);
   const grandchildPid = join(dir, "grandchild.pid");
   const childPid = join(dir, "child.pid");
   const grandchild = join(dir, "grandchild.js");
@@ -137,8 +136,7 @@ async function expectAllGone(pidFiles) {
 // A runner that spawns a descendant with ignored stdio and exits on SIGTERM, while the
 // descendant ignores SIGTERM and stays alive: only the immediate group SIGKILL reaches it.
 async function termIgnoringTree() {
-  const dir = await mkdtemp(join(tmpdir(), "test-cmd-sigterm-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("test-cmd-sigterm-", dirs);
   const pidFile = join(dir, "descendant.pid");
   const descendant = join(dir, "descendant.js");
   const runner = join(dir, "runner.js");
@@ -432,8 +430,7 @@ test(
   "an abort signal during the command startup kills the command",
   async () => {
     const cwd = await repo();
-    const dir = await mkdtemp(join(tmpdir(), "test-cmd-startup-abort-"));
-    dirs.push(dir);
+    const dir = await trackedTempDir("test-cmd-startup-abort-", dirs);
     const gated = join(dir, "gate.pid");
     const release = join(dir, "gate-release.txt");
     const expired = join(dir, "gate-expired.txt");

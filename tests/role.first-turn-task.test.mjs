@@ -16,6 +16,7 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
+import { SUMMARY } from "./run-fixtures.mjs";
 
 afterEach(cleanup);
 
@@ -234,7 +235,7 @@ Verdict: accept`;
 const ACCEPT = `${REPORT}
 Checks: none
 Verdict: accept`;
-const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
+
 const finishGated = (repo) =>
   executeRoleCommand(withRepo(["finish", "--cwd", "<repo>", "--require-accept"], repo), {
     stdin: async () => JSON.stringify(SUMMARY),

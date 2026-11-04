@@ -25,14 +25,12 @@ import {
 import {
   equalsArgs,
   freePlanGh,
-  gateRoles,
   PASSING_RUN,
   prGateGh,
   prViewArgs,
-  REVIEW_ACCEPT,
-  SUMMARY,
   unreachableGh,
 } from "./gh-doubles.mjs";
+import { gateRoles, REVIEW_ACCEPT, SUMMARY } from "./run-fixtures.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 const MATCH = {

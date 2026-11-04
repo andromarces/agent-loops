@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,8 @@ import {
   installRefusal,
   isEphemeralPackageRoot,
 } from "../../src/install/package-root.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
+import { LINK_TYPE } from "./install-helpers.mjs";
 
 const realpathMock = vi.hoisted(() => ({
   fail: null,
@@ -56,7 +57,6 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-const LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 const BUNX_LAYOUT = ["bunx-501-pkg@1.0.0", "node_modules"];
 const YARN_LAYOUT = ["xfs-8de51b90", "dlx-31536", ".yarn", "cache", "x.zip", "node_modules"];
 const paths = [];
@@ -71,9 +71,7 @@ afterEach(async () => {
 });
 
 async function scratch() {
-  const base = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-canonical-")));
-  paths.push(base);
-  return base;
+  return realpathSync(await trackedTempDir("agent-loop-canonical-", paths));
 }
 
 // Usefulness: verifies #962 review — a package junction inside a runner layout stays refused when its target is stable, because the installer renders the junction path into the entry points and the runner can delete it.
@@ -596,8 +594,7 @@ test("a bunx or yarn dlx layout directly under a temporary root is refused", () 
 
 // Usefulness: verifies #962 — a package root reached through a link into a temporary root is refused like its canonical spelling, so a symlinked `/var` against `/private/var` cannot hide a layout.
 test("a runner layout reached through a link to a temporary root is refused", async () => {
-  const base = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-alias-")));
-  paths.push(base);
+  const base = realpathSync(await trackedTempDir("agent-loop-alias-", paths));
   const realTemp = join(base, "real");
   const linkTemp = join(base, "link");
   await mkdir(realTemp);

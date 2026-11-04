@@ -7,7 +7,7 @@ import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
 import { restoreAgentLoopHome } from "../env-helpers.mjs";
 import { makeHome, cleanupHomes } from "./install-helpers.mjs";
-import { createBarrierTest } from "../barrier-test.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

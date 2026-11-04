@@ -19,7 +19,7 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { exists, removePath } from "./fs-helpers.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

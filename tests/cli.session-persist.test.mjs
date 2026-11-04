@@ -19,7 +19,7 @@ import { readContinuation } from "../src/lib/continuation.mjs";
 import { sessionRecordPath } from "../src/lib/session-record.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
@@ -96,7 +96,7 @@ const roleArgs = (kinds) => [
 ];
 
 // A scripted adapter for the roles that these tests do not run through the real Claude adapter.
-function scripted(replies) {
+function scriptedFakeSession(replies) {
   let call = 0;
   return {
     async run(state) {
@@ -107,8 +107,8 @@ function scripted(replies) {
 }
 
 const agentsFor = (replies) => ({
-  codex: scripted(replies),
-  agy: scripted([]),
+  codex: scriptedFakeSession(replies),
+  agy: scriptedFakeSession([]),
   claude: { run: runClaude },
 });
 

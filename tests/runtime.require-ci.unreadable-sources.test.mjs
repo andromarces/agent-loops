@@ -17,14 +17,9 @@ import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { CLEAN_REPO_HEAD, cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
-import {
-  freePlanGh,
-  gateRoles,
-  prGateGh,
-  REVIEW_ACCEPT,
-  SUMMARY,
-  unreachableGh,
-} from "./gh-doubles.mjs";
+import { hungGh } from "./lib/ci-gate-helpers.mjs";
+import { freePlanGh, prGateGh, unreachableGh } from "./gh-doubles.mjs";
+import { gateRoles, REVIEW_ACCEPT, SUMMARY } from "./run-fixtures.mjs";
 
 const REVIEW_THEN_FINISH = [
   JSON.stringify({ action: "run_reviewer", prompt: "review" }),
@@ -123,13 +118,6 @@ test("a headless --pr run does not refuse when the read fails for another reason
 // 60 s read deadline, instead of waiting it out and starting the run.
 test("a cancel during the start read of a headless --pr run rejects as a cancel before any turn", async () => {
   const controller = new AbortController();
-  const hungGh = (args, cwd, { signal } = {}) =>
-    new Promise((resolve) => {
-      const settle = () => resolve({ status: 1, stdout: "", stderr: "gh was canceled" });
-      if (signal?.aborted) return settle();
-      signal?.addEventListener("abort", settle, { once: true });
-      controller.abort();
-    });
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
   const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
@@ -143,7 +131,7 @@ test("a cancel during the start read of a headless --pr run rejects as a cancel 
         pr: 42,
         requireCi: 42,
         copyLocalFiles: false,
-        gh: hungGh,
+        gh: hungGh(() => controller.abort(), "gh was canceled"),
         signal: controller.signal,
         roles: gateRoles(),
         agents: { orch, work: scripted([]), rev: scripted([]) },

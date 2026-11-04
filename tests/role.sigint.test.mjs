@@ -50,7 +50,7 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // The moved dispatch cancel tests run through a body barrier (issue #943), so a body that
 // outlasts its timeout cannot change `gitDouble.answer` while the next test runs.

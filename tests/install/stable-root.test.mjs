@@ -1,11 +1,10 @@
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { install } from "../../src/install/installer.mjs";
 import { stablePackageRoot } from "../../src/install/stable-root.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import {
   LINK_TYPE,
   PACKAGE_ROOT as REPO_ROOT,
@@ -57,8 +56,7 @@ async function pnpmGlobalLegacy(globalHome, version) {
 // repoints. The package is scoped, so the rendered path has to keep the scope
 // directory.
 test("a pnpm 10 global layout renders its version-independent link", async () => {
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm-legacy-"));
-  paths.push(globalHome);
+  const globalHome = await trackedTempDir("agent-loop-pnpm-legacy-", paths);
   const { linked, store } = await pnpmGlobalLegacy(globalHome, "0.3.0");
 
   expect(stablePackageRoot(store)).toBe(linked);
@@ -105,12 +103,11 @@ async function pnpmProject(project, version, from) {
 // and which an upgrade repoints. A version-named path here is the stale install
 // #305 reports.
 test("hooks installed in a pnpm 10 project layout survive an upgrade", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm10-project-home-"));
+  const home = await trackedTempDir("agent-loop-pnpm10-project-home-", paths);
   // macOS hands out a temporary directory through a symlink (`/var` points at
   // `/private/var`), and Node resolves the installed module, so the written path
   // carries the resolved prefix. Build the layout under the same real path.
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm10-project-")));
-  paths.push(home, project);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm10-project-", paths));
   const before = await pnpmProject(project, "0.3.0");
 
   await runInstalled(
@@ -140,9 +137,8 @@ test("hooks installed in a pnpm 10 project layout survive an upgrade", async () 
 // Without that script path there is nothing stable to render, and the resolved
 // path stays.
 test("a pnpm 12 project layout renders the project link its script path names", async () => {
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-")));
-  const pnpmHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-store-"));
-  paths.push(project, pnpmHome);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-project-", paths));
+  const pnpmHome = await trackedTempDir("agent-loop-pnpm12-store-", paths);
   const hash = "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d";
   const { linked, store } = await pnpm12Project(pnpmHome, project, { hash, version: "0.4.0" });
 
@@ -176,10 +172,9 @@ function guardCommandFor(packageRoot) {
  * same shape a real `pnpm add` under pnpm 12 produces.
  */
 async function pnpm12Fixture() {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-render-home-"));
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-render-project-")));
-  const pnpmHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-render-store-"));
-  paths.push(home, project, pnpmHome);
+  const home = await trackedTempDir("agent-loop-pnpm12-render-home-", paths);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-render-project-", paths));
+  const pnpmHome = await trackedTempDir("agent-loop-pnpm12-render-store-", paths);
   const layout = await pnpm12Project(pnpmHome, project, {
     hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
     version: "0.4.0",
@@ -228,9 +223,8 @@ test("a foreign script path renders the resolved path, not a project link", asyn
 // directly and never named it. Rendering it would write a path the invocation did
 // not name, so the resolved path must be used instead.
 test("a link in a parent node_modules renders the resolved path", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-junction-home-"));
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-junction-")));
-  paths.push(home, project);
+  const home = await trackedTempDir("agent-loop-pnpm12-junction-home-", paths);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-junction-", paths));
   const modules = join(project, "node_modules");
   const { store } = await pnpm12Project(modules, project, {
     hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
@@ -253,9 +247,8 @@ test("a link in a parent node_modules renders the resolved path", async () => {
 // package, so picking either link by its position in the path rather than by depth
 // would render a path the script did not come through.
 test("a nested chain renders the innermost link", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested-home-"));
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested-")));
-  paths.push(home, project);
+  const home = await trackedTempDir("agent-loop-pnpm12-nested-home-", paths);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-nested-", paths));
   const { store } = await pnpm12Project(join(project, "pnpm-home"), project, {
     hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
     version: "0.4.0",
@@ -279,9 +272,8 @@ test("a nested chain renders the innermost link", async () => {
 // this package. The inner link points elsewhere, so it must be skipped and the
 // outer one used, rather than the walk giving up or rendering the wrong link.
 test("a nested chain renders the outer link when only it matches", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested2-home-"));
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-nested2-")));
-  paths.push(home, project);
+  const home = await trackedTempDir("agent-loop-pnpm12-nested2-home-", paths);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-nested2-", paths));
   const { store } = await pnpm12Project(join(project, "pnpm-home"), project, {
     hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
     version: "0.4.0",
@@ -315,10 +307,8 @@ test("a nested chain renders the outer link when only it matches", async () => {
 test.skipIf(process.platform !== "win32")(
   "a share-shaped Windows root does not lose its server and share",
   async () => {
-    const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-unc-home-"));
-    paths.push(home);
-    const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-unc-")));
-    paths.push(project);
+    const home = await trackedTempDir("agent-loop-pnpm12-unc-home-", paths);
+    const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-unc-", paths));
     const { linked, store } = await pnpm12Project(join(project, "pnpm-home"), project, {
       hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
       version: "0.4.0",
@@ -349,12 +339,11 @@ test.skipIf(process.platform !== "win32")(
 test.skipIf(process.platform === "win32")(
   "a backslash in a POSIX directory name renders the link",
   async () => {
-    const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-backslash-home-"));
+    const home = await trackedTempDir("agent-loop-pnpm12-backslash-home-", paths);
     const project = join(
-      realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-backslash-"))),
+      realpathSync(await trackedTempDir("agent-loop-pnpm12-backslash-", paths)),
       "we\\ird",
     );
-    paths.push(home, dirname(project));
     await mkdir(project, { recursive: true });
     const { linked, store } = await pnpm12Project(join(project, "pnpm-home"), project, {
       hash: "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d",
@@ -396,8 +385,7 @@ test.skipIf(process.platform !== "win32")(
 // upgrade, so the rendered root stays the resolved one rather than a path that
 // does not exist.
 test("a root with no resolvable link is rendered unchanged", async () => {
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm-nolink-"));
-  paths.push(globalHome);
+  const globalHome = await trackedTempDir("agent-loop-pnpm-nolink-", paths);
   const v11 = join(globalHome, "global", "v11");
   const { linked, store } = await pnpmGlobal(v11, {
     id: "637c-18d963de1bc57d7c-0",
@@ -417,8 +405,7 @@ test("a root with no resolvable link is rendered unchanged", async () => {
 // the links the stable rewrite needs, because the rewritten path stays inside the
 // dlx cache and remains deletable.
 test("a dlx cache root stays refused after the stable rewrite", async () => {
-  const cache = await mkdtemp(join(tmpdir(), "agent-loop-dlx-cache-"));
-  paths.push(cache);
+  const cache = await trackedTempDir("agent-loop-dlx-cache-", paths);
   const v11 = join(cache, "dlx", "0dd49d4f3230c83239c085437bfea068", "mtwi", "global", "v11");
   const { hashLink } = await pnpmGlobal(v11, {
     id: "72a0-18d965a32ca251bc-0",

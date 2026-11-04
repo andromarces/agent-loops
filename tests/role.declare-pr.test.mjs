@@ -12,13 +12,13 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { freePlanGh, PASSING_RUN, prGateGh, unreachableGh } from "./gh-doubles.mjs";
+import { SUMMARY } from "./run-fixtures.mjs";
 
 afterEach(cleanup);
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
 const declareArgv = (pr, ...flags) => [
   "declare-pr",
   "--cwd",
