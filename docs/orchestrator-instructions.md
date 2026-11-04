@@ -239,6 +239,16 @@ Apply these parent rules:
     of the user.
   - The field reports a change observed between the two reads. It does not prove the turn made the
     change. A global change can come from another process or another run on the host.
+  - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or a key that can change the author
+    or signing of every later commit, such as an identity or signing key once the field names it,
+    needs action before the next dispatch: it can break the main work tree or every later commit at
+    once.
+    - Dispatch a worker to read that key in the shared config and report its current state. From
+      that report, name the turn whose report says it changed it and ask the user whether to
+      restore it.
+    - Dispatch a worker to restore the key only after the user approves.
+    - Concurrent runs whose turns overlap the change all name it, so compare their overlapping
+      turns before you name the run that made the change.
   - A read of the
     shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
     the absent field then does not prove that no change happened. The runtime logs a warning for
