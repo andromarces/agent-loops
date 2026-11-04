@@ -82,8 +82,7 @@ reviewed tree is clean. A closed or merged PR refuses even when its head is unch
 
 The required wait before that finish, and the `--all` wait when no source can
 state the required checks, are in
-[Finish with --compare-head](finish-compare-head.md). The runtime reads no check
-result for that finish, so the wait is the only check evidence.
+[Finish with --compare-head](finish-compare-head.md).
 
 The runtime
 reads no required-check source or check result and claims none, so `verified` still states what
@@ -101,7 +100,5 @@ both paths, because it resolves the head in the runtime: `agent-loop role finish
 (issue #286, accepted gap; #293). A run with no usable gate, for example one
 that cannot read the required checks, keeps the marker as its only trace.
 
-A headless run that takes neither `--pr` nor `--require-ci` can also gain its PR
-from the runtime, as [Declaring a PR run](pr-declaration.md) states. The
-conditions that the `--require-accept` and `--require-ci` gates check at
+The conditions that the `--require-accept` and `--require-ci` gates check at
 `finish` are in [Finish gates](finish-gates.md).

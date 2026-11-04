@@ -1513,9 +1513,6 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["reviewer-evidence.md", "The runtime reports the status it read beside the reviewer result"],
   ["reviewer-sandbox.md", "Output under a path that the reviewer chose"],
   ["waiting-for-checks.md", "A check that a third-party app registers late"],
-  // The wait result already sat in finish-compare-head.md before #1399 moved the finish detail
-  // out of the core, so the core no longer states the same sentence.
-  ["finish-compare-head.md", "A pending or failing check goes into notDone or blocks the finish."],
 ];
 
 // Usefulness: verifies a sentence that the headless prompt shares with the instructions stays in the

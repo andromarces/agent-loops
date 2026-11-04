@@ -542,7 +542,8 @@ Completion is completion of the requested work, not code acceptance.
 `finish` reads a five-key summary as JSON on stdin and is accepted only from the
 `active` lifecycle. Before you call `finish`, read
 [Finish output](orchestrator/finish-output.md) when you need the exact summary
-shape or the `unresolvedCompare` marker, or when a `finish` is refused.
+shape or the `unresolvedCompare` marker, or when a `finish` is refused. A pending
+or failing check goes into `notDone` or blocks the finish.
 
 Map the child report fields into the finish summary:
 

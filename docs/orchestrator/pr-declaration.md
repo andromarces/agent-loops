@@ -195,8 +195,9 @@ GitHub. Declare the PR after the worker opens it:
 - A repository whose rulesets the gate does not get (#301) refuses every finish
   of a declared run, so do not declare the PR there. `declare-pr` reads the
   required-check sources once and refuses there, leaving the run unchanged. A read
-  that fails for another reason warns and does not refuse. The recovery, the
-  `headCompare` record, and the marker-only case are in the section above.
+  that fails for another reason warns and does not refuse. The recovery and the
+  marker-only case are in the section above; the `headCompare` record is in
+  [Finish with --compare-head](finish-compare-head.md).
   - Run
     `wait-checks --all` once before each reviewer turn, because the required wait
     refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
