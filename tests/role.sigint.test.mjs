@@ -19,13 +19,26 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-// Replaces only `writeSync`, so a test can see the bytes that a forced exit writes to fd 1.
-const fsDouble = vi.hoisted(() => ({ writeSync: null }));
+// Replaces only `writeSync`, so a test can see the bytes that a forced exit writes to fd 1. Also
+// runs `onChunk` after the next streamed file chunk, so a test can cancel a baseline hash.
+const fsDouble = vi.hoisted(() => ({ writeSync: null, onChunk: null, stream: null }));
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     writeSync: (...args) => (fsDouble.writeSync ?? real.writeSync)(...args),
+    createReadStream: (...args) => {
+      const stream = real.createReadStream(...args);
+      return (async function* () {
+        fsDouble.stream = stream;
+        for await (const chunk of stream) {
+          yield chunk;
+          const hook = fsDouble.onChunk;
+          fsDouble.onChunk = null;
+          hook?.();
+        }
+      })();
+    },
   };
 });
 
@@ -364,6 +377,29 @@ barrierTest(
     expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
   },
 );
+
+// Usefulness: verifies a cancel during a reviewer baseline hash keeps the cancel identity, so the
+// turn records interrupted with exit 130 (issue #1448 review).
+barrierTest("a cancel during the reviewer baseline hash records the turn as canceled", async () => {
+  const repo = await newRunRepo();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await writeFile(join(repo, "dirty.txt"), "changed\n");
+  const controller = new AbortController();
+  fsDouble.onChunk = () => controller.abort();
+  try {
+    const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([REPORT]) },
+      stdin: stdinPrompt,
+      signal: controller.signal,
+    });
+
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.status).toBe("error");
+    expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
+  } finally {
+    fsDouble.onChunk = null;
+  }
+});
 
 // Usefulness: verifies ADR 0027 decision 5 for a replaced conversation: a canceled dispatch persists the
 // id the CLI reported with the replaced mark, and the next worker dispatch sends the preamble (#587).

@@ -730,7 +730,7 @@ test("snapshot stops a file hash when its signal aborts", async () => {
     readHook.onFirstChunk = () => controller.abort();
     const started = Date.now();
     const error = await snapshot(repo, { signal: controller.signal }).catch((err) => err);
-    expect(error).toBeInstanceOf(SnapshotError);
+    expect(error).toMatchObject({ name: "SnapshotError", isCanceled: true });
     expect(Date.now() - started).toBeLessThan(5_000);
   } finally {
     readHook.onFirstChunk = null;

@@ -170,8 +170,10 @@ const hashEntries = (root, entries, signal) =>
     try {
       return { ...entry, hash: await sha256File(join(root, entry.path), { signal }) };
     } catch (err) {
+      // An abort keeps the cancel identity, so the caller ends the turn as canceled.
       throw new SnapshotError(`failed to hash ${entry.path}: ${readableErrorText(err)}`, {
         cause: err,
+        isCanceled: signal?.aborted === true,
       });
     }
   });
