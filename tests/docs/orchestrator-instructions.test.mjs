@@ -486,15 +486,10 @@ test("the parent surfaces state the refusal of a no-checks-yet reply with no rea
   }
 });
 
-// The surfaces that state the empty-union rule of the gate. The reviewer found them contradicting
-// each other, so one rule is asserted on each. Only an allowlisted reply proves an absence, and a
-// private Free-plan repository must omit `--pr`. Usefulness: verifies every surface states the same
-// rule (#336 review). An orchestrator reading one is then not told that a run passes on a branch
-// that the gate refuses.
-const RULE_SURFACES = [
-  ["docs/orchestrator-instructions.md", () => readInstructions()],
-  ["the user docs", readUserDocs],
-];
+// The one surface that states the empty-union rule of the gate. Only an allowlisted reply proves an
+// absence, and a private Free-plan repository must omit `--pr`. Usefulness: verifies the
+// orchestrator guide states the rule, the single source that #1397 keeps.
+const RULE_SURFACES = [["docs/orchestrator-instructions.md", () => readInstructions()]];
 
 for (const [name, load] of RULE_SURFACES) {
   // Usefulness: verifies ${name} states the allowlist rule, the one absence per source, and the
@@ -557,6 +552,29 @@ for (const [name, load] of RULE_SURFACES) {
     expectRule(text, /private/i, /Free.plan/i, /omit/i, /--pr/);
   });
 }
+
+// Usefulness: verifies the reference finish-gates page links to the orchestrator absence rule
+// instead of restating it, so the two copies cannot drift again (#1397). It also resolves the
+// relative path and the heading anchor, so a moved section fails here.
+test("the reference finish-gates page links to the single absence rule", async () => {
+  const reference = await readFile(
+    join(dirname(instructionsPath), "reference/finish-gates.md"),
+    "utf8",
+  );
+  const link = reference.match(/\]\((\.\.\/orchestrator\/finish-gates\.md)#([a-z0-9-]+)\)/);
+  expect(link, "the reference page has no anchored link to the orchestrator guide").not.toBeNull();
+  const section = await readFile(join(referenceSectionsDir, "finish-gates.md"), "utf8");
+  const anchors = [...section.matchAll(/^#{1,6}\s+(.+)$/gm)].map(([, title]) =>
+    title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s-]/gu, "")
+      .trim()
+      .replace(/\s+/g, "-"),
+  );
+  expect(anchors).toContain(link[2]);
+  expect(reference).not.toMatch(/allowlist/i);
+  expect(reference).not.toMatch(/has-contexts/i);
+});
 
 // Usefulness: verifies the two parent paths state the same narrow exception (issue #319). An
 // interactive parent and a headless orchestrator then resolve the role conflict the same way.
