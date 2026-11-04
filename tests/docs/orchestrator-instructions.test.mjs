@@ -126,6 +126,29 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /failed or canceled worker turn/i, /field too/i),
   // Issue #1224: a shared Git read that fails or passes its deadline reports no field.
   (text) => expectRule(text, /fails or passes its 10 second deadline/i, /no field/i, /not prove/i),
+  // Issue #1443: an entry for a key that breaks the main work tree or the author and signing of
+  // every later commit needs action before the next dispatch.
+  (text) =>
+    expectRule(
+      text,
+      /sharedGitChanged/,
+      /core\.bare/,
+      /core\.worktree/,
+      /identity/,
+      /signing/,
+      /needs action before the next dispatch/i,
+    ),
+  (text) =>
+    expectRule(
+      text,
+      /read that key in the shared config/i,
+      /name the turn whose report says it changed it/i,
+      /ask the user whether to restore it/i,
+    ),
+  // Issue #1443: concurrent runs whose turns overlap one change all name it, so the parent compares
+  // the overlapping turns before it names the run that made the change.
+  (text) =>
+    expectRule(text, /overlapping turns/i, /concurrent runs/i, /before (?:you|it) names? the run/i),
   // Issue #1180: a worker turn that changed a lockfile is reported by path, and the parent
   // reinstalls before the next reviewer dispatch.
   (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),
