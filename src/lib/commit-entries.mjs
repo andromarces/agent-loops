@@ -20,11 +20,11 @@ const CHECK_RUN_STATUSES = new Set([
 const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"]);
 
 // The status read, the check wait, and the source probe parse the check-run and commit-status
-// replies strictly. The gate accepts a missing or malformed field as an empty list. A reply that is
-// not the paginated shape, or that holds an entry the judgment cannot read, throws in strict mode,
-// and the reader reports it as unresolved instead of judging the entries that did parse. The
-// latest entry for a name decides, so an id or a timestamp that cannot be ordered is malformed too:
-// it could rank an old pass above a newer failure (issue #349).
+// replies strictly. The gate accepts a missing or malformed field as an empty list. In strict mode,
+// a reply that is not the paginated shape, or that holds an entry the judgment cannot read, throws.
+// The reader then reports it as unresolved instead of judging the entries that did parse. The
+// latest entry for a name decides, so an id or a timestamp that cannot be ordered is malformed too.
+// Such an entry can rank an old pass above a newer failure (issue #349).
 function pagesOf(data, field, what) {
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error(`malformed ${what} reply`);
@@ -37,8 +37,8 @@ function pagesOf(data, field, what) {
   });
 }
 
-// Validates with `Date.parse`, looser than `parseTime`: `latestBy` returns a lone entry without
-// parsing its timestamp, so a stricter check here would refuse a read that the judgment accepts.
+// Validates with `Date.parse`, looser than `parseTime`. `latestBy` returns a lone entry without
+// parsing its timestamp. A stricter check here refuses a read that the judgment accepts.
 const isOrderable = (entry, fields) =>
   Number.isFinite(entry.id) &&
   fields.some(
@@ -76,7 +76,7 @@ const isWellFormedRun = (run) =>
   run.name !== "" &&
   CHECK_RUN_STATUSES.has(run.status) &&
   !(run.status === "completed" && typeof run.conclusion !== "string") &&
-  // A queued run has not started, so it may carry no start time.
+  // A queued run has not started, so it can carry no start time.
   (run.status === "completed" || run.status === "in_progress"
     ? isOrderable(run, RUN_TIME_FIELDS)
     : Number.isFinite(run.id));
@@ -160,11 +160,10 @@ function compareTime(a, b) {
 
 // The most recent entry: the later of the first present timestamp in `fields`,
 // then the larger numeric id when times tie. Null when a group of several entries
-// holds an entry with a non-numeric id or a missing or unparseable timestamp,
-// because the order is then unknown and the caller must not pass the group. A
-// single entry needs no order and is returned as is. GitHub evaluates the latest
-// run for a name; an earlier failing run that a later run replaces does not fail
-// the gate.
+// holds an entry with a non-numeric id or a missing or unparseable timestamp.
+// The order is then unknown, and the caller must not pass the group. A single
+// entry needs no order and is returned as is. GitHub evaluates the latest run for
+// a name. An earlier failing run that a later run replaces does not fail the gate.
 export function latestBy(entries, fields) {
   if (entries.length === 1) {
     return entries[0];
@@ -197,9 +196,10 @@ export function matchingEntries({ name, appId }, runs, statuses) {
 }
 
 // Null when the required context passes, or `{ kind, reason }` where `kind` is
-// `missing`, `pending`, or `failing` and `reason` names the condition. An app-qualified context is satisfied only by a check run from that
-// app; an unqualified context is satisfied by a check run or a commit status
-// with the name, and both types must pass when both carry an unqualified name.
+// `missing`, `pending`, or `failing` and `reason` names the condition. An
+// app-qualified context is satisfied only by a check run from that app. An
+// unqualified context is satisfied by a check run or a commit status with the
+// name. Both types must pass when both carry an unqualified name.
 export function evaluateContext({ name, appId }, commit, runs, statuses) {
   const label = appId === null ? `"${name}"` : `"${name}" (app ${appId})`;
   const { runs: matchingRuns, statuses: matchingStatuses } = matchingEntries(
@@ -213,8 +213,8 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
   }
 
   // The reason is the first unmet condition, which is what the gate reports. The
-  // kind is the worst condition among all entries that share the name: a pending
-  // latest entry does not hide a failing entry beside it, whether that entry is
+  // kind is the worst condition among all entries that share the name. A pending
+  // latest entry does not hide a failing entry beside it. That entry can be
   // another run, an earlier run, or a commit status (issue #349).
   let problem = null;
   const runFailed = (run) =>

@@ -5,7 +5,7 @@ import { isJsonObject } from "./json.mjs";
 
 /**
  * The default bound on a status read. The read sits in front of a child turn
- * that has its own much longer `--timeout`, so it needs its own bound: a `gh`
+ * that has its own much longer `--timeout`, so it needs its own bound. A `gh`
  * that hangs must not hold the dispatch open (#320).
  */
 export const DEFAULT_READ_TIMEOUT_MS = 60_000;
