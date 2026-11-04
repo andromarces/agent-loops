@@ -152,9 +152,9 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
   expect(warn.mock.calls.some((call) => String(call[0]).includes("lockfile"))).toBe(true);
 });
 
-// Usefulness: verifies requirement "the 200 ms bound is the root read's only time limit" (issue
-// #1440): a root read slower than the bound in real time must still start a hash read, or the two
-// cases below fail under load. A separate timer on the root read fails this case by name.
+// Usefulness: verifies requirement "no timer shorter than the 200 ms bound ends the root read"
+// (issue #1440): a root read slower than the bound in real time must still start a hash read, or
+// the two cases below fail under load. A root-read timer at the bound fails this case by name.
 test("a root read slower than the bound in real time still starts a hash read", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
