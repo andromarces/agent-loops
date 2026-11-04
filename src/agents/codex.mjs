@@ -1,10 +1,12 @@
 import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
-import { exec, execFailureCause } from "../lib/exec.mjs";
+import { exec } from "../lib/exec.mjs";
 import { withTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
   asSessionId,
   assertResumedSession,
+  boundedDetail,
   closingText,
+  failureMessage as sharedFailureMessage,
   flagMissingSession,
   keepFailedSessionId,
   markCapacityFailure,
@@ -56,23 +58,17 @@ function flagCapacityFailure(err, events) {
  * exit reports the last failure message and the stream byte counts, both bounded.
  */
 function failureMessage(err, events, timeout) {
-  const cause = execFailureCause("codex", err, timeout);
-  if (cause) {
-    return cause;
-  }
-
-  const detail = boundedDetail(terminalFailureMessage(events));
+  const detail = boundedDetail(terminalFailureMessage(events), DETAIL_LIMIT);
   const stdoutBytes = Buffer.byteLength(err?.stdout ?? "");
   const stderrBytes = Buffer.byteLength(err?.stderr ?? "");
-  return `codex exited with code ${err?.exitCode}: ${detail || NO_DETAIL} (${stdoutBytes} stdout bytes, ${stderrBytes} stderr bytes)`;
-}
-
-/** Flattens `text` to one line and keeps at most `DETAIL_LIMIT` characters, including the ellipsis. */
-function boundedDetail(text) {
-  const flat = String(text ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return flat.length > DETAIL_LIMIT ? `${flat.slice(0, DETAIL_LIMIT - 3)}...` : flat;
+  return sharedFailureMessage({
+    agent: "codex",
+    err,
+    timeout,
+    detail,
+    noDetail: NO_DETAIL,
+    note: ` (${stdoutBytes} stdout bytes, ${stderrBytes} stderr bytes)`,
+  });
 }
 
 export async function runCodex(state, prompt, options = {}) {

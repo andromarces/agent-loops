@@ -473,8 +473,8 @@ test("opencode bounds the message for a malformed error event", async () => {
 });
 
 // Usefulness: verifies a well-formed error event with an oversized message is truncated at the fixed
-// 500-character detail cap, so a long provider message cannot fill the envelope or the state file
-// the way the raw stream did (#326).
+// 500-character detail cap, ellipsis included, so a long provider message cannot fill the envelope
+// or the state file the way the raw stream did (#326, #1407).
 test("opencode caps the described detail at 500 characters", async () => {
   const error = await rejectTurnWith({
     exitCode: 1,
@@ -483,7 +483,7 @@ test("opencode caps the described detail at 500 characters", async () => {
 
   const prefix = "provider.internal: ";
   expect(error.message).toBe(
-    `opencode exited with code 1: ${prefix}${"D".repeat(500 - prefix.length)}...`,
+    `opencode exited with code 1: ${prefix}${"D".repeat(500 - prefix.length - 3)}...`,
   );
   expect(error.message.length).toBeLessThan(600);
 });
@@ -502,9 +502,9 @@ test("opencode reads an exit-0 stream that holds non-object lines", async () => 
   expect(state.sessionId).toBe("sess-oc");
 });
 
-// Usefulness: verifies an exit-0 error event detail is capped at the same 500 characters the
-// non-zero path applies, so a long provider message cannot reach the dispatch envelope or the state
-// file the way the raw event did (issue #335).
+// Usefulness: verifies an exit-0 error event detail is capped at the same 500 characters, ellipsis
+// included, that the non-zero path applies, so a long provider message cannot reach the dispatch
+// envelope or the state file the way the raw event did (issue #335, #1407).
 test("opencode caps the described detail of an exit-0 error event at 500 characters", async () => {
   const stdout = errorEvent({ type: "provider.internal", message: `D${"D".repeat(5000)}` });
   vi.mocked(exec).mockResolvedValueOnce({ stdout, stderr: "" });
@@ -514,7 +514,7 @@ test("opencode caps the described detail of an exit-0 error event at 500 charact
 
   const prefix = "provider.internal: ";
   expect(error.message).toBe(
-    `opencode returned an error event: ${prefix}${"D".repeat(500 - prefix.length)}...`,
+    `opencode returned an error event: ${prefix}${"D".repeat(500 - prefix.length - 3)}...`,
   );
   expect(error.message.length).toBeLessThan(600);
 });

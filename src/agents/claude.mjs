@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { isJsonObject, parseJson, parseJsonObjects } from "../lib/json.mjs";
+import { isJsonObject, parseJson, parseJsonLines, parseJsonObjects } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
@@ -84,13 +84,7 @@ async function ownsSession(id, cwd, role) {
   }
   for (const dir of dirs) {
     const head = await readSessionHead(join(projects, dir), `${id}.jsonl`);
-    for (const line of head?.split("\n") ?? []) {
-      let record;
-      try {
-        record = JSON.parse(line);
-      } catch {
-        continue;
-      }
+    for (const record of parseJsonLines(head ?? "")) {
       if (record?.type === "user") {
         return (
           record.sessionId === id &&

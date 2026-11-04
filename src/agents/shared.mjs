@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
+import { execFailureCause } from "../lib/exec.mjs";
 import { hasClosingBlockAttempt } from "../lib/report.mjs";
 
 // A model id has no whitespace or control character, so a sentence or a blank is not one.
@@ -180,12 +181,48 @@ export function markCapacityFailure(err) {
   err.transient = "capacity";
 }
 
+/** True for a non-empty string. */
+export function isNonEmptyString(value) {
+  return typeof value === "string" && value !== "";
+}
+
 /**
  * Returns `value` when it is a non-empty string, else `undefined`. A CLI id of any other type,
  * such as a number or an object, is not a session id, so a success path must not store it.
  */
 export function asSessionId(value) {
-  return typeof value === "string" && value ? value : undefined;
+  return isNonEmptyString(value) ? value : undefined;
+}
+
+/**
+ * Flattens `text` to one line and keeps at most `limit` characters, the ellipsis included, so the
+ * result never exceeds the limit.
+ */
+export function boundedDetail(text, limit) {
+  const flat = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return flat.length > limit ? `${flat.slice(0, limit - 3)}...` : flat;
+}
+
+/**
+ * Builds the message for an ordinary failed turn: the exit cause when the process was killed,
+ * timed out, or did not start, else the exit code and `detail`. `detail` falls back to `noDetail`
+ * when empty, and `note` follows the detail unbounded.
+ * @param {object} failure
+ * @param {string} failure.agent display name of the adapter, for example `codex`
+ * @param {unknown} failure.err the error `exec` threw
+ * @param {number | undefined} failure.timeout timeout of the turn
+ * @param {string} failure.detail bounded failure detail
+ * @param {string} failure.noDetail text for a turn whose detail is empty
+ * @param {string} [failure.note] suffix after the detail
+ */
+export function failureMessage({ agent, err, timeout, detail, noDetail, note = "" }) {
+  const cause = execFailureCause(agent, err, timeout);
+  if (cause) {
+    return cause;
+  }
+  return `${agent} exited with code ${err?.exitCode}: ${detail || noDetail}${note}`;
 }
 
 /**

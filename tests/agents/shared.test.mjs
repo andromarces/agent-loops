@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  boundedDetail,
   lastClosingMessage,
   setMainLoopUsage,
   setUsageOrDelete,
@@ -34,6 +35,16 @@ test("setMainLoopUsage keeps an empty object and deletes on absent or null usage
   state.usage = { mainLoop: { stale: true } };
   setMainLoopUsage(state, null);
   expect("usage" in state).toBe(false);
+});
+
+// Usefulness: pins the one failure-detail bound both adapters use (issue #1407): the flattened
+// text, ellipsis included, never exceeds the limit, and shorter text keeps its single line.
+test("boundedDetail flattens to one line and counts the ellipsis inside the limit", () => {
+  const limit = 10;
+
+  expect(boundedDetail("line one\n  line two", limit)).toBe("line on...");
+  expect(boundedDetail("line one\n  line two", limit)).toHaveLength(limit);
+  expect(boundedDetail("short\n text", limit)).toBe("short text");
 });
 
 const CLOSING = "Conclusion: c.\nWhy: w.\nBlockers: none";
