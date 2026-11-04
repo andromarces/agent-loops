@@ -6,7 +6,7 @@ import { expect, test } from "vite-plus/test";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 
 // npm ships these root files even when the `files` allowlist omits them.
-const ALWAYS_SHIPPED = ["README.md", "package.json"];
+const ALWAYS_SHIPPED = ["README.md", "package.json", "LICENSE", "LICENCE"];
 
 const toPosix = (path) => path.split(sep).join("/");
 
@@ -28,7 +28,11 @@ async function walk(dir) {
 async function shippedFiles(entries) {
   const included = entries.filter((entry) => !entry.startsWith("!"));
   const excluded = entries.filter((entry) => entry.startsWith("!")).map((entry) => entry.slice(1));
-  const files = new Set(ALWAYS_SHIPPED);
+  const files = new Set();
+  for (const entry of ALWAYS_SHIPPED) {
+    const details = await stat(join(root, entry)).catch(() => undefined);
+    if (details?.isFile()) files.add(entry);
+  }
   for (const entry of included) {
     const absolute = join(root, entry);
     const details = await stat(absolute);
@@ -78,25 +82,27 @@ function findUnshippedLinks(documents, shipped) {
   return problems;
 }
 
-// Requirement: no packaged doc links to a path outside the package (issue #1398).
+// Requirement: no shipped Markdown file links to a path outside the package.
 // Usefulness: verifies every relative link resolves to a shipped file, so a
-// shipped doc cannot break with a link such as ../../adr/. No other check reads
-// the links of the packaged docs against the `files` allowlist.
-test("every relative link in a packaged doc resolves to a shipped file", async () => {
+// shipped file cannot break with a link such as ../../adr/. No other check reads
+// the links of the shipped Markdown files against the `files` allowlist.
+test("every relative link in a shipped Markdown file resolves to a shipped file", async () => {
   const { files = [] } = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const shipped = await shippedFiles(files);
-  const docs = [...shipped].filter((path) => path.startsWith("docs/") && path.endsWith(".md"));
+  const paths = [...shipped].filter((path) => path.endsWith(".md"));
   const documents = await Promise.all(
-    docs.map(async (path) => ({ path, text: await readFile(join(root, path), "utf8") })),
+    paths.map(async (path) => ({ path, text: await readFile(join(root, path), "utf8") })),
   );
   const problems = findUnshippedLinks(documents, shipped);
-  expect(problems, `Unshipped links in packaged docs:\n${problems.join("\n")}`).toEqual([]);
+  expect(problems, `Unshipped links in shipped Markdown files:\n${problems.join("\n")}`).toEqual(
+    [],
+  );
 });
 
 // Requirement: the link check fails on a link that the package does not ship.
 // Usefulness: covers the detector itself on a known-bad document, so a broken
-// matcher cannot make the real-doc test pass. The passing cases are the forms
-// the docs use: an absolute URL, a same-file anchor, and a shipped sibling.
+// matcher cannot make the real-file test pass. The passing cases are the forms
+// the shipped files use: an absolute URL, a same-file anchor, and a shipped sibling.
 test("the link check flags a relative target that the package does not ship", () => {
   const shipped = new Set(["docs/a.md", "docs/b.md", "README.md"]);
   const documents = [
@@ -111,9 +117,11 @@ test("the link check flags a relative target that the package does not ship", ()
         "[missing](c.md)",
       ].join("\n"),
     },
+    { path: "README.md", text: "[ADR](adr/0001-hybrid-orchestrator-runtime.md)" },
   ];
   expect(findUnshippedLinks(documents, shipped)).toEqual([
     "docs/a.md: ../../adr/0001-hybrid-orchestrator-runtime.md leaves the package",
     "docs/a.md: c.md is not shipped (docs/c.md)",
+    "README.md: adr/0001-hybrid-orchestrator-runtime.md is not shipped (adr/0001-hybrid-orchestrator-runtime.md)",
   ]);
 });
