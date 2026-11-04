@@ -186,39 +186,19 @@ function kebab(name) {
   return name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
-const OPERATIONS = new Set([
-  "dispatch",
-  "finish",
-  "abort",
-  "extend",
-  "declare-pr",
-  "set-model",
-  "wait-checks",
-]);
 const ROLE_NAMES = new Set(CHILD_ROLE_KINDS);
 const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
 
-export const ROLE_USAGE = [
-  "Usage: agent-loop role [dispatch|finish|abort|extend|declare-pr|set-model|wait-checks] [flags]",
-  "",
-  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
-  "state file. One JSON object on stdout, except this help; logs on stderr.",
-  "",
-  "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
-  "Init task: --task <text> or --task-file <path|-> (- reads stdin; then pass --prompt-file).",
-  "",
-  "-h, --help  Show this help. Run agent-loop --help for every role flag.",
-].join("\n");
-
 /**
- * Parses `agent-loop role [dispatch|finish|abort|extend|declare-pr|set-model|wait-checks] [flags]`. Reuses the flag
- * reading rules of the headless CLI. The OpenCode validation runs later through
- * `validateInitFlags`. Semantics that depend on the state file (init detection, change rejection)
- * are checked at execution time, not parse time.
+ * Parses `agent-loop role [<operation>] [flags]`, where `operations` is the caller's operation
+ * table in default-first order. Reuses the flag reading rules of the headless CLI. The OpenCode
+ * validation runs later through `validateInitFlags`. Semantics that depend on the state file (init
+ * detection, change rejection) are checked at execution time, not parse time.
  */
-export function parseRoleArgs(argv) {
+export function parseRoleArgs(argv, operations) {
+  const names = operations.map((operation) => operation.name);
   const args = {
-    operation: "dispatch",
+    operation: names[0],
     cwd: process.cwd(),
     role: null,
     task: null,
@@ -255,7 +235,7 @@ export function parseRoleArgs(argv) {
   };
 
   let index = 0;
-  if (argv.length > 0 && OPERATIONS.has(argv[0])) {
+  if (argv.length > 0 && names.includes(argv[0])) {
     args.operation = argv[0];
     index = 1;
   }

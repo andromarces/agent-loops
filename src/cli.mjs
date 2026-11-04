@@ -35,11 +35,8 @@ import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
-import {
-  runHarnessCheckCommand,
-  runInstallCommand,
-  runUninstallCommand,
-} from "./install/commands.mjs";
+import { runHarnessCheckCommand } from "./harness-check.mjs";
+import { runInstallCommand, runUninstallCommand } from "./install/commands.mjs";
 import { setVerbose } from "./lib/log.mjs";
 import { resolveWriteTarget } from "./lib/atomic-write.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";

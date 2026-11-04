@@ -11,11 +11,11 @@ import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { isJsonObject } from "./lib/json.mjs";
 import { logInfo } from "./lib/log.mjs";
 import { acceptanceFailure } from "./lib/report.mjs";
-import { cwdHash, writeState } from "./lib/runstate.mjs";
+import { writeState } from "./lib/runstate.mjs";
 import { reviewedState, snapshot } from "./lib/snapshot.mjs";
-import { unlockWorkTree } from "./lib/work-tree-lock.mjs";
 import { validateAction } from "./contracts/orchestrator-action.mjs";
 import { RoleError } from "./role-envelope.mjs";
+import { releaseWorkTreeLock } from "./role-state.mjs";
 
 // V8 `JSON.parse` message heads that carry no input text, observed on Node 26 (#839).
 const JSON_POSITION_PHRASES = [
@@ -221,7 +221,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     payload.unresolvedCompare = true;
   }
   await writeState(paths.stateFile, state);
-  await unlockWorkTree(args.cwd, { runId: cwdHash(args.cwd), signal });
+  await releaseWorkTreeLock(args.cwd, { signal });
   logInfo(`run finished (${state.stepsUsed} steps used)`);
   return { exitCode: 0, payload };
 }

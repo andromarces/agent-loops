@@ -1,14 +1,12 @@
-// CLI commands for `agent-loop install`, `agent-loop uninstall`, and
-// `agent-loop harness-check` (#139). The installer is interactive when a TTY
-// is present; `--harness` and `--yes` make it scriptable, and tests always pass
-// `--harness`.
+// CLI commands for `agent-loop install` and `agent-loop uninstall` (#139). The installer is
+// interactive when a TTY is present; `--harness` and `--yes` make it scriptable, and tests always
+// pass `--harness`.
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { walkFlags } from "../lib/args.mjs";
 import { readableErrorText, readProp } from "../lib/error-message.mjs";
 import { logError, logInfo, logInfoFull, logWarn, setVerbose } from "../lib/log.mjs";
-import { nearestHarness } from "../lib/process-ancestry.mjs";
-import { HARNESS_META, HARNESS_ORDER, harnessForCommand, isHarness } from "../lib/harnesses.mjs";
+import { HARNESS_META, HARNESS_ORDER, isHarness } from "../lib/harnesses.mjs";
 import { detectHarnesses } from "./detect-harnesses.mjs";
 import { askHarnessCheckboxes, harnessCheckboxItems } from "./harness-prompt.mjs";
 import { install, uninstall } from "./installer.mjs";
@@ -295,56 +293,4 @@ export async function runUninstallCommand(argv, io = {}) {
   if (reports.some((entry) => entry.action === "failed")) {
     process.exitCode = 1;
   }
-}
-
-/**
- * Exit code for a harness mismatch: the named harness is not the nearest
- * ancestor, so another harness owns the shell. Exit 0 means the names match;
- * every other non-zero code means the check could not run, found no harness
- * ancestor, or could not read the process ancestry. The distinct code lets a
- * caller separate a genuine harness refusal from a check that did not decide
- * (#151).
- */
-export const HARNESS_MISMATCH_EXIT = 3;
-
-export async function runHarnessCheckCommand(argv, { lookup = nearestHarness, signal } = {}) {
-  const requested = argv[0];
-  if (!requested) {
-    logError("harness-check requires a harness name.");
-    process.exitCode = 1;
-    return;
-  }
-  const harness = harnessForCommand(requested) ?? requested;
-  if (!isHarness(harness)) {
-    logError(`Unknown harness: ${requested}`);
-    process.exitCode = 1;
-    return;
-  }
-
-  let found;
-  try {
-    found = await lookup({ signal });
-  } catch (err) {
-    if (readProp(err, "isCanceled")) {
-      logError("harness-check was canceled.");
-      process.exitCode = 130;
-      return;
-    }
-    logError(`could not read the process table: ${readableErrorText(err)}`);
-    process.exitCode = 1;
-    return;
-  }
-  if (found === harness) {
-    process.exitCode = 0;
-    return;
-  }
-  if (found === null || found === undefined) {
-    logError(
-      `no known harness process was found above this shell, so not ${harness}. Not starting a run.`,
-    );
-    process.exitCode = 1;
-    return;
-  }
-  logError(`nearest harness ancestor is ${found}, not ${harness}. Refusing to start a run.`);
-  process.exitCode = HARNESS_MISMATCH_EXIT;
 }

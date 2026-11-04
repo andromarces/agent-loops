@@ -18,24 +18,58 @@ import {
 } from "./lib/runstate.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { withStateLock } from "./lib/state-lock.mjs";
-import { unlockWorkTree } from "./lib/work-tree-lock.mjs";
+import { withTimeBound } from "./lib/time-bound.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
 import {
-  ROLE_USAGE,
-  parseRoleArgs,
+  parseRoleArgs as parseRoleArgsWithOperations,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
 } from "./role-args.mjs";
-import { dispatch, readStdin, refuseUnreadableGate, requireState } from "./role-dispatch.mjs";
+import { dispatch } from "./role-dispatch.mjs";
 import { RoleError, printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
 import { finishRun } from "./role-finish.mjs";
+import {
+  readStdin,
+  refuseUnreadableGate,
+  releaseWorkTreeLock,
+  requireState,
+} from "./role-state.mjs";
 
-export { parseRoleArgs };
+// Every operation of `agent-loop role`, in default-first usage order. `runEnding` marks an
+// operation that ends, extends, or changes the PR or a model of a run; a child process of that run
+// never runs one.
+const ROLE_OPERATIONS = [
+  { name: "dispatch", runEnding: false, run: dispatch },
+  { name: "finish", runEnding: true, run: finish },
+  { name: "abort", runEnding: true, run: abort },
+  { name: "extend", runEnding: true, run: extend },
+  { name: "declare-pr", runEnding: true, run: declarePr },
+  { name: "set-model", runEnding: true, run: setModel },
+  { name: "wait-checks", runEnding: false, run: waitChecksOperation },
+];
 
-// Operations that end, extend, or change the PR or a model of a run. A child process of that run
-// never runs them.
-const RUN_ENDING_OPERATIONS = new Set(["finish", "abort", "extend", "declare-pr", "set-model"]);
+const OPERATION_SYNTAX = ROLE_OPERATIONS.map((operation) => operation.name).join("|");
+
+const ROLE_USAGE = [
+  `Usage: agent-loop role [${OPERATION_SYNTAX}] [flags]`,
+  "",
+  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
+  "state file. One JSON object on stdout, except this help; logs on stderr.",
+  "",
+  "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
+  "Init task: --task <text> or --task-file <path|-> (- reads stdin; then pass --prompt-file).",
+  "",
+  "-h, --help  Show this help. Run agent-loop --help for every role flag.",
+].join("\n");
+
+/**
+ * Parses `agent-loop role [<operation>] [flags]` against the operation table, so the table is the
+ * one source for the accepted names and the default operation.
+ */
+export function parseRoleArgs(argv) {
+  return parseRoleArgsWithOperations(argv, ROLE_OPERATIONS);
+}
 
 /**
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
@@ -57,7 +91,7 @@ function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = n
       // A crash between the terminal state write and the unlock leaves the run's own lock behind.
       // A later finish or abort releases that lock, and keeps a lock that names another owner.
       if (requireOptions.releaseTerminalLock) {
-        await unlockWorkTree(args.cwd, { runId: cwdHash(args.cwd) });
+        await releaseWorkTreeLock(args.cwd);
       }
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }
@@ -93,7 +127,7 @@ async function abort(args) {
       state.lifecycle = "aborted";
       state.reason = args.reason;
       await writeState(paths.stateFile, state);
-      await unlockWorkTree(args.cwd, { runId: cwdHash(args.cwd) });
+      await releaseWorkTreeLock(args.cwd);
       logInfo(`run aborted: ${args.reason}`);
       return { exitCode: 0, payload: { status: "ok", lifecycle: "aborted" } };
     },
@@ -334,10 +368,11 @@ async function waitChecksOperation(
     // The validation runs inside the same bound, so a hung `git` cannot add its
     // own time to the command. It refuses on the bound, because a work tree the
     // probe never confirmed is not one this command may read.
-    await withinBound(
+    await withTimeBound(
       remaining,
-      () => assertWorkTree(args.cwd, { timeoutMs: remaining, signal }),
       "--cwd validation did not complete within the wait bound, so the work tree was not confirmed.",
+      ({ stopped }) =>
+        Promise.race([assertWorkTree(args.cwd, { timeoutMs: remaining, signal }), stopped]),
     );
   }
   const result = await waitChecks({
@@ -356,63 +391,22 @@ async function waitChecksOperation(
 }
 
 /**
- * Runs `work` and rejects when it has not settled within `ms`, so a step that
- * hangs cannot outlive the bound the caller owns. The work promise is consumed
- * either way, so a late failure after the bound is not an unhandled rejection.
- */
-async function withinBound(ms, work, message) {
-  let timer;
-  try {
-    const guarded = Promise.resolve(work()).then(
-      (value) => ({ value }),
-      (error) => ({ error }),
-    );
-    const expired = new Promise((resolve) => {
-      timer = setTimeout(() => resolve({ expired: true }), ms);
-    });
-    const outcome = await Promise.race([guarded, expired]);
-    if (outcome.expired) {
-      throw new RoleError(message);
-    }
-    if (outcome.error) {
-      throw outcome.error;
-    }
-    return outcome.value;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * Executes one parsed role command. Returns `{ exitCode, payload }`; the
  * payload is the JSON envelope. Unexpected failures become `status: "error"`
  * envelopes instead of stack traces on stdout.
  */
 export async function executeRoleCommand(args, deps = {}) {
   try {
-    if (RUN_ENDING_OPERATIONS.has(args.operation) && isSpawnedByRun(cwdHash(args.cwd))) {
+    const operation = ROLE_OPERATIONS.find((entry) => entry.name === args.operation);
+    if (!operation) {
+      throw new RoleError(`Unsupported operation: ${args.operation}`);
+    }
+    if (operation.runEnding && isSpawnedByRun(cwdHash(args.cwd))) {
       throw new RoleError(
         `${args.operation} is refused for a child role; only the parent session runs it.`,
       );
     }
-    switch (args.operation) {
-      case "dispatch":
-        return await dispatch(args, deps);
-      case "finish":
-        return await finish(args, deps);
-      case "abort":
-        return await abort(args);
-      case "extend":
-        return await extend(args);
-      case "declare-pr":
-        return await declarePr(args, deps);
-      case "set-model":
-        return await setModel(args);
-      case "wait-checks":
-        return await waitChecksOperation(args, deps);
-      default:
-        throw new RoleError(`Unsupported operation: ${args.operation}`);
-    }
+    return await operation.run(args, deps);
   } catch (err) {
     return errorResult(err);
   }
@@ -450,11 +444,8 @@ export async function main(argv, { agents = defaultAgents } = {}) {
       if (envelope.state === "writing") return envelope.done;
       if (envelope.state === "done") return undefined;
       envelope.state = "done";
-      writeAllSync(
-        1,
-        `${JSON.stringify({ status: "error", error: "Interrupted by SIGINT" })}
-`,
-      );
+      const { payload } = errorResult({ isCanceled: true });
+      writeAllSync(1, `${JSON.stringify(payload)}\n`);
       return undefined;
     },
   });
