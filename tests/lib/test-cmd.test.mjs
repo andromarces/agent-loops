@@ -279,7 +279,7 @@ test.skipIf(process.platform === "win32")(
       });
       expect(testRun.summary).toMatch(/^exit 0; .*not captured/);
       expect(testRun.summary).not.toMatch(/canceled|killed/);
-      expect(() => process.kill(pid, 0)).toThrow();
+      expect(processExists(pid)).toBe(false);
     });
   },
   60_000,
