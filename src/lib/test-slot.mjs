@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { readableErrorText } from "./error-message.mjs";
 import { logDebug, logInfo, logWarn } from "./log.mjs";
-import { ownerAlive } from "./process-identity.mjs";
+import { ownerAlive, startTimeCache } from "./process-identity.mjs";
 import { slotsRoot } from "./slots-root.mjs";
 import { lockHeld, readLockOwner, tryStateLock } from "./state-lock.mjs";
 
@@ -61,7 +61,7 @@ export function testSlotOptions(
 // One pass under the short `acquire.lock`: counts the slot files held by live owners and, while
 // fewer than `slots` are held, takes the lowest free index (`tryStateLock` reclaims a dead
 // owner's file). Returns `{ index, lockFile, release, nonce }`, or null when the pass wins no slot.
-async function tryAcquireSlot(root, slots) {
+async function tryAcquireSlot(root, slots, cache) {
   const releaseTable = await tryStateLock(join(root, "acquire.lock"), {
     label: "Test slot table",
     noun: "test slot table",
@@ -72,7 +72,7 @@ async function tryAcquireSlot(root, slots) {
   const errors = [];
   let slot = null;
   try {
-    slot = await claimSlot(root, slots);
+    slot = await claimSlot(root, slots, cache);
   } catch (err) {
     errors.push(err);
   }
@@ -100,11 +100,11 @@ async function tryAcquireSlot(root, slots) {
 
 // The indexes of the slot files that a live owner holds (`lockHeld`: an unreadable file counts, a
 // stale one does not). Throws when `root` cannot be read.
-async function heldSlotIndexes(root) {
+async function heldSlotIndexes(root, cache) {
   const held = new Set();
   for (const entry of await readdir(root)) {
     const match = SLOT_FILE.exec(entry);
-    if (match && (await lockHeld(join(root, entry)))) {
+    if (match && (await lockHeld(join(root, entry), cache))) {
       held.add(Number(match[1]));
     }
   }
@@ -113,8 +113,8 @@ async function heldSlotIndexes(root) {
 
 // Counts the held slot files and, while fewer than `slots` are held, takes the lowest free index.
 // Runs under the table lock.
-async function claimSlot(root, slots) {
-  const held = await heldSlotIndexes(root);
+async function claimSlot(root, slots, cache) {
+  const held = await heldSlotIndexes(root, cache);
   for (let index = 0; held.size < slots; index++) {
     if (held.has(index)) {
       continue;
@@ -138,9 +138,11 @@ async function claimSlot(root, slots) {
 // with no further await, so the bound check is the last step before the start.
 async function acquireSlot({ root, slots, waitMs, signal }) {
   const deadline = Date.now() + waitMs;
+  // One cache for this wait, so each slot owner's start time is probed once per age window.
+  const cache = startTimeCache();
   let waiting = false;
   for (;;) {
-    const slot = await tryAcquireSlot(root, slots);
+    const slot = await tryAcquireSlot(root, slots, cache);
     if (slot && ((waitMs > 0 && Date.now() >= deadline) || signal.aborted)) {
       await slot.release();
       return null;

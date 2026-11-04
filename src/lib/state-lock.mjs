@@ -70,9 +70,10 @@ export async function tryStateLock(lockFile, { label = "State", noun = "state" }
  * True when `lockFile` would refuse an acquisition: it cannot be read, its parsed owner is
  * alive, or it is unparseable and a writer can still own it (see `ownerless`). False only for
  * a missing file and for a stale one (a dead owner, or an unparseable file that `ownerless`
- * finds stale). Reads only; it never removes a stale lock.
+ * finds stale). Reads only; it never removes a stale lock. `cache` reuses a start-time probe
+ * across the passes of one wait.
  */
-export async function lockHeld(lockFile) {
+export async function lockHeld(lockFile, cache) {
   let text;
   try {
     text = await readFile(lockFile, "utf8");
@@ -80,7 +81,7 @@ export async function lockHeld(lockFile) {
     return err?.code !== "ENOENT";
   }
   const owner = parseLockOwner(text);
-  return owner ? ownerAlive(owner) : !(await ownerless(lockFile));
+  return owner ? ownerAlive(owner, cache) : !(await ownerless(lockFile));
 }
 
 /** The parsed owner record of `lockFile`, or null when it is missing or unparseable. */

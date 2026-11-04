@@ -23,14 +23,39 @@ const isSharedConfigKey = (key) => {
   return SHARED_CONFIG_KEYS.has(key) || key.startsWith("extensions.");
 };
 
+// A local key is reported by name. A `branch.<name>.*` key stays out because a normal `git push -u`
+// writes it. `remote.<name>.*` is reported as `remote.<name>`, so it stays out here.
+function isLocalReportKey(key) {
+  const first = key.indexOf(".");
+  const last = key.lastIndexOf(".");
+  const section = key.slice(0, first).toLowerCase();
+  if (section === "branch") return false;
+  if (section === "remote" && first !== last) return false;
+  const lower = key.toLowerCase();
+  if (
+    lower === "core.hookspath" ||
+    lower === "core.bare" ||
+    lower === "core.worktree" ||
+    (first === last && lower.startsWith("extensions."))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+// The userinfo of a URL in a key name can hold a credential, so it becomes `<redacted>`.
+function redactKeyName(key) {
+  return key.replace(/(:\/\/)[^/]*@/g, "$1<redacted>@");
+}
+
 /**
  * Reads the Git state that every work tree of a repository shares and that a turn can change from
  * a linked work tree: `core.hooksPath`, the hook files in the common `hooks/` directory, and the
  * configured remotes. `core.hooksPath` and the remotes come from the local and the worktree scope
  * on their own: the effective value of `core.hooksPath` would hide a change to the scope that the
- * other one overrides. The result holds digests only, so a config value or a URL never leaves this
- * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
- * a change.
+ * other one overrides. The result holds digests and redacted key names, so a config value or a URL
+ * credential never leaves this function. An unexpected `git` exit throws a `SnapshotError`, because
+ * an empty state would read as a change.
  *
  * The read starts two `git` processes at once, because every worker turn reads twice and
  * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`,
@@ -49,7 +74,7 @@ const isSharedConfigKey = (key) => {
  * value. The field reports a change observed between the two reads and does not prove the turn
  * made it. A global change can come from another process or another run on the host. A third
  * `git` process reads the main work tree's worktree config after the common directory resolves.
- * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, string> }>}
+ * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, { name: string, digest: string }> }>}
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
   if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
@@ -131,13 +156,16 @@ function readConfigState(
     const lowerKey = key.toLowerCase();
     if (key === "core.hookspath") {
       hooksPath[scope].push(value);
-    } else if (scope !== "global" && key.startsWith("remote.")) {
+    } else if (scope !== "global" && key.startsWith("remote.") && key.split(".").length >= 3) {
       const remoteName = key.slice("remote.".length, key.lastIndexOf("."));
       remotes.set(remoteName, [...(remotes.get(remoteName) ?? []), [scope, entry]]);
     } else if (isSharedConfigKey(lowerKey)) {
       // The value list, never the key spelling, is the state. Git prints the name in lower case.
       // A value list that keeps its order but changes a value is still a change.
       sharedKeys.set(lowerKey, [...(sharedKeys.get(lowerKey) ?? []), [scope, value]]);
+    } else if (scope === "local" && isLocalReportKey(key)) {
+      // The key spelling is case-sensitive only in a subsection. `key` keeps that spelling.
+      sharedKeys.set(key, [...(sharedKeys.get(key) ?? []), [scope, value]]);
     }
   }
   return state;
@@ -151,7 +179,11 @@ function hashConfigState({ hooksPath, remotes, sharedKeys }) {
       [...remotes].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
     ),
     sharedKeys: Object.fromEntries(
-      [...sharedKeys].map(([name, list]) => [name, sha256(JSON.stringify(list))]),
+      // The digest key keeps two names that differ only in redacted userinfo apart.
+      [...sharedKeys].map(([name, list]) => [
+        sha256(name),
+        { name: redactKeyName(name), digest: sha256(JSON.stringify(list)) },
+      ]),
     ),
   };
 }
@@ -235,7 +267,9 @@ export function diffSharedGit(before, after) {
   if (before.hooksPath !== after.hooksPath) changed.push(HOOKS_PATH_ITEM);
   for (const name of differing(before.hooks, after.hooks)) changed.push(`hooks/${name}`);
   for (const name of differing(before.remotes, after.remotes)) changed.push(`remote.${name}`);
-  for (const name of differing(before.sharedKeys, after.sharedKeys)) changed.push(name);
+  for (const id of differingEntries(before.sharedKeys, after.sharedKeys)) {
+    changed.push((after.sharedKeys[id] ?? before.sharedKeys[id]).name);
+  }
   return changed.sort();
 }
 
@@ -253,5 +287,11 @@ export const failedSharedGitChanged = carrier.failed;
 function differing(before, after) {
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
     (name) => before[name] !== after[name],
+  );
+}
+
+function differingEntries(before, after) {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
+    (id) => before[id]?.digest !== after[id]?.digest,
   );
 }

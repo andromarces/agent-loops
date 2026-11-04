@@ -56,6 +56,16 @@ test("a worker turn that sets core.bare carries the key name", async () => {
   expect(result.sharedGitChanged).toEqual(["core.bare"]);
 });
 
+// Usefulness: verifies requirement "a worker turn that removes user.name carries user.name" (issue
+// #1442). The unit test covers the read, and only a turn covers the envelope field.
+test("a worker turn that removes user.name carries the key name", async () => {
+  await execa("git", ["config", "--local", "user.name", "Original Name"], { cwd: repo });
+  const result = await turn(async () => {
+    await execa("git", ["config", "--local", "--unset", "user.name"], { cwd: repo });
+  });
+  expect(result.sharedGitChanged).toEqual(["user.name"]);
+});
+
 // Usefulness: verifies requirement "a turn that changes no shared key carries no field" (issue
 // #1387). A key set and restored in one turn leaves the envelope without the field.
 test("a worker turn that sets and restores core.bare carries no field", async () => {

@@ -231,18 +231,22 @@ Apply these parent rules:
   - Report it in the finish summary under `open`. A failed or canceled
     worker turn carries the field too. A turn that changed none carries no field.
   - The `sharedGitChanged` field also names the shared `core.bare`, `core.worktree`, and
-    `extensions.*` config keys. It names a key only, never a value.
+    `extensions.*` config keys. It names every other local (shared) config key that the turn
+    added, changed, or removed, including `user.*`, `commit.gpgsign`, `gpg.*`, and `includeIf.*`.
+    It names a key only, never a value. It leaves out `branch.<name>.*`, because a normal
+    `git push -u` writes those keys. The userinfo of a URL in a key name becomes `<redacted>`, so a
+    credential never appears. Two keys that differ only in that userinfo stay two entries with the
+    same redacted name.
   - The read covers the global config, the local (shared) scope, the run work tree's own worktree
     scope, and the main work tree's worktree scope. A `core.worktree` change in the linked work
     tree's own file reports a field without affecting the main work tree. A watched key in the
     main work tree's worktree config names only that key. A global change affects every repository
     of the user.
   - The field reports a change observed between the two reads. It does not prove the turn made the
-    change. A global change can come from another process or another run on the host.
-  - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or a key that can change the author
-    or signing of every later commit, such as an identity or signing key once the field names it,
-    needs action before the next dispatch: it can break the main work tree or every later commit at
-    once.
+    change. Another process or another run on the host can cause a reported change.
+  - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or an identity or signing key needs
+    action before the next dispatch. Such a key can change the author or signing of every later
+    commit. It can break the main work tree or every later commit at once.
     - Dispatch a worker to read that key in the shared config and report its current state. From
       that report, name the turn whose report says it changed it and ask the user whether to
       restore it.
