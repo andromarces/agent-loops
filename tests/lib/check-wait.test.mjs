@@ -657,9 +657,9 @@ function cancelingHoldGh(counts) {
   };
 }
 
-// Usefulness: verifies the workflow-probe cancel reaches the caller as the same error object, and
-// the workflow directory is read once, so the wait neither retries nor reports a timeout (issue
-// #1456). No other test throws a cancel from a read of the wait.
+// Usefulness: verifies the workflow-probe cancel reaches the caller as the same error object.
+// It also verifies the workflow directory is read once, so the wait neither retries nor reports a
+// timeout (issue #1456). No other test throws a cancel from a read of the wait.
 test("waitChecks rejects with the workflow-directory cancel and reads it once", async () => {
   const counts = { listing: 0 };
   const clock = fakeClock();
@@ -694,8 +694,8 @@ function cancelingProbeGh(counts) {
   };
 }
 
-// Usefulness: verifies the no-check-source probe cancel reaches the caller as the same error
-// object, and the base head is read once, so the probe holds no pass and retries no read
+// Usefulness: verifies the no-check-source probe cancel reaches the caller as the same error object.
+// It also verifies the base head is read once, so the probe holds no pass and retries no read
 // (issue #1456).
 test("waitChecks rejects with the no-check-source probe cancel and reads it once", async () => {
   const counts = { base: 0 };
