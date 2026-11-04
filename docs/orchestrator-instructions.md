@@ -284,6 +284,8 @@ Apply these parent rules:
   - The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`,
     `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.
     Ignored paths are never read.
+  - The field redacts each path like the other path fields, names at most 20 paths, and keeps a
+    fixed root lockfile name byte-identical.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn

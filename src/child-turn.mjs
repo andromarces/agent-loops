@@ -7,7 +7,7 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
 import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
-import { diffLockfiles, readLockfiles } from "./lib/lockfile-change.mjs";
+import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockfile-change.mjs";
 import { diffMainWorkTree, readMainWorkTree } from "./lib/main-work-tree-change.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
@@ -432,11 +432,11 @@ export async function runChild(options) {
     }
     return sharedGitItems;
   };
-  /** Paths of the lockfiles that differ from the pre-turn read, or [] when none or unread. */
+  /** Redacted paths of the lockfiles that differ from the pre-turn read, or [] when none or unread. */
   const readLockfileChanged = async () => {
     if (lockfilePaths === null) {
       const after = lockfilesBefore ? await readLockfiles(cwd) : null;
-      lockfilePaths = diffLockfiles(lockfilesBefore, after);
+      lockfilePaths = reportedLockfilePaths(diffLockfiles(lockfilesBefore, after));
       if (lockfilePaths.length > 0) {
         logWarn(`worker: lockfile changed: ${lockfilePaths.join(", ")}`);
       }

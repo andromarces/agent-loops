@@ -184,6 +184,11 @@ const SHARED_PARENT_RULES = [
   // the matching toolchain setup.
   (text) => expectRule(text, /non-Node/i, /dependency file/i, /any depth/i),
   (text) => expectRule(text, /non-Node file/i, /toolchain/i, /before the next reviewer dispatch/i),
+  // Issue #1457: the field redacts each path like the other path fields, and a fixed root lockfile
+  // name stays byte-identical.
+  (text) => expectRule(text, /redacts each path/i, /other path fields/i),
+  (text) => expectRule(text, /at most 20 paths/i),
+  (text) => expectRule(text, /fixed root lockfile name/i, /byte-identical/i),
   // Issue #1457: the setup keeps its deadline in both texts, before the first dispatch and
   // before the next reviewer dispatch after a changed lockfile.
   (text) => expectRule(text, /dependency setup/i, /before the first dispatch/i),
@@ -1014,6 +1019,9 @@ test("instructions state the non-Node lockfileChanged coverage and action", asyn
   );
   expect(instructions).toContain(
     "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+  );
+  expect(instructions).toContain(
+    "The field redacts each path like the other path fields, names at most 20 paths, and keeps a fixed root lockfile name byte-identical.",
   );
   expect(instructions).not.toContain("asks for no reinstall");
   expect(instructions).not.toContain("gap is accepted");

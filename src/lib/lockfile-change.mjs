@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
-import { entryCarrier } from "./entry-report.mjs";
+import { entryCarrier, reportedPathNames } from "./entry-report.mjs";
 import { gitRead } from "./git-read.mjs";
 import { logWarn } from "./log.mjs";
 import { sha256File, workTreeRoot } from "./snapshot.mjs";
@@ -169,6 +169,18 @@ export function diffLockfiles(before, after) {
       after[path] === UNREADABLE,
   );
   return [...new Set([...node, ...nonNode])].sort();
+}
+
+const FIXED_ROOT_LOCKFILES = new Set(LOCKFILES);
+
+/**
+ * Names the changed paths for the envelope, redacted like the other path fields. A fixed root
+ * lockfile name stays byte-identical, because the turn does not choose it.
+ * @param {string[]} paths
+ * @returns {string[]}
+ */
+export function reportedLockfilePaths(paths) {
+  return reportedPathNames(paths, (path) => FIXED_ROOT_LOCKFILES.has(path));
 }
 
 const carrier = entryCarrier("lockfileChanged");

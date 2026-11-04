@@ -242,6 +242,9 @@ test("initialPrompt states the parent's dependency setup by toolchain", () => {
   expect(prompt).toContain(
     "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
   );
+  expect(prompt).toContain(
+    "It redacts each path like the other path fields, names at most 20 paths, and keeps a fixed root lockfile name byte-identical.",
+  );
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the

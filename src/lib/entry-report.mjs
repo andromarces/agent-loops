@@ -14,6 +14,21 @@ export function reportedEntryNames(names) {
 }
 
 /**
+ * Sorts `names`, keeps the first 20, and redacts each like the test command output (ADR 0017),
+ * unless `keep` returns true for a name. One entry per raw name stays, so two names that redact to
+ * the same text stay two entries.
+ * @param {Iterable<string>} names
+ * @param {(name: string) => boolean} [keep]
+ * @returns {string[]}
+ */
+export function reportedPathNames(names, keep = () => false) {
+  return [...new Set(names)]
+    .sort()
+    .slice(0, MAX_ENTRIES)
+    .map((name) => (keep(name) ? name : redactAndClean(name)));
+}
+
+/**
  * Makes the carry pair for a list of entry names on a fatal error. `carry(err, entries)` sets
  * `err[property]`. A frozen error or a throwing setter keeps the original error, and the list stays
  * readable through `failed(err)`, which returns `undefined` when the error carries none.
