@@ -24,6 +24,10 @@ async function seedTemplate() {
   const dir = await mkdtemp(join(tmpdir(), "runtime-test-template-"));
   templateDirs.push(dir);
   await execa("git", ["init"], { cwd: dir });
+  // A commit must not start automatic maintenance, because its lock file can vanish
+  // during the recursive copy of the template (issue #1458).
+  await execa("git", ["config", "maintenance.auto", "false"], { cwd: dir });
+  await execa("git", ["config", "gc.auto", "0"], { cwd: dir });
   await execa("git", ["config", "user.name", "Tester"], { cwd: dir });
   await execa("git", ["config", "user.email", "test@example.com"], { cwd: dir });
   await writeFile(join(dir, "init.txt"), "hello\n");

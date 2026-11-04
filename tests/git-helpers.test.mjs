@@ -32,6 +32,24 @@ test("untrackedFilesGit error for a merged-argument call differs from the expect
   expect(error.message).not.toBe(`unexpected git call: ${expected.join(" ")}`);
 });
 
+// Usefulness: acceptance (#1458) — each copy inherits the template setting that turns
+// off automatic Git maintenance.
+test("a temporary repository turns off automatic git maintenance", async () => {
+  const first = await createTempRepo();
+  const second = await createTempRepo();
+  try {
+    for (const repo of [first, second]) {
+      expect(
+        (await execa("git", ["config", "--get", "maintenance.auto"], { cwd: repo })).stdout,
+      ).toBe("false");
+      expect((await execa("git", ["config", "--get", "gc.auto"], { cwd: repo })).stdout).toBe("0");
+    }
+  } finally {
+    await removePath(first);
+    await removePath(second);
+  }
+});
+
 // Usefulness: (#1417) a copy owns its `.git`; a changed config, hook, or ref in one case
 // reaches no other copy.
 test("a change in one temporary repository reaches no other copy", async () => {
