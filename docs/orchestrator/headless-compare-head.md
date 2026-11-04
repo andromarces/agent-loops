@@ -5,7 +5,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 A headless run on a repository whose required-check sources are unreadable, for
 example a private repository on the GitHub Free plan (#301), passes
 `--compare-head <pr>` for a PR that exists at start (#1104). It is the headless form of
-the interactive `--compare-head` in [Finish output](../orchestrator-instructions.md#finish-output) and keeps its contract. At finish, the
+the interactive `--compare-head` in [Finish output](finish-output.md) and keeps its contract. At finish, the
 runtime reads the PR head and state and refuses unless the PR is open, it equals the
 reviewed head, and the reviewed tree is clean. It reads no required-check source and claims no check
 result, and it does not evaluate the merge state. A pass emits a `head-compare`

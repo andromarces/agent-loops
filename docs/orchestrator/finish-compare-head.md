@@ -1,6 +1,6 @@
 # Finish with --compare-head
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you finish with `--compare-head <pr>`, and when a finish with it is refused. The core rules of that finish are in [Finish output](../orchestrator-instructions.md#finish-output).
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you finish with `--compare-head <pr>`, and when a finish with it is refused. The core rules of that finish are in [Finish output](finish-output.md).
 
 `--compare-head <pr>` makes the PR-head half of the gate and nothing else (#301, #1098):
 
