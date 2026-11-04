@@ -2,8 +2,7 @@
 // The runtime calls it after a worker turn of a headless run that has no PR input. No child turn
 // names or changes the result.
 import { readableErrorText } from "./error-message.mjs";
-import { DEFAULT_READ_TIMEOUT_MS } from "./ci-gate.mjs";
-import { ghFailureText, runGh } from "./gh-api.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, ghFailureText, runGh } from "./gh-api.mjs";
 import { isJsonObject } from "./json.mjs";
 import { gitRead } from "./snapshot.mjs";
 

@@ -41,7 +41,7 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...real, availableParallelism: () => hostCpus.count ?? real.availableParallelism() };
 });
 
-import { parseTestSlotArgs, runTestSlot } from "../../src/lib/test-slot.mjs";
+import { parseTestSlotArgs, runTestSlot } from "../../src/lib/test-slot-cli.mjs";
 
 const CLI = fileURLToPath(new URL("../../src/cli.mjs", import.meta.url));
 const SLOT_ENV = [
