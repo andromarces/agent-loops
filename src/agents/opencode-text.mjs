@@ -1,5 +1,6 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
+import { isNonEmptyString } from "./shared.mjs";
 
 /** Returns a matcher for a line that opens one of the labels `names`, plain at column 0. */
 const labelLine = (names) => new RegExp(`^(?:${names.join("|")}):`, "i");
@@ -16,9 +17,6 @@ const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unide
 
 // Upper bound, in UTF-16 code units, on the joined text of a stream error (issues #510 and #529).
 const ERROR_TEXT_LIMIT = 4000;
-
-/** Returns whether a stream id or model field is a non-empty string. */
-export const isNonEmptyString = (value) => typeof value === "string" && value !== "";
 
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`

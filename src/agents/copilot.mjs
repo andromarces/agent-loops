@@ -61,13 +61,7 @@ async function holdsTurn(id, cwd) {
   );
   // A stored non-string that reads as a UUID, such as `[uuid]`, is refused by the native `TypeError` of `join`.
   const head = await readSessionHead(join(home, "session-state", id), "events.jsonl");
-  return (head?.split("\n") ?? []).some((line) => {
-    try {
-      return JSON.parse(line)?.type === "user.message";
-    } catch {
-      return false;
-    }
-  });
+  return parseJsonLines(head ?? "").some((event) => event?.type === "user.message");
 }
 
 /**
