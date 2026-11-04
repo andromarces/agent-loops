@@ -107,27 +107,10 @@ function isFailing(check) {
 }
 
 /**
- * One required-check read, mapped to the wait outcome the `gh` exit code and the
- * check list carry. Throws when the read is unresolved, so an unresolved read
- * never reads as a pass.
- *
- * - A listed failing check is settled, whichever code answered, and the failure
- *   is reported rather than waited out.
- * - Exit 8, or exit 0 with a pending check listed, keeps the wait running. An
- *   exit 0 with no settled check keeps it running too.
- * - Exit 1 with no output and the exact `no required checks reported on the
- *   '<branch>' branch` stderr is settled as `noRequiredChecks`: the branch has
- *   no required check to wait for, which is no pass either (#894). In the
- *   all-checks mode that answer does not exist, so that stderr is unresolved
- *   there, like every other exit 1 with no failing check listed (#896).
- * - Exit 1 with no output and the exact `no checks reported on the '<branch>'
- *   branch` stderr is an empty list that is not settled, so the wait continues:
- *   no check has reported on the PR head yet (#941). The all-checks read applies
- *   the same rule (#950).
- * - Any other code, with no failing check listed, is unresolved: exit 1 covers
- *   a read error, and an unparseable output is a read error. A list item that is
- *   not well formed is unresolved too, so one unreadable item cannot settle the
- *   list as a pass.
+ * One required-check read, mapped to the wait outcome that the `gh` exit code and the check list
+ * carry. A failing check is settled. A pending read, or an empty one on exit 0, keeps the wait
+ * running. The exact no-required-check and no-checks-yet replies are read here. Throws when the
+ * read is unresolved, so it never reads as a pass.
  */
 function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
   const label = source ?? `gh pr checks ${pr}${all ? "" : " --required"}`;
@@ -147,29 +130,33 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     }
     checks = items;
   }
+  // A listed failing check is settled, whichever code answered, and the failure is reported.
   if (checks.some(isFailing)) {
     return { settled: true, checks };
   }
-  // Only exit 8, or exit 0 with a pending item, keeps the wait running. Exit 1
+  // Only the pending exit code, or exit 0 with a pending item, keeps the wait running. Exit 1
   // with a pending list and no failing check is a read error, so it is not waited
   // out as pending (#894).
   if (status === EXIT_PENDING || (status === 0 && checks.some(isPending))) {
     return { settled: false, checks };
   }
-  // An empty list on exit 0 keeps waiting, because `gh pr checks --required`
-  // omits a check that has not started. The same empty list on exit 1 is not
-  // that: exit 1 with no failing check listed is a read error unless `gh` states
-  // the branch has no required check, or that no check has reported on the PR
-  // head yet (#941, #950). Any other exit 1 falls through to the refusal below.
+  // An empty list on exit 0 keeps waiting, because `gh pr checks --required` omits a check that
+  // has not started. The same empty list on exit 1 is not that. Exit 1 with no failing check
+  // listed is a read error unless `gh` names no required check or no check has reported yet
+  // (#941, #950). Any other exit 1 falls through to the refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
+  // Exit 1 with no output and the exact no-required-check reply states the branch has no check.
+  // The all-checks read has no such answer, so that stderr is unresolved there (#896).
   if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
   }
+  // Exit 1 with no output and the exact no-checks-yet reply is an empty list that is not settled (#941).
   if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
     return { settled: false, checks, noChecksYet: true };
   }
+  // Any other non-zero code, with no failing check listed, is unresolved (#329).
   if (status !== 0) {
     throw ghReadError(label, { status, stdout, stderr });
   }
@@ -290,7 +277,7 @@ function requiredItems({ runs, statuses }, contexts, commit) {
 
 /** The `gh pr checks` reply shape for `items`, so one outcome rule set judges both sources. */
 function asRead(items) {
-  const status = items.some(isFailing) ? 1 : items.some(isPending) ? 8 : 0;
+  const status = items.some(isFailing) ? 1 : items.some(isPending) ? EXIT_PENDING : 0;
   return { status, stdout: JSON.stringify(items), stderr: "" };
 }
 
