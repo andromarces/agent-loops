@@ -96,10 +96,18 @@ async function createLinkedWorkTree() {
   return { repo, linked };
 }
 
-async function changedBy(cwd, change) {
-  const before = await readSharedGit(cwd);
+async function changedBy(cwd, change, options) {
+  const before = await readSharedGit(cwd, options);
   await change();
-  return diffSharedGit(before, await readSharedGit(cwd));
+  return diffSharedGit(before, await readSharedGit(cwd, options));
+}
+
+// A temporary global config file and the environment that points git at it, with no system config.
+async function tempGlobalConfig() {
+  const dir = await mkdtemp(join(tmpdir(), "agent-loops-global-git-"));
+  dirs.push(dir);
+  const file = join(dir, "config");
+  return { file, env: { ...process.env, GIT_CONFIG_GLOBAL: file, GIT_CONFIG_NOSYSTEM: "1" } };
 }
 
 // Usefulness: verifies "a turn that changes none of the shared Git state reports nothing", so the
@@ -139,6 +147,104 @@ test("a core.bare change in the shared config is reported by name from a linked 
     execa("git", ["config", "core.bare", "true"], { cwd: linked }),
   );
   expect(changed).toEqual(["core.bare"]);
+});
+
+// Usefulness: verifies requirement "a core.bare change in the main work tree's worktree config is
+// reported by name" (issue #1392). The linked read sees no other watched item for this change.
+test("a core.bare change in the main work tree's worktree config is reported by name", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--worktree", "core.bare", "true"], { cwd: repo }),
+  );
+  expect(changed).toEqual(["core.bare"]);
+});
+
+// Usefulness: verifies requirement "a global core.hooksPath change is reported by name" (issue
+// #1392). The test points `GIT_CONFIG_GLOBAL` at a temporary file, so no user config is read.
+test("a global core.hooksPath change is reported by name and never by value", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const { env } = await tempGlobalConfig();
+  await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Tester\n");
+  const changed = await changedBy(
+    linked,
+    () =>
+      execa("git", ["config", "--global", "core.hooksPath", "global-secret-hooks"], {
+        cwd: linked,
+        env,
+      }),
+    { env },
+  );
+  expect(changed).toEqual(["core.hooksPath"]);
+  expect(JSON.stringify(await readSharedGit(linked, { env }))).not.toContain("global-secret-hooks");
+});
+
+// Usefulness: verifies requirement "a watched key in the global config is reported by name" (issue
+// #1392). The field covers the global scope and names the key only.
+test("a watched key change in the global config is reported by name", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const { env } = await tempGlobalConfig();
+  await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Tester\n");
+  const changed = await changedBy(
+    linked,
+    () =>
+      execa("git", ["config", "--global", "extensions.worktreeConfig", "true"], {
+        cwd: linked,
+        env,
+      }),
+    { env },
+  );
+  expect(changed).toEqual(["extensions.worktreeconfig"]);
+});
+
+// Usefulness: verifies requirement "a turn that changes no watched key in either scope carries no
+// field" (issue #1392 acceptance). Both new scopes hold only unwatched keys.
+test("unwatched keys in the global config and the main work tree config report nothing", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  const { env } = await tempGlobalConfig();
+  await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Tester\n");
+  await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo, env });
+  await execa("git", ["config", "--worktree", "user.email", "main@example.test"], {
+    cwd: repo,
+    env,
+  });
+  expect(await changedBy(linked, async () => {}, { env })).toEqual([]);
+});
+
+// Usefulness: verifies requirement "a global config file that a turn creates is read" (issue
+// #1392). The file is absent before the turn, so the read must not fail.
+test("a global config file created by the turn reports its watched key", async () => {
+  const { linked } = await createLinkedWorkTree();
+  const { env } = await tempGlobalConfig();
+  const changed = await changedBy(
+    linked,
+    () =>
+      execa("git", ["config", "--global", "core.hooksPath", "new-hooks"], {
+        cwd: linked,
+        env,
+      }),
+    { env },
+  );
+  expect(changed).toEqual(["core.hooksPath"]);
+});
+
+// Usefulness: verifies requirement "a config.worktree that Git ignores is not read" (issue #1392
+// review). With `extensions.worktreeConfig` off, the main work tree does not use the file.
+test("a main work tree worktree config is ignored while extensions.worktreeConfig is off", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  await writeFile(join(repo, ".git", "config.worktree"), "[core]\n\tbare = true\n");
+  expect(await changedBy(linked, async () => {})).toEqual([]);
+});
+
+// Usefulness: verifies requirement "turning on extensions.worktreeConfig activates the main work
+// tree config" (issue #1392 review): the key it activates is named too.
+test("turning on extensions.worktreeConfig reports the key it activates", async () => {
+  const { repo, linked } = await createLinkedWorkTree();
+  await writeFile(join(repo, ".git", "config.worktree"), "[core]\n\tbare = true\n");
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo }),
+  );
+  expect(changed).toEqual(["core.bare", "extensions.worktreeconfig"]);
 });
 
 // Usefulness: verifies the other minimum key of issue #1387, `core.worktree`, so a change that
