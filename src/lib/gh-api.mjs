@@ -1,4 +1,4 @@
-// The general `gh` client: runs `gh`, reads `gh api` endpoints, and judges every reply the way the
+// The general `gh` client runs `gh` and reads `gh api` endpoints. It judges every reply the way the
 // CI gate, the check wait, and the source probe need (#1183). It holds no required-check logic.
 import { execBounded } from "./exec.mjs";
 import { isJsonObject, tryParseJson } from "./json.mjs";
@@ -86,7 +86,7 @@ function tagRetry(err, { transient, transport }) {
  * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did, or
  * when the failure is a transport failure. A `terminal` result never becomes transport. Only a
  * result marked `include`, a failed `gh api --include` read, passes its stdout on for a status line
- * (#1246): the stdout of any other read is a reply body.
+ * (#1246). The stdout of any other read is a reply body.
  */
 export function ghApiFailure(endpoint, { status, stdout, stderr, transient, include, terminal }) {
   const text = ghFailureText({ status, stdout: include ? stdout : undefined, stderr });

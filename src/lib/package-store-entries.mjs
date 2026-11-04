@@ -59,10 +59,8 @@ function recordedStoreDir(text) {
  * null when no store is recorded. The file is read up to a byte cap. The root is the parent of the
  * recorded `storeDir`, which pnpm writes as the version directory (`<root>/v11`). A missing,
  * unreadable, oversized, malformed, or store-less file, or a path that is not absolute, gives
- * null.
- *
- * The runtime does not predict which store a later install uses. The result only names the
- * recorded store, whatever selected it (config, the environment, or a flag).
+ * null. The runtime does not predict which store a later install uses, so the result only names the
+ * recorded store (config, the environment, or a flag).
  */
 // known-limit: an install into a store other than the recorded one gives no field, whatever
 // selected that store, and a work tree that never ran an install records none

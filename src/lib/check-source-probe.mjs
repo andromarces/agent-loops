@@ -200,8 +200,9 @@ async function changedFilesOf({ bounded, slug, cwd, pr }) {
 }
 
 /**
- * The texts of the workflow files at `baseSha`, or null for a read that fails, a listing at the API
- * cap, or an entry or file of another shape. A missing workflow directory holds no file.
+ * The texts of the workflow files at `baseSha`, or null for a read that fails or a listing at the
+ * API cap. Null also covers an entry or file of another shape. A missing workflow directory holds
+ * no file.
  */
 async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
   const listingEndpoint = `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`;

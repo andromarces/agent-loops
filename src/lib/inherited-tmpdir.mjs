@@ -2,11 +2,11 @@ import { isAbsolute, resolve } from "node:path";
 import { tryParseJson } from "./json.mjs";
 
 /**
- * Environment variable that lists the temporary directories that the process tree inherited
- * before a Codex turn replaced `TMPDIR`, `TEMP`, and `TMP` with a private one, as a JSON array of
- * absolute paths, innermost first (issue #955). JSON cannot split a valid path, which a platform
- * list delimiter can. A package-runner layout that an earlier process created under one of them
- * still counts as a temporary layout.
+ * Environment variable that lists the temporary directories of the process tree, as a JSON array of
+ * absolute paths, innermost first (issue #955). The list holds the directories inherited before a
+ * Codex turn replaced `TMPDIR`, `TEMP`, and `TMP` with a private one. JSON cannot split a valid
+ * path, which a platform list delimiter can. A package-runner layout that an earlier process
+ * created under one of them still counts as a temporary layout.
  */
 export const INHERITED_TMPDIR_ENV = "AGENT_LOOP_INHERITED_TMPDIR";
 
@@ -20,9 +20,9 @@ function parseList(raw) {
 
 /**
  * Reads the list for the installer check. An absent variable is a valid empty list. A value that
- * is present but is not a JSON array of absolute paths is not valid, and the caller must fail
- * closed: an empty string, malformed JSON, a non-array, a non-string entry, and a relative or
- * empty entry are all invalid.
+ * is present but is not a JSON array of absolute paths is not valid, so the caller fails closed.
+ * That covers an empty string, malformed JSON, a non-array, a non-string entry, and a relative or
+ * empty entry.
  * @returns {{ valid: boolean, paths: string[] }}
  */
 export function readInheritedTmpdirs(env = process.env) {

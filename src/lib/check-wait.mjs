@@ -47,7 +47,7 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
-// Every value a well-formed item may carry, so an item the runtime cannot read
+// Every value a well-formed item can carry, so an item the runtime cannot read
 // is unresolved rather than a pass. `gh pr checks --help` names the buckets:
 // pass, fail, pending, skipping, and cancel. A `gh` that adds one is refused
 // rather than guessed at, because an unread value is not evidence of a pass.

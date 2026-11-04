@@ -408,8 +408,8 @@ export async function repoSlug(gh, cwd, failure = "failed") {
   return stdout.trim();
 }
 
-// The exact `gh pr checks --required` reply on a branch with no required check, compared against
-// the trimmed stderr of an exit 1 with no stdout.
+// The exact `gh pr checks --required` reply on a branch with no required check. It is compared
+// against the trimmed stderr of an exit 1 with no stdout.
 export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
 
 // The `gh pr checks` exit code of a pending check. Exit 1 covers a failing check, a read error, and a
@@ -424,27 +424,17 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 /**
  * The required names of one `gh pr checks --required --json` reply. Any field list that includes
  * `name` serves, so the wait passes the reply of its own check-list read instead of a second one.
- *
  * `gh pr checks --required` resolves required check names without admin rights. It lists only
- * checks that already reported on the commit, exits non-zero for pending or failing checks, and
- * prints no JSON when no required check has reported, so the output is parsed leniently and an
- * unparseable reply contributes no names. This source carries no app qualifier, so every name it
- * yields is unqualified.
- *
- * `ok` is true only for a read that succeeded, whatever its stdout holds: exit 0 with a list of
- * named checks, exit 1 or 8 (a failing or pending check) with a non-empty list of named checks, or
- * the exact `no required checks reported` answer on exit 1 with no stdout. Any other exit, an empty
- * list on a non-zero exit, an error text that merely contains those words, and the `no checks
- * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read and
- * the check wait refuse on it, because the list may name a required check no configuration source
- * did (issue #349). A reply that is no list carries `transient` and the `failure` text for a clean
- * server error or a transport failure. The wait retries either one (#1121, #1312).
+ * checks that already reported, so the output is parsed leniently and an unparseable reply
+ * contributes no names. This source carries no app qualifier. A reply that is no list carries
+ * `transient` and the `failure` text for a clean server error or a transport failure.
  * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */
 export function requiredNamesOf({ status, stdout, stderr }) {
   const parsed = tryParseJson(stdout);
   if (Array.isArray(parsed)) {
     const named = parsed.every((check) => typeof check?.name === "string" && check.name !== "");
+    // `ok` is true only for exit 0, or for a failing or pending exit with a non-empty list.
     const succeeded =
       status === 0 || ((status === 1 || status === EXIT_PENDING) && parsed.length > 0);
     return {
@@ -452,6 +442,8 @@ export function requiredNamesOf({ status, stdout, stderr }) {
       ok: named && succeeded,
     };
   }
+  // The gate ignores `ok`. The status read and the check wait refuse on it, because a name can be
+  // required (issue #349).
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
   // A clean server error or a transport failure only: an unparseable reply is never retried
   // (#1121, #1312).
