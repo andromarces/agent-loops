@@ -553,6 +553,26 @@ export async function runChild(options) {
     }
     return advisory;
   };
+  /**
+   * Reads the shared Git change, the lockfile change, and both advisory lists together for a turn
+   * that failed. A rejected read throws in the order shared Git, lockfile, advisory, which is the
+   * order the reads ran in before they ran together.
+   */
+  const readFailedTurnEvidence = async () => {
+    const [sharedRead, lockfileRead, advisoryRead] = await Promise.allSettled([
+      readSharedGitChanged(),
+      readLockfileChanged(),
+      readAdvisory(),
+    ]);
+    for (const read of [sharedRead, lockfileRead, advisoryRead]) {
+      if (read.status === "rejected") throw read.reason;
+    }
+    return {
+      sharedGitChanged: sharedRead.value,
+      lockfileChanged: lockfileRead.value,
+      ...advisoryRead.value,
+    };
+  };
   try {
     let reviewed = null;
     let prChecks = null;
@@ -672,9 +692,7 @@ export async function runChild(options) {
       if (err && typeof err === "object") {
         carryTurnEvidence(err, {
           testRun,
-          sharedGitChanged: await readSharedGitChanged(),
-          lockfileChanged: await readLockfileChanged(),
-          ...(await readAdvisory()),
+          ...(await readFailedTurnEvidence()),
         });
       }
       throw err;
@@ -686,11 +704,10 @@ export async function runChild(options) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
-    // The failed turn may have changed the shared state before it failed. Neither read takes the
-    // turn signal, so a cancel never loses what they read.
-    const sharedGitChanged = await readSharedGitChanged();
-    const lockfileChanged = await readLockfileChanged();
-    const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory();
+    // The failed turn can change the shared state before it fails. The three reads take no turn
+    // signal, so a cancel never loses what they read.
+    const { sharedGitChanged, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries } =
+      await readFailedTurnEvidence();
     // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn. This
     // throw leaves the catch block, so it carries the evidence just read, as the fatal path does.
     try {
