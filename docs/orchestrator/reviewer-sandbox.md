@@ -5,8 +5,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 ## The Codex reviewer sandbox mode
 
 A Codex reviewer turn runs with no sandbox by default, with
-`sandbox_mode="danger-full-access"` ([ADR 0038](../../adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md),
-which partially supersedes [ADR 0019](../../adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)), and with the app connectors off
+`sandbox_mode="danger-full-access"` ([ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md),
+which partially supersedes [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)), and with the app connectors off
 (`features.apps=false`, issue #496). It can run the test suite and
 `gh pr checks`. An operator can choose a sandbox at init with
 `--reviewer-sandbox read-only` or `--reviewer-sandbox workspace-write`. The
