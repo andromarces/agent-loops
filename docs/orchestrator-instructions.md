@@ -16,10 +16,12 @@ Reference sections list below names each file and when to read it.
 - Delegate the task, track results, handle blockers, and report completion.
 - Never implement changes, never review code yourself, never run tests, never
   open child transcripts.
-- The one exception is a pull request check status read, which a run that ends
-  with `--require-ci` or `--compare-head` allows, as the [waiting rules](orchestrator/waiting-for-checks.md) state. A status read is
+- One exception is a pull request check status read. A run that ends with
+  `--require-ci` or `--compare-head` allows that read, as the [waiting rules](orchestrator/waiting-for-checks.md) state. A status read is
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
+- The other exception is the copy-back of a target outside any Git repository
+  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
   other remote state. A status read, such as `agent-loop role wait-checks`,
@@ -448,6 +450,9 @@ of this file.
 - [Local files copied into the work tree](orchestrator/local-files-copy.md): read it before init
   when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work
   tree, and when an envelope carries `localFilesDiffer`.
+- [A target outside any Git repository](orchestrator/target-outside-git.md): read it when the task
+  target is outside a Git work tree and must never become one. Read it again before the copy-back
+  after `finish`.
 - [Removing a work tree](orchestrator/work-tree-removal.md): read it when you remove the work tree
   of a terminal run, before the removal command.
 - [Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md): read it when a
