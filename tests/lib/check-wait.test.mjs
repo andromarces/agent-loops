@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../src/lib/check-wait.mjs";
+import { canceledError } from "../../src/lib/ci-gate.mjs";
 import { pageStdout } from "../gh-doubles.mjs";
 import {
   fakeClock,
@@ -12,6 +13,7 @@ import {
   once,
   pinned,
   blockOf,
+  readOk,
   replyOf,
   FORBIDDEN,
   NOT_FOUND,
@@ -625,4 +627,124 @@ test("waitChecks reads an unreadable protection source again and settles on its 
   });
   expect(result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
   expect(protectionReads).toBeGreaterThan(1);
+});
+
+// The cancel error of the role CLI, as a read that the signal stopped throws it.
+const CANCEL = canceledError();
+const BASE_HEAD = "c".repeat(40);
+const THIRD_PARTY = { name: "Workers Builds: site", bucket: "pass" };
+
+/**
+ * A `gh` for the `--all` hold whose workflow-directory read throws `CANCEL`. Every other read
+ * answers a passing third-party check and a `pull_request` workflow in the base branch.
+ * `counts.listing` counts the workflow-directory reads.
+ */
+function cancelingHoldGh(counts) {
+  const inner = scriptedGh([{ status: 0, checks: [THIRD_PARTY] }], { all: true });
+  return async (args, cwd, options) => {
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (endpoint === "repos/owner/repo/commits/main") {
+      return readOk({ sha: BASE_HEAD });
+    }
+    if (endpoint.startsWith("repos/owner/repo/pulls/42/files")) {
+      return readOk([]);
+    }
+    if (endpoint === `repos/owner/repo/contents/.github/workflows?ref=${BASE_HEAD}`) {
+      counts.listing += 1;
+      throw CANCEL;
+    }
+    return inner(args, cwd, options);
+  };
+}
+
+// Usefulness: verifies the workflow-probe cancel reaches the caller as the same error object, and
+// the workflow directory is read once, so the wait neither retries nor reports a timeout (issue
+// #1456). No other test throws a cancel from a read of the wait.
+test("waitChecks rejects with the workflow-directory cancel and reads it once", async () => {
+  const counts = { listing: 0 };
+  const clock = fakeClock();
+  await expect(
+    waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 60,
+      all: true,
+      gh: cancelingHoldGh(counts),
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+  ).rejects.toBe(CANCEL);
+  expect(counts.listing).toBe(1);
+});
+
+/**
+ * A `gh` for the `--all` no-check-source probe whose base-head read throws `CANCEL`. The check list
+ * and the head hold no run, so the probe runs on the first poll. `counts.base` counts the base-head
+ * reads.
+ */
+function cancelingProbeGh(counts) {
+  const inner = scriptedGh([{ status: 0, checks: [] }], { all: true });
+  return async (args, cwd, options) => {
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (endpoint === "repos/owner/repo/commits/main") {
+      counts.base += 1;
+      throw CANCEL;
+    }
+    return inner(args, cwd, options);
+  };
+}
+
+// Usefulness: verifies the no-check-source probe cancel reaches the caller as the same error
+// object, and the base head is read once, so the probe holds no pass and retries no read
+// (issue #1456).
+test("waitChecks rejects with the no-check-source probe cancel and reads it once", async () => {
+  const counts = { base: 0 };
+  const clock = fakeClock();
+  await expect(
+    waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 60,
+      all: true,
+      gh: cancelingProbeGh(counts),
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+  ).rejects.toBe(CANCEL);
+  expect(counts.base).toBe(1);
+});
+
+/**
+ * A `gh` for a required wait whose `gh pr checks` lists a failure and whose check-runs read throws
+ * `CANCEL`. `counts.runs` counts the check-runs reads.
+ */
+function cancelingCommitGh(counts) {
+  const inner = scriptedGh([{ status: 0, checks: [FAILED_ITEM] }]);
+  return async (args, cwd, options) => {
+    const endpoint = args[0] === "api" ? args[1] : "";
+    if (endpoint.startsWith(`repos/owner/repo/commits/${HEAD_A}/check-runs`)) {
+      counts.runs += 1;
+      throw CANCEL;
+    }
+    return inner(args, cwd, options);
+  };
+}
+
+// Usefulness: verifies a commit-read cancel reaches the caller as the same error object even when
+// `gh pr checks` listed a failure, which settles the wait. No other test covers a cancel beside a
+// listed failure (issue #1456).
+test("waitChecks rejects with the commit-read cancel despite a listed failure", async () => {
+  const counts = { runs: 0 };
+  const clock = fakeClock();
+  await expect(
+    waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 60,
+      gh: cancelingCommitGh(counts),
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+  ).rejects.toBe(CANCEL);
+  expect(counts.runs).toBe(1);
 });

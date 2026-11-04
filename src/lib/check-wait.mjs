@@ -29,6 +29,7 @@ import {
 } from "./ci-required-sources.mjs";
 import { noCheckSource, pullRequestWorkflowMayRun } from "./check-source-probe.mjs";
 import { failureOf, ghReadError, runGh, withSignal } from "./gh-api.mjs";
+import { readProp } from "./error-message.mjs";
 import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject, tryParseJson } from "./json.mjs";
 
@@ -681,6 +682,10 @@ export async function waitChecks({
     { retryable = (err) => err?.transient, settled = () => false } = {},
   ) => {
     const err = failureOf(raw);
+    // A cancel reaches the caller as the same object, with no retry and no hold.
+    if (readProp(err, "isCanceled")) {
+      throw err;
+    }
     if (err instanceof BoundReached || !retryable(err)) {
       if (err instanceof BoundReached || !settled()) {
         throw err;
