@@ -341,15 +341,14 @@ run on the PR head branch. A repository with no remote has no `origin/<default>`
 The setup for both, and the per-work-tree `push.default` override, are in
 [Work tree setup details](orchestrator/work-tree-setup.md).
 
-The parent installs the dependencies of the work tree, and no worker or reviewer
-does. After you create the work tree and before the first dispatch, run inside it
-the dependency setup that the repository documents for its tests. For a Node
-project, that is the lockfile install, for example
-`pnpm install --frozen-lockfile`. For another toolchain, it is the documented
-setup, for example a virtual environment built from a hashed requirements file.
-The work tree then has its own installed dependencies, such as `node_modules`,
-for every turn. Never link or junction the `node_modules` of another checkout into
-the work tree, and never run an install in another checkout: a tool such as `vp`
+The parent installs the work tree's own dependencies, such as `node_modules`, for
+every turn, and no worker or reviewer does. After you create the work tree and
+before the first dispatch, run inside it the dependency setup that the repository
+documents for its tests. For a Node project, that is the lockfile install, for
+example `pnpm install --frozen-lockfile`. For another toolchain, it is the
+documented setup, for example a virtual environment built from a hashed
+requirements file. Never link or junction the `node_modules` of another checkout
+into the work tree. Never run an install in another checkout: a tool such as `vp`
 can rewrite links in the `node_modules` that the junction points to.
 
 `dispatch` checks the work tree before it reads the run state, charges a step, or
