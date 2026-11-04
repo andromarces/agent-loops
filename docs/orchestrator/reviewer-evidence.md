@@ -134,7 +134,7 @@ The read follows the PR that the run names before its first turn: `--pr`, or
 only `--require-ci` therefore supplies the status for the gated PR (issue #350).
 The interactive path receives `--require-ci` only at `finish`, so only `--pr`
 supplies the status there, declared at init or with `role declare-pr`
-(see [Declaring a PR run](../orchestrator-instructions.md#declaring-a-pr-run)).
+(see [Declaring a PR run](pr-declaration.md)).
 
 ## The runtime supplies a test command result
 

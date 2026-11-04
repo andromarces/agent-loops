@@ -271,7 +271,7 @@ Apply these parent rules:
   never an accept.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
-  sets the marker described under Finish output, so the record never reads the
+  sets the marker described in [Finish output](orchestrator/finish-output.md), so the record never reads the
   same as a verified finish. That marker is the only machine-readable record of
   the compare, and nothing else in the run distinguishes an omitted marker from a
   verified finish, so always set it.
@@ -414,8 +414,11 @@ of this file.
   with `--require-ci` or `--compare-head` waits for checks, and when a reviewer reports a pending required check.
   Read it when a required check fails on a known flaky test. Read it when `wait-checks` returns an
   error, `noRequiredChecks`, or `noCheckSource`.
-- [Declaring the PR when a worker opens it](orchestrator/pr-declaration.md): read it when the PR
-  does not exist at init, or when a headless run declares its PR itself.
+- [Declaring a PR run](orchestrator/pr-declaration.md): read it before you pass `--pr`, when a
+  declared run refuses a finish, when the PR does not exist at init, or when a headless run
+  declares its PR itself.
+- [Finish output](orchestrator/finish-output.md): read it before you call `finish`, when you need
+  the exact summary shape or the `unresolvedCompare` marker, or when a `finish` is refused.
 - [Finish gates](orchestrator/finish-gates.md): read it when a `finish` is refused, and before you
   end a run with `--require-accept` or `--require-ci`.
 - [Turn history and the step budget](orchestrator/run-history.md): read it when you rebuild a run
@@ -532,36 +535,14 @@ Completion is completion of the requested work, not code acceptance.
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
-- `review-only`: call `finish` after the reviewer turn, whatever it returned. The
-  gate is on the turn, not on a report: a turn that ended in an error satisfies
-  it, so the finish can carry no report. The runtime checks that all five
-  summary keys are non-empty strings. It refuses a finish that holds any other
-  key and names each unknown key: the headless action object allows only
-  `action`, `summary`, and an optional boolean `unresolvedCompare`, and its
-  nested `summary` object allows only the five summary keys. The `role finish`
-  stdin object allows the five summary keys and an optional boolean
-  `unresolvedCompare`. It never compares the summary content with what the
-  reviewer returned.
+- `review-only`: call `finish` after the reviewer turn, whatever it returned.
+  The gate is on the turn, not on a report, and neither path takes
+  `--require-accept` in this mode.
 
-A `review-only` finish needs a reviewer turn that ran, whatever it returned. The
-runtime does not compare the summary with the reviewer result. Record the
-reviewer status and verdict in `verified`, including an error or a missing
-report.
-
-- `agent-loop role finish` applies no reviewer-turn rule of its own. Every
-  reachable interactive run already has a reviewer turn, because the init
-  dispatch is itself that turn.
-- A headless `--mode review-only` run can reach a finish before any reviewer
-  turn. The runtime refuses that finish until a reviewer turn was dispatched. A
-  `run_worker` action ends the headless run on exit 1 with the reason
-  `mode review-only rejects a run_worker action`.
-- Neither path takes `--require-accept` in this mode. `role finish` refuses the
-  flag at `finish`, and the headless command refuses it before the run starts.
-  Both give this error:
-  `--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.`
-
-Call `finish` after the reviewer turn, whatever it returned. Record what the run
-did not cover in `notDone` and `open`.
+`finish` reads a five-key summary as JSON on stdin and is accepted only from the
+`active` lifecycle. Before you call `finish`, read
+[Finish output](orchestrator/finish-output.md) when you need the exact summary
+shape or the `unresolvedCompare` marker, or when a `finish` is refused.
 
 Map the child report fields into the finish summary:
 
@@ -584,141 +565,16 @@ Map the child report fields into the finish summary:
   items go into `deferred`. `deferred` holds out-of-scope items in every mode;
   `open` holds unresolved in-scope findings.
 
-## Finish output
+## PR declaration
 
-`finish` reads the summary as JSON on stdin and is accepted only from the
-`active` lifecycle. All five keys are required and carry the same keys as the
-orchestrator action contract (`validateAction`):
-
-```bash
-printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}' \
-  | agent-loop role finish --cwd "<work tree>"
-```
-
-A finish that records an unresolved PR-head compare instead of aborting sets
-`"unresolvedCompare": true` beside the five keys, the same marker the headless
-finish action carries beside its summary:
-
-```bash
-printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","deferred":"...","notDone":"PR head unresolved","open":"PR head unresolved","unresolvedCompare":true}' \
-  | agent-loop role finish --cwd "<work tree>"
-```
-
-The value must be a boolean, and the key is not one of the five summary keys:
-`summary` keeps exactly those five. A refused finish keeps the lifecycle,
-`active` or `interrupted`. The stdin object allows only the five
-summary keys and `unresolvedCompare`. The headless finish action object allows
-only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
-object allows only the five summary keys. A finish with any other key in
-either object, such as a misspelled marker, is refused and the refusal names
-each unknown key; resend the finish with only the allowed keys (#1021).
-
-The envelope then carries
-`"unresolvedCompare": true` and the state file records the same field beside
-`summary`, so a recorded unresolved compare never reads the same as a verified
-finish, which keeps the current envelope and state (#281). A finish with the
-field absent, or set to `false`, is a verified finish. The marker cannot be
-combined with `--require-ci`: that gate resolves the PR head itself, so a
-compare it verified is not unresolved. A run that cannot use `--require-ci`,
-for example one whose base branch requires a check this credential cannot read,
-finishes with `--compare-head <pr>`, or records the marker when it cannot
-read the PR head. A base branch whose required-check sources each state that it
-holds no required check can use the gate, which verifies the PR head, the clean
-reviewed tree, and the merge state.
-
-A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a repository
-whose required-check sources are unreadable (#301, #1098). The runtime reads the PR head and
-state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
-reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged.
-
-Before a finish with `--compare-head`, run the required wait on the reviewed head first.
-When that wait refuses because no source can state the required checks, run
-`agent-loop role wait-checks --all` on the same head. A pending or failing check goes into
-`notDone` or blocks the finish. The runtime reads no check result for that finish, so the
-wait is the only check evidence.
-
-The runtime
-reads no required-check source or check result and claims none, so `verified` still states what
-the checks showed. A finish that also sets `unresolvedCompare` is refused, because the compare
-resolves that head. Dispatch the reviewer again when the PR head moved, then repeat the finish. The
-command and the `headCompare` record are in
-[Finish with --compare-head](orchestrator/finish-compare-head.md).
-
-Without the gate or `--compare-head`, the runtime never resolves the PR head, so it cannot tell an
-absent field from a verified compare. A finish that records the compare under
-notDone and open and omits the field is a verified finish to every machine
-consumer, and the free text is the only trace. `--require-ci` closes the gap in
-both paths, because it resolves the head in the runtime: `agent-loop role finish
---require-ci <pr>` here, and `agent-loop --require-ci <pr>` in the headless loop
-(issue #286, accepted gap; #293). A run with no usable gate, for example one
-that cannot read the required checks, keeps the marker as its only trace.
-
-## Declaring a PR run
-
-`--pr <pr>` on the init call declares that this run's work is delivered on that
-pull request. The declaration is the run's PR input, so such a run can only end
-through the gate: `agent-loop role finish --require-ci <pr>` here, and
+`--pr <pr>` on the init call declares that the run's work is delivered on that
+pull request, so the run can end only through the gate:
+`agent-loop role finish --require-ci <pr>` here, and
 `agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
 
-- A `finish` with no `--require-ci` is refused, and a `finish` whose
-  `--require-ci` names another PR is refused without reading GitHub. That refusal
-  is the only way the interactive path can catch a wrong number, because its
-  `--require-ci` arrives at `finish`. The headless path takes both flags on one
-  command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the
-  run starts.
-- A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
-  resolves that compare. The recorded marker is the accepted gap above, and a
-  declared run does not have it. One refusal names every condition the finish
-  broke above the `--require-ci` gate, so read all of it rather than the first
-  reason. The interactive `finish` reads the gate only after those conditions
-  pass, so a later `finish` can report a `--require-ci` condition that the first
-  refusal did not name. A matching gate applies its own conditions on top of the
-  declaration, and a gate for another PR is never read.
-- The gate flag is a run input, so no `dispatch` supplies it and a repeat
-  `finish` is refused the same way. A declared run with no gate can only end
-  through `abort` with the missing gate named in the reason.
-- `--pr` is an init field, so a later call that changes it is refused like any
-  other init field. The one exception is `role declare-pr`, below. A state file
-  written before this field has no `pr`, and that run keeps the marker-only
-  behavior.
-- `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
-  at finish and the run would refuse every finish. On the headless path every
-  flag arrives on one command line, so `--mode review-only` with `--pr`,
-  `--require-accept`, or `--require-ci` is a usage error before the run starts,
-  with the same two wordings this section states.
-- A base branch with no required check does not refuse `--pr` when every
-  required-check source stated that it holds none. The gate passes on the PR head,
-  the clean reviewed tree, and the merge state, and the run records it, so a
-  declared run on such a branch ends and never keeps the #286 gap. A base branch
-  whose required checks this credential cannot read still refuses every finish,
-  because the gate cannot establish the absence, and the refusal names the source
-  it could not read.
-- Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
-  the gate, for example a private repository on the GitHub Free plan (#301), because
-  a declared run there refuses every finish and can end only through `abort`.
-  Init with `--pr`, `role declare-pr`, and the headless start read the required-check
-  sources of the PR base once. They refuse when the rulesets read settled nothing,
-  before any state file is written or child spawns.
-  - A read that fails for another
-    reason, such as a transport failure, warns and does not refuse. A `--continue-from`
-    run that restored its PR makes no start read, because the earlier run read at the
-    start of its own `--pr` run or before it declared a worker-opened PR, and its
-    prompt states none. After a refusal, omit
-    `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
-    `reviewed.head` in the runtime and requires the PR to be open.
-  - Use the `"unresolvedCompare": true` marker only
-    when the PR head itself cannot be read. The headless `--require-ci` with no
-    `--pr` declares nothing, so the start does not read it and its gate refuses at
-    finish.
-
-A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
-an omitted marker still reads as a verified finish. The declaration closes the
-gap for a run that states its PR (issue #302). A headless run that takes neither
-`--pr` nor `--require-ci` can also gain its PR from the runtime, as
-[Declaring the PR when a worker opens it](orchestrator/pr-declaration.md) states.
-
-The conditions that the `--require-accept` and `--require-ci` gates check at `finish` are in
-[Finish gates](orchestrator/finish-gates.md).
+Before you pass `--pr`, and when a declared run refuses a finish, read
+[Declaring a PR run](orchestrator/pr-declaration.md). Read it also when the
+PR does not exist at init, and when a headless run declares its PR itself.
 
 ## Blockers and terminal states
 
