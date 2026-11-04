@@ -75,6 +75,11 @@ function boundedDetail(text) {
   return flat.length > DETAIL_LIMIT ? `${flat.slice(0, DETAIL_LIMIT - 3)}...` : flat;
 }
 
+/**
+ * Runs one Codex turn in a private temporary directory, which the runtime removes after the turn.
+ * A failed `ExecError` gets a bounded `message`: the exit cause, or the exit code and last
+ * failure event. Any other error reaches the caller unchanged.
+ */
 export async function runCodex(state, prompt, options = {}) {
   const { readOnly, sandbox, onTurnTmpdir } = options;
   const configArgs = [];

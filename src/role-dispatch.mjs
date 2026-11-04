@@ -56,9 +56,9 @@ function isInitCall(args) {
  * Rejects a non-init call when no state file exists for the work tree.
  *
  * `needsBudget` refuses an unsafe stored `maxSteps` before the operation runs.
- * Init over an existing state, `finish`, and `extend` set it. `abort` leaves it
- * unset: refusing it would block the only route to a terminal lifecycle, because
- * a new init refuses over a non-terminal run (#312).
+ * A later dispatch, `finish`, and `extend` set it. `abort` leaves it unset:
+ * refusing it blocks the only route to a terminal lifecycle, because a new init
+ * refuses over a non-terminal run (#312).
  */
 export function requireState(state, cwd, { needsBudget = false } = {}) {
   if (!state) {

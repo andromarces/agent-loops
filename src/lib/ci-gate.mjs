@@ -663,10 +663,11 @@ export async function unreadableGateReason({
  * - `{ absent: true }`: no source names a check, and both the rulesets and the classic
  *   protection stated they hold none.
  * - `{ unproven }`: no source names a check, and the listed sources did not state an absence. A
- *   source that settled nothing and a ruleset read that found no rule are both named, because a
- *   parent can only fix a source it can see (issue #336). The protection source cannot be
- *   `EMPTY`: `classifyProtection` returns `ABSENT`, `HAS_CONTEXTS`, or `UNKNOWN` and nothing
- *   else, so an unreadable protection reply is already in `unknown`.
+ *   source that settled nothing and a ruleset read that found no rule are both named. A parent
+ *   can only fix a source it can see (issue #336). The protection source cannot be
+ *   `EMPTY`: only the ruleset source returns it. `classifyProtection` returns only
+ *   `HAS_CONTEXTS` or `UNKNOWN`, and `ABSENT` comes from the exact-404 path in
+ *   `readRequiredSource`, so an unreadable protection reply is already in `unknown`.
  * @param {{ unknown: string[], rulesetState: string, protectionState: string, contexts: object[] }} required
  * @returns {{ absent: true } | { unproven: string[] } | null}
  */

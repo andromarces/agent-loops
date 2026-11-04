@@ -1,7 +1,8 @@
-// `agent-loop role`: run one worker or reviewer turn, or finish/abort/extend a run,
-// through the same guards as the headless loop, driven by a lifecycle state
+// `agent-loop role`: run one worker or reviewer turn, or one of six other
+// subcommands: finish, abort, extend, declare-pr, set-model, or wait-checks. It
+// runs through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
-// envelope per invocation, except `--help`, which prints plain usage; all logs go
+// envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
 import { defaultAgents } from "./agents/index.mjs";
 import { CHILD_ROLE_KINDS, REVIEW_ONLY_PR_REFUSAL, openCodeOptionsError } from "./lib/args.mjs";
