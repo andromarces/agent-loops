@@ -4,6 +4,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { readableErrorText } from "./error-message.mjs";
 import { logDebug, logInfo, logWarn } from "./log.mjs";
 import { ownerAlive } from "./process-identity.mjs";
 import { slotsRoot } from "./slots-root.mjs";
@@ -89,7 +90,7 @@ async function tryAcquireSlot(root, slots) {
   }
   if (errors.length > 1) {
     // Every failure stays in the message, so a later one never hides the cause.
-    throw new AggregateError(errors, errors.map((err) => err?.message ?? String(err)).join("; "));
+    throw new AggregateError(errors, errors.map((err) => readableErrorText(err)).join("; "));
   }
   if (errors.length === 1) {
     throw errors[0];

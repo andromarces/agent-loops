@@ -1,3 +1,4 @@
+import { readableErrorText, readProp } from "./error-message.mjs";
 import { endCommandTrees, killLiveTrees } from "./exec-tree.mjs";
 import { logWarn, logError } from "./log.mjs";
 
@@ -89,7 +90,9 @@ export function cancelOnSigInt(controller, { onForceExit } = {}) {
     try {
       pending = onForceExit?.();
     } catch (err) {
-      logError(`second SIGINT: the final write failed: ${err?.code ?? err?.message ?? err}`);
+      logError(
+        `second SIGINT: the final write failed: ${readProp(err, "code") ?? readableErrorText(err)}`,
+      );
     }
     if (typeof pending?.then !== "function") {
       exit();
