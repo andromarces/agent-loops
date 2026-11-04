@@ -203,6 +203,49 @@ export function ownStartTime() {
   return ownStartTimeQuery;
 }
 
+// Longest time one cached start-time stamp is used before a fresh probe. It bounds the
+// window in which a pid reuse reads as the recorded owner.
+export const START_TIME_CACHE_MAX_AGE_MS = 5000;
+
+/**
+ * A start-time probe cache for one wait. `probe` defaults to `processStartTime`, and
+ * `monotonic` defaults to the monotonic `performance.now`. An entry is keyed by pid and
+ * recorded stamp, and it expires after `START_TIME_CACHE_MAX_AGE_MS`. A null result is not
+ * cached, and `forget` drops a pid's entries. A wall-clock step cannot extend an entry, because
+ * age never reads the wall clock. known-limit: a pid reused within the age reads as its recorded
+ * owner until the next probe.
+ */
+export function startTimeCache({
+  probe = processStartTime,
+  monotonic = () => performance.now(),
+} = {}) {
+  const entries = new Map();
+  return {
+    async probe(pid, recorded) {
+      const key = `${pid}\u0000${recorded}`;
+      const hit = entries.get(key);
+      if (hit !== undefined && monotonic() - hit.at < START_TIME_CACHE_MAX_AGE_MS) {
+        return hit.stamp;
+      }
+      const stamp = await probe(pid);
+      if (stamp === null) {
+        entries.delete(key);
+      } else {
+        entries.set(key, { stamp, at: monotonic() });
+      }
+      return stamp;
+    },
+    forget(pid) {
+      const prefix = `${pid}\u0000`;
+      for (const key of entries.keys()) {
+        if (key.startsWith(prefix)) {
+          entries.delete(key);
+        }
+      }
+    },
+  };
+}
+
 // Two reads of one process on the fixed-at-creation sources differ by at most this
 // many seconds: it covers their one-second resolution only, not a clock step.
 const START_TIME_TOLERANCE_S = 2;
@@ -277,17 +320,21 @@ function startTimesDiffer(recorded, current) {
 // owner of another namespace, and a crashed owner of this namespace when the reader
 // cannot read its own PID namespace, keep the lock until a person checks that the owner
 // is gone and removes the lock file (and any `.reap.<digest>` claim beside it).
-export async function ownerAlive(owner) {
+export async function ownerAlive(owner, cache) {
   const recorded = parseStamp(owner.startTime);
   if (recorded?.kind === "linux-proc" && recorded.namespace !== (await readerPidNamespace())) {
     return true;
   }
   if (!pidAlive(owner.pid)) {
+    // A dead pid frees its slot at once, and no stale entry waits to match a reused pid.
+    cache?.forget(owner.pid);
     return false;
   }
   if (typeof owner.startTime !== "string") {
     return true;
   }
-  const current = await processStartTime(owner.pid);
+  const current = cache
+    ? await cache.probe(owner.pid, owner.startTime)
+    : await processStartTime(owner.pid);
   return current === null || !startTimesDiffer(owner.startTime, current);
 }
