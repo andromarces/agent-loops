@@ -3,38 +3,14 @@ import { throwIfCanceled } from "./agents/shared.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS, readRequiredChecks } from "./lib/ci-gate.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
-import {
-  appearedInInheritedTmpdir,
-  carryInheritedTmpdirEntries,
-  failedInheritedTmpdirEntries,
-  snapshotInheritedTmpdir,
-} from "./lib/tmpdir-entries.mjs";
-import {
-  carryPackageStoreEntries,
-  changedInPackageStore,
-  failedPackageStoreEntries,
-  snapshotPackageStore,
-} from "./lib/package-store-entries.mjs";
+import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
+import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
-import {
-  carryLockfileChanged,
-  diffLockfiles,
-  failedLockfileChanged,
-  readLockfiles,
-} from "./lib/lockfile-change.mjs";
-import {
-  carrySharedGitChanged,
-  diffSharedGit,
-  failedSharedGitChanged,
-  readSharedGit,
-} from "./lib/shared-git.mjs";
+import { diffLockfiles, readLockfiles } from "./lib/lockfile-change.mjs";
+import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
-import {
-  carryTestRun,
-  failedTestRun,
-  reportLateChangedPaths,
-  runTestCmd,
-} from "./lib/test-cmd.mjs";
+import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
+import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
@@ -122,80 +98,7 @@ export async function runProbeTurn({
   throwIfCanceled(signal, roleName);
 }
 
-// The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
-// and the fatal-path events. The consumers of `TURN_EVIDENCE` pick up a new field with no change. The
-// field still needs these edits:
-// - The producer in `runChild` sets its value, in the ok result and in the error result.
-// - The `TurnEvidence` typedef below names it.
-// - A field that must survive a fatal error also joins `carryTurnEvidence` and `failedTurnEvidence`.
-// - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
-//   (issue #984).
-// - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
-//   before the next reviewer turn (issue #1180).
-// - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
-//   reviewer turn. Advisory: the runtime cannot attribute them to the turn (issue #1024).
-// - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
-//   Advisory, like the temporary directory entries (issue #1045).
-// - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the
-//   comparison with the Checks line. The state file keeps it beside the response in `lastResult`,
-//   and the turn history keeps its fixed shape.
-// Each entry also names the type and the value property of the fatal-path event of its field.
-const TURN_EVIDENCE = [
-  { field: "sharedGitChanged", type: "shared-git", key: "items" },
-  { field: "lockfileChanged", type: "lockfile", key: "paths" },
-  { field: "inheritedTmpdirEntries", type: "inherited-tmpdir", key: "entries" },
-  { field: "packageStoreEntries", type: "package-store", key: "entries" },
-  { field: "testRun", type: "test-run", key: "testRun", emitFirst: true },
-];
-const TURN_EVIDENCE_FIELDS = TURN_EVIDENCE.map(({ field }) => field);
-
-/**
- * The event that the fatal path of `runLoop` emits for each evidence field, with the event
- * property that carries the value. The `testRun` event comes first, then the others in field order.
- */
-export const TURN_EVIDENCE_EVENTS = [
-  ...TURN_EVIDENCE.filter((entry) => entry.emitFirst),
-  ...TURN_EVIDENCE.filter((entry) => !entry.emitFirst),
-];
-
-/** Picks the evidence fields of `source` that carry a value. A falsy field and an empty list are dropped. */
-export function pickTurnEvidence(source) {
-  return Object.fromEntries(
-    TURN_EVIDENCE_FIELDS.filter((field) =>
-      Array.isArray(source[field]) ? source[field].length > 0 : source[field],
-    ).map((field) => [field, source[field]]),
-  );
-}
-
-/**
- * Carries the evidence of a failed turn on a fatal error: the `--test-cmd` result, the shared Git
- * items, the lockfile paths, and the two advisory lists. An absent or empty field is skipped, and
- * so is an error that cannot take it.
- */
-function carryTurnEvidence(
-  err,
-  { testRun, sharedGitChanged, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries },
-) {
-  if (!err || typeof err !== "object") return;
-  if (testRun) carryTestRun(err, testRun);
-  if (sharedGitChanged?.length > 0) carrySharedGitChanged(err, sharedGitChanged);
-  if (lockfileChanged?.length > 0) carryLockfileChanged(err, lockfileChanged);
-  if (inheritedTmpdirEntries?.length > 0) carryInheritedTmpdirEntries(err, inheritedTmpdirEntries);
-  if (packageStoreEntries?.length > 0) carryPackageStoreEntries(err, packageStoreEntries);
-}
-
-/** Reads back what `carryTurnEvidence` carried. A field the error does not carry is `undefined`. */
-export function failedTurnEvidence(err) {
-  return {
-    testRun: failedTestRun(err),
-    sharedGitChanged: failedSharedGitChanged(err),
-    lockfileChanged: failedLockfileChanged(err),
-    inheritedTmpdirEntries: failedInheritedTmpdirEntries(err),
-    packageStoreEntries: failedPackageStoreEntries(err),
-  };
-}
-
-/** @typedef {{ sharedGitChanged?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
+/** @typedef {import("./lib/turn-evidence.mjs").TurnEvidence} TurnEvidence */
 
 /**
  * Run one worker or reviewer turn with the same guards as the headless loop:
@@ -206,7 +109,7 @@ export function failedTurnEvidence(err) {
  * A reviewer result also carries `reviewed` and `prChecks`. `reviewed` is the runtime-owned
  * identity of the work tree the reviewer saw. `prChecks` is the required-check status the
  * runtime read for a declared PR (#320).
- * The evidence fields of `TURN_EVIDENCE_FIELDS` join a result. A fatal error carries them
+ * The evidence fields listed in `lib/turn-evidence.mjs` join a result. A fatal error carries them
  * through `carryTurnEvidence` and `failedTurnEvidence`.
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
@@ -686,7 +589,7 @@ export async function runChild(options) {
       }
       // A fatal error ends the turn, and the caller records it, so the result rides on it.
       // A cancel of the command itself already carries its own result.
-      testRun ??= failedTestRun(err) ?? null;
+      testRun ??= failedTurnEvidence(err).testRun ?? null;
       // A fatal error carries the entries too, because the dispatcher builds its envelope, its
       // state record, and its event from the error (issue #1024).
       if (err && typeof err === "object") {
