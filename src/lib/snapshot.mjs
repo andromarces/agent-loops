@@ -3,14 +3,13 @@ import { createReadStream } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
-import { execBounded } from "./exec.mjs";
 import { readableErrorText } from "./error-message.mjs";
+import { GIT_READ_TIMEOUT_MS, gitRead, SnapshotError } from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
 
-// Milliseconds that one snapshot `git` read waits before it ends the child.
-const GIT_READ_TIMEOUT_MS = 120_000;
+export { SnapshotError };
 
 export class MutationError extends Error {
   constructor(role, paths) {
@@ -18,18 +17,6 @@ export class MutationError extends Error {
     this.name = "MutationError";
     this.role = role;
     this.paths = paths;
-  }
-}
-
-// Snapshot failure: a turn's mutation state could not be determined, so no verdict exists.
-// Precedence note: if the agent turn was canceled (SIGINT) and the post-turn snapshot also fails,
-// SnapshotError wins and the cancellation is not preserved; the caller exits 1, not 130.
-export class SnapshotError extends Error {
-  constructor(message, options) {
-    super(message, options);
-    this.name = "SnapshotError";
-    // True when a cancel ended the read, so a caller keeps exit 130.
-    this.isCanceled = options?.isCanceled === true;
   }
 }
 
@@ -136,50 +123,6 @@ export async function sha256File(path, { signal } = {}) {
     }
     throw err;
   }
-}
-
-function snapshotReadError(reason, { args, timeoutMs, result }) {
-  if (reason === "canceled") {
-    return new SnapshotError(`git ${args[0]} was canceled`, { isCanceled: true });
-  }
-  if (reason === "timeout") {
-    return new SnapshotError(`git ${args[0]} timed out after ${timeoutMs} ms`);
-  }
-  return new SnapshotError(
-    `git ${args[0]} failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
-  );
-}
-
-/**
- * Runs one bounded `git` read. A timeout or a cancel throws, because the read has no answer to
- * return. Any other exit code is data for the caller, unless `allowExit` lists the accepted exit
- * codes: then any other code throws too. `createError(reason, { args, timeoutMs, result })` builds
- * the error for `reason` `"canceled"` (it must set `isCanceled`), `"timeout"`, or `"exit"`; the
- * default builds a `SnapshotError`. Other options go to `execBounded`.
- */
-export async function gitRead(
-  cwd,
-  args,
-  {
-    signal,
-    timeoutMs = GIT_READ_TIMEOUT_MS,
-    allowExit,
-    createError = snapshotReadError,
-    ...execOptions
-  } = {},
-) {
-  const result = await execBounded("git", args, { cwd, timeoutMs, signal, ...execOptions });
-  const context = { args, timeoutMs, result };
-  if (result.isCanceled) {
-    throw createError("canceled", context);
-  }
-  if (result.timedOut) {
-    throw createError("timeout", context);
-  }
-  if (allowExit !== undefined && !allowExit.includes(result.exitCode)) {
-    throw createError("exit", context);
-  }
-  return result;
 }
 
 const gitIn = (cwd, args, bound) => gitRead(cwd, args, { ...bound, allowExit: [0] });

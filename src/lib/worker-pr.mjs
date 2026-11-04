@@ -3,8 +3,8 @@
 // names or changes the result.
 import { readableErrorText } from "./error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS, ghFailureText, runGh } from "./gh-api.mjs";
+import { gitRead } from "./git-read.mjs";
 import { isJsonObject } from "./json.mjs";
-import { gitRead } from "./snapshot.mjs";
 
 // Cap of the list read. A reply of this size holds too many PRs to name one, so it is ambiguous.
 const LIST_LIMIT = 100;

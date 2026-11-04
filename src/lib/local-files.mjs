@@ -7,9 +7,15 @@ import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { mapInBatches } from "./batches.mjs";
+import {
+  gitRead,
+  gitReadError,
+  parseWorkTreeList,
+  stripLf,
+  WORK_TREE_READ_TIMEOUT_MS,
+} from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
 import { logInfo, logWarn } from "./log.mjs";
-import { gitRead } from "./snapshot.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
 // three conditions apply to each file inside it.
@@ -57,35 +63,25 @@ export const MAX_WALKED_ENTRIES = 2000;
 // the run's reviewed state would shift (ADR 0018).
 const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
 
-// Milliseconds that one `git` read waits before it ends the child.
-const GIT_READ_TIMEOUT_MS = 60_000;
-
-function gitReadError(reason, { args, timeoutMs, result }) {
-  if (reason === "canceled") {
-    return Object.assign(new Error(`local files: git ${args[0]} was canceled`), {
-      isCanceled: true,
-    });
-  }
-  if (reason === "timeout") {
-    return new Error(`local files: git ${args[0]} timed out after ${timeoutMs} ms`);
-  }
-  // `shortMessage` holds the whole command line, so the fallback is the error code.
-  const detail = (result.stderr || result.code || "").trim();
-  return new Error(
-    `local files: git ${args[0]} failed (exit ${result.exitCode ?? "none"}): ${detail}`,
-  );
-}
+// Keeps the `local files` message and plain error class of the earlier builder.
+const localReadError = (reason, context) =>
+  gitReadError(reason, context, {
+    errorClass: Error,
+    prefix: "local files: ",
+    detail: (result) => `: ${(result.stderr || result.code || "").trim()}`,
+    exit: (result) => result.exitCode ?? "none",
+  });
 
 function git(cwd, args, { allowExit = [], ...options } = {}) {
   // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
   // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
   // of a path.
   return gitRead(cwd, args, {
-    timeoutMs: GIT_READ_TIMEOUT_MS,
+    timeoutMs: WORK_TREE_READ_TIMEOUT_MS,
     stripFinalNewline: false,
     ...options,
     allowExit: [0, ...allowExit],
-    createError: gitReadError,
+    createError: localReadError,
   });
 }
 
@@ -158,12 +154,6 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
   return false;
 }
 
-/**
- * Removes the one line feed that Git prints after a single value, and nothing
- * else: a path can end in a carriage return, a space, or a line feed of its own.
- */
-const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
-
 /** True when `path` holds a control character: a line feed, a carriage return, a tab, and so on. */
 const hasControlCharacter = (path) =>
   Array.from(path, (character) => character.codePointAt(0)).some(
@@ -171,29 +161,12 @@ const hasControlCharacter = (path) =>
   );
 
 /**
- * Reads `git worktree list --porcelain -z` into `{ path, bare }` entries, in Git's
- * order. With `-z` Git ends every field with NUL, so a path that holds a newline
- * arrives whole; the Git documentation states that this makes the output parseable
- * for such a path. A record is a run of `<label> <value>` fields (`worktree <path>`
- * first, a bare `bare` field for a bare repository) closed by an empty field. A Git
- * that rejects `-z` fails the command, which fails the init. An entry that Git still
- * lists counts as a work tree even when its `.git` entry is gone.
+ * Reads `git worktree list --porcelain -z` into entries, in Git's order. A Git that rejects `-z`
+ * fails the command, which fails the init.
  */
 async function readWorkTrees(root, read) {
   const { stdout } = await read(root, ["worktree", "list", "--porcelain", "-z"]);
-  const entries = [];
-  let current = null;
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      current = null;
-    } else if (field.startsWith("worktree ")) {
-      current = { path: field.slice(9), bare: false };
-      entries.push(current);
-    } else if (field === "bare" && current !== null) {
-      current.bare = true;
-    }
-  }
-  return entries;
+  return parseWorkTreeList(stdout);
 }
 
 const isInsideByText = (parent, child) => {
