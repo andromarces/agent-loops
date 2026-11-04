@@ -4,11 +4,13 @@ import {
   SHELL_EXCEPTION,
   SHELL_ONLY_LIMIT_SENTENCE,
   initTaskBlock,
+  probeCopyRule,
   processRule,
   reportBlock,
   REQUIRE_CI_GATE_SENTENCE,
   secretFileRule,
   tempPathRule,
+  tempRemovalRule,
   testSlotRule,
 } from "./report.mjs";
 
@@ -109,14 +111,8 @@ function testRunLines(testRun) {
 // breach (issue #422).
 const remoteWriteRule = `Do not write to GitHub or any remote: ${REMOTE_WRITE_ACTIONS} A read-only query changes nothing, so it stays allowed.`;
 
-// A package-manager install writes to the shared store outside the repository and to `node_modules`,
-// both ignored, so the mutation check passes and every work tree that links the store is exposed.
-// `vp` starts an install by itself when it finds no usable `node_modules`, so a probe copy needs a
-// link to the work tree's own (issue #1026). A package manager can also install from its own
-// dependency check before a run or exec command, so the runtime sets that check to warn in the
-// reviewer environment (issue #1145). The runtime does not detect a breach.
-const noInstallRule =
-  "Run no dependency install, repair, or update in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to the shared package store outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there. When the copy cannot link it, report the probe as unresolved in Checks. The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, call the installed binary directly instead of a package manager run or exec command, or report the probe as unresolved in Checks.";
+// The reviewer variant of the probe-copy rule names its install ban and the runtime environment
+// (issue #1026, issue #1145). The runtime does not detect a breach.
 
 // The file-change rule bars a change to the work tree and Git state only. Without this scope a
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
@@ -160,7 +156,7 @@ const toolCacheRule = (scratchDir) =>
   `A cache that a tool writes to its own default location is not output of this turn, even when it sits under an ignored path inside the repository or in a temporary directory: leave it in place and do not report it in Notes. ${chosenPathOutput(scratchDir)} Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.`;
 
 const scratchWriteRule = (scratchDir) =>
-  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. ${tempPathRule("repository")} Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove. ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes. ${toolCacheRule(scratchDir)}`;
+  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. ${tempPathRule("repository")} ${tempRemovalRule("repository")} ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes. ${toolCacheRule(scratchDir)}`;
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
@@ -185,7 +181,15 @@ const sandboxNotes = {
   ],
 };
 
-export function reviewerPrompt(
+/**
+ * Builds a reviewer turn prompt from one options object.
+ * `prChecks` adds the runtime-read required-check status.
+ * `sandboxMode` adds the sandbox note for "none", "read-only", or "workspace-write".
+ * `task` adds the init task block.
+ * `testRun` adds the operator test-command result.
+ * A null optional value omits its part.
+ */
+export function reviewerPrompt({
   prompt,
   prChecks = null,
   testRun = null,
@@ -193,7 +197,7 @@ export function reviewerPrompt(
   task = null,
   scratchDir = null,
   requiredCheckSourceUnreadable = false,
-) {
+}) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const noReadableChecks = requiredCheckSourceUnreadable || prChecks?.status === "unresolved";
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
@@ -205,7 +209,7 @@ export function reviewerPrompt(
     `
 Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule(scratchDir)} Live probes and read-only queries are authorized.
 ${remoteWriteRule}
-${noInstallRule}
+${probeCopyRule("repository")}
 ${processRule}
 ${secretFileRule}
 ${testSlotRule()}

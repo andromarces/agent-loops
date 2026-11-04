@@ -1143,11 +1143,13 @@ describe.each([
 // text (issue #655).
 test("the opted-in reviewer prompt states the user-rule exception", () => {
   expect(
-    denialsWithoutUserRuleException(reviewerPrompt("x", null, null, "workspace-write")),
+    denialsWithoutUserRuleException(
+      reviewerPrompt({ prompt: "x", sandboxMode: "workspace-write" }),
+    ),
   ).toEqual([]);
-  expect(reviewerPrompt("x", null, null, "workspace-write").replace(/\s+/g, " ")).toContain(
-    USER_RULE_EXCEPTION,
-  );
+  expect(
+    reviewerPrompt({ prompt: "x", sandboxMode: "workspace-write" }).replace(/\s+/g, " "),
+  ).toContain(USER_RULE_EXCEPTION);
 });
 
 // Usefulness: verifies that the exception scan flags a denial with no exception or with a contrary
@@ -1308,8 +1310,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
       gated("copilot", "codex"),
       initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "read-only" }),
       initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox: "workspace-write" }),
-      reviewerPrompt("x", null, null, "read-only"),
-      reviewerPrompt("x", null, null, "workspace-write"),
+      reviewerPrompt({ prompt: "x", sandboxMode: "read-only" }),
+      reviewerPrompt({ prompt: "x", sandboxMode: "workspace-write" }),
     ];
     const wordings = unique(surfaces, /That limit covers shell commands only: [^.]*\./g);
     expect(wordings).toHaveLength(1);

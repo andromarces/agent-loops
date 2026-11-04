@@ -2,10 +2,12 @@ import { escapeLineSeparators } from "./escape.mjs";
 import {
   initTaskBlock,
   PR_BODY_SCOPE,
+  probeCopyRule,
   processRule,
   reportBlock,
   secretFileRule,
   tempPathRule,
+  tempRemovalRule,
   testSlotRule,
 } from "./report.mjs";
 
@@ -23,12 +25,6 @@ const namedPushRule =
   "Push only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`.";
 const matchingPushNote =
   "Under `push.default=matching`, a plain `git push` also pushes each local branch with a same-name remote branch, such as the default branch.";
-
-// A probe copy without a usable `node_modules` makes `vp` install into the shared package store
-// (issue #1026). pnpm also installs from its dependency check before `pnpm run` and `pnpm exec`
-// (issue #1145).
-const probeCopyRule =
-  "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there. A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write. Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly, because pnpm installs from its dependency check by default.";
 
 // The pnpm dependency check also defaults to install in the run work tree.
 // A worker command there can run the project lifecycle scripts (issue #1385).
@@ -51,6 +47,10 @@ const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
 const conclusionFirstRule =
   "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 
+/**
+ * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
+ * body, and closing-block rules only. `task` adds the init task block.
+ */
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the PR
@@ -81,7 +81,7 @@ Your role:
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
 - ${ownNodeModulesRule}
-- ${probeCopyRule}
+- ${probeCopyRule("work tree")}
 - ${pnpmRunRule}
 - For PR work, the dispatcher names the PR branch. Commit your change on that
   branch and push it, so the reviewer sees a committed head and the PR head
@@ -99,7 +99,7 @@ Your role:
 - State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - ${tmpdirRule}
-- Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove. A PR body file in the system temporary directory is one example.
+- ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.")}
 - ${processRule}
 - ${secretFileRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
