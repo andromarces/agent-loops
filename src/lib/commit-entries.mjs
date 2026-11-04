@@ -184,6 +184,11 @@ export function latestBy(entries, fields) {
   return latest;
 }
 
+/** The display label of a required context: its name, with `(app <id>)` when an app qualifies it. */
+export function contextLabel(name, appId) {
+  return appId === null ? name : `${name} (app ${appId})`;
+}
+
 /**
  * The check runs and commit statuses that can satisfy a required context. A commit status
  * carries no app, so it can never satisfy an app-qualified context.
@@ -201,7 +206,7 @@ export function matchingEntries({ name, appId }, runs, statuses) {
 // unqualified context is satisfied by a check run or a commit status with the
 // name. Both types must pass when both carry an unqualified name.
 export function evaluateContext({ name, appId }, commit, runs, statuses) {
-  const label = appId === null ? `"${name}"` : `"${name}" (app ${appId})`;
+  const label = contextLabel(`"${name}"`, appId);
   const { runs: matchingRuns, statuses: matchingStatuses } = matchingEntries(
     { name, appId },
     runs,

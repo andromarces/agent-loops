@@ -2,6 +2,7 @@ import { open, opendir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { tryParseJson } from "./json.mjs";
 import { logDebug, logWarn } from "./log.mjs";
 import { withTimeBound } from "./time-bound.mjs";
 
@@ -49,12 +50,8 @@ async function readCapped(file, signal) {
  * valid JSON or names none. pnpm 12.11.2 writes this file as JSON, so it is parsed strictly.
  */
 function recordedStoreDir(text) {
-  try {
-    const parsed = JSON.parse(text);
-    return typeof parsed?.storeDir === "string" ? parsed.storeDir : null;
-  } catch {
-    return null;
-  }
+  const parsed = tryParseJson(text);
+  return typeof parsed?.storeDir === "string" ? parsed.storeDir : null;
 }
 
 /**
@@ -62,9 +59,7 @@ function recordedStoreDir(text) {
  * null when no store is recorded. The file is read up to a byte cap. The root is the parent of the
  * recorded `storeDir`, which pnpm writes as the version directory (`<root>/v11`). A missing,
  * unreadable, oversized, malformed, or store-less file, or a path that is not absolute, gives
- * null.
- *
- * The runtime does not predict which store a later install uses. The result only names the
+ * null. The runtime does not predict which store a later install uses. The result only names the
  * recorded store, whatever selected it (config, the environment, or a flag).
  */
 // known-limit: an install into a store other than the recorded one gives no field, whatever

@@ -134,16 +134,25 @@ async function mergedHeadsOf({ bounded, slug, cwd }, baseSha, base) {
   return heads;
 }
 
+/**
+ * Reads `endpoint` with `readOne`, throws a transport failure, and parses a successful reply as JSON.
+ * Returns `{ reply, body }`, where `body` is null for a failed reply. A successful reply that is not
+ * JSON throws a `SyntaxError`, as a direct `JSON.parse` does.
+ */
+async function readOneJson(read, endpoint, cwd) {
+  const reply = await readOne(read, endpoint, cwd);
+  // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
+  if (reply.status !== 0 && reply.transport) {
+    throw ghApiFailure(endpoint, reply);
+  }
+  return { reply, body: reply.status === 0 ? JSON.parse(reply.stdout) : null };
+}
+
 /** The lowercase full SHA of the head of `base`, or null for a read that fails or names none. */
 async function baseShaOf({ bounded, slug, cwd }, base) {
   const endpoint = `repos/${slug}/commits/${encodeURIComponent(base)}`;
-  const read = await readOne(bounded, endpoint, cwd);
-  // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
-  if (read.status !== 0 && read.transport) {
-    throw ghApiFailure(endpoint, read);
-  }
-  const parsed = read.status === 0 ? JSON.parse(read.stdout) : null;
-  const found = isJsonObject(parsed) && typeof parsed.sha === "string" ? parsed.sha : "";
+  const { body } = await readOneJson(bounded, endpoint, cwd);
+  const found = isJsonObject(body) && typeof body.sha === "string" ? body.sha : "";
   return isFullSha(found.toLowerCase()) ? found.toLowerCase() : null;
 }
 
@@ -191,23 +200,20 @@ async function changedFilesOf({ bounded, slug, cwd, pr }) {
 }
 
 /**
- * The texts of the workflow files at `baseSha`, or null for a read that fails, a listing at the API
- * cap, or an entry or file of another shape. A missing workflow directory holds no file.
+ * The texts of the workflow files at `baseSha`, or null for a read that fails or a listing at the
+ * API cap. Null also covers an entry or file of another shape. A missing workflow directory holds
+ * no file.
  */
 async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
   const listingEndpoint = `repos/${slug}/contents/${WORKFLOW_DIR}?ref=${baseSha}`;
-  const listing = await readOne(bounded, listingEndpoint, cwd);
-  // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
-  if (listing.status !== 0 && listing.transport) {
-    throw ghApiFailure(listingEndpoint, listing);
-  }
+  const { reply: listing, body } = await readOneJson(bounded, listingEndpoint, cwd);
   let entries = [];
   if (listing.status !== 0) {
     if (!listing.notFound) {
       return null;
     }
   } else {
-    entries = JSON.parse(listing.stdout);
+    entries = body;
     if (!Array.isArray(entries) || entries.length >= DIRECTORY_CAP) {
       return null;
     }
@@ -235,12 +241,7 @@ async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
     files.map((filePath) => async (read) => {
       const path = filePath.split("/").map(encodeURIComponent).join("/");
       const endpoint = `repos/${slug}/contents/${path}?ref=${baseSha}`;
-      const reply = await readOne(read, endpoint, cwd);
-      // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
-      if (reply.status !== 0 && reply.transport) {
-        throw ghApiFailure(endpoint, reply);
-      }
-      const body = reply.status === 0 ? JSON.parse(reply.stdout) : null;
+      const { body } = await readOneJson(read, endpoint, cwd);
       return isJsonObject(body) ? workflowText(body, filePath) : null;
     }),
     (text) => text === null,

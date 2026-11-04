@@ -121,14 +121,21 @@ async function lstatOrNull(path, options) {
 }
 
 /**
- * Walks the ancestor directories of `rel` under `base`, never `base` itself, and
- * returns true when one of them must not be read or written through: a symlink, a
- * directory that holds a `.git` entry, or a registered work tree listed in
- * `blocked` (canonical paths). With `create`, a missing ancestor is created, one
- * level at a time and without following anything; without it, the walk stops at
- * the first missing ancestor.
+ * The ancestor verdicts of one copy call, per blocked set. `true` is a blocked directory, `false` a
+ * plain one, and `null` a missing one. Only the pre-filter passes read it, because `copyOne` checks
+ * again before the copy.
  */
-async function hasBlockedAncestor(base, rel, blocked, create = false) {
+const newAncestorCache = () => ({ source: new Map(), target: new Map() });
+
+/**
+ * Walks the ancestor directories of `rel` under `base`, never `base` itself. Returns true for a
+ * symlink, a directory that holds a `.git` entry, or a registered work tree listed in `blocked`
+ * (canonical paths). With `create`, a missing ancestor is created one level at a time without
+ * following anything. Without it, the walk stops at the first missing ancestor. `cache` holds the
+ * verdicts of one copy call for the pre-filter passes only, because the copy checks again before
+ * `copyFile`.
+ */
+async function hasBlockedAncestor(base, rel, blocked, create = false, cache = null) {
   let current = base;
   for (const part of rel.split("/").slice(0, -1)) {
     current = join(current, part);
@@ -139,15 +146,27 @@ async function hasBlockedAncestor(base, rel, blocked, create = false) {
         }
       });
     }
+    const known = cache?.get(current);
+    if (known !== undefined) {
+      if (known === null) {
+        return false;
+      }
+      if (known) {
+        return true;
+      }
+      continue;
+    }
     const stat = await lstatOrNull(current);
     if (stat === null) {
+      cache?.set(current, null);
       return false;
     }
-    if (
+    const verdict =
       !stat.isDirectory() ||
       blocked.has(await realpath(current)) ||
-      (await lstatOrNull(join(current, ".git"))) !== null
-    ) {
+      (await lstatOrNull(join(current, ".git"))) !== null;
+    cache?.set(current, verdict);
+    if (verdict) {
       return true;
     }
   }
@@ -343,24 +362,13 @@ async function ownWorkTree(cwd, read) {
 }
 
 /**
- * Refuses, before any copy, an operator path that cannot be copied as an ignored local path. Each
- * path in `extra` (already normalized) must meet all of these in the source work tree `mainReal`:
- * 1. It holds no file that Git tracks. Names are compared folded (`foldName`), so a case alias of a
- *    tracked name is refused on any file system. The compare matches leading segments: the folded
- *    path is refused when it equals the folded leading segments of any one tracked name, whether
- *    the path names that file or a directory above it. That costs a false refusal on a
- *    case-sensitive file system for a path that is not a case alias of a tracked path.
- * 2. No level of it is a symlink or a junction, and the existing path resolves, by `realpath`, to
- *    the source work tree plus the path as written. That refuses a link out of the tree, a case or
- *    short-name alias, a registered work tree, and a directory that holds a `.git` entry.
- * 3. Every file under it that would be copied is ignored in `rootReal`, the work tree that
- *    receives it. A listed directory past the entry bound is skipped whole by the copy and is not
- *    checked.
- * A path that does not exist passes: nothing is copied for it. `known` holds the `sourceBlocked`
- * and `targetBlocked` sets and the `trackedNames` of the source work tree, which the copy reads once.
+ * Refuses, before any copy, an operator path that cannot be copied as an ignored local path.
+ * Every path in `extra` must hold no tracked file, no link at any level, and no unignored file.
+ * `known` holds the blocked sets and the tracked names that the copy reads once. `ancestors` holds
+ * the ancestor verdicts of one copy call.
  * @throws {Error} that names the path and starts with `--copy-local-path`
  */
-async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries) {
+async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries, ancestors) {
   const { mainReal, rootReal } = tree;
   const { sourceBlocked, targetBlocked, trackedNames } = known;
   // Every folded leading path of a tracked name, so each operator path is one lookup.
@@ -372,15 +380,24 @@ async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries) {
       trackedPrefixes.add(prefix);
     }
   }
+  // Each path in `extra` is already normalized, and every check runs in the main work tree.
   for (const rel of extra) {
     const refuse = (why) =>
       new Error(`--copy-local-path ${JSON.stringify(rel)} is refused: ${why}`);
     const parts = rel.split("/");
     const folded = parts.map(foldName).join("/");
+    // Names are compared folded, so a case alias of a tracked name is refused on any file system.
+    // The compare matches leading segments, so a path that names a tracked file or a directory
+    // above it is refused.
+    // That costs a false refusal on a case-sensitive file system for a path that is not a case
+    // alias of a tracked path.
     if (trackedPrefixes.has(folded)) {
       throw refuse("it holds a tracked file");
     }
     let current = mainReal;
+    // No level can be a symlink or a junction. The existing path must resolve, by `realpath`, to
+    // the main work tree plus the path as written. That refuses a link out of the tree, a case or
+    // short-name alias, a registered work tree, and a directory that holds a `.git` entry.
     for (const part of parts) {
       current = join(current, part);
       const stat = await lstatOrNull(current);
@@ -392,6 +409,7 @@ async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries) {
       }
     }
     const abs = join(mainReal, ...parts);
+    // A path that does not exist passes, because nothing is copied for it.
     if ((await lstatOrNull(abs)) === null) {
       continue;
     }
@@ -400,23 +418,25 @@ async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries) {
       canon !== abs ||
       sourceBlocked.has(canon) ||
       (await lstatOrNull(join(abs, ".git"))) !== null ||
-      (await hasBlockedAncestor(mainReal, rel, sourceBlocked))
+      (await hasBlockedAncestor(mainReal, rel, sourceBlocked, false, ancestors.source))
     ) {
       throw refuse("it does not resolve to a plain path inside the main work tree");
     }
     const ctx = newWalk(sourceBlocked, maxEntries);
     await collect(ctx, rel, abs);
+    // A listed directory past the entry bound is skipped whole by the copy and is not checked.
     if (ctx.budget.exceeded) {
       continue;
     }
     const names = [];
+    // Every file that the copy takes must be ignored in `rootReal`, the receiving work tree.
     for (const { rel: name } of ctx.files) {
-      // The copy never copies these, so they need no ignore rule; a target that sits beyond a link
-      // or a work tree is skipped by the copy, and `git check-ignore` refuses such a path.
+      // The copy never takes these, so they need no ignore rule. A target beyond a link or a work
+      // tree is skipped by the copy, and `git check-ignore` refuses such a path.
       if (
         !GIT_CONTROL_FILES.has(foldName(basename(name))) &&
         !isClaudeLockFile(name) &&
-        !(await hasBlockedAncestor(rootReal, name, targetBlocked))
+        !(await hasBlockedAncestor(rootReal, name, targetBlocked, false, ancestors.target))
       ) {
         names.push(name);
       }
@@ -537,6 +557,7 @@ export async function copyLocalFiles(
     return null;
   }
   const { entries, mainReal, rootReal } = tree;
+  const ancestors = newAncestorCache();
   const { sourceBlocked, targetBlocked } = await blockedTrees(entries, mainReal, rootReal);
   const trackedNames = await listTrackedNames(mainReal, read);
   if (extra.length > 0) {
@@ -546,13 +567,20 @@ export async function copyLocalFiles(
       { sourceBlocked, targetBlocked, trackedNames },
       read,
       maxEntries,
+      ancestors,
     );
   }
   if (located === null) {
     return null;
   }
   const listed = [...new Set([...LOCAL_FILE_PATHS, ...extra])];
-  const { files, skipped } = await walkListed(mainReal, listed, sourceBlocked, maxEntries);
+  const { files, skipped } = await walkListed(
+    mainReal,
+    listed,
+    sourceBlocked,
+    maxEntries,
+    ancestors.source,
+  );
   const trackedCanon = await canonOfTracked(mainReal, listed, trackedNames);
   const tracked = new Set(trackedNames);
   const pending = [];
@@ -566,7 +594,7 @@ export async function copyLocalFiles(
       GIT_CONTROL_FILES.has(foldName(basename(file.rel))) ||
       isClaudeLockFile(file.rel) ||
       (await lstatOrNull(join(rootReal, file.rel))) !== null ||
-      (await hasBlockedAncestor(rootReal, file.rel, targetBlocked))
+      (await hasBlockedAncestor(rootReal, file.rel, targetBlocked, false, ancestors.target))
     ) {
       skipped.add(file.rel);
     } else {
@@ -594,11 +622,12 @@ export async function copyLocalFiles(
 }
 
 /**
- * Walks each listed path of the main work tree `mainReal` and returns `{ files, skipped }`: the
+ * Walks each listed path of the main work tree `mainReal`. Returns `{ files, skipped }`: the
  * candidate files (see `collect`) and a set of skipped root-relative names. A path past its entry
  * bound, or under a blocked ancestor, is skipped whole and never starves the next listed path.
+ * `cache` holds the ancestor verdicts of one copy call.
  */
-async function walkListed(mainReal, listed, sourceBlocked, maxEntries) {
+async function walkListed(mainReal, listed, sourceBlocked, maxEntries, cache) {
   const skipped = new Set();
   const files = [];
   for (const rel of listed) {
@@ -607,7 +636,7 @@ async function walkListed(mainReal, listed, sourceBlocked, maxEntries) {
     const abs = join(mainReal, rel);
     if (
       (await lstatOrNull(abs)) !== null &&
-      (await hasBlockedAncestor(mainReal, rel, sourceBlocked))
+      (await hasBlockedAncestor(mainReal, rel, sourceBlocked, false, cache))
     ) {
       skipped.add(rel);
       continue;

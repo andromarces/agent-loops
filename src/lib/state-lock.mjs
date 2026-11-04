@@ -5,6 +5,7 @@ import { link, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/pro
 import { basename, dirname, join } from "node:path";
 import { removeTemp } from "./atomic-write.mjs";
 import { sha256 } from "./hash.mjs";
+import { tryParseJson } from "./json.mjs";
 import { logWarn } from "./log.mjs";
 import { ownStartTime, ownerAlive, pidAlive } from "./process-identity.mjs";
 
@@ -431,13 +432,9 @@ async function readLockText(lockFile) {
 }
 
 function parseLockOwner(text) {
-  try {
-    const value = JSON.parse(text);
-    if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
-      return null;
-    }
-    return value;
-  } catch {
+  const value = tryParseJson(text);
+  if (value === null || typeof value !== "object" || !Number.isInteger(value.pid)) {
     return null;
   }
+  return value;
 }

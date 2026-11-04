@@ -10,7 +10,7 @@ import {
   pagedRead,
   readOne,
 } from "./gh-api.mjs";
-import { isJsonObject } from "./json.mjs";
+import { isJsonObject, tryParseJson } from "./json.mjs";
 
 // A source the caller cannot read answers 404 or 403, and the message names the
 // credential. Observed live on the classic-protection endpoint (#280, #295):
@@ -162,10 +162,8 @@ async function readRequiredSource(
   if (text === "") {
     return { state: UNKNOWN, contexts: [], unparsed: true };
   }
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
+  const body = tryParseJson(text);
+  if (body === null) {
     return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   const { state, contexts } = classify(body);
@@ -351,10 +349,7 @@ function classifyProtection(data) {
     return { state: UNKNOWN, contexts: [] };
   }
   const contexts = protectionContexts(required);
-  if (contexts === null) {
-    return { state: UNKNOWN, contexts: [] };
-  }
-  if (contexts.length === 0) {
+  if (contexts === null || contexts.length === 0) {
     return { state: UNKNOWN, contexts: [] };
   }
   return { state: HAS_CONTEXTS, contexts };
@@ -413,9 +408,14 @@ export async function repoSlug(gh, cwd, failure = "failed") {
   return stdout.trim();
 }
 
-// The exact `gh pr checks --required` reply on a branch with no required check, compared against
-// the trimmed stderr of an exit 1 with no stdout.
+// The exact `gh pr checks --required` reply on a branch with no required check. It is compared
+// against the trimmed stderr of an exit 1 with no stdout.
 export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
+
+// The `gh pr checks` exit code of a pending check, as `docs/orchestrator/reviewer-evidence.md` states
+// it for the reviewer read. Exit 1 covers a failing check, a read error, and a repository with no
+// required check, so the check list decides (#329).
+export const EXIT_PENDING = 8;
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet, as right after a
 // push. It is an empty list, not a read error, in the required and the all-checks read alike (#941,
@@ -425,41 +425,35 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 /**
  * The required names of one `gh pr checks --required --json` reply. Any field list that includes
  * `name` serves, so the wait passes the reply of its own check-list read instead of a second one.
- *
- * `gh pr checks --required` resolves required check names without admin rights. It lists only
- * checks that already reported on the commit, exits non-zero for pending or failing checks, and
- * prints no JSON when no required check has reported, so the output is parsed leniently and an
- * unparseable reply contributes no names. This source carries no app qualifier, so every name it
- * yields is unqualified.
- *
- * `ok` is true only for a read that succeeded, whatever its stdout holds: exit 0 with a list of
- * named checks, exit 1 or 8 (a failing or pending check) with a non-empty list of named checks, or
- * the exact `no required checks reported` answer on exit 1 with no stdout. Any other exit, an empty
- * list on a non-zero exit, an error text that merely contains those words, and the `no checks
- * reported` reply (`NO_CHECKS_YET`) are a failed read. The gate ignores `ok`. The status read and
- * the check wait refuse on it, because the list may name a required check no configuration source
- * did (issue #349). A reply that is no list carries `transient` and the `failure` text for a clean
- * server error or a transport failure. The wait retries either one (#1121, #1312).
+ * `gh pr checks --required` resolves required check names without admin rights. This source
+ * carries no app qualifier, so every name it yields is unqualified. A reply that is no list
+ * carries `transient` and the `failure` text for a clean server error or a transport failure.
  * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */
 export function requiredNamesOf({ status, stdout, stderr }) {
-  let parsed = null;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    // Not JSON: judged below.
-  }
+  const parsed = tryParseJson(stdout);
   if (Array.isArray(parsed)) {
+    // `gh pr checks --required` lists only checks that already reported on the commit. It exits
+    // non-zero for a pending or failing check, and prints no JSON when no required check has
+    // reported. The output is parsed leniently, so an unparseable reply contributes no names.
+    // A read succeeds by its exit code, whatever its stdout holds, and every item must name a check.
     const named = parsed.every((check) => typeof check?.name === "string" && check.name !== "");
-    const succeeded = status === 0 || ((status === 1 || status === 8) && parsed.length > 0);
+    // `ok` is true only for exit 0, or a failing or pending exit with a non-empty list of named checks.
+    const succeeded =
+      status === 0 || ((status === 1 || status === EXIT_PENDING) && parsed.length > 0);
     return {
       names: parsed.map((check) => check?.name).filter(Boolean),
       ok: named && succeeded,
     };
   }
+  // The exact `no required checks reported` answer on exit 1 with no stdout is also `ok`.
   const none = stdout.trim() === "" && status === 1 && NO_REQUIRED_CHECKS.test(stderr.trim());
-  // A clean server error or a transport failure only: an unparseable reply is never retried
-  // (#1121, #1312).
+  // Any other exit, an empty list on a non-zero exit, and an error text that merely contains those
+  // words are a failed read. The `NO_CHECKS_YET` reply is a failed read too.
+  // The gate ignores `ok`. The status read and the check wait refuse on it, because the list can
+  // name a required check that no configuration source did (issue #349).
+  // The wait retries a clean server error or a transport failure (#1121, #1312).
+  // An unparseable reply is never retried.
   const transient =
     isCleanServerError({ stdout, stderr }) || isTransportFailure({ stdout, stderr });
   return { names: [], ok: none, transient, failure: transient ? stderr.trim() : "" };

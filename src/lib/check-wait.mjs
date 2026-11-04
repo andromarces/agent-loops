@@ -11,6 +11,7 @@ import {
 } from "./ci-gate.mjs";
 import {
   commitEntries,
+  contextLabel,
   evaluateContext,
   latestBy,
   matchingEntries,
@@ -18,6 +19,7 @@ import {
   STATUS_TIME_FIELDS,
 } from "./commit-entries.mjs";
 import {
+  EXIT_PENDING,
   NO_CHECKS_YET,
   NO_REQUIRED_CHECKS,
   repoSlug,
@@ -28,7 +30,7 @@ import {
 import { noCheckSource, pullRequestWorkflowMayRun } from "./check-source-probe.mjs";
 import { failureOf, ghReadError, runGh, withSignal } from "./gh-api.mjs";
 import { isFullSha } from "./git-sha.mjs";
-import { isJsonObject } from "./json.mjs";
+import { isJsonObject, tryParseJson } from "./json.mjs";
 
 // The app of the check runs that a workflow of the repository registers.
 const ACTIONS_APP_SLUG = "github-actions";
@@ -45,13 +47,7 @@ export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
 
-// The `gh pr checks` exit codes, as `docs/orchestrator/reviewer-evidence.md` states
-// them for the reviewer read: 8 is a pending check, and 1 covers a failing check,
-// a repository with no required check, and a read error. An exit 1 is therefore
-// not a failure on its own; the check list decides (#329).
-const EXIT_PENDING = 8;
-
-// Every value a well-formed item may carry, so an item the runtime cannot read
+// Every value a well-formed item can carry, so an item the runtime cannot read
 // is unresolved rather than a pass. `gh pr checks --help` names the buckets:
 // pass, fail, pending, skipping, and cancel. A `gh` that adds one is refused
 // rather than guessed at, because an unread value is not evidence of a pass.
@@ -111,43 +107,24 @@ function isFailing(check) {
 }
 
 /**
- * One required-check read, mapped to the wait outcome the `gh` exit code and the
- * check list carry. Throws when the read is unresolved, so an unresolved read
- * never reads as a pass.
- *
- * - A listed failing check is settled, whichever code answered, and the failure
- *   is reported rather than waited out.
- * - Exit 8, or exit 0 with a pending check listed, keeps the wait running. An
- *   exit 0 with no settled check keeps it running too.
- * - Exit 1 with no output and the exact `no required checks reported on the
- *   '<branch>' branch` stderr is settled as `noRequiredChecks`: the branch has
- *   no required check to wait for, which is no pass either (#894). In the
- *   all-checks mode that answer does not exist, so that stderr is unresolved
- *   there, like every other exit 1 with no failing check listed (#896).
- * - Exit 1 with no output and the exact `no checks reported on the '<branch>'
- *   branch` stderr is an empty list that is not settled, so the wait continues:
- *   no check has reported on the PR head yet (#941). The all-checks read applies
- *   the same rule (#950).
- * - Any other code, with no failing check listed, is unresolved: exit 1 covers
- *   a read error, and an unparseable output is a read error. A list item that is
- *   not well formed is unresolved too, so one unreadable item cannot settle the
- *   list as a pass.
+ * One required-check read, mapped to the wait outcome that the `gh` exit code and the check list
+ * carry. A failing check is settled. A pending read, or an empty one on exit 0, keeps the wait
+ * running. The exact no-required-check and no-checks-yet replies are read here. Throws when the
+ * read is unresolved, so it never reads as a pass.
  */
 function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
   const label = source ?? `gh pr checks ${pr}${all ? "" : " --required"}`;
   const text = stdout.trim();
   let checks = [];
   if (text !== "") {
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = null;
-    }
+    const parsed = tryParseJson(text);
     if (!Array.isArray(parsed)) {
+      // An unparseable output is a read error (#329).
       throw ghReadError(label, { status, stdout, stderr });
     }
     const items = parsed.map(readItem);
+    // A list item that is not well formed is unresolved too, so one unreadable item cannot settle
+    // the list as a pass.
     const bad = items.findIndex((item) => item === null);
     if (bad !== -1) {
       throw new Error(
@@ -156,29 +133,39 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     }
     checks = items;
   }
+  // A listed failing check is settled, whichever code answered, and the failure is reported rather
+  // than waited out.
   if (checks.some(isFailing)) {
     return { settled: true, checks };
   }
-  // Only exit 8, or exit 0 with a pending item, keeps the wait running. Exit 1
+  // Only the pending exit code, or exit 0 with a pending item, keeps the wait running. Exit 1
   // with a pending list and no failing check is a read error, so it is not waited
   // out as pending (#894).
   if (status === EXIT_PENDING || (status === 0 && checks.some(isPending))) {
     return { settled: false, checks };
   }
-  // An empty list on exit 0 keeps waiting, because `gh pr checks --required`
-  // omits a check that has not started. The same empty list on exit 1 is not
-  // that: exit 1 with no failing check listed is a read error unless `gh` states
-  // the branch has no required check, or that no check has reported on the PR
-  // head yet (#941, #950). Any other exit 1 falls through to the refusal below.
+  // An empty list on exit 0 keeps waiting, because `gh pr checks --required` omits a check that
+  // has not started. An exit 0 with no settled check keeps it running too. The same empty list on
+  // exit 1 is not that. Exit 1 with no failing check listed is a read error unless `gh` names no
+  // required check or no check has reported yet (#941, #950). Any other exit 1 falls through to the
+  // refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
+  // Exit 1 with no output and the exact `no required checks reported` reply is settled as
+  // `noRequiredChecks`. The branch has no required check to wait for, which is no pass either
+  // (#894). The all-checks read has no such answer, so its stderr is unresolved, like every other
+  // exit 1 with no failing check listed (#896).
   if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
   }
+  // Exit 1 with no output and the exact `no checks reported` reply is an empty list that is not
+  // settled. The wait continues, because no check has reported on the PR head yet (#941). The
+  // all-checks read applies the same rule (#950).
   if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
     return { settled: false, checks, noChecksYet: true };
   }
+  // Exit 1 with no failing check listed covers a read error, and any other code is unresolved (#329).
   if (status !== 0) {
     throw ghReadError(label, { status, stdout, stderr });
   }
@@ -195,12 +182,8 @@ function readHead(pr, { status, stdout, stderr }) {
   if (status !== 0) {
     throw ghReadError(label, { status, stdout, stderr });
   }
-  let parsed = null;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    // Left null: the read is refused below.
-  }
+  const parsed = tryParseJson(stdout);
+  // A null parse is refused below, as a missing head or base branch.
   const head = isJsonObject(parsed) ? parsed.headRefOid : undefined;
   const base = isJsonObject(parsed) ? parsed.baseRefName : undefined;
   if (typeof head !== "string" || !isFullSha(head.toLowerCase())) {
@@ -240,17 +223,7 @@ function statusItem(status) {
 
 /** The latest entry of each group, keyed by `keyOf`. Throws when a group cannot be ordered, so the read is unresolved. */
 function latestOfEach(entries, keyOf, fields, what) {
-  const groups = new Map();
-  for (const entry of entries) {
-    const key = keyOf(entry);
-    const group = groups.get(key);
-    if (group) {
-      group.push(entry);
-    } else {
-      groups.set(key, [entry]);
-    }
-  }
-  return [...groups].map(([key, group]) => {
+  return [...Map.groupBy(entries, keyOf)].map(([key, group]) => {
     const latest = latestBy(group, fields);
     if (latest === null) {
       throw new Error(`the ${what} named "${key}" cannot be ordered; the read is unresolved.`);
@@ -268,7 +241,7 @@ function allItems({ runs, statuses }) {
   return [
     ...latestOfEach(
       runs,
-      (run) => `${run.name} (app ${run.app?.id ?? "none"})`,
+      (run) => contextLabel(run.name, run.app?.id ?? "none"),
       RUN_TIME_FIELDS,
       "check runs",
     ).map(runItem),
@@ -314,7 +287,7 @@ function requiredItems({ runs, statuses }, contexts, commit) {
 
 /** The `gh pr checks` reply shape for `items`, so one outcome rule set judges both sources. */
 function asRead(items) {
-  const status = items.some(isFailing) ? 1 : items.some(isPending) ? 8 : 0;
+  const status = items.some(isFailing) ? 1 : items.some(isPending) ? EXIT_PENDING : 0;
   return { status, stdout: JSON.stringify(items), stderr: "" };
 }
 
@@ -658,12 +631,12 @@ export async function waitChecks({
         await ensureSlug();
         value = await pullRequestWorkflowMayRun(probeContext(), sha, base);
       } catch (raw) {
-        const err = failureOf(raw);
         // A failed read holds the pass. A transport failure is kept for the bound, which reports it.
-        if (err instanceof BoundReached) {
-          throw err;
-        }
-        if (err?.transport) {
+        const err = retryableOrThrow(raw, {
+          retryable: (error) => error?.transport,
+          settled: () => true,
+        });
+        if (err !== null) {
           failed = err;
         }
       }
@@ -699,11 +672,20 @@ export async function waitChecks({
     }
     return { sha, base, listed, names };
   };
-  // The retryable failure of a failed read, or a throw for the bound and every other failure.
-  const retryableOrThrow = (raw) => {
+  // The retryable failure of `raw`, or a throw. The bound always ends the wait and so does a terminal
+  // failure, unless `settled` says the poll already holds a failure that ends it. `retryable` names
+  // the tag that the read sets for a failure that it can retry. A cancel carries neither tag, so it
+  // reaches the caller as the same object.
+  const retryableOrThrow = (
+    raw,
+    { retryable = (err) => err?.transient, settled = () => false } = {},
+  ) => {
     const err = failureOf(raw);
-    if (!err?.transient || err instanceof BoundReached) {
-      throw err;
+    if (err instanceof BoundReached || !retryable(err)) {
+      if (err instanceof BoundReached || !settled()) {
+        throw err;
+      }
+      return null;
     }
     return err;
   };
@@ -726,13 +708,12 @@ export async function waitChecks({
     } catch (raw) {
       // A failure that `gh pr checks` lists settles the wait, so a commit or source read
       // that fails never delays it. The bound and every other failure still end it.
-      const err = failureOf(raw);
-      if (err?.transient && !(err instanceof BoundReached)) {
+      const err = retryableOrThrow(raw, {
+        settled: () => failed !== null || prFailures.length > 0,
+      });
+      if (err !== null) {
         // A retryable failure is retried on the next poll, unless a listed failure settles the wait.
         failed = err;
-      }
-      if (err instanceof BoundReached || (failed === null && prFailures.length === 0)) {
-        throw err;
       }
     }
     // The probe runs once per settled answer, only for an `--all` wait that names no expected check.
@@ -746,12 +727,12 @@ export async function waitChecks({
           return { settled: true, checks: [], noCheckSource: true };
         }
       } catch (raw) {
-        const err = failureOf(raw);
-        if (err instanceof BoundReached) {
-          throw err;
-        }
         // A transport failure keeps the probe open, so the next poll reads again.
-        if (err?.transport) {
+        const err = retryableOrThrow(raw, {
+          retryable: (error) => error?.transport,
+          settled: () => true,
+        });
+        if (err !== null) {
           failed = err;
         } else {
           probed = true;

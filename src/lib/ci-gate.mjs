@@ -5,7 +5,7 @@
 //
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
-import { evaluateContext, evaluatedState } from "./commit-entries.mjs";
+import { evaluateContext, contextLabel, evaluatedState } from "./commit-entries.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import {
@@ -598,8 +598,7 @@ async function readStatus({
     // The commit is the gate's own selection, so the read judges the state the
     // gate judges and cannot pass a state the gate refuses.
     const { commit, findings } = await evaluateRequired(call, slug, info, cwd, contexts, true);
-    const label = ({ context }) =>
-      context.appId === null ? context.name : `${context.name} (app ${context.appId})`;
+    const label = ({ context }) => contextLabel(context.name, context.appId);
     const ofKind = (...kinds) =>
       findings.filter(({ failure }) => failure && kinds.includes(failure.kind));
     const failing = ofKind("failing");
