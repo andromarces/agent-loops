@@ -76,7 +76,9 @@ function boundedDetail(text) {
 }
 
 /**
- * Runs one Codex turn in a private temporary directory, which the runtime removes after the turn.
+ * Runs one Codex turn in a private temporary directory when creation succeeds. A failed creation
+ * warns and the turn uses the inherited temporary directory. The runtime removes the private
+ * directory after the turn. A failed, refused, or timed-out removal only warns.
  * A failed `ExecError` gets a bounded `message`: the exit cause, or the exit code and last
  * failure event. Any other error reaches the caller unchanged.
  */

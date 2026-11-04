@@ -660,8 +660,10 @@ export async function unreadableGateReason({
  *
  * - `null`: a source names a required check, so there is no absence to decide. The caller judges
  *   each named check.
+ *
  * - `{ absent: true }`: no source names a check, and both the rulesets and the classic
  *   protection stated they hold none.
+ *
  * - `{ unproven }`: no source names a check, and the listed sources did not state an absence. A
  *   source that settled nothing and a ruleset read that found no rule are both named. A parent
  *   can only fix a source it can see (issue #336). The protection source cannot be
