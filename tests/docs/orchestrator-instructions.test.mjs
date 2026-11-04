@@ -180,6 +180,10 @@ const SHARED_PARENT_RULES = [
   // Issue #1457: the setup is by toolchain, so a repository with no Node lockfile still gets one.
   (text) => expectRule(text, /dependency setup/i, /repository documents/i, /tests/i),
   (text) => expectRule(text, /Node lockfile install/i),
+  // Issue #1457: the field covers non-Node dependency files at any depth, and the parent reruns
+  // the matching toolchain setup.
+  (text) => expectRule(text, /non-Node/i, /dependency file/i, /any depth/i),
+  (text) => expectRule(text, /non-Node file/i, /toolchain/i, /before the next reviewer dispatch/i),
   // Issue #1457: the setup keeps its deadline in both texts, before the first dispatch and
   // before the next reviewer dispatch after a changed lockfile.
   (text) => expectRule(text, /dependency setup/i, /before the first dispatch/i),
@@ -191,7 +195,7 @@ const SHARED_PARENT_RULES = [
       /before the next reviewer dispatch/i,
     ),
   // Issue #1225: an unread work tree root names every lockfile, so the parent still reinstalls.
-  (text) => expectRule(text, /(?:could not|cannot) read the work tree root/i, /every lockfile/i),
+  (text) => expectRule(text, /cannot read the work tree root/i, /every lockfile/i),
   // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
   // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
   (text) =>
@@ -1001,14 +1005,18 @@ test("instructions and headless prompt name the work tree install owner and bar 
   );
 });
 
-// Usefulness: verifies the instructions record the accepted lockfileChanged gap, so a parent
-// never expects a requirements file change to ask for a reinstall (#1457).
-test("instructions record the accepted lockfileChanged gap for a non-Node dependency file", async () => {
+// Usefulness: verifies the instructions state the non-Node coverage and the rerun action, so a
+// requirements change reaches the parent. The removed gap text stays gone.
+test("instructions state the non-Node lockfileChanged coverage and action", async () => {
   const instructions = (await readInstructions()).replace(/\s+/g, " ");
   expect(instructions).toContain(
-    "The field watches root lockfiles only, so a change to another dependency file, such as a requirements file, asks for no reinstall.",
+    "The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.",
   );
-  expect(instructions).toContain("That gap is accepted (issue #1457).");
+  expect(instructions).toContain(
+    "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+  );
+  expect(instructions).not.toContain("asks for no reinstall");
+  expect(instructions).not.toContain("gap is accepted");
 });
 
 // Usefulness: verifies the instructions name the work tree removal step and a delete that never

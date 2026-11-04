@@ -267,19 +267,23 @@ Apply these parent rules:
   the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed
   between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
   the run, and leave the main work tree change to the user.
-- A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
-  tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
-  lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts
-  as changed.
-  - When the runtime could not read the work tree root, the field names every lockfile,
-    which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
+- A worker envelope carries `lockfileChanged` when the turn changed a lockfile at the work tree root
+  or a non-Node dependency file at any depth. Examples are `pnpm-lock.yaml` after a base branch
+  merge and a `requirements.txt` in a subdirectory. The field names the lockfiles by path only, and
+  a non-Node dependency file by its root-relative path. A dependency file whose read fails before or
+  after the turn counts as changed.
+  - When the runtime cannot read the work tree root, the field names every lockfile. That list can
+    include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
     never installs, so the installed dependencies no longer match
-    the lockfile.
+    the lockfile. When the runtime cannot read the dependency file list, the field names every
+    lockfile and every non-Node path known from the other read. See issues #1225 and #1457.
   - When the field appears, run the dependency setup the repository documents for its tests, such
-    as the Node lockfile install, before the next reviewer dispatch. A failed worker turn carries the
-    field too. A turn that changed none carries no field. See issues #1180 and #1457.
-  - The field watches root lockfiles only, so a change to another dependency file, such as a
-    requirements file, asks for no reinstall. That gap is accepted (issue #1457).
+    as the Node lockfile install, before the next reviewer dispatch. For a non-Node file, run the
+    setup that its toolchain documents before the next reviewer dispatch. A failed worker turn
+    carries the field too. A turn that changed none carries no field. See issues #1180 and #1457.
+  - The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`,
+    `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.
+    Ignored paths are never read.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn

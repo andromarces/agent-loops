@@ -236,6 +236,12 @@ test("initialPrompt states the parent's dependency setup by toolchain", () => {
   expect(prompt).toContain(
     "When the field appears, run the dependency setup the repository documents for its tests, such as the Node lockfile install, before the next reviewer dispatch.",
   );
+  expect(prompt).toContain(
+    "lockfileChanged also covers a non-Node dependency file at any depth, such as a requirements file in a subdirectory.",
+  );
+  expect(prompt).toContain(
+    "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+  );
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the
