@@ -495,7 +495,7 @@ async function restoreOrDelete(record, kind, dryRun) {
   return uninstallReport(record, kind, "delete");
 }
 
-async function planSettingsRestore(record, dryRun) {
+async function restoreSettings(record, dryRun) {
   const current = await readTextOrNull(record.path, { notDirIsMissing: true });
   if (current === null) {
     return uninstallReport(record, "settings", "missing");
@@ -535,7 +535,7 @@ async function planSettingsRestore(record, dryRun) {
   );
 }
 
-async function planFileRestore(record, dryRun) {
+async function restoreFile(record, dryRun) {
   const current = await readTextOrNull(record.path, { notDirIsMissing: true });
   if (current === null) {
     return uninstallReport(record, "file", "missing");
@@ -592,10 +592,10 @@ async function runUninstall({ harnesses, home, dryRun = false } = {}) {
   for (const harness of selected) {
     const record = manifest.harnesses[harness];
     for (const settings of record.settings ?? []) {
-      reports.push(await planSettingsRestore({ ...settings, harness }, dryRun));
+      reports.push(await restoreSettings({ ...settings, harness }, dryRun));
     }
     for (const file of record.files ?? []) {
-      reports.push(await planFileRestore({ ...file, harness }, dryRun));
+      reports.push(await restoreFile({ ...file, harness }, dryRun));
     }
     if (!dryRun) {
       let pruned;
