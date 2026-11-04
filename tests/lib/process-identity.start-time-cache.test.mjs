@@ -29,17 +29,17 @@ test("several passes on one live owner start the start-time probe once", async (
 // Usefulness: acceptance (#1404) — a pid reused between passes keeps `pidAlive` true, so
 // the entry age must re-probe and free the slot. Not redundant: only this test covers reuse.
 test("a pid reused after the cache age frees the slot", async () => {
-  let now = 0;
+  let elapsed = 0;
   let stamp = LIVE_STAMP;
   const probe = vi.fn(async () => stamp);
-  const cache = startTimeCache({ probe, now: () => now });
+  const cache = startTimeCache({ probe, monotonic: () => elapsed });
   const owner = { pid: process.pid, startTime: LIVE_STAMP };
 
   await expect(ownerAlive(owner, cache)).resolves.toBe(true);
   expect(probe).toHaveBeenCalledTimes(1);
 
   stamp = REUSED_STAMP;
-  now += START_TIME_CACHE_MAX_AGE_MS;
+  elapsed += START_TIME_CACHE_MAX_AGE_MS;
   await expect(ownerAlive(owner, cache)).resolves.toBe(false);
   expect(probe).toHaveBeenCalledTimes(2);
 });
@@ -92,5 +92,26 @@ test("a failed or unknown probe result is not cached", async () => {
   await expect(ownerAlive(owner, cache)).resolves.toBe(true);
   stamp = LIVE_STAMP;
   await expect(ownerAlive(owner, cache)).resolves.toBe(true);
+  expect(probe).toHaveBeenCalledTimes(2);
+});
+
+// Usefulness: review (#1404) — a 60 s wall-clock rollback must not extend a cached entry
+// past its age. Not redundant: only this test separates wall time from monotonic age.
+test("a wall-clock step backward does not extend a cached entry", async () => {
+  let wall = 1_000_000;
+  let elapsed = 0;
+  let stamp = LIVE_STAMP;
+  const probe = vi.fn(async () => stamp);
+  vi.spyOn(Date, "now").mockImplementation(() => wall);
+  const cache = startTimeCache({ probe, monotonic: () => elapsed });
+  const owner = { pid: process.pid, startTime: LIVE_STAMP };
+
+  await expect(ownerAlive(owner, cache)).resolves.toBe(true);
+  expect(probe).toHaveBeenCalledTimes(1);
+
+  stamp = REUSED_STAMP;
+  wall -= 60_000;
+  elapsed += START_TIME_CACHE_MAX_AGE_MS;
+  await expect(ownerAlive(owner, cache)).resolves.toBe(false);
   expect(probe).toHaveBeenCalledTimes(2);
 });

@@ -208,26 +208,30 @@ export function ownStartTime() {
 export const START_TIME_CACHE_MAX_AGE_MS = 5000;
 
 /**
- * A start-time probe cache for one wait. `probe` defaults to `processStartTime`, and `now`
- * defaults to `Date.now`. An entry is keyed by pid and recorded stamp, and it expires after
- * `START_TIME_CACHE_MAX_AGE_MS`. A null result is not cached, and `forget` drops a pid's entries.
- * known-limit: a pid that exits and is reused within the age reads as its recorded owner until
- * the next probe.
+ * A start-time probe cache for one wait. `probe` defaults to `processStartTime`, and
+ * `monotonic` defaults to the monotonic `performance.now`. An entry is keyed by pid and
+ * recorded stamp, and it expires after `START_TIME_CACHE_MAX_AGE_MS`. A null result is not
+ * cached, and `forget` drops a pid's entries. A wall-clock step cannot extend an entry, because
+ * age never reads the wall clock. known-limit: a pid reused within the age reads as its recorded
+ * owner until the next probe.
  */
-export function startTimeCache({ probe = processStartTime, now = Date.now } = {}) {
+export function startTimeCache({
+  probe = processStartTime,
+  monotonic = () => performance.now(),
+} = {}) {
   const entries = new Map();
   return {
     async probe(pid, recorded) {
       const key = `${pid}\u0000${recorded}`;
       const hit = entries.get(key);
-      if (hit !== undefined && now() - hit.at < START_TIME_CACHE_MAX_AGE_MS) {
+      if (hit !== undefined && monotonic() - hit.at < START_TIME_CACHE_MAX_AGE_MS) {
         return hit.stamp;
       }
       const stamp = await probe(pid);
       if (stamp === null) {
         entries.delete(key);
       } else {
-        entries.set(key, { stamp, at: now() });
+        entries.set(key, { stamp, at: monotonic() });
       }
       return stamp;
     },
