@@ -1,7 +1,21 @@
 import { mkdir, realpath } from "node:fs/promises";
 import { execa } from "execa";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { gitRead } from "../../src/lib/snapshot.mjs";
+
+// Records each path that a work tree lookup resolves, so the test can count them.
+const resolved = vi.hoisted(() => ({ calls: [] }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    realpath: vi.fn(async (path) => {
+      resolved.calls.push(path);
+      return actual.realpath(path);
+    }),
+  };
+});
+
+import { gitRead } from "../../src/lib/git-read.mjs";
 import { lockWorkTree, unlockWorkTree, workTreeLockReason } from "../../src/lib/work-tree-lock.mjs";
 import { removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import { createLinkedWorkTree } from "../git-helpers.mjs";
@@ -75,6 +89,36 @@ test("locks the work tree root for a cwd below it", async () => {
   expect(result).toMatchObject({ status: "locked" });
   expect(await realpath(result.root)).toBe(await realpath(tree));
   expect(await lockField(main, tree)).toBe(`locked ${workTreeLockReason("abc123")}`);
+});
+
+// Usefulness: verifies acceptance 2 — one lookup resolves the root once, not once per entry.
+// Not redundant: the other cases run real Git and never count file system calls.
+test("resolves the work tree root once per lookup", async () => {
+  const { main, linked: root } = await linked();
+  const read = async (_cwd, args) => {
+    if (args[0] === "rev-parse") {
+      return { exitCode: 0, stdout: `${root}\n`, stderr: "" };
+    }
+    if (args[0] === "worktree" && args[1] === "list") {
+      const stdout = [
+        `worktree ${main}`,
+        "HEAD 0",
+        "branch refs/heads/main",
+        "",
+        `worktree ${root}`,
+        "HEAD 0",
+        "branch refs/heads/run",
+        "",
+      ].join("\0");
+      return { exitCode: 0, stdout, stderr: "" };
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+  resolved.calls.length = 0;
+
+  await lockWorkTree(root, { runId: "abc123", read });
+
+  expect(resolved.calls.filter((path) => path === root)).toHaveLength(1);
 });
 
 // Usefulness: verifies the existing-lock rule. A lock made by a user or another tool keeps its

@@ -3,22 +3,17 @@
 // precondition of the command that takes or drops it.
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import { gitRead, parseWorkTreeList, stripLf, WORK_TREE_READ_TIMEOUT_MS } from "./git-read.mjs";
 import { logInfo, logWarn } from "./log.mjs";
-import { gitRead } from "./snapshot.mjs";
-
-// Milliseconds that one `git` read waits before it ends the child.
-const GIT_READ_TIMEOUT_MS = 60_000;
 
 /** The Git lock reason of one run, as the removal step and a maintainer read it. */
 export const workTreeLockReason = (runId) => `agent-loop run ${runId} active`;
-
-const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
 
 /** Runs one `git` read and returns its stdout; any other exit code is an error. */
 async function readOutput(cwd, args, readGit, signal) {
   const result = await readGit(cwd, args, {
     signal,
-    timeoutMs: GIT_READ_TIMEOUT_MS,
+    timeoutMs: WORK_TREE_READ_TIMEOUT_MS,
     stripFinalNewline: false,
   });
   if (result.exitCode !== 0) {
@@ -29,42 +24,13 @@ async function readOutput(cwd, args, readGit, signal) {
   return result.stdout;
 }
 
-/**
- * Parses `git worktree list --porcelain -z` into `{ path, locked, reason }` records. Git prints
- * `locked <reason>` as one NUL-ended field and `locked` alone for a lock with no reason.
- */
-function parseEntries(stdout) {
-  const entries = [];
-  let current = null;
-  for (const field of stdout.split("\0")) {
-    if (field === "") {
-      current = null;
-    } else if (field.startsWith("worktree ")) {
-      current = { path: field.slice(9), locked: false, reason: null };
-      entries.push(current);
-    } else if (current === null) {
-      continue;
-    } else if (field === "locked") {
-      current.locked = true;
-    } else if (field.startsWith("locked ")) {
-      current.locked = true;
-      current.reason = field.slice(7);
-    }
+/** Resolves one path canonically, and falls back to `resolve` when `realpath` fails. */
+async function canonicalPath(path) {
+  try {
+    return await realpath(path);
+  } catch {
+    return resolve(path);
   }
-  return entries;
-}
-
-/** Compares two paths canonically, so a symlinked or short path names its own work tree. */
-async function samePath(left, right) {
-  const canon = async (path) => {
-    try {
-      return await realpath(path);
-    } catch {
-      return resolve(path);
-    }
-  };
-  const [first, second] = await Promise.all([canon(left), canon(right)]);
-  return first === second;
 }
 
 /**
@@ -76,19 +42,22 @@ async function locate(cwd, readGit, signal) {
   if (root === "") {
     throw new Error("cwd has no work tree root");
   }
-  const entries = parseEntries(
+  const entries = parseWorkTreeList(
     await readOutput(cwd, ["worktree", "list", "--porcelain", "-z"], readGit, signal),
   );
+  const rootReal = await canonicalPath(root);
   let own = null;
   for (const candidate of entries) {
-    if (await samePath(candidate.path, root)) {
+    const matches = candidate.path === root || (await canonicalPath(candidate.path)) === rootReal;
+    if (matches) {
       own = candidate;
       break;
     }
   }
   return {
     root,
-    main: entries.length > 0 && (await samePath(entries[0].path, root)),
+    // The first entry is the main work tree exactly when it is the matched one.
+    main: entries.length > 0 && entries[0] === own,
     locked: own?.locked === true,
     reason: own?.reason ?? null,
   };

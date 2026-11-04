@@ -2,7 +2,7 @@ import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { entryCarrier } from "./entry-report.mjs";
 import { sha256 } from "./hash.mjs";
-import { gitRead, SnapshotError } from "./snapshot.mjs";
+import { gitRead, gitReadError, SnapshotError } from "./git-read.mjs";
 import { withTimeBound } from "./time-bound.mjs";
 
 // Item name of the hooks path setting in a shared Git state diff.
@@ -101,15 +101,7 @@ async function readWithin(cwd, bound) {
 
 // Names the failed `git` operation and the exit code only: git stderr can carry a config value,
 // for example the path of an `include.path` entry, and the error reaches the log.
-function readFailure(reason, { args, timeoutMs, result }) {
-  if (reason === "canceled") {
-    return new SnapshotError(`git ${args[0]} was canceled`, { isCanceled: true });
-  }
-  if (reason === "timeout") {
-    return new SnapshotError(`git ${args[0]} timed out after ${timeoutMs} ms`);
-  }
-  return new SnapshotError(`git ${args[0]} failed (exit ${result.exitCode})`);
-}
+const readFailure = (reason, context) => gitReadError(reason, context, { detail: () => "" });
 
 // With `-z` and `--show-scope`, each entry is `<scope>NUL<key>LF<value>NUL`, and a key with no
 // value has no LF. Git writes the variable name in lower case. `mainWorkTree` keeps only the
