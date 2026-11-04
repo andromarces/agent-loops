@@ -116,6 +116,42 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
   }
 });
 
+// Usefulness: verifies requirement "a changed key with userinfo reports no userinfo in the
+// envelope, a log line, or the state file" (issue #1442). Only a dispatch covers all three.
+test("worker dispatch redacts userinfo in a changed local key", async () => {
+  await withLinkedWorkTree(async (linked) => {
+    const marker = "redact-marker-1442";
+    const worker = recordingAdapter([
+      async (_state, _prompt, options) => {
+        await execa(
+          "git",
+          ["config", "--local", `http.https://user:${marker}@example.test/.extraheader`, "value"],
+          { cwd: options.cwd },
+        );
+        return WORKER_REPLY;
+      },
+    ]);
+    const agents = { fake1: worker, fake2: recordingAdapter([]) };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+        agents,
+        stdin: stdinPrompt,
+      });
+      const name = "http.https://<redacted>@example.test/.extraheader";
+      expect(result.payload.sharedGitChanged).toEqual([name]);
+      const state = await readRepoState(linked);
+      expect(state.lastResult.sharedGitChanged).toEqual([name]);
+      const logs = errorSpy.mock.calls.map((call) => call.join(" "));
+      expect(JSON.stringify(result.payload)).not.toContain(marker);
+      expect(JSON.stringify(state)).not.toContain(marker);
+      expect(logs.join("\n")).not.toContain(marker);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
 // Usefulness: verifies requirement "a worker turn that changes the lockfile reports its path, and a
 // turn that changes none carries no field" (issue #1180). The parent installs once before the first
 // dispatch, so a lockfile change is the only sign that the next reviewer sees stale dependencies.
