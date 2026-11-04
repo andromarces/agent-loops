@@ -1,7 +1,7 @@
 // The general `gh` client: runs `gh`, reads `gh api` endpoints, and judges every reply the way the
 // CI gate, the check wait, and the source probe need (#1183). It holds no required-check logic.
 import { execBounded } from "./exec.mjs";
-import { isJsonObject } from "./json.mjs";
+import { isJsonObject, tryParseJson } from "./json.mjs";
 
 /**
  * The default bound on a status read. The read sits in front of a child turn
@@ -69,6 +69,20 @@ export function ghFailureText({ status, stderr, stdout }) {
 }
 
 /**
+ * Sets the `transient` tag on `err` for a retryable failure or a transport failure, and the
+ * `transport` tag for a transport failure. Returns `err`, so a caller can throw the same object.
+ */
+function tagRetry(err, { transient, transport }) {
+  if (transient || transport) {
+    err.transient = true;
+  }
+  if (transport) {
+    err.transport = true;
+  }
+  return err;
+}
+
+/**
  * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did, or
  * when the failure is a transport failure. A `terminal` result never becomes transport. Only a
  * result marked `include`, a failed `gh api --include` read, passes its stdout on for a status line
@@ -78,13 +92,7 @@ export function ghApiFailure(endpoint, { status, stdout, stderr, transient, incl
   const text = ghFailureText({ status, stdout: include ? stdout : undefined, stderr });
   const err = new Error(`gh api ${endpoint} failed: ${text}`);
   const transport = !terminal && isTransportFailure({ stdout, stderr });
-  if (transient || transport) {
-    err.transient = true;
-  }
-  if (transport) {
-    err.transport = true;
-  }
-  return err;
+  return tagRetry(err, { transient, transport });
 }
 
 // The words that the network stack of `gh` writes for a transport failure, which carries no server
@@ -174,13 +182,7 @@ export function ghReadError(label, result) {
   const { status, stderr } = result;
   const err = new Error(`${label} could not be read: ${ghFailureText({ status, stderr })}`);
   const transport = isTransportFailure(result);
-  if (isCleanServerError(result) || transport) {
-    err.transient = true;
-  }
-  if (transport) {
-    err.transport = true;
-  }
-  return err;
+  return tagRetry(err, { transient: isCleanServerError(result), transport });
 }
 
 // The status line, header lines, and blank line that open the stdout of one `gh api --include`
@@ -257,12 +259,8 @@ async function requestHosts(read, cwd) {
     const { status, stdout } = await read(["auth", "status", "--json", "hosts"], cwd, {
       dropEnv: TOKEN_NAMES,
     });
-    let reply = null;
-    try {
-      reply = JSON.parse(stdout);
-    } catch {
-      // An unreadable reply states no host.
-    }
+    const reply = tryParseJson(stdout);
+    // An unreadable reply states no host.
     host = status === 0 ? defaultHost(reply) : null;
     if (host === null) {
       return new Set();

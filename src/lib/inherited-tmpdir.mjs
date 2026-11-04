@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import { tryParseJson } from "./json.mjs";
 
 /**
  * Environment variable that lists the temporary directories that the process tree inherited
@@ -13,12 +14,8 @@ export const INHERITED_TMPDIR_ENV = "AGENT_LOOP_INHERITED_TMPDIR";
 const UNUSABLE_INHERITED_TMPDIRS = "unusable";
 
 function parseList(raw) {
-  try {
-    const list = JSON.parse(raw);
-    return Array.isArray(list) && list.every((entry) => typeof entry === "string") ? list : null;
-  } catch {
-    return null;
-  }
+  const list = tryParseJson(raw);
+  return Array.isArray(list) && list.every((entry) => typeof entry === "string") ? list : null;
 }
 
 /**

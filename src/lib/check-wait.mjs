@@ -11,6 +11,7 @@ import {
 } from "./ci-gate.mjs";
 import {
   commitEntries,
+  contextLabel,
   evaluateContext,
   latestBy,
   matchingEntries,
@@ -18,6 +19,7 @@ import {
   STATUS_TIME_FIELDS,
 } from "./commit-entries.mjs";
 import {
+  EXIT_PENDING,
   NO_CHECKS_YET,
   NO_REQUIRED_CHECKS,
   repoSlug,
@@ -28,7 +30,7 @@ import {
 import { noCheckSource, pullRequestWorkflowMayRun } from "./check-source-probe.mjs";
 import { failureOf, ghReadError, runGh, withSignal } from "./gh-api.mjs";
 import { isFullSha } from "./git-sha.mjs";
-import { isJsonObject } from "./json.mjs";
+import { isJsonObject, tryParseJson } from "./json.mjs";
 
 // The app of the check runs that a workflow of the repository registers.
 const ACTIONS_APP_SLUG = "github-actions";
@@ -44,12 +46,6 @@ export const DEFAULT_WAIT_SECONDS = 300;
 export const CHILD_EXIT_CEILING_MS = 5000;
 
 const POLL_INTERVAL_MS = 15_000;
-
-// The `gh pr checks` exit codes, as `docs/orchestrator/reviewer-evidence.md` states
-// them for the reviewer read: 8 is a pending check, and 1 covers a failing check,
-// a repository with no required check, and a read error. An exit 1 is therefore
-// not a failure on its own; the check list decides (#329).
-const EXIT_PENDING = 8;
 
 // Every value a well-formed item may carry, so an item the runtime cannot read
 // is unresolved rather than a pass. `gh pr checks --help` names the buckets:
@@ -138,12 +134,7 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
   const text = stdout.trim();
   let checks = [];
   if (text !== "") {
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = null;
-    }
+    const parsed = tryParseJson(text);
     if (!Array.isArray(parsed)) {
       throw ghReadError(label, { status, stdout, stderr });
     }
@@ -195,12 +186,7 @@ function readHead(pr, { status, stdout, stderr }) {
   if (status !== 0) {
     throw ghReadError(label, { status, stdout, stderr });
   }
-  let parsed = null;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    // Left null: the read is refused below.
-  }
+  const parsed = tryParseJson(stdout);
   const head = isJsonObject(parsed) ? parsed.headRefOid : undefined;
   const base = isJsonObject(parsed) ? parsed.baseRefName : undefined;
   if (typeof head !== "string" || !isFullSha(head.toLowerCase())) {
@@ -240,17 +226,7 @@ function statusItem(status) {
 
 /** The latest entry of each group, keyed by `keyOf`. Throws when a group cannot be ordered, so the read is unresolved. */
 function latestOfEach(entries, keyOf, fields, what) {
-  const groups = new Map();
-  for (const entry of entries) {
-    const key = keyOf(entry);
-    const group = groups.get(key);
-    if (group) {
-      group.push(entry);
-    } else {
-      groups.set(key, [entry]);
-    }
-  }
-  return [...groups].map(([key, group]) => {
+  return [...Map.groupBy(entries, keyOf)].map(([key, group]) => {
     const latest = latestBy(group, fields);
     if (latest === null) {
       throw new Error(`the ${what} named "${key}" cannot be ordered; the read is unresolved.`);
@@ -268,7 +244,7 @@ function allItems({ runs, statuses }) {
   return [
     ...latestOfEach(
       runs,
-      (run) => `${run.name} (app ${run.app?.id ?? "none"})`,
+      (run) => contextLabel(run.name, run.app?.id ?? "none"),
       RUN_TIME_FIELDS,
       "check runs",
     ).map(runItem),
@@ -658,12 +634,12 @@ export async function waitChecks({
         await ensureSlug();
         value = await pullRequestWorkflowMayRun(probeContext(), sha, base);
       } catch (raw) {
-        const err = failureOf(raw);
         // A failed read holds the pass. A transport failure is kept for the bound, which reports it.
-        if (err instanceof BoundReached) {
-          throw err;
-        }
-        if (err?.transport) {
+        const err = retryableOrThrow(raw, {
+          retryable: (error) => error?.transport,
+          settled: () => true,
+        });
+        if (err !== null) {
           failed = err;
         }
       }
@@ -699,11 +675,20 @@ export async function waitChecks({
     }
     return { sha, base, listed, names };
   };
-  // The retryable failure of a failed read, or a throw for the bound and every other failure.
-  const retryableOrThrow = (raw) => {
+  // The retryable failure of `raw`, or a throw. The bound always ends the wait and so does a terminal
+  // failure, unless `settled` says the poll already holds a failure that ends it. `retryable` names
+  // the tag that the read sets for a failure that it can retry. A cancel carries neither tag, so it
+  // reaches the caller as the same object.
+  const retryableOrThrow = (
+    raw,
+    { retryable = (err) => err?.transient, settled = () => false } = {},
+  ) => {
     const err = failureOf(raw);
-    if (!err?.transient || err instanceof BoundReached) {
-      throw err;
+    if (err instanceof BoundReached || !retryable(err)) {
+      if (err instanceof BoundReached || !settled()) {
+        throw err;
+      }
+      return null;
     }
     return err;
   };
@@ -726,13 +711,12 @@ export async function waitChecks({
     } catch (raw) {
       // A failure that `gh pr checks` lists settles the wait, so a commit or source read
       // that fails never delays it. The bound and every other failure still end it.
-      const err = failureOf(raw);
-      if (err?.transient && !(err instanceof BoundReached)) {
+      const err = retryableOrThrow(raw, {
+        settled: () => failed !== null || prFailures.length > 0,
+      });
+      if (err !== null) {
         // A retryable failure is retried on the next poll, unless a listed failure settles the wait.
         failed = err;
-      }
-      if (err instanceof BoundReached || (failed === null && prFailures.length === 0)) {
-        throw err;
       }
     }
     // The probe runs once per settled answer, only for an `--all` wait that names no expected check.
@@ -746,12 +730,12 @@ export async function waitChecks({
           return { settled: true, checks: [], noCheckSource: true };
         }
       } catch (raw) {
-        const err = failureOf(raw);
-        if (err instanceof BoundReached) {
-          throw err;
-        }
         // A transport failure keeps the probe open, so the next poll reads again.
-        if (err?.transport) {
+        const err = retryableOrThrow(raw, {
+          retryable: (error) => error?.transport,
+          settled: () => true,
+        });
+        if (err !== null) {
           failed = err;
         } else {
           probed = true;

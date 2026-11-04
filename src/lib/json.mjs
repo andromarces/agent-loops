@@ -7,6 +7,18 @@ export function parseJson(text, description) {
 }
 
 /**
+ * Parses `text` as JSON, or returns null when it is not JSON. A JSON `null` reads the same as an
+ * unreadable text, so a caller that must tell them apart parses itself.
+ */
+export function tryParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Parses each non-blank line as JSON and drops every line that does not parse, without a warning.
  * Returns the parsed values in input order.
  */

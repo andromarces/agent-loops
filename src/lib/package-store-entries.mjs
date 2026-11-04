@@ -2,6 +2,7 @@ import { open, opendir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { tryParseJson } from "./json.mjs";
 import { logDebug, logWarn } from "./log.mjs";
 import { withTimeBound } from "./time-bound.mjs";
 
@@ -49,12 +50,8 @@ async function readCapped(file, signal) {
  * valid JSON or names none. pnpm 12.11.2 writes this file as JSON, so it is parsed strictly.
  */
 function recordedStoreDir(text) {
-  try {
-    const parsed = JSON.parse(text);
-    return typeof parsed?.storeDir === "string" ? parsed.storeDir : null;
-  } catch {
-    return null;
-  }
+  const parsed = tryParseJson(text);
+  return typeof parsed?.storeDir === "string" ? parsed.storeDir : null;
 }
 
 /**

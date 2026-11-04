@@ -10,7 +10,7 @@ import {
   pagedRead,
   readOne,
 } from "./gh-api.mjs";
-import { isJsonObject } from "./json.mjs";
+import { isJsonObject, tryParseJson } from "./json.mjs";
 
 // A source the caller cannot read answers 404 or 403, and the message names the
 // credential. Observed live on the classic-protection endpoint (#280, #295):
@@ -162,10 +162,8 @@ async function readRequiredSource(
   if (text === "") {
     return { state: UNKNOWN, contexts: [], unparsed: true };
   }
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
+  const body = tryParseJson(text);
+  if (body === null) {
     return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   const { state, contexts } = classify(body);
@@ -351,10 +349,7 @@ function classifyProtection(data) {
     return { state: UNKNOWN, contexts: [] };
   }
   const contexts = protectionContexts(required);
-  if (contexts === null) {
-    return { state: UNKNOWN, contexts: [] };
-  }
-  if (contexts.length === 0) {
+  if (contexts === null || contexts.length === 0) {
     return { state: UNKNOWN, contexts: [] };
   }
   return { state: HAS_CONTEXTS, contexts };
@@ -417,6 +412,10 @@ export async function repoSlug(gh, cwd, failure = "failed") {
 // the trimmed stderr of an exit 1 with no stdout.
 export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' branch$/;
 
+// The `gh pr checks` exit code of a pending check. Exit 1 covers a failing check, a read error, and a
+// repository with no required check, so the check list decides (#329).
+export const EXIT_PENDING = 8;
+
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet, as right after a
 // push. It is an empty list, not a read error, in the required and the all-checks read alike (#941,
 // #950).
@@ -443,15 +442,11 @@ export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
  * @returns {{ names: string[], ok: boolean, transient?: boolean, failure?: string }}
  */
 export function requiredNamesOf({ status, stdout, stderr }) {
-  let parsed = null;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    // Not JSON: judged below.
-  }
+  const parsed = tryParseJson(stdout);
   if (Array.isArray(parsed)) {
     const named = parsed.every((check) => typeof check?.name === "string" && check.name !== "");
-    const succeeded = status === 0 || ((status === 1 || status === 8) && parsed.length > 0);
+    const succeeded =
+      status === 0 || ((status === 1 || status === EXIT_PENDING) && parsed.length > 0);
     return {
       names: parsed.map((check) => check?.name).filter(Boolean),
       ok: named && succeeded,
