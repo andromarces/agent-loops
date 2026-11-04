@@ -6,7 +6,7 @@ partially-superseded
 
 Extends [ADR 0047: Give each Codex turn a private temporary directory](0047-give-each-codex-turn-a-private-temporary-directory.md). Decisions 5 and 6 of ADR 0047 remove the directory after the turn, which a dead process never reaches. This ADR adds the removal by a later call. No decision of ADR 0047 is replaced.
 
-Superseded in part by [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md):
+Superseded by [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md):
 
 - Decision 3, the conditions that keep the directory: ADR 0063 adds a live POSIX process group of the child.
 - Decision 4, the refusal of a record: ADR 0063 adds a record whose parent is not the inherited temporary directory of the call.

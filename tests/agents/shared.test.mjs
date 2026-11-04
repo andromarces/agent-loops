@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  boundedDetail,
   lastClosingMessage,
   setMainLoopUsage,
   setUsageOrDelete,
@@ -34,6 +35,29 @@ test("setMainLoopUsage keeps an empty object and deletes on absent or null usage
   state.usage = { mainLoop: { stale: true } };
   setMainLoopUsage(state, null);
   expect("usage" in state).toBe(false);
+});
+
+// Usefulness: pins the one failure-detail bound both adapters use (issue #1407): the flattened
+// text, ellipsis included, never exceeds the limit, and shorter text keeps its single line.
+test("boundedDetail flattens to one line and counts the ellipsis inside the limit", () => {
+  const limit = 10;
+
+  expect(boundedDetail("line one\n  line two", limit)).toBe("line on...");
+  expect(boundedDetail("line one\n  line two", limit)).toHaveLength(limit);
+  expect(boundedDetail("short\n text", limit)).toBe("short text");
+});
+
+// Usefulness: verifies the bound holds below the ellipsis length too (issue #1407), so a small
+// limit cannot produce output longer than the limit it names.
+test("boundedDetail never exceeds a limit shorter than the ellipsis", () => {
+  expect(boundedDetail("abcd", 3)).toBe("...");
+  expect(boundedDetail("abcd", 2)).toBe("..");
+  expect(boundedDetail("abcd", 1)).toBe(".");
+  expect(boundedDetail("abcd", 0)).toBe("");
+
+  for (const limit of [0, 1, 2, 3, 4, 5]) {
+    expect(boundedDetail("abcdef", limit).length).toBeLessThanOrEqual(limit);
+  }
 });
 
 const CLOSING = "Conclusion: c.\nWhy: w.\nBlockers: none";
