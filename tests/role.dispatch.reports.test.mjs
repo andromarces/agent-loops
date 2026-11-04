@@ -116,6 +116,44 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
   }
 });
 
+// Usefulness: verifies requirement "a worker turn that writes a tracked file of the main work tree
+// reports that path in the envelope, and a turn that leaves it unchanged carries no field" (issue
+// #1448). The linked work tree stays clean, so no other envelope field shows the change.
+test("worker dispatch reports a main work tree change by path and omits the field otherwise", async () => {
+  const repo = await newRunRepo();
+  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-main-"));
+  const linked = join(parent, "linked");
+  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
+  try {
+    const mainChangingWorker = recordingAdapter([
+      async () => {
+        await writeFile(join(repo, "init.txt"), "changed in the main work tree\n");
+        return WORKER_REPLY;
+      },
+      async () => WORKER_REPLY,
+    ]);
+    const agents = { fake1: mainChangingWorker, fake2: recordingAdapter([]) };
+
+    const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(changed.payload.workTree.clean).toBe(true);
+    expect(changed.payload.mainWorkTreeChanged).toEqual(["init.txt"]);
+    expect(JSON.stringify(changed.payload)).not.toMatch(/changed in the main work tree/);
+    expect((await readRepoState(linked)).lastResult.mainWorkTreeChanged).toEqual(["init.txt"]);
+
+    const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(unchanged.payload.workTree).toBeDefined();
+    expect(unchanged.payload).not.toHaveProperty("mainWorkTreeChanged");
+  } finally {
+    await removePath(parent);
+  }
+});
+
 // Usefulness: verifies requirement "a worker turn that changes the lockfile reports its path, and a
 // turn that changes none carries no field" (issue #1180). The parent installs once before the first
 // dispatch, so a lockfile change is the only sign that the next reviewer sees stale dependencies.

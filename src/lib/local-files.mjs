@@ -207,12 +207,13 @@ async function findMainWorkTree(root, entries, read) {
  * (the registered work trees, and the canonical paths of the main and the linked work tree), or
  * null, with the reason logged, when nothing can be read from or written to: a path holds a
  * control character, there is no main work tree for this copy, or `cwd` is the main work tree.
+ * The `quiet` option suppresses its log line.
  */
-async function locateWorkTrees(cwd, read) {
+async function locateWorkTrees(cwd, read, { quiet = false } = {}) {
   // A path with a control character is not trusted to survive a round trip through
   // Git's output or a path comparison, so the copy refuses it and copies nothing.
   const refuse = (what) => {
-    logInfo(`local files: ${what} holds a control character, so nothing is copied`);
+    if (!quiet) logInfo(`local files: ${what} holds a control character, so nothing is copied`);
     return null;
   };
   if (hasControlCharacter(cwd)) {
@@ -234,11 +235,24 @@ async function locateWorkTrees(cwd, read) {
     return refuse(found.refused);
   }
   if (found.main === null) {
-    logInfo("local files: no main work tree found, so nothing is copied");
+    if (!quiet) logInfo("local files: no main work tree found, so nothing is copied");
     return null;
   }
   const rootReal = await realpath(root);
   return found.main === rootReal ? null : { entries, mainReal: found.main, rootReal };
+}
+
+/**
+ * Returns the canonical path of the main work tree for a linked `cwd`, or null when `cwd` is the
+ * main work tree or the layout has none. The resolution matches the local-file copy.
+ */
+export async function mainWorkTreePath(cwd, { signal } = {}) {
+  const located = await locateWorkTrees(
+    cwd,
+    (dir, args, options) => git(dir, args, { signal, ...options }),
+    { quiet: true },
+  );
+  return located?.mainReal ?? null;
 }
 
 /**
