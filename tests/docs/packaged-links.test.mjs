@@ -248,15 +248,18 @@ function definitionTargets(text) {
   const targets = [];
   const lines = text.split(/\r?\n/);
   let fence;
+  let fenceIndent = 0;
   for (let index = 0; index < lines.length; index += 1) {
-    const line = stripQuotes(lines[index]);
     if (fence) {
+      const line = continuationLine(lines[index], fenceIndent);
       if (closesFence(line, fence)) fence = undefined;
       continue;
     }
-    const opening = FENCE_OPEN.exec(line);
+    const item = listItem(stripQuotes(lines[index]));
+    const opening = FENCE_OPEN.exec(item.text);
     if (opening && !(opening[1][0] === "`" && opening[2].includes("`"))) {
       fence = opening[1];
+      fenceIndent = item.baseIndent;
       continue;
     }
     const definition = readDefinition(lines, index);
@@ -444,6 +447,32 @@ test("the link check passes reference definitions to an absolute URL and a shipp
     },
   ];
   expect(findUnshippedLinks(documents, shipped)).toEqual([]);
+});
+
+// Requirement: a fence that opens after a list marker is a fenced code block.
+// Usefulness: verifies the reader skips a sample definition inside a fence that
+// follows a bullet or ordered list marker, so a shipped sample cannot fail as a
+// live definition. The definition after the fences must still fail, so a fence
+// that never closes cannot make the check pass.
+test("the link check ignores definitions inside a fence after a list marker", () => {
+  const shipped = new Set(["docs/a.md"]);
+  const documents = [
+    {
+      path: "docs/a.md",
+      text: [
+        "- ```md",
+        "  [bullet]: ../bullet.md",
+        "  ```",
+        "1. ```md",
+        "   [ordered]: ../ordered.md",
+        "   ```",
+        "[after]: ../after.md",
+      ].join("\n"),
+    },
+  ];
+  expect(findUnshippedLinks(documents, shipped)).toEqual([
+    "docs/a.md: ../after.md is not shipped (after.md)",
+  ]);
 });
 
 // Requirement: indented and fenced code lines are not reference definitions.
