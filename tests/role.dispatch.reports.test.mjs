@@ -116,6 +116,44 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
   }
 });
 
+// Usefulness: verifies requirement "a worker turn that writes a tracked main work tree file reports
+// that path in the envelope" (issue #1448). A turn that leaves the main work tree unchanged carries
+// no field. The linked work tree stays clean, so no other envelope field shows the change.
+test("worker dispatch reports a main work tree change by path and omits the field otherwise", async () => {
+  const repo = await newRunRepo();
+  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-main-"));
+  const linked = join(parent, "linked");
+  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
+  try {
+    const mainChangingWorker = recordingAdapter([
+      async () => {
+        await writeFile(join(repo, "init.txt"), "changed in the main work tree\n");
+        return WORKER_REPLY;
+      },
+      async () => WORKER_REPLY,
+    ]);
+    const agents = { fake1: mainChangingWorker, fake2: recordingAdapter([]) };
+
+    const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(changed.payload.workTree.clean).toBe(true);
+    expect(changed.payload.mainWorkTreeChanged).toEqual(["init.txt"]);
+    expect(JSON.stringify(changed.payload)).not.toMatch(/changed in the main work tree/);
+    expect((await readRepoState(linked)).lastResult.mainWorkTreeChanged).toEqual(["init.txt"]);
+
+    const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    expect(unchanged.payload.workTree).toBeDefined();
+    expect(unchanged.payload).not.toHaveProperty("mainWorkTreeChanged");
+  } finally {
+    await removePath(parent);
+  }
+});
+
 // Usefulness: verifies requirement "a changed key with userinfo reports no userinfo in the
 // envelope, a log line, or the state file" (issue #1442). Only a dispatch covers all three.
 test("worker dispatch redacts userinfo in a changed local key", async () => {

@@ -1,6 +1,7 @@
 import { carryInheritedTmpdirEntries, failedInheritedTmpdirEntries } from "./tmpdir-entries.mjs";
 import { carryPackageStoreEntries, failedPackageStoreEntries } from "./package-store-entries.mjs";
 import { carryLockfileChanged, failedLockfileChanged } from "./lockfile-change.mjs";
+import { carryMainWorkTreeChanged, failedMainWorkTreeChanged } from "./main-work-tree-change.mjs";
 import { carrySharedGitChanged, failedSharedGitChanged } from "./shared-git.mjs";
 import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 
@@ -9,6 +10,8 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 // A new field needs one entry here, and its producer in `runChild`.
 // - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
 //   (issue #984).
+// - mainWorkTreeChanged: paths of the main work tree that a worker turn in a linked work tree changed
+//   (issue #1448).
 // - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
 //   before the next reviewer turn (issue #1180).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
@@ -26,6 +29,13 @@ const TURN_EVIDENCE = [
     key: "items",
     carry: carrySharedGitChanged,
     failed: failedSharedGitChanged,
+  },
+  {
+    field: "mainWorkTreeChanged",
+    type: "main-work-tree",
+    key: "paths",
+    carry: carryMainWorkTreeChanged,
+    failed: failedMainWorkTreeChanged,
   },
   {
     field: "lockfileChanged",
@@ -94,8 +104,8 @@ export function pickTurnEvidence(source) {
 
 /**
  * Carries the evidence of a failed turn on a fatal error. The evidence is the `--test-cmd` result,
- * the shared Git items, the lockfile paths, and the two advisory lists. An absent or empty field is
- * skipped, and so is an error that cannot take it.
+ * the shared Git items, the main work tree paths, the lockfile paths, and the two advisory lists.
+ * An absent or empty field is skipped, and so is an error that cannot take it.
  */
 export function carryTurnEvidence(err, evidence) {
   if (!err || typeof err !== "object") return;
@@ -109,4 +119,4 @@ export function failedTurnEvidence(err) {
   return Object.fromEntries(TURN_EVIDENCE.map(({ field, failed }) => [field, failed(err)]));
 }
 
-/** @typedef {{ sharedGitChanged?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
+/** @typedef {{ sharedGitChanged?: string[], mainWorkTreeChanged?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */

@@ -257,6 +257,14 @@ Apply these parent rules:
     shared Git state that fails or passes its 10 second deadline after the turn reports no field, so
     the absent field then does not prove that no change happened. The runtime logs a warning for
     such a read.
+- A worker envelope carries `mainWorkTreeChanged` only when the turn changed the main work tree of
+  a linked run. The `mainWorkTreeChanged` field names dirty, untracked, unignored, and committed
+  paths relative to that work tree, at most 20, and never content. A failed or canceled worker turn
+  carries `mainWorkTreeChanged` too, and a turn that changed none carries no field. A read of the
+  main work tree that fails or passes its 10 second deadline reports no `mainWorkTreeChanged`, so
+  the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed
+  between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
+  the run, and leave the main work tree change to the user.
 - A worker envelope carries `lockfileChanged` only when the turn changed a lockfile at the work
   tree root, for example `pnpm-lock.yaml` after a merge of the base branch. The field names the
   lockfiles by path only. A lockfile that the runtime could not read before or after the turn counts

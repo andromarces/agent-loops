@@ -8,6 +8,7 @@ import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./lib/tmpdir
 import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffLockfiles, readLockfiles } from "./lib/lockfile-change.mjs";
+import { diffMainWorkTree, readMainWorkTree } from "./lib/main-work-tree-change.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
@@ -391,8 +392,11 @@ export async function runChild(options) {
   let keepReplacedMark = false;
   let sharedBefore = null;
   let lockfilesBefore = null;
+  let mainBefore = null;
   // The post-turn lockfile paths, kept once read so a cancel after the read reuses them.
   let lockfilePaths = null;
+  // The post-turn main work tree paths, kept once read so a cancel after the read reuses them.
+  let mainPaths = null;
   let tmpdirBefore = null;
   let storeBefore = null;
   // The post-turn advisory lists, kept once read so a cancel after the reads reuses them.
@@ -400,6 +404,18 @@ export async function runChild(options) {
 
   // The post-turn shared Git items, kept once read so a cancel after the read reuses them.
   let sharedGitItems = null;
+
+  /** Paths of the main work tree that differ from the pre-turn read, or [] when none or unread. */
+  const readMainWorkTreeChanged = async () => {
+    if (mainPaths === null) {
+      const after = mainBefore ? await readMainWorkTree(cwd, { since: mainBefore }) : null;
+      mainPaths = diffMainWorkTree(mainBefore, after);
+      if (mainPaths.length > 0) {
+        logWarn(`worker: the main work tree changed: ${mainPaths.join(", ")}`);
+      }
+    }
+    return mainPaths;
+  };
 
   /**
    * Names of the shared Git items that differ from the pre-turn read, or [] when none or unread. The
@@ -455,22 +471,24 @@ export async function runChild(options) {
     return advisory;
   };
   /**
-   * Reads the shared Git change, the lockfile change, and both advisory lists together for a turn
-   * that failed. A rejected read throws in the order shared Git, lockfile, advisory, which is the
-   * order the reads ran in before they ran together.
+   * Reads the shared Git change, the lockfile change, the main work tree change, and both advisory
+   * lists together for a turn that failed. A rejected read throws in the order shared Git, lockfile,
+   * main work tree, advisory. That is the order the reads ran in before they ran together.
    */
   const readFailedTurnEvidence = async () => {
-    const [sharedRead, lockfileRead, advisoryRead] = await Promise.allSettled([
+    const [sharedRead, lockfileRead, mainWorkTreeRead, advisoryRead] = await Promise.allSettled([
       readSharedGitChanged(),
       readLockfileChanged(),
+      readMainWorkTreeChanged(),
       readAdvisory(),
     ]);
-    for (const read of [sharedRead, lockfileRead, advisoryRead]) {
+    for (const read of [sharedRead, lockfileRead, mainWorkTreeRead, advisoryRead]) {
       if (read.status === "rejected") throw read.reason;
     }
     return {
       sharedGitChanged: sharedRead.value,
       lockfileChanged: lockfileRead.value,
+      mainWorkTreeChanged: mainWorkTreeRead.value,
       ...advisoryRead.value,
     };
   };
@@ -493,9 +511,11 @@ export async function runChild(options) {
     // A linked work tree shares config, hooks, and remotes with the main work tree, which the work
     // tree snapshot never covers, so a worker turn is compared on them too (issue #984).
     // The parent installs once before the first dispatch, so a worker turn that changes a lockfile
-    // leaves the next reviewer on stale dependencies (issue #1180). The two reads are independent.
-    [sharedBefore, lockfilesBefore] =
-      roleName === "worker" ? await Promise.all([readShared(), readLockfiles(cwd)]) : [null, null];
+    // leaves the next reviewer on stale dependencies (issue #1180). The reads are independent.
+    [sharedBefore, lockfilesBefore, mainBefore] =
+      roleName === "worker"
+        ? await Promise.all([readShared(), readLockfiles(cwd), readMainWorkTree(cwd)])
+        : [null, null, null];
     if (roleName === "reviewer") {
       [tmpdirBefore, storeBefore] = await Promise.all([
         snapshotInheritedTmpdir(),
@@ -534,20 +554,21 @@ export async function runChild(options) {
     }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
-    // The three reads are independent, so they run together. All settle before a failure throws, so
-    // a cancel in the work tree read leaves the shared Git items and the lockfile paths read once and
-    // kept for the catch path.
-    const [workTreeRead, sharedRead, lockfileRead] = await Promise.allSettled([
+    // The four reads are independent, so they run together. All settle before a failure throws, so
+    // a cancel in the work tree read keeps the other values for the catch path.
+    const [workTreeRead, sharedRead, lockfileRead, mainWorkTreeRead] = await Promise.allSettled([
       roleName === "worker" ? readWorkTree() : null,
       readSharedGitChanged(),
       readLockfileChanged(),
+      readMainWorkTreeChanged(),
     ]);
-    for (const read of [workTreeRead, sharedRead, lockfileRead]) {
+    for (const read of [workTreeRead, sharedRead, lockfileRead, mainWorkTreeRead]) {
       if (read.status === "rejected") throw read.reason;
     }
     const workTree = workTreeRead.value;
     const sharedGitChanged = sharedRead.value;
     const lockfileChanged = lockfileRead.value;
+    const mainWorkTreeChanged = mainWorkTreeRead.value;
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -569,6 +590,7 @@ export async function runChild(options) {
       ...pickTurnEvidence({
         sharedGitChanged,
         lockfileChanged,
+        mainWorkTreeChanged,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,
@@ -605,10 +627,15 @@ export async function runChild(options) {
       errorMessage = `${roleName} timed out after ${timeout} seconds`;
     }
     logWarn(timedOut ? errorMessage : `${roleName}: ${firstErrorLine(errorMessage)}`);
-    // The failed turn can change the shared state before it fails. The three reads take no turn
+    // The failed turn can change the shared state before it fails. The four reads take no turn
     // signal, so a cancel never loses what they read.
-    const { sharedGitChanged, lockfileChanged, inheritedTmpdirEntries, packageStoreEntries } =
-      await readFailedTurnEvidence();
+    const {
+      sharedGitChanged,
+      lockfileChanged,
+      mainWorkTreeChanged,
+      inheritedTmpdirEntries,
+      packageStoreEntries,
+    } = await readFailedTurnEvidence();
     // A cancel that landed during these reads ends the turn as a cancel, not as a failed turn. This
     // throw leaves the catch block, so it carries the evidence just read, as the fatal path does.
     try {
@@ -618,6 +645,7 @@ export async function runChild(options) {
         testRun,
         sharedGitChanged,
         lockfileChanged,
+        mainWorkTreeChanged,
         inheritedTmpdirEntries,
         packageStoreEntries,
       });
@@ -633,6 +661,7 @@ export async function runChild(options) {
       ...pickTurnEvidence({
         sharedGitChanged,
         lockfileChanged,
+        mainWorkTreeChanged,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,

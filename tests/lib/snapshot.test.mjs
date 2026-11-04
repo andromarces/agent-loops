@@ -719,6 +719,25 @@ test("sha256File rejects with an abort error when its signal is already aborted"
   }
 });
 
+// Usefulness: verifies requirement "snapshot passes its signal to every file hash and stops the
+// read at the deadline" (issue #1448 review). Without the signal, a slow hash continues after the
+// caller aborts and the snapshot resolves.
+test("snapshot stops a file hash when its signal aborts", async () => {
+  const repo = await createTempRepo();
+  try {
+    await writeFile(join(repo, "init.txt"), Buffer.alloc(512 * 1024, "abcdefghij"));
+    const controller = new AbortController();
+    readHook.onFirstChunk = () => controller.abort();
+    const started = Date.now();
+    const error = await snapshot(repo, { signal: controller.signal }).catch((err) => err);
+    expect(error).toMatchObject({ name: "SnapshotError", isCanceled: true });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  } finally {
+    readHook.onFirstChunk = null;
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies requirement "digests stay byte-identical" (issue #1241): a file that spans
 // several read chunks hashes to the whole-content digest, so recorded snapshot digests still match.
 test("sha256File hashes a multi-chunk file to the whole-content digest", async () => {
