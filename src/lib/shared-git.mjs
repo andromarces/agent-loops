@@ -23,6 +23,27 @@ const isSharedConfigKey = (key) => {
   return SHARED_CONFIG_KEYS.has(key) || key.startsWith("extensions.");
 };
 
+// A local key is reported by name. A `branch.<name>.*` key stays out because a normal `git push -u`
+// writes it. A subsection can hold a URL, so a key whose subsection has `://` stays out.
+function isLocalReportKey(key) {
+  const first = key.indexOf(".");
+  const last = key.lastIndexOf(".");
+  const section = key.slice(0, first).toLowerCase();
+  if (section === "branch") return false;
+  // `remote.<name>.*` is reported as `remote.<name>`, so its subsection keys stay out.
+  if (section === "remote" && first !== last) return false;
+  const lower = key.toLowerCase();
+  if (
+    lower === "core.hookspath" ||
+    lower === "core.bare" ||
+    lower === "core.worktree" ||
+    lower.startsWith("extensions.")
+  ) {
+    return false;
+  }
+  return first === last || !key.slice(first + 1, last).includes("://");
+}
+
 /**
  * Reads the Git state that every work tree of a repository shares and that a turn can change from
  * a linked work tree: `core.hooksPath`, the hook files in the common `hooks/` directory, and the
@@ -131,13 +152,16 @@ function readConfigState(
     const lowerKey = key.toLowerCase();
     if (key === "core.hookspath") {
       hooksPath[scope].push(value);
-    } else if (scope !== "global" && key.startsWith("remote.")) {
+    } else if (scope !== "global" && key.startsWith("remote.") && key.split(".").length >= 3) {
       const remoteName = key.slice("remote.".length, key.lastIndexOf("."));
       remotes.set(remoteName, [...(remotes.get(remoteName) ?? []), [scope, entry]]);
     } else if (isSharedConfigKey(lowerKey)) {
       // The value list, never the key spelling, is the state. Git prints the name in lower case.
       // A value list that keeps its order but changes a value is still a change.
       sharedKeys.set(lowerKey, [...(sharedKeys.get(lowerKey) ?? []), [scope, value]]);
+    } else if (scope === "local" && isLocalReportKey(key)) {
+      // The key spelling is case-sensitive only in a subsection. `key` keeps that spelling.
+      sharedKeys.set(key, [...(sharedKeys.get(key) ?? []), [scope, value]]);
     }
   }
   return state;

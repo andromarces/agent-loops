@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
@@ -293,6 +293,154 @@ test("a changed value list of a watched key is reported by key name", async () =
   await execa("git", ["config", "--unset-all", "core.bare"], { cwd: linked });
   await execa("git", ["config", "--add", "core.bare", "false"], { cwd: linked });
   expect(diffSharedGit(before, await readSharedGit(linked))).toEqual(["core.bare"]);
+});
+
+// Usefulness: verifies requirement "a turn that removes user.name reports user.name" (issue #1442).
+// No existing item names an identity key, and its loss changes every later commit.
+test("a removed local identity key is reported by name", async () => {
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "user.name", "Original Name"], { cwd: repo });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--local", "--unset", "user.name"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["user.name"]);
+});
+
+// Usefulness: verifies requirement "identity and signing keys are reported keys" (issue #1442).
+// Each name stays visible when one turn removes the whole local group.
+test("a turn that removes identity and signing keys names each key", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  const keys = ["user.name", "user.email", "user.signingkey", "commit.gpgsign", "gpg.format"];
+  for (const key of keys) await execa("git", ["config", "--local", key, "value"], { cwd: linked });
+  const changed = await changedBy(linked, async () => {
+    for (const key of keys) {
+      await execa("git", ["config", "--local", "--unset", key], { cwd: linked });
+    }
+  });
+  expect(changed).toEqual(keys.sort());
+});
+
+// Usefulness: verifies requirement "a branch.<name>.* key stays out" (issue #1442). A normal
+// `git push -u` writes those keys, so reporting them adds noise to every pushed turn.
+test("a local branch key change is not reported", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  const changed = await changedBy(linked, async () => {
+    await execa("git", ["config", "--local", "branch.linked-branch.remote", "origin"], {
+      cwd: linked,
+    });
+    await execa("git", ["config", "--local", "branch.linked-branch.merge", "refs/heads/main"], {
+      cwd: linked,
+    });
+  });
+  expect(changed).toEqual([]);
+});
+
+// Usefulness: verifies requirement "a global identity key change stays out of the local report"
+// (issue #1442). The field covers the local (shared) scope only.
+test("a global identity key change is not reported", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  const { env } = await tempGlobalConfig();
+  await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Name\n");
+  const changed = await changedBy(
+    linked,
+    () => execa("git", ["config", "--global", "user.name", "Changed Name"], { cwd: linked, env }),
+    { env },
+  );
+  expect(changed).toEqual([]);
+});
+
+// Usefulness: verifies requirement "a multi-valued local key that gains a value is reported"
+// (issue #1442). The whole value list, not the effective value, is the compared state.
+test("a local key that gains a value is reported by name", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "--add", "demo.key", "one"], { cwd: linked });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--local", "--add", "demo.key", "two"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["demo.key"]);
+});
+
+// Usefulness: verifies requirement "a multi-valued local key that loses one value is reported"
+// (issue #1442). Dropping only the effective value misses a list that still looks set.
+test("a local key that loses a value is reported by name", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "--add", "demo.key", "one"], { cwd: linked });
+  await execa("git", ["config", "--local", "--add", "demo.key", "two"], { cwd: linked });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--local", "--unset", "demo.key", "one"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["demo.key"]);
+});
+
+// Usefulness: verifies requirement "a multi-valued local key whose values reorder is reported"
+// (issue #1442). Keeping the same set in one order must still count as a change.
+test("a local key whose values reorder is reported by name", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "--add", "demo.key", "one"], { cwd: linked });
+  await execa("git", ["config", "--local", "--add", "demo.key", "two"], { cwd: linked });
+  const changed = await changedBy(linked, async () => {
+    await execa("git", ["config", "--local", "--unset-all", "demo.key"], { cwd: linked });
+    await execa("git", ["config", "--local", "--add", "demo.key", "two"], { cwd: linked });
+    await execa("git", ["config", "--local", "--add", "demo.key", "one"], { cwd: linked });
+  });
+  expect(changed).toEqual(["demo.key"]);
+});
+
+// Usefulness: verifies requirement "a local section or key name that differs only in case reports
+// nothing" (issue #1442). Git prints those names in lower case, so the key is the same.
+test("a local section or key name that differs only in case reports nothing", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "Demo.Key", "one"], { cwd: linked });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--local", "demo.key", "one"], { cwd: linked }),
+  );
+  expect(changed).toEqual([]);
+});
+
+// Usefulness: verifies requirement "a local subsection name that differs only in case keeps both
+// spellings" (issue #1442). A subsection name is case-sensitive in Git config.
+test("a local subsection name that differs only in case names both keys", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "demo.Sub.key", "one"], { cwd: linked });
+  const changed = await changedBy(linked, async () => {
+    await execa("git", ["config", "--local", "demo.sub.key", "two"], { cwd: linked });
+    await execa("git", ["config", "--local", "--unset", "demo.Sub.key"], { cwd: linked });
+  });
+  expect(changed).toEqual(["demo.Sub.key", "demo.sub.key"]);
+});
+
+// Usefulness: verifies requirement "a removed local section names each key it held" (issue #1442).
+// A section removal drops several keys in one edit, and each name must survive.
+test("a removed local section names each key it held", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  await execa("git", ["config", "--local", "demo.first", "one"], { cwd: linked });
+  await execa("git", ["config", "--local", "demo.second", "two"], { cwd: linked });
+  const changed = await changedBy(linked, () =>
+    execa("git", ["config", "--local", "--remove-section", "demo"], { cwd: linked }),
+  );
+  expect(changed).toEqual(["demo.first", "demo.second"]);
+});
+
+// Usefulness: verifies requirement "a boolean local key with no = is reported by name" (issue
+// #1442). Git prints such a key with no value, and it must not read as absent.
+test("a local key with no value is reported by name", async () => {
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
+  const changed = await changedBy(linked, () =>
+    appendFile(join(repo, ".git", "config"), "\n[demo]\n\tflag\n"),
+  );
+  expect(changed).toEqual(["demo.flag"]);
+});
+
+// Usefulness: verifies requirement "a local value with a newline still names the key once" (issue
+// #1442). A line-based read splits the value and loses the next key.
+test("a local value with a newline names the key and never the value", async () => {
+  const { linked } = await createRepoWithLinkedWorkTree();
+  const changed = await changedBy(linked, async () => {
+    await execa("git", ["config", "--local", "demo.key", "first\nsecond"], { cwd: linked });
+    await execa("git", ["config", "--local", "demo.other", "third"], { cwd: linked });
+  });
+  expect(changed).toEqual(["demo.key", "demo.other"]);
+  expect(JSON.stringify(await readSharedGit(linked))).not.toContain("first");
 });
 
 // Usefulness: verifies a config subsection that can hold a URL is neither reported nor leaked, so

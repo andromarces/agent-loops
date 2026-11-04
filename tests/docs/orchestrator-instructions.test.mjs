@@ -111,6 +111,10 @@ const SHARED_PARENT_RULES = [
   (text) =>
     expectRule(text, /sharedGitChanged/, /core\.hooksPath/, /hooks\//, /remote/i, /outside/i),
   (text) => expectRule(text, /sharedGitChanged/, /core\.bare/, /extensions/),
+  // Issue #1442: every local (shared) config key is named, including identity and signing keys.
+  (text) => expectRule(text, /local \(shared\) config key/i, /user\.\*/, /commit\.gpgsign/),
+  // Issue #1442: branch.<name>.* stays out, because a normal `git push -u` writes those keys.
+  (text) => expectRule(text, /branch\.<name>\.\*/, /git push -u/, /writes/),
   (text) => expectRule(text, /local \(shared\) scope/i, /worktree scope/i),
   (text) => expectRule(text, /core\.worktree/, /linked work tree/i, /main work tree/i),
   (text) => expectRule(text, /global config/i, /worktree scope/i),
@@ -136,10 +140,9 @@ const SHARED_PARENT_RULES = [
       /core\.worktree/,
       /needs action before the next dispatch/i,
     ),
-  // Issue #1443: identity wording holds only once the field names those keys, and the parent reads
-  // only the envelope, so it dispatches a worker to inspect the key and to restore it.
-  (text) =>
-    expectRule(text, /identity or signing key/i, /once the field names it/i, /needs action/i),
+  // Issue #1442: the field names identity and signing keys, and the parent reads only the envelope,
+  // so it dispatches a worker to inspect the key and to restore it.
+  (text) => expectRule(text, /identity or signing key/i, /needs action/i),
   (text) =>
     expectRule(
       text,
