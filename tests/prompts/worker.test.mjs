@@ -234,6 +234,22 @@ test("first worker turn forbids ending a process by name or command-line match",
   expect(prompt).toContain("End only the exact PIDs your own commands started.");
 });
 
+// Usefulness: verifies acceptance #1459: an unbounded CI wait outlasted a worker turn timeout after
+// its push was done. The rule names the bounded command that the parent or the headless
+// orchestrator runs, so the worker reads CI only with a bound.
+test("first worker turn bars an unbounded CI wait", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Never wait for CI with an unbounded command, such as `gh pr checks --watch`.",
+  );
+  expect(prompt).toContain(
+    "The parent, or the headless orchestrator, waits for the required checks with `role wait-checks`.",
+  );
+  expect(prompt).toContain(
+    "A worker that must read CI, for example for a flaky check, uses a bounded read.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker runs a full suite only through the test slot" (issue
 // #848): the first turn names the wrapper of this run, built from the Node binary and the CLI
 // script, so the rule works where `agent-loop` is not on PATH.
