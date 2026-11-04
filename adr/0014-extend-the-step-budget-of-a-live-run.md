@@ -189,6 +189,52 @@ The checker never read the model reply.
 - Copilot CLI 1.0.106-5 and agy 1.4.12: not run.
   The item named Claude Code, Codex CLI, and OpenCode.
 
+The earlier record left Copilot CLI and agy untested. This run repeated the shape on both harnesses.
+
+2026-11-03, macOS 27.2 (build 26B123), Darwin 27.2.0, arm64. Node v27.0.0-alpha.0.0.0.
+Source `84d62c017925a91623eb654c50298ce6dba45538`.
+Copilot CLI was 1.0.106-6 before and after the probes, and agy was 1.4.12 before and after.
+
+Each harness ran two nested live sessions in disposable Git repositories with no remote.
+Each session ran `role dispatch` init, then the parent operations, through its own shell tool.
+The launch cleared `AGENT_LOOP_SPAWNED_RUN`, `AGENT_LOOP_TEST_SLOT_HELD`, and `AGENT_LOOP_RUNS_ROOT`.
+Each nested shell printed `AGENT_LOOP_SPAWNED_RUN=unset` and `AGENT_LOOP_TEST_SLOT_HELD=unset`.
+Run 1 ran init, `role extend --max-steps 30`, then `role finish`.
+Run 2 ran init in a second repository, then `role abort`.
+
+Each init ran one reviewer turn on `claude` with `--reviewer-model haiku`.
+The state files held `roles.reviewer.model` `haiku`.
+The checker read each raw tool-output field of the saved session stream.
+The checker never read the model reply.
+
+- Copilot CLI 1.0.106-6: `--session-id c0a1b2c3-d4e5-4f60-8172-83940516a7b8` preassigned run 1.
+  The saved `result` event held that id, and run 2 used `c0a1b2c3-d4e5-4f60-8172-83940516a7c8`.
+  The saved stream held one `bash` tool call per session, and its result field held each envelope.
+  `extend` exited 0 with `{"status":"ok","lifecycle":"active","maxSteps":30,"stepsUsed":1}`.
+  `finish` exited 0 with `{"status":"ok","lifecycle":"finished"}`.
+  `abort` exited 0 with `{"status":"ok","lifecycle":"aborted"}`.
+- agy 1.4.12: a first turn returned conversation id `e47aa7d3-1f55-4b0f-a2c4-1925ce5c8ba1`.
+  The parent turn ran with `--conversation e47aa7d3-1f55-4b0f-a2c4-1925ce5c8ba1`.
+  The parent `init` event held that id. Run 2 used `4d6dadbe-7ef6-4240-9e31-25b13a3b53e8`.
+  The saved `run_command` `tool_info.output` field held each envelope.
+  `extend`, `finish`, and `abort` returned the same `status` and `lifecycle` values as the
+  Copilot run.
+- After init, each state file held lifecycle `active`, `maxSteps` 20, and `stepsUsed` 1.
+  The state held `parentSession` equal to the harness session id.
+  After `extend`, the state held `maxSteps` 30 and one `budgetChanges` entry from 20 to 30 at
+  `stepsUsed` 1. The final states held `finished` with `maxSteps` 30, and `aborted` with
+  `maxSteps` 20.
+- Wrong-id mutants: in each harness, `extend` with another `--parent-session` exited 1 with
+  `--parent-session does not match the run's parent session.`.
+  `finish` and `abort` with another id exited 1 with `--parent-session cannot be changed after init`.
+  The state stayed `active` after each mutant.
+- Marker mutant: in each harness, `abort` with `AGENT_LOOP_SPAWNED_RUN` set to the run key
+  exited 1. The refusal read `abort is refused for a child role; only the parent session runs it.`.
+  The state stayed `active`.
+- The checker passed 188 assertions. Five changed-evidence mutants each failed one assertion:
+  marker text, final lifecycle, extend `maxSteps`, run key, and parent session id.
+  The marker-refusal and extend-exit mutants each failed two assertions.
+
 ## Alternatives
 
 1. **Abort and start a new run**: this is the only route without `extend`. It sets every role to `sessionId: null`, so each role loses its history and prompt cache. Rejected.
