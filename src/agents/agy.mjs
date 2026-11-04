@@ -39,6 +39,11 @@ function flagCapacityFailure(err) {
   }
 }
 
+/**
+ * Runs one Antigravity turn and stores the returned conversation id on `state`.
+ * Clears `state.conversationReplaced` before the turn. A resumed turn that returns a different
+ * conversation id sets it, because that conversation never received the role preamble.
+ */
 export async function runAgy(state, prompt, options = {}) {
   const { readOnly } = options;
   // --input-format text reads the prompt from stdin; -p is omitted because it consumes the next arg as the prompt value.

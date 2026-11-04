@@ -658,15 +658,11 @@ export async function unreadableGateReason({
  * Whether the required contexts that `requiredContexts` resolved state an absence of a required
  * check. The gate and the check wait share it, so one rule decides it (issue #1013).
  *
- * - `null`: a source names a required check, so there is no absence to decide. The caller judges
- *   each named check.
- * - `{ absent: true }`: no source names a check, and both the rulesets and the classic
- *   protection stated they hold none.
- * - `{ unproven }`: no source names a check, and the listed sources did not state an absence. A
- *   source that settled nothing and a ruleset read that found no rule are both named, because a
- *   parent can only fix a source it can see (issue #336). The protection source cannot be
- *   `EMPTY`: `classifyProtection` returns `ABSENT`, `HAS_CONTEXTS`, or `UNKNOWN` and nothing
- *   else, so an unreadable protection reply is already in `unknown`.
+ * Returns `null` when a source names a required check, so there is no absence to decide, and the
+ * caller judges each named check. With no named check, returns `{ absent: true }` when both the
+ * rulesets and the classic protection stated they hold none. With no named check, returns
+ * `{ unproven }` when the listed sources did not state an absence. A parent can only fix a source
+ * it can see (issue #336).
  * @param {{ unknown: string[], rulesetState: string, protectionState: string, contexts: object[] }} required
  * @returns {{ absent: true } | { unproven: string[] } | null}
  */
@@ -674,10 +670,15 @@ export function requiredAbsence({ unknown, rulesetState, protectionState, contex
   if (contexts.length > 0) {
     return null;
   }
+  // `classifyProtection` returns only `HAS_CONTEXTS` or `UNKNOWN`, and `ABSENT` comes from the
+  // exact-404 path in `readRequiredSource`, so an unreadable protection reply is already in
+  // `unknown`.
   if (rulesetState === ABSENT && protectionState === ABSENT) {
     return { absent: true };
   }
+  // A source that settled nothing and a ruleset read that found no rule are both named.
   const unproven = [...unknown];
+  // The protection source cannot be `EMPTY`: only the ruleset source returns it.
   if (rulesetState === EMPTY) {
     unproven.push(RULESETS);
   }

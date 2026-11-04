@@ -3,6 +3,10 @@
 import { readFile, readlink } from "node:fs/promises";
 import { execBounded } from "./exec.mjs";
 
+/**
+ * Reports whether `pid` names a live process. `EPERM` counts as alive, because the process exists
+ * but belongs to another user.
+ */
 export function pidAlive(pid) {
   try {
     process.kill(pid, 0);

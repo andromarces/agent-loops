@@ -6,6 +6,10 @@ export function parseJson(text, description) {
   }
 }
 
+/**
+ * Parses each non-blank line as JSON and drops every line that does not parse, without a warning.
+ * Returns the parsed values in input order.
+ */
 export function parseJsonLines(text) {
   const events = [];
 
@@ -79,6 +83,10 @@ export function isJsonObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Parses a JSON object from `text`, after removing one surrounding Markdown code fence.
+ * Returns `{ ok: true, value }` for a top-level object, else `{ ok: false, error }`.
+ */
 export function extractJsonObject(text) {
   let trimmed = text.trim();
 
