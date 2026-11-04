@@ -20,18 +20,26 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import {
+  ACCEPT,
   basicDeps,
   cleanup,
   dispatchArgv,
+  dispatchReviewer,
+  finishCall,
+  GATE_SUMMARY,
+  initPrRun,
+  initWorkerRun,
   INIT_OVERRIDES,
   readRepoState,
   recordingAdapter,
   repos,
+  REVIEW_ONLY_OVERRIDES,
   setup,
   stdinPrompt,
+  UNRESOLVED_SUMMARY,
   withRepo,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
@@ -42,11 +50,8 @@ import {
   expectNoReplyToMalformedCalls,
   gateReadCalls,
   isPagedRead,
-  noRequiredCheckGh,
   pagedApiArgs,
   pageStdout,
-  prChecksArgs,
-  prGateGh,
   prViewArgs,
   REPO_VIEW_ARGS,
 } from "./gh-doubles.mjs";
@@ -311,43 +316,10 @@ test("finish and abort reject changed init flags", async () => {
   expect(state.mode).toBe("work-first");
 });
 
-const GATE_SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
-const ACCEPT =
-  "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\nVerdict: accept";
 const ACCEPT_NO_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nVerdict: accept";
 const WORKER_WITH_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
 const REJECT =
   "Conclusion: no\nWhy: broken\nBlockers: missing test\nChecks: npm test\nVerdict: reject";
-const REVIEW_ONLY_OVERRIDES = [
-  "--task",
-  "Review only.",
-  "--mode",
-  "review-only",
-  "--parent-session",
-  "parent-sess-1",
-  "--worker",
-  "fake1",
-  "--reviewer",
-  "fake2",
-];
-
-function finishCall(repo, extra = [], deps = {}) {
-  return executeRoleCommand(withRepo(["finish", "--cwd", "<repo>", ...extra], repo), {
-    stdin: async () => JSON.stringify(GATE_SUMMARY),
-    ...deps,
-  });
-}
-
-async function dispatchReviewer(repo, reply) {
-  return executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
-    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([reply]) },
-    stdin: stdinPrompt,
-  });
-}
-
-async function initWorkerRun(repo) {
-  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
-}
 
 async function dispatchWorker(repo, reply) {
   return executeRoleCommand(withRepo(dispatchArgv([]), repo), {
@@ -659,13 +631,6 @@ test("--require-ci refuses an unknown merge state and passes a clean PR", async 
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
-const UNRESOLVED_SUMMARY = {
-  ...GATE_SUMMARY,
-  notDone: "PR head unresolved",
-  open: "PR head unresolved",
-  unresolvedCompare: true,
-};
-
 // Usefulness: verifies an interactive finish that reports an unresolved PR-head
 // compare is machine-distinct from a verified finish, in the envelope and the
 // state file, where nothing else separates the two (issue #281).
@@ -816,12 +781,6 @@ test("an undeclared run keeps the marker refusal text it had before", async () =
   );
 });
 
-async function initPrRun(repo, pr) {
-  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--pr", String(pr)]), repo), {
-    ...basicDeps(),
-  });
-}
-
 // Usefulness: verifies the `--require-ci` merge-state double routes on the exact argument
 // elements, so a call that merges two elements into one, drops one, or adds one
 // gets no reply and its error prints the array (issues #530 and #538).
@@ -894,101 +853,6 @@ test("a declared PR with no gate reports the marker and the gate in one refusal"
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 
-// The finishes below run on a repo whose `git` is answered from memory. A
-// declared run with one accepted reviewer turn takes about twenty `git`
-// processes to reach the finish (a repo, then a snapshot around each turn), and a
-// loaded Windows runner outlasted a test limit on that before the finish under
-// test started (issue #385). The `role` code is real: the double replaces only
-// the `git` child, so the dispatches, the snapshots, and the finish gate all run
-// over the answers. Snapshot behavior against a real repo keeps its own tests.
-// A directory stands in for the repo: the double answers for it, so it needs no
-// `git` setup.
-async function useDeclaredPrRun() {
-  const repo = await useCleanRepo();
-  await initPrRun(repo, 42);
-  return { repo, head: CLEAN_REPO_HEAD };
-}
-
-async function useAcceptedPrRun() {
-  const run = await useDeclaredPrRun();
-  await dispatchReviewer(run.repo, ACCEPT);
-  return run;
-}
-
-describe("finish on a run that declares a PR", () => {
-  // Usefulness: verifies a declared run finishes on a base branch with no required
-  // check, and records the absence in the envelope and the state file, so a finish
-  // that verified no check stays distinguishable from one that verified a check
-  // (issue #336).
-  test("a declared PR finishes on a base branch with no required check", async () => {
-    await setup();
-    const { repo, head } = await useAcceptedPrRun();
-
-    const calls = [];
-    const result = await finishCall(repo, ["--require-ci", "42"], {
-      gh: noRequiredCheckGh(head, calls),
-    });
-    expect(result.exitCode).toBe(0);
-    // The absence rests on the two fixtures this double names, so a route that
-    // stops matching fails here instead of passing on a fallback.
-    expect(calls).toEqual([
-      pagedApiArgs("repos/owner/repo/rules/branches/main").join(" "),
-      prChecksArgs(42).join(" "),
-    ]);
-    expect(result.payload).toMatchObject({ noRequiredChecks: true });
-    const state = await readRepoState(repo);
-    expect(state.lifecycle).toBe("finished");
-    expect(state.noRequiredChecks).toBe(true);
-  });
-
-  // Usefulness: verifies a gated finish on a base branch that does require a check
-  // records no absence, so the field means the branch had none rather than that the
-  // gate ran (issue #336).
-  test("a gated finish records no absence when the base branch requires a check", async () => {
-    await setup();
-    const { repo, head } = await useAcceptedPrRun();
-
-    const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
-    expect(result.exitCode).toBe(0);
-    expect(result.payload.noRequiredChecks).toBeUndefined();
-    expect((await readRepoState(repo)).noRequiredChecks).toBeUndefined();
-  });
-
-  // Usefulness: verifies the same collect-then-report rule covers the completion
-  // rule, so a declared PR run learns about the unmet reviewer turn and the missing
-  // gate from one `finish` call (#302).
-  test("a declared PR with no gate reports the completion rule and the gate in one refusal", async () => {
-    await setup();
-    const { repo } = await useDeclaredPrRun();
-
-    const result = await finishCall(repo, ["--require-accept"], {
-      gh: async () => {
-        throw new Error("gh must not run: no gate was requested.");
-      },
-    });
-
-    const gate =
-      "this run declares PR 42, so a finish must end through the --require-ci 42 gate, and this run carries no --require-ci gate";
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toBe(
-      `Finish refused: no reviewer turn after the latest worker turn; ${gate}.`,
-    );
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-  });
-
-  // Usefulness: verifies a run that declares a PR and gates the same PR behaves as
-  // a gated run does today, so the declaration adds no second enforcement path
-  // (#302).
-  test("a declared PR with a matching gate finishes as the gate allows", async () => {
-    await setup();
-    const { repo, head } = await useAcceptedPrRun();
-
-    const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
-    expect(result.exitCode).toBe(0);
-    expect((await readRepoState(repo)).lifecycle).toBe("finished");
-  });
-});
-
 // Usefulness: verifies a refused finish makes no GitHub call of its own, measured
 // from the moment the finish call starts. The earlier assertion proved the gate
 // never ran by throwing on any call, which also fails for a call the finish did
@@ -1016,194 +880,4 @@ test("a refused finish makes no GitHub call from the moment the finish starts", 
   // assertion does not know about still fails it.
   expect(callsDuringFinish).toEqual([]);
   expect((await readRepoState(repo)).lifecycle).toBe("active");
-});
-
-describe("finish --compare-head", () => {
-  // A `gh` that answers only the PR read, and records every call, so a read of any
-  // required-check source fails the test by name.
-  const headGh =
-    (head, calls, state = "OPEN") =>
-    async (args) => {
-      calls.push(args.join(" "));
-      if (equalsArgs(args, prViewArgs(42))) {
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            headRefOid: head,
-            baseRefName: "main",
-            mergeStateStatus: "BLOCKED",
-            potentialMergeCommit: null,
-            state,
-          }),
-          stderr: "",
-        };
-      }
-      return { status: 1, stdout: "", stderr: `unexpected read: ${JSON.stringify(args)}` };
-    };
-
-  // Usefulness: verifies requirement "a matching clean head records a verified compare that differs
-  // from unresolvedCompare" (#1098), and that the compare reads the PR head and no required-check
-  // source, so it works where those sources are unreadable.
-  test("a matching clean head records headCompare verified after one PR read", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initWorkerRun(repo);
-    await dispatchReviewer(repo, ACCEPT);
-
-    const calls = [];
-    const result = await finishCall(repo, ["--compare-head", "42"], {
-      gh: headGh(CLEAN_REPO_HEAD, calls),
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.payload).toEqual({
-      status: "ok",
-      lifecycle: "finished",
-      headCompare: "verified",
-    });
-    expect(calls).toEqual([prViewArgs(42).join(" ")]);
-    const state = await readRepoState(repo);
-    expect(state.lifecycle).toBe("finished");
-    expect(state.headCompare).toBe("verified");
-    expect(state).not.toHaveProperty("unresolvedCompare");
-  });
-
-  // Usefulness: verifies requirement "a PR head that differs from reviewed.head refuses the
-  // finish" (#1098): the run stays active so a reviewer turn can retry.
-  test("a PR head that differs from the reviewed head refuses and keeps the run active", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initWorkerRun(repo);
-    await dispatchReviewer(repo, ACCEPT);
-
-    const result = await finishCall(repo, ["--compare-head", "42"], {
-      gh: headGh("f".repeat(40), []),
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toContain("the PR head differs from the reviewed commit");
-    const state = await readRepoState(repo);
-    expect(state.lifecycle).toBe("active");
-    expect(state).not.toHaveProperty("headCompare");
-  });
-
-  // Usefulness: verifies a closed PR with an unchanged head refuses the compare (#1111), because the
-  // head alone cannot tell an open PR from one that left the open list.
-  test("a closed PR with a matching head refuses and keeps the run active", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initWorkerRun(repo);
-    await dispatchReviewer(repo, ACCEPT);
-
-    const result = await finishCall(repo, ["--compare-head", "42"], {
-      gh: headGh(CLEAN_REPO_HEAD, [], "CLOSED"),
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toContain("PR 42 is closed, not open");
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-  });
-
-  // Usefulness: verifies requirement "a reviewed tree that is not clean refuses the finish" (#1098),
-  // before any GitHub read.
-  test("a reviewed tree that is not clean refuses without a GitHub read", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await writeFile(join(repo, "new.txt"), "x");
-    gitDouble.answer = gitWithStatus("?? new.txt\0");
-    await initWorkerRun(repo);
-    await dispatchReviewer(repo, ACCEPT);
-    expect((await readRepoState(repo)).lastResult.reviewed.clean).toBe(false);
-
-    const calls = [];
-    const result = await finishCall(repo, ["--compare-head", "42"], {
-      gh: headGh(CLEAN_REPO_HEAD, calls),
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toContain("the reviewed work tree is not clean");
-    expect(calls).toEqual([]);
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-  });
-
-  // Usefulness: verifies requirement "no reviewer turn means no compare" (#1098): without a
-  // reviewed state there is no `reviewed.head` to compare.
-  test("a finish with no reviewer turn refuses", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initWorkerRun(repo);
-
-    const result = await finishCall(repo, ["--compare-head", "42"], {
-      gh: headGh(CLEAN_REPO_HEAD, []),
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toContain("no reviewed state");
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-  });
-
-  // Usefulness: verifies requirement "refuses together with --require-ci or unresolvedCompare"
-  // (#1098), before any GitHub read, so the three finish records stay mutually exclusive.
-  test.each([
-    ["--require-ci", { extra: ["--require-ci", "42"], summary: GATE_SUMMARY }, "--require-ci"],
-    ["unresolvedCompare", { extra: [], summary: UNRESOLVED_SUMMARY }, "unresolvedCompare"],
-  ])("refuses together with %s", async (_name, { extra, summary }, word) => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initWorkerRun(repo);
-    await dispatchReviewer(repo, ACCEPT);
-
-    const calls = [];
-    const result = await executeRoleCommand(
-      withRepo(["finish", "--cwd", "<repo>", "--compare-head", "42", ...extra], repo),
-      { stdin: async () => JSON.stringify(summary), gh: headGh(CLEAN_REPO_HEAD, calls) },
-    );
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toContain("--compare-head cannot be combined with");
-    expect(result.payload.error).toContain(word);
-    expect(calls).toEqual([]);
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-  });
-
-  // Usefulness: verifies a run that declared its PR still needs the gate, so the compare is no way
-  // around it (#1098, #302).
-  test("a run that declares a PR refuses the compare in place of the gate", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initPrRun(repo, 42);
-    await dispatchReviewer(repo, ACCEPT);
-
-    const result = await finishCall(repo, ["--compare-head", "42"], {
-      gh: headGh(CLEAN_REPO_HEAD, []),
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.payload.error).toContain("--require-ci 42 gate");
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-  });
-
-  // Usefulness: verifies the flag is finish-only, like the other finish flags, and that review-only
-  // (no PR work) refuses it (#1098).
-  test("is refused outside finish and in review-only", async () => {
-    await setup();
-    const repo = await useCleanRepo();
-    await initWorkerRun(repo);
-
-    const dispatched = await executeRoleCommand(
-      withRepo(["dispatch", "--role", "worker", "--cwd", "<repo>", "--compare-head", "42"], repo),
-      basicDeps(),
-    );
-    expect(dispatched.exitCode).toBe(1);
-    expect(dispatched.payload.error).toContain("--compare-head is only valid for finish");
-
-    const reviewOnly = await useCleanRepo();
-    await executeRoleCommand(
-      withRepo(dispatchArgv(REVIEW_ONLY_OVERRIDES, "reviewer"), reviewOnly),
-      basicDeps(),
-    );
-    const refused = await finishCall(reviewOnly, ["--compare-head", "42"]);
-    expect(refused.exitCode).toBe(1);
-    expect(refused.payload.error).toContain("review-only");
-  });
-
-  // Usefulness: verifies the flag value is a positive PR number, as `--require-ci` requires.
-  test("rejects a value that is not a PR number", () => {
-    expect(() => parseRoleArgs(["finish", "--compare-head", "abc"])).toThrow(
-      "--compare-head must be a positive integer",
-    );
-  });
 });

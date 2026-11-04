@@ -1,4 +1,20 @@
-import { describe, expect, test } from "vite-plus/test";
+import { resolve } from "node:path";
+import { describe, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the tests that switch it on, so no test here
+// starts a `git` process.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import {
   initialPrompt,
@@ -7,7 +23,12 @@ import {
   requiredCheckWait,
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
+import { runLoop } from "../../src/runtime.mjs";
 import { SUMMARY_KEYS } from "../../src/contracts/orchestrator-action.mjs";
+import { scripted } from "../agent-doubles.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "../git-helpers.mjs";
+import { prGateGh } from "../gh-doubles.mjs";
 import {
   clauses,
   expectRule,
@@ -1323,4 +1344,68 @@ test("initialPrompt tells the worker to push only with a named refspec", () => {
     "The worker pushes only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`.",
   );
   expect(prompt).toContain("`push.default=matching`");
+});
+
+// Usefulness: verifies the headless wait bound follows the turn --timeout the run
+// was started with, so a wait the orchestrator runs ends before the turn does and
+// the run cannot end on exit 1 with no action (issue #348).
+test("the orchestrator prompt states a wait bound below the run's turn timeout", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+    await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 60,
+      requireCi: 42,
+      gh: prGateGh("0".repeat(40)),
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[0].prompt;
+    expect(prompt).toContain(`--cwd "${resolve(repo).replaceAll("\\", "/")}" --pr 42 --timeout 25`);
+    expect(prompt).not.toContain("--watch");
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a run whose turn --timeout is too short for any bounded
+// wait tells the orchestrator not to wait, instead of a wait the turn cannot
+// hold (issue #348).
+test("the orchestrator prompt names no wait when the turn timeout is too short", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const orch = scripted([JSON.stringify({ action: "abort", reason: "stop" })]);
+    await runLoop({
+      task: "PR work: address issue 43 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      timeout: 8,
+      requireCi: 42,
+      gh: prGateGh("0".repeat(40)),
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orch, work: scripted([]), rev: scripted([]) },
+    });
+
+    const prompt = orch.recorded[0].prompt;
+    expect(prompt).not.toContain("--pr 42 --timeout");
+    expect(prompt).toMatch(/cannot wait for the required checks/i);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
 });
