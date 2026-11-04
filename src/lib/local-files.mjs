@@ -130,9 +130,10 @@ const newAncestorCache = () => ({ source: new Map(), target: new Map() });
 /**
  * Walks the ancestor directories of `rel` under `base`, never `base` itself. Returns true for a
  * symlink, a directory that holds a `.git` entry, or a registered work tree listed in `blocked`
- * (canonical paths). With `create`, a missing ancestor is created one level at a time. Without it,
- * the walk stops at the first missing ancestor. `cache` holds the verdicts of one copy call for the
- * pre-filter passes only, because the copy checks again before `copyFile`.
+ * (canonical paths). With `create`, a missing ancestor is created one level at a time without
+ * following anything. Without it, the walk stops at the first missing ancestor. `cache` holds the
+ * verdicts of one copy call for the pre-filter passes only, because the copy checks again before
+ * `copyFile`.
  */
 async function hasBlockedAncestor(base, rel, blocked, create = false, cache = null) {
   let current = base;
@@ -361,10 +362,10 @@ async function ownWorkTree(cwd, read) {
 }
 
 /**
- * Refuses, before any copy, an operator path that cannot be copied as an ignored local path. Each
- * path in `extra` must hold no tracked file, pass no symlink or junction, and copy only ignored
- * files. `known` holds the blocked sets and the tracked names that the copy reads once. `ancestors`
- * holds the ancestor verdicts of one copy call.
+ * Refuses, before any copy, an operator path that cannot be copied as an ignored local path.
+ * Every path in `extra` must hold no tracked file, no link at any level, and no unignored file.
+ * `known` holds the blocked sets and the tracked names that the copy reads once. `ancestors` holds
+ * the ancestor verdicts of one copy call.
  * @throws {Error} that names the path and starts with `--copy-local-path`
  */
 async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries, ancestors) {
@@ -379,17 +380,24 @@ async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries, ance
       trackedPrefixes.add(prefix);
     }
   }
+  // Each path in `extra` is already normalized, and every check runs in the main work tree.
   for (const rel of extra) {
     const refuse = (why) =>
       new Error(`--copy-local-path ${JSON.stringify(rel)} is refused: ${why}`);
     const parts = rel.split("/");
     const folded = parts.map(foldName).join("/");
     // Names are compared folded, so a case alias of a tracked name is refused on any file system.
+    // The compare matches leading segments, so a path that names a tracked file or a directory
+    // above it is refused.
+    // That costs a false refusal on a case-sensitive file system for a path that is not a case
+    // alias of a tracked path.
     if (trackedPrefixes.has(folded)) {
       throw refuse("it holds a tracked file");
     }
     let current = mainReal;
-    // No level can be a link, and the path must resolve to the main work tree plus itself.
+    // No level can be a symlink or a junction. The existing path must resolve, by `realpath`, to
+    // the main work tree plus the path as written. That refuses a link out of the tree, a case or
+    // short-name alias, a registered work tree, and a directory that holds a `.git` entry.
     for (const part of parts) {
       current = join(current, part);
       const stat = await lstatOrNull(current);
@@ -401,6 +409,7 @@ async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries, ance
       }
     }
     const abs = join(mainReal, ...parts);
+    // A path that does not exist passes, because nothing is copied for it.
     if ((await lstatOrNull(abs)) === null) {
       continue;
     }
@@ -415,11 +424,12 @@ async function refuseUnsafeLocalPaths(tree, extra, known, read, maxEntries, ance
     }
     const ctx = newWalk(sourceBlocked, maxEntries);
     await collect(ctx, rel, abs);
+    // A listed directory past the entry bound is skipped whole by the copy and is not checked.
     if (ctx.budget.exceeded) {
       continue;
     }
     const names = [];
-    // Every file that the copy takes must be ignored in the receiving work tree.
+    // Every file that the copy takes must be ignored in `rootReal`, the receiving work tree.
     for (const { rel: name } of ctx.files) {
       // The copy never takes these, so they need no ignore rule. A target beyond a link or a work
       // tree is skipped by the copy, and `git check-ignore` refuses such a path.

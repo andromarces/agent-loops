@@ -20,9 +20,9 @@ function parseList(raw) {
 
 /**
  * Reads the list for the installer check. An absent variable is a valid empty list. A value that
- * is present but is not a JSON array of absolute paths is not valid, so the caller fails closed.
- * That covers an empty string, malformed JSON, a non-array, a non-string entry, and a relative or
- * empty entry.
+ * is present but is not a JSON array of absolute paths is not valid, so the caller must fail closed.
+ * All of those are invalid, including an empty string, malformed JSON, a non-array, a non-string
+ * entry, and a relative or empty entry.
  * @returns {{ valid: boolean, paths: string[] }}
  */
 export function readInheritedTmpdirs(env = process.env) {

@@ -119,9 +119,12 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
   if (text !== "") {
     const parsed = tryParseJson(text);
     if (!Array.isArray(parsed)) {
+      // An unparseable output is a read error (#329).
       throw ghReadError(label, { status, stdout, stderr });
     }
     const items = parsed.map(readItem);
+    // A list item that is not well formed is unresolved too, so one unreadable item cannot settle
+    // the list as a pass.
     const bad = items.findIndex((item) => item === null);
     if (bad !== -1) {
       throw new Error(
@@ -130,7 +133,8 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     }
     checks = items;
   }
-  // A listed failing check is settled, whichever code answered, and the failure is reported.
+  // A listed failing check is settled, whichever code answered, and the failure is reported rather
+  // than waited out.
   if (checks.some(isFailing)) {
     return { settled: true, checks };
   }
@@ -141,22 +145,27 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
     return { settled: false, checks };
   }
   // An empty list on exit 0 keeps waiting, because `gh pr checks --required` omits a check that
-  // has not started. The same empty list on exit 1 is not that. Exit 1 with no failing check
-  // listed is a read error unless `gh` names no required check or no check has reported yet
-  // (#941, #950). Any other exit 1 falls through to the refusal below.
+  // has not started. An exit 0 with no settled check keeps it running too. The same empty list on
+  // exit 1 is not that. Exit 1 with no failing check listed is a read error unless `gh` names no
+  // required check or no check has reported yet (#941, #950). Any other exit 1 falls through to the
+  // refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
-  // Exit 1 with no output and the exact no-required-check reply states the branch has no check.
-  // The all-checks read has no such answer, so that stderr is unresolved there (#896).
+  // Exit 1 with no output and the exact `no required checks reported` reply is settled as
+  // `noRequiredChecks`. The branch has no required check to wait for, which is no pass either
+  // (#894). The all-checks read has no such answer, so its stderr is unresolved, like every other
+  // exit 1 with no failing check listed (#896).
   if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
   }
-  // Exit 1 with no output and the exact no-checks-yet reply is an empty list that is not settled (#941).
+  // Exit 1 with no output and the exact `no checks reported` reply is an empty list that is not
+  // settled. The wait continues, because no check has reported on the PR head yet (#941). The
+  // all-checks read applies the same rule (#950).
   if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
     return { settled: false, checks, noChecksYet: true };
   }
-  // Any other non-zero code, with no failing check listed, is unresolved (#329).
+  // Exit 1 with no failing check listed covers a read error, and any other code is unresolved (#329).
   if (status !== 0) {
     throw ghReadError(label, { status, stdout, stderr });
   }
@@ -174,6 +183,7 @@ function readHead(pr, { status, stdout, stderr }) {
     throw ghReadError(label, { status, stdout, stderr });
   }
   const parsed = tryParseJson(stdout);
+  // A null parse is refused below, as a missing head or base branch.
   const head = isJsonObject(parsed) ? parsed.headRefOid : undefined;
   const base = isJsonObject(parsed) ? parsed.baseRefName : undefined;
   if (typeof head !== "string" || !isFullSha(head.toLowerCase())) {
