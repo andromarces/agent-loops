@@ -37,7 +37,7 @@ import { cleanRepoGit, createTempRepo, createWithContinueRepo } from "./git-help
 import { processExists } from "./process-helpers.mjs";
 import { RESISTANT_TREE } from "./sigterm-resistant-fixture.mjs";
 import { within } from "./wait-helpers.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

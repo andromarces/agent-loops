@@ -19,7 +19,7 @@ import {
   WORKER_REPLY,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.

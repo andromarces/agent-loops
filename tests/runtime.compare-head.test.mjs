@@ -25,7 +25,8 @@ import {
   createCleanRepoDir,
   createTempRepo,
 } from "./git-helpers.mjs";
-import { freePlanGh, gateRoles, REVIEW_ACCEPT, SUMMARY } from "./gh-doubles.mjs";
+import { freePlanGh } from "./gh-doubles.mjs";
+import { gateRoles, REVIEW_ACCEPT, SUMMARY } from "./run-fixtures.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 

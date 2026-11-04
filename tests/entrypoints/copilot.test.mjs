@@ -17,7 +17,7 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { buildCopilotInvocation, main, reportFailure } from "../../src/entrypoints/copilot.mjs";
-import { createBarrierTest } from "../barrier-test.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

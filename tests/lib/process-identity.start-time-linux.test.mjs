@@ -1,9 +1,8 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readFile, readlink } from "node:fs/promises";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import { deadPid } from "../process-helpers.mjs";
 
 // The Linux source reads /proc, which does not exist on the other test platforms, so
@@ -98,8 +97,7 @@ afterEach(async () => {
 });
 
 async function lockWith(startTime, pid = process.pid) {
-  const dir = await mkdtemp(join(tmpdir(), "runstate-linux-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("runstate-linux-", dirs);
   const lockFile = join(dir, "state.lock");
   await writeFile(lockFile, JSON.stringify({ pid, startedAt: "old", startTime }));
   return lockFile;

@@ -1,8 +1,8 @@
-import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { writeFileAtomic } from "../../src/lib/atomic-write.mjs";
+import { trackedTempDir } from "../fs-helpers.mjs";
 
 const dirs = [];
 afterEach(async () => {
@@ -12,9 +12,7 @@ afterEach(async () => {
 });
 
 async function makeDir() {
-  const dir = await mkdtemp(join(tmpdir(), "agent-loop-atomic-"));
-  dirs.push(dir);
-  return dir;
+  return trackedTempDir("agent-loop-atomic-", dirs);
 }
 
 // Usefulness: verifies the `mode` option sets the permission bits of a newly created file, which

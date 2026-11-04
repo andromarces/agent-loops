@@ -29,7 +29,6 @@ import {
 } from "./git-helpers.mjs";
 import {
   equalsArgs,
-  gateRoles,
   isPagedRead,
   noRequiredCheckGh,
   pagedApiArgs,
@@ -38,10 +37,8 @@ import {
   prChecksArgs,
   prGateGh,
   prViewArgs,
-  REVIEW_ACCEPT,
-  REVIEW_REJECT,
-  SUMMARY,
 } from "./gh-doubles.mjs";
+import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./run-fixtures.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 

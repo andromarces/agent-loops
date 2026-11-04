@@ -19,10 +19,9 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { createLinkedWorkTree } from "./git-helpers.mjs";
+import { SUMMARY } from "./run-fixtures.mjs";
 
 afterEach(cleanup);
-
-const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
 
 const git = (cwd, args) => execa("git", args, { cwd, reject: false });
 

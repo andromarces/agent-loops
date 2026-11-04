@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -9,7 +9,7 @@ vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
 import { copyLocalFiles } from "../../src/lib/local-files.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 
 const dirs = [];
 let log;
@@ -63,8 +63,7 @@ function answerGit({ root, top = root, list, common, failing = [], workingDirect
 }
 
 async function makeBase() {
-  const base = await mkdtemp(join(tmpdir(), "local-files-main-"));
-  dirs.push(base);
+  const base = await trackedTempDir("local-files-main-", dirs);
   const root = join(base, "linked");
   const gitDir = join(base, "gitdir");
   await mkdir(root);

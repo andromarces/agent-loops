@@ -21,7 +21,7 @@ import {
 } from "./role-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

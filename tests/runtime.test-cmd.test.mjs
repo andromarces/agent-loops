@@ -12,11 +12,11 @@ import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 import { processExists } from "./process-helpers.mjs";
+import { SUMMARY } from "./run-fixtures.mjs";
 
 // Headless behavior of `--test-cmd` (issue #420, ADR 0017). Each test runs a real
 // command through the platform shell inside a real Git work tree.
 
-const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
 const REVIEW = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: none\nVerdict: accept";
 const node = (body) => `node -e "${body}"`;
 // Synthetic value for the secret-named environment variable of the redaction tests.

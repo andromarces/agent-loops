@@ -1,6 +1,5 @@
 import { inspect } from "node:util";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
@@ -64,7 +63,7 @@ vi.mock("execa", async (importOriginal) => {
 
 import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.mjs";
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import {
   endOwnedProcess,
@@ -86,11 +85,10 @@ afterEach(async () => {
 });
 
 // A repository and a linked work tree of it, so the shared state sits in the common directory.
-async function createLinkedWorkTree() {
+async function createRepoWithLinkedWorkTree() {
   const repo = await createTempRepo();
   dirs.push(repo);
-  const parent = await mkdtemp(join(tmpdir(), "agent-loops-shared-git-"));
-  dirs.push(parent);
+  const parent = await trackedTempDir("agent-loops-shared-git-", dirs);
   const linked = join(parent, "linked");
   await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
   return { repo, linked };
@@ -104,8 +102,7 @@ async function changedBy(cwd, change, options) {
 
 // A temporary global config file and the environment that points git at it, with no system config.
 async function tempGlobalConfig() {
-  const dir = await mkdtemp(join(tmpdir(), "agent-loops-global-git-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("agent-loops-global-git-", dirs);
   const file = join(dir, "config");
   return { file, env: { ...process.env, GIT_CONFIG_GLOBAL: file, GIT_CONFIG_NOSYSTEM: "1" } };
 }
@@ -113,14 +110,14 @@ async function tempGlobalConfig() {
 // Usefulness: verifies "a turn that changes none of the shared Git state reports nothing", so the
 // envelope field stays absent and a clean turn is never read as a change.
 test("an unchanged repository reports no shared Git change", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   expect(await changedBy(linked, async () => {})).toEqual([]);
 });
 
 // Usefulness: verifies "a changed core.hooksPath is reported by name from a linked work tree", the
 // Husky-migration case of issue #984; it is not covered by the hook-file or remote checks.
 test("a changed core.hooksPath is reported by name and never by value", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "core.hooksPath", "secret-hooks-dir"], { cwd: linked }),
   );
@@ -130,7 +127,7 @@ test("a changed core.hooksPath is reported by name and never by value", async ()
 
 // Usefulness: verifies "an unset core.hooksPath is reported", the other half of the migration.
 test("an unset core.hooksPath is reported", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   await execa("git", ["config", "core.hooksPath", ".husky"], { cwd: repo });
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "--unset", "core.hooksPath"], { cwd: repo }),
@@ -142,7 +139,7 @@ test("an unset core.hooksPath is reported", async () => {
 // work tree" (issue #1387). The main work tree then reads as bare, and no other watched item
 // covers it.
 test("a core.bare change in the shared config is reported by name from a linked work tree", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "core.bare", "true"], { cwd: linked }),
   );
@@ -152,7 +149,7 @@ test("a core.bare change in the shared config is reported by name from a linked 
 // Usefulness: verifies requirement "a core.bare change in the main work tree's worktree config is
 // reported by name" (issue #1392). The linked read sees no other watched item for this change.
 test("a core.bare change in the main work tree's worktree config is reported by name", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo });
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "--worktree", "core.bare", "true"], { cwd: repo }),
@@ -163,7 +160,7 @@ test("a core.bare change in the main work tree's worktree config is reported by 
 // Usefulness: verifies requirement "a global core.hooksPath change is reported by name" (issue
 // #1392). The test points `GIT_CONFIG_GLOBAL` at a temporary file, so no user config is read.
 test("a global core.hooksPath change is reported by name and never by value", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const { env } = await tempGlobalConfig();
   await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Tester\n");
   const changed = await changedBy(
@@ -182,7 +179,7 @@ test("a global core.hooksPath change is reported by name and never by value", as
 // Usefulness: verifies requirement "a watched key in the global config is reported by name" (issue
 // #1392). The field covers the global scope and names the key only.
 test("a watched key change in the global config is reported by name", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const { env } = await tempGlobalConfig();
   await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Tester\n");
   const changed = await changedBy(
@@ -200,7 +197,7 @@ test("a watched key change in the global config is reported by name", async () =
 // Usefulness: verifies requirement "a turn that changes no watched key in either scope carries no
 // field" (issue #1392 acceptance). Both new scopes hold only unwatched keys.
 test("unwatched keys in the global config and the main work tree config report nothing", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   const { env } = await tempGlobalConfig();
   await writeFile(env.GIT_CONFIG_GLOBAL, "[user]\n\tname = Global Tester\n");
   await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo, env });
@@ -214,7 +211,7 @@ test("unwatched keys in the global config and the main work tree config report n
 // Usefulness: verifies requirement "a global config file that a turn creates is read" (issue
 // #1392). The file is absent before the turn, so the read must not fail.
 test("a global config file created by the turn reports its watched key", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const { env } = await tempGlobalConfig();
   const changed = await changedBy(
     linked,
@@ -231,7 +228,7 @@ test("a global config file created by the turn reports its watched key", async (
 // Usefulness: verifies requirement "a config.worktree that Git ignores is not read" (issue #1392
 // review). With `extensions.worktreeConfig` off, the main work tree does not use the file.
 test("a main work tree worktree config is ignored while extensions.worktreeConfig is off", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   await writeFile(join(repo, ".git", "config.worktree"), "[core]\n\tbare = true\n");
   expect(await changedBy(linked, async () => {})).toEqual([]);
 });
@@ -239,7 +236,7 @@ test("a main work tree worktree config is ignored while extensions.worktreeConfi
 // Usefulness: verifies requirement "turning on extensions.worktreeConfig activates the main work
 // tree config" (issue #1392 review): the key it activates is named too.
 test("turning on extensions.worktreeConfig reports the key it activates", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   await writeFile(join(repo, ".git", "config.worktree"), "[core]\n\tbare = true\n");
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo }),
@@ -250,7 +247,7 @@ test("turning on extensions.worktreeConfig reports the key it activates", async 
 // Usefulness: verifies the other minimum key of issue #1387, `core.worktree`, so a change that
 // points Git at another work tree is named too.
 test("a core.worktree change is reported by name", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "core.worktree", "/another/work-tree"], { cwd: linked }),
   );
@@ -259,7 +256,7 @@ test("a core.worktree change is reported by name", async () => {
 
 // Usefulness: verifies an `extensions.*` key of issue #1387 is reported by name.
 test("an extensions key change is reported by name", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: linked }),
   );
@@ -269,7 +266,7 @@ test("an extensions key change is reported by name", async () => {
 // Usefulness: verifies a watched key that is set and restored in the same turn reports nothing, so
 // the envelope keeps no field (issue #1387 acceptance).
 test("a watched key set and restored reports nothing", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, async () => {
     await execa("git", ["config", "core.bare", "true"], { cwd: linked });
     await execa("git", ["config", "core.bare", "false"], { cwd: linked });
@@ -280,7 +277,7 @@ test("a watched key set and restored reports nothing", async () => {
 // Usefulness: verifies a name case change alone reports nothing, because Git prints section and
 // key names in lower case.
 test("a key whose name changes case only reports nothing", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const before = await readSharedGit(linked);
   await execa("git", ["config", "Core.Bare", "false"], { cwd: linked });
   expect(diffSharedGit(before, await readSharedGit(linked))).toEqual([]);
@@ -289,7 +286,7 @@ test("a key whose name changes case only reports nothing", async () => {
 // Usefulness: verifies a multi-valued watched key is compared by all its values, not by the
 // effective one, so a changed value list is reported.
 test("a changed value list of a watched key is reported by key name", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   await execa("git", ["config", "--add", "core.bare", "false"], { cwd: linked });
   await execa("git", ["config", "--add", "core.bare", "false"], { cwd: linked });
   const before = await readSharedGit(linked);
@@ -301,7 +298,7 @@ test("a changed value list of a watched key is reported by key name", async () =
 // Usefulness: verifies a config subsection that can hold a URL is neither reported nor leaked, so
 // no credential reaches the envelope.
 test("a URL subsection key is not reported and its value never leaves the read", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "credential.https://user:token-8@example.test.helper", "store"], {
       cwd: linked,
@@ -314,7 +311,7 @@ test("a URL subsection key is not reported and its value never leaves the read",
 // Usefulness: verifies a config subsection under a watched section is not reported either, because
 // a subsection name can hold a URL (issue #1387).
 test("an extensions subsection key is not reported and never leaks its URL", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const changed = await changedBy(linked, () =>
     execa("git", ["config", "extensions.https://user:token-8@example.test.flag", "true"], {
       cwd: linked,
@@ -327,7 +324,7 @@ test("an extensions subsection key is not reported and never leaks its URL", asy
 // Usefulness: verifies "a hook file written, edited, or removed in the common hooks directory is
 // reported by its file name".
 test("an added, edited, and removed hook file is reported by name", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   const hooks = join(repo, ".git", "hooks");
   await mkdir(hooks, { recursive: true });
   await writeFile(join(hooks, "pre-commit"), "#!/bin/sh\nexit 0\n");
@@ -344,7 +341,7 @@ test("an added, edited, and removed hook file is reported by name", async () => 
 // Usefulness: verifies "the sample hooks that `git init` writes are not active hooks", so a stale
 // sample never reads as a change.
 test("a sample hook file is not reported", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   const hooks = join(repo, ".git", "hooks");
   await mkdir(hooks, { recursive: true });
   const changed = await changedBy(linked, () =>
@@ -356,7 +353,7 @@ test("a sample hook file is not reported", async () => {
 // Usefulness: verifies "an added, retargeted, and removed remote is reported by name and never by
 // URL", so a credentialed URL never reaches the envelope.
 test("an added, retargeted, and removed remote is reported by name without its URL", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   await execa("git", ["remote", "add", "origin", "https://example.test/a.git"], { cwd: repo });
   await execa("git", ["remote", "add", "gone", "https://example.test/gone.git"], { cwd: repo });
 
@@ -379,7 +376,7 @@ test("an added, retargeted, and removed remote is reported by name without its U
 // effective value alone hides the change. Both the main and a linked work tree read it.
 for (const place of ["main", "linked"]) {
   test(`a local core.hooksPath change under a worktree override is reported from the ${place} work tree`, async () => {
-    const { repo, linked } = await createLinkedWorkTree();
+    const { repo, linked } = await createRepoWithLinkedWorkTree();
     const cwd = place === "main" ? repo : linked;
     await execa("git", ["config", "extensions.worktreeConfig", "true"], { cwd: repo });
     await execa("git", ["config", "--local", "core.hooksPath", "local-a"], { cwd });
@@ -401,7 +398,7 @@ for (const place of ["main", "linked"]) {
 // #1224): the deadline covers the whole read, not the `git` processes alone, so a canceled worker
 // turn that reads the shared Git state after the cancel reports within the bound.
 test("a stalled hooks directory read rejects at the deadline", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   fsFailure.stallReaddir = true;
   const started = Date.now();
   await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
@@ -411,7 +408,7 @@ test("a stalled hooks directory read rejects at the deadline", async () => {
 // Usefulness: verifies requirement "the deadline aborts with the default abort reason" (#1269): the
 // helper shared by three reads must not give the shared Git read a named error as its reason.
 test("the deadline aborts the git calls with the default abort reason", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   fsFailure.stallReaddir = true;
   await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
   expect(configExit.signals.length).toBeGreaterThan(0);
@@ -428,7 +425,7 @@ test("the deadline aborts the git calls with the default abort reason", async ()
 // deadline" (issue #1315). A deadline that stops waiting without ending the git processes leaves
 // them running past the end of a canceled turn.
 test("every git process of the read has ended when the read rejects at its deadline", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   await withGitHangingAfter(0, async ({ shimDir }) => {
     const failure = await readSharedGit(linked, { deadlineMs: 5_000 }).catch((err) => err);
     expect(failure).toBeInstanceOf(Error);
@@ -451,7 +448,7 @@ test("every git process of the read has ended when the read rejects at its deadl
 // that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
 // dispatch has reported its result and a late file system request would run past the end of the turn.
 test("no hook file system request starts after the deadline", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
   fsFailure.lstatDelayMs = 800;
   await expect(readSharedGit(linked, { deadlineMs: 2_000 })).rejects.toThrow(/2000 ms/);
@@ -464,7 +461,7 @@ test("no hook file system request starts after the deadline", async () => {
 // Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):
 // passing both must not drop the turn signal.
 test("a canceled turn signal stops a read that also has a deadline", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const controller = new AbortController();
   controller.abort();
   await expect(
@@ -475,7 +472,7 @@ test("a canceled turn signal stops a read that also has a deadline", async () =>
 // Usefulness: verifies "an unexpected `git config` exit is a read failure, not an empty state"
 // (issue #984 review): an empty state read before or after a turn would report a false change.
 test("a git config read that exits unexpectedly rejects", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   configExit.code = 128;
   await expect(readSharedGit(linked)).rejects.toThrow(/config/);
 });
@@ -483,7 +480,7 @@ test("a git config read that exits unexpectedly rejects", async () => {
 // Usefulness: verifies "a Git without `--show-scope` fails the read", so the caller warns and
 // reports no change instead of a false one (issue #1387).
 test("a git without --show-scope rejects the read", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   configExit.code = 129;
   await expect(readSharedGit(linked)).rejects.toThrow(/config/);
 });
@@ -491,7 +488,7 @@ test("a git without --show-scope rejects the read", async () => {
 // Usefulness: verifies "exit 1 from `git config` is the documented unset value, not a failure", so
 // a repository with no hooksPath and no remote still reads.
 test("a git config read that exits 1 for an unset key reads as empty", async () => {
-  const { linked } = await createLinkedWorkTree();
+  const { linked } = await createRepoWithLinkedWorkTree();
   const state = await readSharedGit(linked);
   expect(state.remotes).toEqual({});
 });
@@ -500,7 +497,7 @@ test("a git config read that exits 1 for an unset key reads as empty", async () 
 // (issue #984 review): git's stderr can carry a config value, here the path of an include.path
 // entry, and the error reaches the warning log.
 test("a failed read never carries git stderr or a config value", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   const include = join(repo, "secret-include-4821");
   await mkdir(include);
   await execa("git", ["config", "include.path", include], { cwd: repo });
@@ -514,7 +511,7 @@ test("a failed read never carries git stderr or a config value", async () => {
 // Usefulness: verifies "a swapped order of two URLs of one remote is reported" (issue #984 review):
 // the first URL is the one `git remote get-url` returns, so the order is part of the state.
 test("a reordered value list of one remote key is reported by remote name", async () => {
-  const { repo, linked } = await createLinkedWorkTree();
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
   await execa("git", ["remote", "add", "origin", "https://example.test/a.git"], { cwd: repo });
   await execa("git", ["remote", "set-url", "--add", "origin", "https://example.test/b.git"], {
     cwd: repo,
@@ -539,7 +536,7 @@ test("a reordered value list of one remote key is reported by remote name", asyn
 test.each(["readdir", "lstat", "readFile", "readlink"])(
   "a failed %s of the hooks directory never exposes the path",
   async (operation) => {
-    const { repo, linked } = await createLinkedWorkTree();
+    const { repo, linked } = await createRepoWithLinkedWorkTree();
     const hooks = join(repo, ".git", "hooks");
     await mkdir(hooks, { recursive: true });
     await writeFile(join(hooks, "pre-push"), "#!/bin/sh\nexit 0\n");
@@ -562,7 +559,6 @@ test.each(["readdir", "lstat", "readFile", "readlink"])(
 // Usefulness: verifies "a read from a directory outside a repository fails", so the caller can warn
 // and omit the field instead of reporting an empty, unchanged state.
 test("reading outside a repository rejects", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-loops-shared-git-none-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("agent-loops-shared-git-none-", dirs);
   await expect(readSharedGit(dir)).rejects.toThrow();
 });

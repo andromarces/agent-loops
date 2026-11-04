@@ -1,12 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import { deadPid, processExists } from "../process-helpers.mjs";
 
 // Delays each in-process lock attempt by `ms`, so a test can make one acquisition pass end
@@ -79,8 +78,7 @@ afterEach(async () => {
 // A work directory with a slot root inside it. Commands are script files in the work
 // directory, so no command text needs quoting inside a shell argument.
 async function setup(scripts = {}) {
-  const cwd = await mkdtemp(join(tmpdir(), "test-slot-"));
-  dirs.push(cwd);
+  const cwd = await trackedTempDir("test-slot-", dirs);
   for (const [name, body] of Object.entries(scripts)) {
     await writeFile(join(cwd, name), body, "utf8");
   }

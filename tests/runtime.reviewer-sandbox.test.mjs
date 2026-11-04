@@ -6,6 +6,7 @@ import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
+import { SUMMARY } from "./run-fixtures.mjs";
 
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -19,7 +20,6 @@ const READ_ONLY = 'sandbox_mode="read-only"';
 const NO_SANDBOX = 'sandbox_mode="danger-full-access"';
 const WORKSPACE_WRITE = 'sandbox_mode="workspace-write"';
 const NETWORK_OFF = "sandbox_workspace_write.network_access=false";
-const SUMMARY = { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" };
 
 const roles = {
   orchestrator: { kind: "codex", sessionId: null },

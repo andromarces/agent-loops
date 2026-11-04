@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 import { runInstallCommand, runUninstallCommand } from "../../src/install/commands.mjs";
 import { restoreAgentLoopHome } from "../env-helpers.mjs";
-import { createBarrierTest } from "../barrier-test.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 import { cleanupHomes, makeHome } from "./install-helpers.mjs";
 
 const test = createBarrierTest();

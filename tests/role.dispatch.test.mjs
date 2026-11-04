@@ -38,7 +38,7 @@ import {
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo, gitWhileDotGitExists } from "./git-helpers.mjs";
 import { PASSING_RUN, prGateGh } from "./gh-doubles.mjs";
-import { createBarrierTest } from "./barrier-test.mjs";
+import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

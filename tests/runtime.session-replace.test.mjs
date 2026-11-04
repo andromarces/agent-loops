@@ -26,7 +26,8 @@ import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
-import { gateRoles, prGateGh, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./gh-doubles.mjs";
+import { prGateGh } from "./gh-doubles.mjs";
+import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./run-fixtures.mjs";
 
 // Usefulness: verifies a worker turn that ran in a replacement conversation is followed by one
 // preamble-only turn in that conversation, in the same step, and never reruns the task, so its

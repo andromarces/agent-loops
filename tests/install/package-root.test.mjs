@@ -1,6 +1,5 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
@@ -9,7 +8,7 @@ import {
   INHERITED_TMPDIR_INVALID_MESSAGE,
   installRefusal,
 } from "../../src/install/package-root.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import {
   LINK_TYPE,
   PACKAGE_ROOT as REPO_ROOT,
@@ -31,9 +30,8 @@ afterEach(async () => {
 // upgrade, so the guard command and the skill CLI path must name the hash-named
 // symlink the bin shim calls, which the upgrade repoints.
 test("hooks installed under a pnpm 12 global layout survive an upgrade", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-home-"));
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-global-"));
-  paths.push(home, globalHome);
+  const home = await trackedTempDir("agent-loop-pnpm12-home-", paths);
+  const globalHome = await trackedTempDir("agent-loop-pnpm12-global-", paths);
   // macOS hands out a temporary directory through a symlink (`/var` points at
   // `/private/var`), and Node resolves the installed module, so the written path
   // carries the resolved prefix. Build the expectation from the same real path.
@@ -80,10 +78,9 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
 // that link and deletes the old store entry leaves the installed files pointing
 // at a package that still exists.
 test("hooks installed in a pnpm 12 project layout survive an upgrade", async () => {
-  const home = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-home-"));
-  const project = realpathSync(await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-project-")));
-  const pnpmHome = await mkdtemp(join(tmpdir(), "agent-loop-pnpm12-store-"));
-  paths.push(home, project, pnpmHome);
+  const home = await trackedTempDir("agent-loop-pnpm12-project-home-", paths);
+  const project = realpathSync(await trackedTempDir("agent-loop-pnpm12-project-", paths));
+  const pnpmHome = await trackedTempDir("agent-loop-pnpm12-store-", paths);
   const hash = "beacea4c4f2552abe00f58581c4a6900e467d9d2a95d9306d5f68f4d629e5f7d";
   const before = await pnpm12Project(pnpmHome, project, { hash, version: "0.3.0" });
 
@@ -113,8 +110,7 @@ test("hooks installed in a pnpm 12 project layout survive an upgrade", async () 
 // Usefulness: verifies --version resolves in an installed pnpm layout, where the
 // package directory holds src and package.json and nothing else.
 test("--version prints the package version from an installed layout", async () => {
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-version-global-"));
-  paths.push(globalHome);
+  const globalHome = await trackedTempDir("agent-loop-version-global-", paths);
   const { linked } = await pnpmGlobal(join(globalHome, "global", "v11"), {
     id: "637c-18d963de1bc57d7c-0",
     hash: null,
@@ -149,10 +145,10 @@ async function assertDependenciesResolve(store) {
 test("an installed layout resolves every runtime dependency package.json lists", async () => {
   // macOS hands out a temporary directory through a symlink (`/var` points at
   // `/private/var`), so the fixture is reached through a link on every platform.
-  const real = await mkdtemp(join(tmpdir(), "agent-loop-deps-global-"));
+  const real = await trackedTempDir("agent-loop-deps-global-", paths);
   const globalHome = `${real}-link`;
   await symlink(real, globalHome, LINK_TYPE);
-  paths.push(real, globalHome);
+  paths.push(globalHome);
   const { store } = await pnpmGlobal(join(globalHome, "global", "v11"), {
     id: "637c-18d963de1bc57d7c-0",
     hash: null,
@@ -164,8 +160,7 @@ test("an installed layout resolves every runtime dependency package.json lists",
 // Usefulness: verifies a dependency that only an ancestor `node_modules` provides does not
 // pass for a link beside the package, so a parent directory cannot hide an omitted link.
 test("a dependency provided by an ancestor node_modules does not satisfy the installed layout", async () => {
-  const globalHome = await mkdtemp(join(tmpdir(), "agent-loop-deps-ancestor-"));
-  paths.push(globalHome);
+  const globalHome = await trackedTempDir("agent-loop-deps-ancestor-", paths);
   const { installDir, store } = await pnpmGlobal(join(globalHome, "global", "v11"), {
     id: "637c-18d963de1bc57d7c-0",
     hash: null,

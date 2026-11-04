@@ -18,7 +18,7 @@ import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
-import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./gh-doubles.mjs";
+import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./run-fixtures.mjs";
 
 // 29. Usefulness: verifies --require-accept refuses a finish with no later
 // reviewer accept, then allows the finish once a reviewer accepts that state

@@ -1,10 +1,9 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vite-plus/test";
 import { processStartTime } from "../../src/lib/process-identity.mjs";
 import { withStateLock } from "../../src/lib/state-lock.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 
 // The start-time query runs `ps` or PowerShell. Its failure modes (error, timeout,
 // empty or unparseable output) cannot be produced on demand with the real command,
@@ -65,8 +64,7 @@ const FAILURES = [
 // current start time counts as alive, so an unknown stamp never frees a live lock.
 test.each(FAILURES)("a live lock is kept after %s", async (_name, result) => {
   answer = result;
-  const dir = await mkdtemp(join(tmpdir(), "runstate-starttime-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("runstate-starttime-", dirs);
   const lockFile = join(dir, "state.lock");
   await writeFile(
     lockFile,
@@ -102,8 +100,7 @@ test.each([
 // reused pid, so the lock is taken over (the positive case of the alive-on-failure rule).
 test("a lock whose recorded stamp differs from the current one is taken over", async () => {
   answer = { err: null, out: "Thu Jan  1 00:01:00 1970\n" };
-  const dir = await mkdtemp(join(tmpdir(), "runstate-starttime-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("runstate-starttime-", dirs);
   const lockFile = join(dir, "state.lock");
   await writeFile(
     lockFile,
@@ -121,8 +118,7 @@ test.each([
   ["darwin", "darwin-lstart", "Thu Jan  1 00:01:00 1970\n"],
   ["win32", "win32-creation", "60\n"],
 ])("a live lock with a malformed %s stamp is kept", async (platform, kind, out) => {
-  const dir = await mkdtemp(join(tmpdir(), "runstate-starttime-"));
-  dirs.push(dir);
+  const dir = await trackedTempDir("runstate-starttime-", dirs);
   answer = { err: null, out };
   Object.defineProperty(process, "platform", { value: platform });
   try {
