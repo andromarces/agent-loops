@@ -93,6 +93,11 @@ function spaceOffset(text) {
   return /^[ \t]*/.exec(text)[0].length;
 }
 
+/** Returns the number of leading spaces. */
+function leadingSpaces(text) {
+  return /^ */.exec(text)[0].length;
+}
+
 /** Returns true when `char` opens a title. */
 function isTitleStart(char) {
   return char === '"' || char === "'" || char === "(";
@@ -242,7 +247,8 @@ function readDefinition(lines, index) {
  * Returns the targets of reference-style link definitions in a Markdown text.
  * A definition allows up to three leading spaces, then `[label]:`, then a bare
  * or angle-bracket destination. A destination or title can sit on the next
- * line. Four-space indents and fenced code blocks are not definitions.
+ * line. Four-space indents and fenced code blocks are not definitions. A fence
+ * that opens in a list item also ends when the list item ends.
  */
 function definitionTargets(text) {
   const targets = [];
@@ -251,9 +257,18 @@ function definitionTargets(text) {
   let fenceIndent = 0;
   for (let index = 0; index < lines.length; index += 1) {
     if (fence) {
-      const line = continuationLine(lines[index], fenceIndent);
-      if (closesFence(line, fence)) fence = undefined;
-      continue;
+      const line = stripQuotes(lines[index]);
+      if (closesFence(continuationLine(lines[index], fenceIndent), fence)) {
+        fence = undefined;
+        fenceIndent = 0;
+        continue;
+      }
+      if (fenceIndent > 0 && line.trim() !== "" && leadingSpaces(line) < fenceIndent) {
+        fence = undefined;
+        fenceIndent = 0;
+      } else {
+        continue;
+      }
     }
     const item = listItem(stripQuotes(lines[index]));
     const opening = FENCE_OPEN.exec(item.text);
@@ -472,6 +487,33 @@ test("the link check ignores definitions inside a fence after a list marker", ()
   ];
   expect(findUnshippedLinks(documents, shipped)).toEqual([
     "docs/a.md: ../after.md is not shipped (after.md)",
+  ]);
+});
+
+// Requirement: a fence opened after a list marker ends with the list content.
+// Usefulness: verifies a live definition after the list is read, not hidden by an
+// unterminated fence. A blank line and a mismatched closer each leave the fence
+// open in the list, so only the list end can expose the definitions after it.
+test("the link check ends a list fence when the list content ends", () => {
+  const shipped = new Set(["docs/a.md"]);
+  const documents = [
+    {
+      path: "docs/a.md",
+      text: [
+        "- ```md",
+        "  [blank]: ../blank.md",
+        "",
+        "[after-blank]: ../after-blank.md",
+        "- ```md",
+        "  [mismatch]: ../mismatch.md",
+        "  ~~~",
+        "[after-mismatch]: ../after-mismatch.md",
+      ].join("\n"),
+    },
+  ];
+  expect(findUnshippedLinks(documents, shipped)).toEqual([
+    "docs/a.md: ../after-blank.md is not shipped (after-blank.md)",
+    "docs/a.md: ../after-mismatch.md is not shipped (after-mismatch.md)",
   ]);
 });
 
