@@ -183,9 +183,15 @@ const SHARED_PARENT_RULES = [
   // Issue #1457: the setup keeps its deadline in both texts, before the first dispatch and
   // before the next reviewer dispatch after a changed lockfile.
   (text) => expectRule(text, /dependency setup/i, /before the first dispatch/i),
-  (text) => expectRule(text, /dependency setup/i, /before the next reviewer dispatch/i),
+  (text) =>
+    expectRule(
+      text,
+      /dependency setup/i,
+      /Node lockfile install/i,
+      /before the next reviewer dispatch/i,
+    ),
   // Issue #1225: an unread work tree root names every lockfile, so the parent still reinstalls.
-  (text) => expectRule(text, /read the work tree root/i, /every lockfile/i),
+  (text) => expectRule(text, /(?:could not|cannot) read the work tree root/i, /every lockfile/i),
   // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
   // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
   (text) =>
@@ -989,6 +995,7 @@ test("instructions and headless prompt name the work tree install owner and bar 
   expect(prompt).toContain(
     "For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file.",
   );
+  expect(prompt).toContain("No worker or reviewer installs them.");
   expect(prompt).toContain(
     "Never tell a worker to link or junction the `node_modules` of another checkout into the work tree, or to run an install in another checkout.",
   );
