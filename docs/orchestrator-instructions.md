@@ -275,9 +275,11 @@ Apply these parent rules:
     which can include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
     never installs, so the installed dependencies no longer match
     the lockfile.
-  - When the field appears, run the lockfile install in that work tree, for example
-    `pnpm install --frozen-lockfile`, before the next reviewer dispatch (issue #1180). A failed worker
-    turn carries the field too. A turn that changed none carries no field.
+  - When the field appears, run the dependency setup the repository documents for its tests, such
+    as the Node lockfile install, before the next reviewer dispatch. A failed worker turn carries the
+    field too. A turn that changed none carries no field. See issues #1180 and #1457.
+  - The field watches root lockfiles only, so a change to another dependency file, such as a
+    requirements file, asks for no reinstall. That gap is accepted (issue #1457).
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
   entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
@@ -340,9 +342,12 @@ The setup for both, and the per-work-tree `push.default` override, are in
 [Work tree setup details](orchestrator/work-tree-setup.md).
 
 The parent installs the dependencies of the work tree, and no worker or reviewer
-does. After you create the work tree and before the first dispatch, run the
-repository's lockfile install inside the work tree, for example
-`pnpm install --frozen-lockfile`. The work tree then has its own `node_modules`
+does. After you create the work tree and before the first dispatch, run inside it
+the dependency setup that the repository documents for its tests. For a Node
+project, that is the lockfile install, for example
+`pnpm install --frozen-lockfile`. For another toolchain, it is the documented
+setup, for example a virtual environment built from a hashed requirements file.
+The work tree then has its own installed dependencies, such as `node_modules`,
 for every turn. Never link or junction the `node_modules` of another checkout into
 the work tree, and never run an install in another checkout: a tool such as `vp`
 can rewrite links in the `node_modules` that the junction points to.
