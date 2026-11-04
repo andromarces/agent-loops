@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 import { main as cliMain } from "../../src/cli.mjs";
-import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/install/commands.mjs";
+import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/harness-check.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
 import { restoreAgentLoopHome } from "../env-helpers.mjs";
 import { makeHome, cleanupHomes } from "./install-helpers.mjs";

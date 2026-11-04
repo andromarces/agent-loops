@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { runHarnessCheckCommand } from "../../src/install/commands.mjs";
+import { runHarnessCheckCommand } from "../../src/harness-check.mjs";
 import { HARNESS_META, HARNESS_ORDER, harnessForCommand } from "../../src/lib/harnesses.mjs";
 import { harnessForProcessName } from "../../src/lib/process-ancestry.mjs";
 
