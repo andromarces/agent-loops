@@ -11,6 +11,12 @@ const HOOKS_PATH_ITEM = "core.hooksPath";
 // Shared config keys that change how Git treats the main work tree. The read names a key only.
 const SHARED_CONFIG_KEYS = new Set(["core.bare", "core.worktree"]);
 
+// Scopes a turn can change. The system scope needs administrator rights and stays out.
+const CONFIG_SCOPES = new Set(["global", "local", "worktree"]);
+
+// Scope label of the main work tree's worktree config, read from the common Git directory.
+const MAIN_WORK_TREE_SCOPE = "mainWorkTree";
+
 const isSharedConfigKey = (key) => {
   // A name with three parts is a subsection, and a subsection can hold a URL.
   if (key.split(".").length !== 2) return false;
@@ -24,19 +30,25 @@ const isSharedConfigKey = (key) => {
  * on their own: the effective value of `core.hooksPath` would hide a change to the scope that the
  * other one overrides. The result holds digests only, so a config value or a URL never leaves this
  * function. An unexpected `git` exit throws a `SnapshotError`, because an empty state would read as
- * a change. The read starts two `git` processes at once, because every worker turn reads twice and
+ * a change.
+ *
+ * The read starts two `git` processes at once, because every worker turn reads twice and
  * a process start is slow on Windows. `bound` takes `signal` and `timeoutMs`, as for `snapshot`,
  * and `deadlineMs`, which stops the whole read: the `git` processes, the directory read, and the
  * hashing. The deadline joins `signal`, so either one stops the read. After it, no new file system
  * request starts, the `git` processes end (SIGTERM, then SIGKILL after 1 s), and the read rejects
  * with a `SnapshotError` that names the deadline. A read that needs no turn signal, such as the one
  * after a cancel, sets the deadline.
+ *
  * known-limit: a file system request already in flight cannot be stopped. The read stops waiting
  * for it, and it can stay pending in the background when the file system stalls. Between the
  * requests of one hook hash, the read checks the signal, so no new request starts after the stop.
  *
- * The read also covers the shared `core.bare`, `core.worktree`, and `extensions.*` config keys.
- * It names each changed key only, never a value.
+ * The read also covers the global config, the main work tree's worktree config, and the shared
+ * `core.bare`, `core.worktree`, and `extensions.*` keys. It names each changed key only, never a
+ * value. The field reports a change observed between the two reads and does not prove the turn
+ * made it. A global change can come from another process or another run on the host. A third
+ * `git` process reads the main work tree's worktree config after the common directory resolves.
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, string> }>}
  */
 export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
@@ -57,7 +69,8 @@ export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) 
 }
 
 async function readWithin(cwd, bound) {
-  const read = (args) => gitRead(cwd, args, { ...bound, allowExit: [0], createError: readFailure });
+  const read = (args, options = {}) =>
+    gitRead(cwd, args, { ...bound, ...options, allowExit: [0], createError: readFailure });
   // Both processes end before the read rejects, so none outlives a stopped read.
   const settled = await Promise.allSettled([
     read(["rev-parse", "--git-common-dir"]),
@@ -68,7 +81,15 @@ async function readWithin(cwd, bound) {
   const [commonResult, listResult] = settled.map((outcome) => outcome.value);
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
-  const { hooksPath, remotes, sharedKeys } = readConfigState(listResult.stdout);
+  const state = readConfigState(listResult.stdout);
+  // The main work tree's own worktree config lives in the common directory. Git reads it only when
+  // the extension is on, and this read keeps that behavior. The explicit work tree stops a
+  // `core.worktree` value from failing the read.
+  const mainResult = await read(["config", "-z", "--list", "--show-scope"], {
+    env: { ...bound.env, GIT_DIR: commonPath, GIT_WORK_TREE: cwd },
+  });
+  readConfigState(mainResult.stdout, state, { mainWorkTree: true });
+  const { hooksPath, remotes, sharedKeys } = hashConfigState(state);
 
   return {
     hooksPath,
@@ -91,15 +112,26 @@ function readFailure(reason, { args, timeoutMs, result }) {
 }
 
 // With `-z` and `--show-scope`, each entry is `<scope>NUL<key>LF<value>NUL`, and a key with no
-// value has no LF. Git writes the variable name in lower case.
-function readConfigState(listing) {
-  const hooksPath = { local: [], worktree: [] };
-  const remotes = new Map();
-  const sharedKeys = new Map();
+// value has no LF. Git writes the variable name in lower case. `mainWorkTree` keeps only the
+// worktree scope of a listing read from the common Git directory.
+function readConfigState(
+  listing,
+  state = {
+    hooksPath: { global: [], local: [], worktree: [], [MAIN_WORK_TREE_SCOPE]: [] },
+    remotes: new Map(),
+    sharedKeys: new Map(),
+  },
+  { mainWorkTree = false } = {},
+) {
+  const { hooksPath, remotes, sharedKeys } = state;
   const tokens = listing.split("\0");
   for (let i = 0; i + 1 < tokens.length; i += 2) {
-    const scope = tokens[i];
-    if (scope !== "local" && scope !== "worktree") continue;
+    let scope = tokens[i];
+    if (!CONFIG_SCOPES.has(scope)) continue;
+    if (mainWorkTree) {
+      if (scope !== "worktree") continue;
+      scope = MAIN_WORK_TREE_SCOPE;
+    }
     const entry = tokens[i + 1];
     const newline = entry.indexOf("\n");
     const key = newline === -1 ? entry : entry.slice(0, newline);
@@ -107,7 +139,7 @@ function readConfigState(listing) {
     const lowerKey = key.toLowerCase();
     if (key === "core.hookspath") {
       hooksPath[scope].push(value);
-    } else if (key.startsWith("remote.")) {
+    } else if (scope !== "global" && key.startsWith("remote.")) {
       const remoteName = key.slice("remote.".length, key.lastIndexOf("."));
       remotes.set(remoteName, [...(remotes.get(remoteName) ?? []), [scope, entry]]);
     } else if (isSharedConfigKey(lowerKey)) {
@@ -116,6 +148,10 @@ function readConfigState(listing) {
       sharedKeys.set(lowerKey, [...(sharedKeys.get(lowerKey) ?? []), [scope, value]]);
     }
   }
+  return state;
+}
+
+function hashConfigState({ hooksPath, remotes, sharedKeys }) {
   return {
     hooksPath: sha256(JSON.stringify(hooksPath)),
     remotes: Object.fromEntries(
