@@ -1,5 +1,5 @@
 import { entryCarrier } from "./entry-report.mjs";
-import { readProp } from "./error-message.mjs";
+import { readableErrorText, readProp } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
 import { logError, logInfo, logWarn } from "./log.mjs";
 import { redactAndClean } from "./redact.mjs";
@@ -109,7 +109,7 @@ async function holdSlotFor(command, signal) {
     options = testSlotOptions();
     slot = await holdTestSlot({ ...options, signal: signal ?? new AbortController().signal });
   } catch (err) {
-    const reason = redactAndClean(err?.message ?? String(err));
+    const reason = redactAndClean(readableErrorText(err));
     logError(`test slot acquisition failed; the test command did not run: ${reason}`);
     return {
       testRun: notRunResult(
@@ -186,7 +186,7 @@ export async function runTestCmd({
     // A failed release never replaces the result or the cancel of the command. The slot then stays
     // held until this process exits, when the stale-owner rules reclaim it.
     await slot.release().catch((err) => {
-      logError(`test slot release failed: ${redactAndClean(err?.message ?? String(err))}`);
+      logError(`test slot release failed: ${redactAndClean(readableErrorText(err))}`);
     });
   }
 }

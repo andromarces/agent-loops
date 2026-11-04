@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
+import { UNREADABLE_MESSAGE } from "../../src/lib/error-message.mjs";
 import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { processExists } from "../process-helpers.mjs";
@@ -108,6 +109,32 @@ test("a second SIGINT ends the process with exit code 130", () => {
   } finally {
     remove();
     exit.mockRestore();
+  }
+});
+
+// Usefulness: acceptance (#1405) — a final write whose error `message` getter throws logs the
+// placeholder and still exits 130, so a hostile getter never escapes the second-SIGINT catch.
+test("a second SIGINT logs the placeholder when the final write error is unreadable", () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const remove = cancelOnSigInt(new AbortController(), {
+    onForceExit: () => {
+      throw Object.defineProperty(new Error("final write failed"), "message", {
+        get() {
+          throw new Error("getter boom");
+        },
+      });
+    },
+  });
+  try {
+    process.emit("SIGINT");
+    process.emit("SIGINT");
+    expect(errorSpy.mock.calls.flat().join(" ")).toContain(UNREADABLE_MESSAGE);
+    expect(exit).toHaveBeenCalledWith(130);
+  } finally {
+    remove();
+    exit.mockRestore();
+    errorSpy.mockRestore();
   }
 });
 
