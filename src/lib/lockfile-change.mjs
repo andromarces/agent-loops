@@ -29,7 +29,9 @@ const UNREADABLE = "unreadable";
  * as unreadable, so the parent reinstalls instead of reading a silent "no change". The read has its
  * own time bound and takes no turn signal, so a canceled turn is read too and the read never
  * changes the cancel outcome. The bound aborts the signal that each hash read takes, which stops a
- * read that has not yet started its file system request.
+ * read that has not yet started its file system request. The root read carries `READ_BOUND_MS` as
+ * its own backstop, so a shorter caller bound ends it through the bound signal, never through a
+ * second timer at that shorter bound.
  * known-limit: the bound ends the wait, not a file system request already in flight. Node checks the
  * signal only between requests, so a stalled `lstat`, `readlink`, or content read stays pending after
  * the bound, can keep its file handle, and can keep the process alive. No test shows bounded handle
@@ -55,7 +57,7 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
     };
     try {
       const root = await Promise.race([
-        workTreeRoot(cwd, { signal: bound.signal, timeoutMs: boundMs }),
+        workTreeRoot(cwd, { signal: bound.signal, timeoutMs: READ_BOUND_MS }),
         bound.stopped,
       ]);
       const hashes = await Promise.all(LOCKFILES.map((name) => hash(root, name)));

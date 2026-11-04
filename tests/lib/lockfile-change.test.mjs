@@ -13,10 +13,33 @@ const hashing = vi.hoisted(() => ({
   signals: [],
   releaseFirstStart: null,
 }));
+// null reads the real work tree root; a number replaces it with a read of that many real
+// milliseconds, so no case waits on `git`.
+const roots = vi.hoisted(() => ({ delayMs: null }));
 vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
+    // The temp repo passed by these cases is its own root, so the double resolves `cwd`. A read
+    // with its own `timeoutMs` ends at that shorter bound, as the real `workTreeRoot` does.
+    workTreeRoot: (cwd, options = {}) => {
+      if (roots.delayMs === null) return actual.workTreeRoot(cwd, options);
+      return new Promise((resolve, reject) => {
+        let deadline;
+        const timer = realSetTimeout(() => {
+          realClearTimeout(deadline);
+          resolve(cwd);
+        }, roots.delayMs);
+        if (options.timeoutMs > 0) {
+          deadline = realSetTimeout(() => {
+            realClearTimeout(timer);
+            reject(
+              new Error(`git rev-parse --show-toplevel timed out after ${options.timeoutMs} ms`),
+            );
+          }, options.timeoutMs);
+        }
+      });
+    },
     sha256File: (path, options) => {
       if (hashing.captureSignal) {
         hashing.signals.push(options?.signal);
@@ -45,6 +68,7 @@ afterEach(async () => {
   hashing.signals.length = 0;
   hashing.failing.clear();
   hashing.releaseFirstStart = null;
+  roots.delayMs = null;
   vi.useRealTimers();
   vi.restoreAllMocks();
   await removePath(repo);
@@ -74,7 +98,10 @@ async function releasePendingRead(pending) {
 
 // Holds the bound until the first hash read starts, so a slow root read cannot end it before a
 // signal is recorded. A read that settles first, or a start past the guard, fails with the cause.
-async function startHashRead() {
+// `rootDelayMs` makes the root read take that many real milliseconds, so a case need not wait on
+// `git` and a read past the bound is repeatable.
+async function startHashRead({ rootDelayMs = 0 } = {}) {
+  roots.delayMs = rootDelayMs;
   vi.useFakeTimers();
   const firstStart = new Promise((resolve) => {
     hashing.releaseFirstStart = resolve;
@@ -123,6 +150,18 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
   expect(Date.now() - started).toBeLessThan(5_000);
   expect(diffLockfiles(before, after)).toContain("pnpm-lock.yaml");
   expect(warn.mock.calls.some((call) => String(call[0]).includes("lockfile"))).toBe(true);
+});
+
+// Usefulness: verifies requirement "no timer shorter than the 200 ms bound ends the root read"
+// (issue #1440): a root read slower than the bound in real time must still start a hash read, or
+// the two cases below fail under load. A root-read timer at the bound fails this case by name.
+test("a root read slower than the bound in real time still starts a hash read", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  hashing.captureSignal = true;
+  const read = await startHashRead({ rootDelayMs: 300 });
+  expect(hashing.signals.length).toBeGreaterThan(0);
+  await read.releaseBound();
+  expect(hashing.signals.every((signal) => signal?.aborted === true)).toBe(true);
 });
 
 // Usefulness: verifies requirement "the bound aborts the signal of a hash read" (issue #1225), so a
