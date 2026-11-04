@@ -93,7 +93,6 @@ function spaceOffset(text) {
   return /^[ \t]*/.exec(text)[0].length;
 }
 
-/** Returns the number of leading spaces. */
 function leadingSpaces(text) {
   return /^ */.exec(text)[0].length;
 }
@@ -258,15 +257,14 @@ function definitionTargets(text) {
   for (let index = 0; index < lines.length; index += 1) {
     if (fence) {
       const line = stripQuotes(lines[index]);
-      if (closesFence(continuationLine(lines[index], fenceIndent), fence)) {
-        fence = undefined;
-        fenceIndent = 0;
-        continue;
-      }
       if (fenceIndent > 0 && line.trim() !== "" && leadingSpaces(line) < fenceIndent) {
         fence = undefined;
         fenceIndent = 0;
       } else {
+        if (closesFence(continuationLine(lines[index], fenceIndent), fence)) {
+          fence = undefined;
+          fenceIndent = 0;
+        }
         continue;
       }
     }
@@ -514,6 +512,37 @@ test("the link check ends a list fence when the list content ends", () => {
   expect(findUnshippedLinks(documents, shipped)).toEqual([
     "docs/a.md: ../after-blank.md is not shipped (after-blank.md)",
     "docs/a.md: ../after-mismatch.md is not shipped (after-mismatch.md)",
+  ]);
+});
+
+// Requirement: a dedented fence line ends the list fence before it opens a fence.
+// Usefulness: verifies a top-level fence after an unfinished list fence takes its
+// own level, so its sample definitions stay hidden and a live definition after it
+// is read. Both fence characters are covered.
+test("the link check opens a dedented fence at its own level", () => {
+  const shipped = new Set(["docs/a.md"]);
+  const documents = [
+    {
+      path: "docs/a.md",
+      text: [
+        "- ```md",
+        "  [list]: ../list.md",
+        "```",
+        "[top]: ../top.md",
+        "```",
+        "[after]: ../after.md",
+        "- ~~~md",
+        "  [list-tilde]: ../list-tilde.md",
+        "~~~",
+        "[top-tilde]: ../top-tilde.md",
+        "~~~",
+        "[after-tilde]: ../after-tilde.md",
+      ].join("\n"),
+    },
+  ];
+  expect(findUnshippedLinks(documents, shipped)).toEqual([
+    "docs/a.md: ../after.md is not shipped (after.md)",
+    "docs/a.md: ../after-tilde.md is not shipped (after-tilde.md)",
   ]);
 });
 
