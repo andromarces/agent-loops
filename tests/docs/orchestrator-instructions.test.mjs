@@ -134,17 +134,26 @@ const SHARED_PARENT_RULES = [
       /sharedGitChanged/,
       /core\.bare/,
       /core\.worktree/,
-      /identity/,
-      /signing/,
       /needs action before the next dispatch/i,
+    ),
+  // Issue #1443: identity wording holds only once the field names those keys, and the parent reads
+  // only the envelope, so it dispatches a worker to inspect the key and to restore it.
+  (text) =>
+    expectRule(text, /identity or signing key/i, /once the field names it/i, /needs action/i),
+  (text) =>
+    expectRule(
+      text,
+      /dispatch a worker/i,
+      /read that key in the shared config/i,
+      /report its current state/i,
     ),
   (text) =>
     expectRule(
       text,
-      /read that key in the shared config/i,
       /name the turn whose report says it changed it/i,
       /ask the user whether to restore it/i,
     ),
+  (text) => expectRule(text, /dispatch a worker/i, /restore the key/i, /after the user approves/i),
   // Issue #1443: concurrent runs whose turns overlap one change all name it, so the parent compares
   // the overlapping turns before it names the run that made the change.
   (text) =>
