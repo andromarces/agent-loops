@@ -668,18 +668,19 @@ async function ensureSlug(context) {
   context.slug ??= await repoSlug(context.bounded, context.cwd, "could not be read");
 }
 
-// The commit reads are the gate's own reads. They page by page number with one `gh api --include`
-// request per page. They never follow the `Link` header, which they reject when it names another
-// host (see `pagedRead`).
-//
-// A failed read is marked `transient`, and the wait retries it on the next poll. That needs a
-// first-line status of 500, 502, 503, or 504 with a body that is empty or one JSON value. It also
-// covers a transport failure with no status line and no body (#1312). Every other failure ends the
-// wait. That covers any other status and a 4xx whatever its body says. It also covers a failure
-// with no status block and a reply whose body is not exactly one JSON value.
-/** Reads the gate's own check-run and commit-status entries of `sha`, after the repository slug read. */
+/**
+ * Reads the gate's own check-run and commit-status entries of `sha`, after the repository slug read.
+ * They page by page number with one `gh api --include` request per page. They never follow the
+ * `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is
+ * marked `transient`, and the wait retries it on the next poll. That needs a first-line status of
+ * 500, 502, 503, or 504 with a body that is empty or one JSON value. It also covers a transport
+ * failure with no status line and no body (#1312).
+ */
 async function readCommit(context, sha) {
   await ensureSlug(context);
+  // Every other failure ends the wait. Any other status, a 4xx whatever its body says, and a
+  // failure with no status block end it.
+  // A reply whose body is not exactly one JSON value ends it too.
   return commitEntries(context.bounded, context.slug, sha, context.cwd, true);
 }
 
@@ -792,10 +793,12 @@ async function readPr(context) {
   return { sha, base, listed, names };
 }
 
-// The retryable failure of `raw`, or a throw. The bound always ends the wait and so does a terminal
-// failure, unless `settled` says the poll already holds a failure that ends it. `retryable` names
-// the tag that the read sets for a failure that it can retry. A cancel carries neither tag, so it
-// reaches the caller as the same object.
+/**
+ * The retryable failure of `raw`, or a throw. The bound always ends the wait and so does a terminal
+ * failure, unless `settled` says the poll already holds a failure that ends it. `retryable` names
+ * the tag that the read sets for a failure that it can retry. A cancel carries neither tag, so it
+ * reaches the caller as the same object.
+ */
 function retryableOrThrow(
   raw,
   { retryable = (err) => err?.transient, settled = () => false } = {},
