@@ -10,6 +10,7 @@ import {
   requiredResolutionRefusal,
 } from "./ci-gate.mjs";
 import {
+  checkSuites,
   commitEntries,
   contextLabel,
   evaluateContext,
@@ -464,10 +465,11 @@ async function absenceOf(
  * missing expected name keeps the wait running to the bound, where `awaiting` lists it. A failing
  * check still settles the wait (#978).
  * An `--all` pass is held while a workflow of the base branch may run for the PR (see
- * `pullRequestWorkflowMayRun`) and `sha` has no check run from GitHub Actions: a workflow registers
- * its run after a fast check of another app passed. The hold skips only a workflow that provably
- * cannot run, so a read that fails or a form that is not settled holds too. It needs no `expect` name,
- * ends at the bound with `timedOut: true`, and a failing check still settles the wait (#1228).
+ * `pullRequestWorkflowMayRun`) and a `github-actions` check suite of `sha` is not completed.
+ * It is held too while no such suite exists and the workflow may run, so a dependent job needs no
+ * `expect` name. The hold skips only a workflow that provably cannot run, so a read that fails or a
+ * form that is not settled holds too. A suite of another app never holds the pass. It ends at the
+ * bound with `timedOut: true`, and a failing check still settles the wait (#1228, #1518).
  *
  * `gh pr checks` names no commit, because it queries by PR identity, so the check states
  * never come from it. Each poll reads the PR head `sha` (`gh pr view`), runs `gh pr checks`
@@ -767,6 +769,33 @@ async function workflowMayRunFor(context, sha, base) {
   return context.workflowMayRun.value;
 }
 
+/**
+ * Whether an --all pass must wait for GitHub Actions on `sha`. The hold applies only while a base
+ * workflow may run for the PR, so a push-only workflow never holds it. Then a `github-actions` check
+ * suite of the commit that is not completed holds the pass, and so does no such suite at all. A suite
+ * of another app never holds it. A failed read holds the pass, and a retryable failure is kept for the
+ * bound, which reports it (#1518).
+ */
+async function actionsHold(context, sha, base) {
+  if (!(await workflowMayRunFor(context, sha, base))) {
+    return false;
+  }
+  try {
+    await ensureSlug(context);
+    const suites = await checkSuites(context.bounded, context.slug, sha, context.cwd, true);
+    const actions = suites.filter((suite) => suite.app.slug === ACTIONS_APP_SLUG);
+    return actions.length === 0 || actions.some((suite) => suite.status !== "completed");
+  } catch (raw) {
+    const err = retryableOrThrow(raw, {
+      settled: () => context.failed !== null || context.prFailures.length > 0,
+    });
+    if (err !== null) {
+      context.failed = err;
+    }
+    return true;
+  }
+}
+
 /** Probes for a check source of the PR head `sha` after the repository slug read. */
 async function probe(context, sha, base) {
   await ensureSlug(context);
@@ -825,12 +854,10 @@ function retryableOrThrow(
 async function commitOutcome(context, sha, base, listed, names) {
   let items = null;
   let runNames = [];
-  let actionsRun = false;
   let headEmpty = false;
   try {
     const entries = await readCommit(context, sha);
     runNames = entries.runs.map((run) => run.name);
-    actionsRun = entries.runs.some((run) => run.app?.slug === ACTIONS_APP_SLUG);
     headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
     items = context.all
       ? allItems(entries)
@@ -896,13 +923,8 @@ async function commitOutcome(context, sha, base, listed, names) {
   context.awaiting = context.expect.filter((name) => !runNames.includes(name));
   const failing = context.prFailures.length > 0 || items.some(isFailing);
   const passing = read.settled && listed.settled && context.awaiting.length === 0;
-  // A pass waits for the run of a base workflow that has not registered on `sha` yet (#1228).
-  const held =
-    !failing &&
-    passing &&
-    context.all &&
-    !actionsRun &&
-    (await workflowMayRunFor(context, sha, base));
+  // A pass waits for the GitHub Actions work of the base workflow on `sha` to complete (#1228, #1518).
+  const held = !failing && passing && context.all && (await actionsHold(context, sha, base));
   return { settled: failing || (passing && !held), checks: read.checks };
 }
 

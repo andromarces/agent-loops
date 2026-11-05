@@ -37,6 +37,7 @@ function holdGh({
   workflow = PR_WORKFLOW,
   prFiles = [{ filename: "src/a.js" }],
   runsByPoll,
+  suitesByPoll = null,
   listingFailures = 0,
   listingFailureText = "gh: Bad Gateway (HTTP 502)",
   baseFailureText = null,
@@ -103,6 +104,25 @@ function holdGh({
     if (endpoint === `${repo}/contents/.github/workflows/ci.yml?ref=${BASE_HEAD}`) {
       return readOk(fileReply(workflow));
     }
+    const suiteRead = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/check-suites(?:\?.*)?$/.exec(
+      endpoint,
+    );
+    if (suiteRead) {
+      const runs = runsByPoll[Math.min(polls, runsByPoll.length) - 1];
+      const scripted =
+        suitesByPoll?.[Math.min(polls, suitesByPoll.length) - 1] ??
+        runs
+          .filter((run) => run.app?.slug === "github-actions")
+          .map(() => ({ status: "completed", conclusion: "success" }));
+      const suites = scripted.map((suite, index) => ({
+        id: 1000 + index,
+        head_sha: suiteRead[1],
+        status: suite.status,
+        ...(suite.conclusion === undefined ? {} : { conclusion: suite.conclusion }),
+        app: suite.app ?? { slug: "github-actions" },
+      }));
+      return readOk({ total_count: suites.length, check_suites: suites });
+    }
     if (endpoint.startsWith(`${repo}/commits/${HEAD_A}/check-runs`)) {
       const runs = runsByPoll[Math.min(polls, runsByPoll.length) - 1];
       return readOk({ total_count: runs.length, check_runs: runs });
@@ -133,6 +153,62 @@ test("the --all wait holds a pass until a GitHub Actions check run appears on th
   expect(result.timedOut).toBe(false);
   expect(result.checks.map(({ name }) => name).sort()).toEqual(["Workers Builds: site", "checks"]);
   expect(elapsed).toBeGreaterThan(0);
+});
+
+// Usefulness: verifies the hold lasts until every job of the GitHub Actions suite is done, so a
+// dependent job that registers after the first job passed is never missed (issue #1518 acceptance 1
+// and 2); no other test covers a suite that outlives its first check run.
+test("the --all wait holds a pass until a dependent job of the GitHub Actions suite registers", async () => {
+  const select = { ...ACTIONS, id: 2, name: "select / select" };
+  const dependent = { ...ACTIONS, id: 3, name: "Test" };
+  const { result, elapsed } = await holdWait({
+    runsByPoll: [
+      [WORKERS, select],
+      [WORKERS, select, dependent],
+    ],
+    suitesByPoll: [[{ status: "in_progress" }], [{ status: "completed", conclusion: "success" }]],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(elapsed).toBeGreaterThan(0);
+  expect(result.checks.map(({ name }) => name).sort()).toEqual([
+    "Test",
+    "Workers Builds: site",
+    "select / select",
+  ]);
+});
+
+// Usefulness: verifies an --all wait never passes while a github-actions suite stays in progress,
+// even when every listed check run passed, and ends at the bound with timedOut true (issue #1518
+// acceptance 1).
+test("the --all wait ends at the bound without a pass while a GitHub Actions suite is in progress", async () => {
+  const select = { ...ACTIONS, id: 2, name: "select / select" };
+  const { result } = await holdWait({
+    runsByPoll: [[WORKERS, select]],
+    suitesByPoll: [[{ status: "in_progress" }]],
+  });
+  expect(result.timedOut).toBe(true);
+  expect(result.checks.map(({ name }) => name).sort()).toEqual([
+    "Workers Builds: site",
+    "select / select",
+  ]);
+});
+
+// Usefulness: verifies an incomplete suite of another app never holds the pass beside a completed
+// github-actions suite, so a stuck suite of a third-party app cannot turn an --all wait into a
+// timeout (issue #1518 live-check rule).
+test("the --all wait passes at once with an incomplete suite of another app", async () => {
+  const { result, elapsed } = await holdWait({
+    workflow: PR_WORKFLOW,
+    runsByPoll: [[WORKERS, ACTIONS]],
+    suitesByPoll: [
+      [
+        { status: "completed", conclusion: "success" },
+        { status: "in_progress", app: { slug: "cloudflare-workers-and-pages" } },
+      ],
+    ],
+  });
+  expect(result.timedOut).toBe(false);
+  expect(elapsed).toBe(0);
 });
 
 // Usefulness: verifies the hold ends at the bound with `timedOut: true` and never a pass when no

@@ -182,6 +182,12 @@ export function scriptedGh(
         timedOut: false,
       };
     }
+    const suites = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/check-suites(?:\?.*)?$/.exec(
+      args[0] === "api" ? args[1] : "",
+    );
+    if (suites) {
+      return ok(pageStdout({ total_count: 0, check_suites: [] }));
+    }
     const api = /^repos\/owner\/repo\/commits\/([0-9a-f]+)\/(check-runs|status)(?:\?.*)?$/.exec(
       args[0] === "api" ? args[1] : "",
     );
