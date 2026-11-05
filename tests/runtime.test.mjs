@@ -30,7 +30,6 @@ import {
   createCleanRepoDir,
   createTempRepo,
   gitAbortingPostTurn,
-  untrackedFilesGit,
 } from "./git-helpers.mjs";
 
 afterEach(() => {
@@ -1504,9 +1503,8 @@ test("verbose mode logs snapshot debug lines around reviewer and orchestrator tu
 const expectMutationLoggedOnce = async (action) => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
-    const repo = await cleanRepo();
-    // The double lists the files of the real directory as untracked, so a write shows in the snapshot.
-    gitDouble.answer = untrackedFilesGit;
+    // Real repository and real `git`: the asserted MutationError comes from a real snapshot diff.
+    const repo = await createTempRepo();
     try {
       const mutate = async () => {
         await writeFile(join(repo, "mutated.txt"), "mutated\n");
