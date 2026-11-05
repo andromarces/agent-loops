@@ -1,7 +1,12 @@
 import { carryInheritedTmpdirEntries, failedInheritedTmpdirEntries } from "./tmpdir-entries.mjs";
 import { carryPackageStoreEntries, failedPackageStoreEntries } from "./package-store-entries.mjs";
 import { carryLockfileChanged, failedLockfileChanged } from "./lockfile-change.mjs";
-import { carryMainWorkTreeChanged, failedMainWorkTreeChanged } from "./main-work-tree-change.mjs";
+import {
+  carryMainWorkTreeChanged,
+  carryMainWorkTreeFastForward,
+  failedMainWorkTreeChanged,
+  failedMainWorkTreeFastForward,
+} from "./main-work-tree-change.mjs";
 import { carrySharedGitChanged, failedSharedGitChanged } from "./shared-git.mjs";
 import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 
@@ -12,6 +17,8 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 //   (issue #984).
 // - mainWorkTreeChanged: paths of the main work tree that a worker turn in a linked work tree changed
 //   (issue #1448).
+// - mainWorkTreeFastForward: the old and new head of a clean fast-forward of the main work tree to
+//   the remote default branch, so the parent can tell it apart from a worker edit (issue #1485).
 // - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
 //   before the next reviewer turn (issue #1180).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
@@ -36,6 +43,13 @@ const TURN_EVIDENCE = [
     key: "paths",
     carry: carryMainWorkTreeChanged,
     failed: failedMainWorkTreeChanged,
+  },
+  {
+    field: "mainWorkTreeFastForward",
+    type: "main-work-tree-fast-forward",
+    key: "heads",
+    carry: carryMainWorkTreeFastForward,
+    failed: failedMainWorkTreeFastForward,
   },
   {
     field: "lockfileChanged",
@@ -119,4 +133,4 @@ export function failedTurnEvidence(err) {
   return Object.fromEntries(TURN_EVIDENCE.map(({ field, failed }) => [field, failed(err)]));
 }
 
-/** @typedef {{ sharedGitChanged?: string[], mainWorkTreeChanged?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
+/** @typedef {{ sharedGitChanged?: string[], mainWorkTreeChanged?: string[], mainWorkTreeFastForward?: { before: string, after: string }, lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */

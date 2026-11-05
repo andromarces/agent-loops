@@ -13,9 +13,9 @@ const READ_BOUND_MS = 10_000;
  * Reads the tracked and untracked, unignored state of the main work tree that a linked `cwd` belongs
  * to. The result holds the HEAD commit, the checked-out branch, and a map of path to status and
  * content hash. With `since`, a changed HEAD or branch adds the paths of `git diff --name-only`
- * between the two commits. The result is null when `cwd` is the main work tree, the layout has none,
- * or the read fails or passes its bound. A failed read warns, and an absent result then proves
- * nothing.
+ * between the two commits, and a clean fast-forward to the remote default branch adds `fastForward`.
+ * The result is null when `cwd` is the main work tree, the layout has none, or the read fails or
+ * passes its bound. A failed read warns, and an absent result then proves nothing.
  * @param {string} cwd
  * @param {{ deadlineMs?: number, since?: object | null }} [options]
  * @returns {Promise<object | null>}
@@ -44,6 +44,10 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
             readCommitPaths(main, since.head, state.head, bound),
             stopped,
           ]);
+          state.fastForward = await Promise.race([
+            readFastForward(main, since, state, bound),
+            stopped,
+          ]);
         }
         return state;
       },
@@ -67,6 +71,60 @@ async function readBranch(main, bound) {
     stripFinalNewline: false,
   });
   return result.exitCode === 0 ? stripLf(result.stdout) : null;
+}
+
+/**
+ * Names the old and new head when the move is a clean fast-forward to the remote default branch.
+ * Returns null for a dirty, untracked, or unignored state on either read, a detached head, a branch
+ * switch, a reset, a non-fast-forward move, a local commit on top, or an unreadable or moving ref.
+ */
+async function readFastForward(main, before, after, bound) {
+  try {
+    return await classifyFastForward(main, before, after, bound);
+  } catch (err) {
+    if (bound.signal?.aborted) throw err;
+    return null;
+  }
+}
+
+async function classifyFastForward(main, before, after, bound) {
+  if (before.entries.size > 0 || after.entries.size > 0) return null;
+  if (before.branch === null || before.branch !== after.branch) return null;
+  if (before.head === "unborn" || after.head === "unborn") return null;
+  if (before.head === after.head) return null;
+  const ancestor = await gitRead(main, ["merge-base", "--is-ancestor", before.head, after.head], {
+    ...bound,
+    allowExit: [0, 1],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
+  });
+  if (ancestor.exitCode !== 0) return null;
+  const first = await readDefaultBranchRef(main, bound);
+  if (first === null || first.name !== after.branch || first.sha !== after.head) return null;
+  // A second read keeps a ref that moves during the turn from passing as the turn's result.
+  const second = await readDefaultBranchRef(main, bound);
+  if (second === null || second.name !== first.name || second.sha !== first.sha) return null;
+  return { before: before.head, after: after.head };
+}
+
+/** Reads the commit that `refs/remotes/origin/HEAD` names, or null when the ref is absent. */
+async function readDefaultBranchRef(main, bound) {
+  const symbolic = await gitRead(main, ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"], {
+    ...bound,
+    allowExit: [0, 1],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
+    stripFinalNewline: false,
+  });
+  if (symbolic.exitCode !== 0) return null;
+  const ref = stripLf(symbolic.stdout);
+  const prefix = "refs/remotes/origin/";
+  if (!ref.startsWith(prefix) || ref.length === prefix.length) return null;
+  const sha = await gitRead(main, ["rev-parse", "--verify", "-q", ref], {
+    ...bound,
+    allowExit: [0, 1],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
+  });
+  if (sha.exitCode !== 0) return null;
+  return { name: ref.slice(prefix.length), sha: sha.stdout.trim() };
 }
 
 /** Reads the paths that differ between two commits, or [] when either is unborn. */
@@ -115,3 +173,15 @@ export const carryMainWorkTreeChanged = carrier.carry;
 
 /** Returns the paths a fatal error carries, or `undefined` when it carries none. */
 export const failedMainWorkTreeChanged = carrier.failed;
+
+const fastForwardCarrier = entryCarrier("mainWorkTreeFastForward");
+
+/**
+ * Carries the clean fast-forward heads on a fatal error as `err.mainWorkTreeFastForward`. A frozen
+ * error or a throwing setter keeps the original error, and the heads stay readable through
+ * `failedMainWorkTreeFastForward`.
+ */
+export const carryMainWorkTreeFastForward = fastForwardCarrier.carry;
+
+/** Returns the fast-forward heads a fatal error carries, or `undefined` when it carries none. */
+export const failedMainWorkTreeFastForward = fastForwardCarrier.failed;
