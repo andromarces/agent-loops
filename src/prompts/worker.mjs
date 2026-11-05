@@ -36,6 +36,11 @@ const pnpmRunRule =
 const ownNodeModulesRule =
   "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.";
 
+// A worker turn in a linked work tree edited the main checkout instead, and a code index can
+// return absolute paths of another checkout (issue #1494).
+const workTreeEditRule =
+  "Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.";
+
 // Every turn runs with a private temporary directory that the runtime removes (ADR 0047, ADR 0068).
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
@@ -101,6 +106,7 @@ Your role:
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of
   this run targets the same \`--cwd\`.
+- ${workTreeEditRule}
 - Report what changed, what was verified, and state any disagreements with evidence.
 - State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.

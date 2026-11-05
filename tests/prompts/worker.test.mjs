@@ -109,6 +109,20 @@ test("first worker turn states that the work tree belongs to the parent", () => 
   );
 });
 
+// Usefulness: acceptance #1494: a worker turn that edited the main checkout instead of its own
+// work tree left the run's work tree clean and changed another checkout. The rule keeps every
+// edit, creation, and deletion in the run work tree, and maps a path from another checkout back.
+test("first worker turn limits every edit to the run work tree", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("Edit, create, and delete files only under the run work tree.");
+  expect(prompt).toContain(
+    "Before an edit with an absolute path, check that the path starts with the work tree root.",
+  );
+  expect(prompt).toContain(
+    "A path that a tool returns for another checkout maps to the same relative path in the run work tree.",
+  );
+});
+
 // Usefulness: verifies the first worker turn forbids a background watcher and
 // requires the closing block for the whole turn as the last message after a late
 // event, so the one message the runtime parses never describes only the event
