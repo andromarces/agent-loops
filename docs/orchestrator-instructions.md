@@ -22,6 +22,7 @@ Reference sections list below names each file and when to read it.
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+- The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
   other remote state. A status read, such as `agent-loop role wait-checks`,
@@ -493,6 +494,24 @@ of this file.
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
+
+## Selecting issues for a batch
+
+A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects. The list command defaults to 30 entries, so pass a limit at least as large as the open PR count. `--limit 1000` covers every open PR of a repository with 1000 or fewer:
+
+```bash
+gh pr list --state open --json number,closingIssuesReferences --limit 1000
+```
+
+Exclude every issue that the list names in `closingIssuesReferences`.
+
+A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply. The paginated read covers every page that the API returns:
+
+```bash
+gh api --paginate "repos/{owner}/{repo}/pulls/<n>/commits" --jq '.[].commit.message'
+```
+
+Exclude every issue that a commit message closes. The commits endpoint returns at most 250 commits of a PR, so a read that returns 250 commits is incomplete. For that PR, stop issue selection and ask the user which issues the PR closes before you select any issue.
 
 ## Several runs at once
 
