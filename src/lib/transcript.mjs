@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic, writeFileAtomicSync } from "./atomic-write.mjs";
-import { readableErrorText, readProp } from "./error-message.mjs";
+import { readableErrorText, readProp, redactedText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logWarn, logWarnFull } from "./log.mjs";
 import {
@@ -80,7 +80,9 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
       await removeSessionRecord(options.transcript);
     } catch (err) {
       logWarnFull(
-        `Failed to write transcript to ${options.transcript}: ${readProp(err, "message")}`,
+        redactedText(
+          `Failed to write transcript to ${options.transcript}: ${redactedText(readProp(err, "message"))}`,
+        ),
       );
     }
   };

@@ -26,8 +26,8 @@ export function parseSettings(text, path) {
 }
 
 /**
- * Serializes `value` as the settings file text. The trailing newline follows `originalText`: a
- * present newline is kept, and an absent one or null text stays without it.
+ * Serializes `value` as the settings file text. The trailing newline follows `originalText`: absent
+ * text and text that ends with a newline get one, and text that ends without one stays without it.
  */
 export function serializeSettings(value, originalText) {
   const newline =
