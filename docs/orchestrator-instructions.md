@@ -391,7 +391,9 @@ main work tree that `--cwd` ignores, such as agent instructions and `.env`, into
 Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env`
 into the run work tree, so remove that work tree when the run ends. The copy rules,
 `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
-[Local files copied into the work tree](orchestrator/local-files-copy.md).
+[Local files copied into the work tree](orchestrator/local-files-copy.md). For a
+`localFilesDiffer` entry with `changed: "source"`, refresh the copy by hand. For `copy`, a
+turn changed the copy: report a breach under `open`.
 
 Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
 with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused

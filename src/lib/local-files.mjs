@@ -729,6 +729,17 @@ async function copyOne({ rel, src, canon }, rootReal, blocked, hooks) {
 const MISSING = Symbol("missing");
 const NOT_COMPARABLE = Symbol("not comparable");
 
+/** True for a non-empty relative path with no `..` segment and no empty segment. */
+const isPlainRelativeName = (rel) =>
+  typeof rel === "string" &&
+  rel !== "" &&
+  !isAbsolute(rel) &&
+  !rel.split("/").some((part) => part === ".." || part === "");
+
+/** True for a JSON object, never an array or null. */
+const isPlainRecord = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
 /**
  * Returns the SHA-256 of the regular file `rel` under `base` (a canonical path), `MISSING` when
  * the first probe finds no file, or `NOT_COMPARABLE` when it cannot be compared: a link on the
@@ -808,6 +819,102 @@ async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
 }
 
 /**
+ * Hashes each named file of the copy root. `names` is the `copied` list of the init copy.
+ * Returns a plain object of path to SHA-256 hex, or an empty object when there is no main work
+ * tree. A name that cannot be hashed is left out, so the later compare fails closed for it.
+ * Content is never returned or logged. `afterAncestorCheck` and `beforeRead` are test seams.
+ * @param {string} cwd
+ * @param {string[]} names
+ * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function hashCopiedLocalFiles(cwd, names, { signal, ...hooks } = {}) {
+  const located = await locateWorkTrees(cwd, (dir, args, options) =>
+    git(dir, args, { signal, ...options }),
+  );
+  if (located === null) {
+    return {};
+  }
+  const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
+    if (!isPlainRelativeName(rel)) {
+      return null;
+    }
+    const hash = await sha256Of(located.rootReal, rel, hooks);
+    return typeof hash === "string" ? [rel, hash] : null;
+  });
+  return Object.fromEntries(pairs.filter(Boolean));
+}
+
+/**
+ * Names the copied local files whose source or copy differs from the init hash, so a parent can
+ * tell a stale copy from a turn edit. `changed` is `source`, `copy`, `both`, or `unknown`.
+ * `unknown` is the fail-closed result of a legacy or malformed init hash, a failed read, or a
+ * missing file, and an absent hash field is legacy. Nothing is written, and content is never
+ * returned or logged. Returns sorted `{path, changed}` entries, or an empty list when there is
+ * no main work tree. `afterAncestorCheck` and `beforeRead` are test seams.
+ * @param {string} cwd
+ * @param {string[]} names
+ * @param {Record<string, string> | undefined} initHashes
+ * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
+ * @returns {Promise<{ path: string, changed: string }[]>}
+ */
+export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...hooks } = {}) {
+  const located = await locateWorkTrees(cwd, (dir, args, options) =>
+    git(dir, args, { signal, ...options }),
+  );
+  if (located === null) {
+    return [];
+  }
+  const hashes = isPlainRecord(initHashes) ? initHashes : null;
+  const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
+    if (!isPlainRelativeName(rel)) {
+      return { rel, source: NOT_COMPARABLE, copy: NOT_COMPARABLE };
+    }
+    const [source, copy] = await Promise.all([
+      sha256Of(located.mainReal, rel, hooks),
+      sha256Of(located.rootReal, rel, hooks),
+    ]);
+    return { rel, source, copy };
+  });
+  return pairs
+    .map(({ rel, source, copy }) => {
+      const changed = changedSide(rel, source, copy, hashes);
+      return changed === null ? null : { path: String(rel), changed };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** The side that the init hash proves changed, or `unknown` when it proves none. */
+function changedSide(rel, source, copy, hashes) {
+  if (hashes === null || source === NOT_COMPARABLE || copy === NOT_COMPARABLE) {
+    return "unknown";
+  }
+  if (!Object.hasOwn(hashes, rel)) {
+    return "unknown";
+  }
+  const init = hashes[rel];
+  if (typeof init !== "string" || !/^[0-9a-f]{64}$/.test(init)) {
+    return "unknown";
+  }
+  if (source === MISSING && copy === MISSING) {
+    return "both";
+  }
+  if (source === MISSING) {
+    return "source";
+  }
+  if (copy === MISSING) {
+    return "copy";
+  }
+  const sourceChanged = source !== init;
+  const copyChanged = copy !== init;
+  if (sourceChanged && copyChanged) {
+    return "both";
+  }
+  return sourceChanged ? "source" : copyChanged ? "copy" : null;
+}
+
+/**
  * Names the copied local files whose content differs from the file of the same name in the main
  * work tree, so a parent can see a stale copy. `names` is the `copied` list of the init copy.
  * Content is compared by SHA-256 and is never returned or logged. Nothing is written: a copy that
@@ -831,12 +938,7 @@ export async function findDifferingLocalFiles(cwd, names, { signal, ...hooks } =
     return [];
   }
   const differs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
-    if (
-      typeof rel !== "string" ||
-      rel === "" ||
-      isAbsolute(rel) ||
-      rel.split("/").some((part) => part === ".." || part === "")
-    ) {
+    if (!isPlainRelativeName(rel)) {
       return true;
     }
     const [source, copy] = await Promise.all([
