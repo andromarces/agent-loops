@@ -471,6 +471,47 @@ test("abort returns exit 1 and reason", async () => {
   }
 });
 
+// Usefulness: verifies requirement "a headless worker turn whose adapter returns no string response
+// fails" (issue #1496). The result event carries `status: "error"`.
+// The error names the missing string response, and the run never reads the turn as `ok` with a null
+// report.
+test.each([
+  { name: "missing", reply: async () => undefined, got: "undefined" },
+  { name: "non-string", reply: async () => ({ ok: true }), got: "object" },
+])("a headless worker turn fails on a $name response", async ({ reply, got }) => {
+  const repo = await createTempRepo();
+  try {
+    const events = [];
+    const result = await runLoop({
+      task: "Check the worker adapter contract.",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: {
+        orch: scripted([
+          JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
+          JSON.stringify({ action: "abort", reason: "stop" }),
+        ]),
+        work: scripted([reply]),
+        rev: scripted([]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    const workerResult = events.find((event) => event.type === "result" && event.role === "worker");
+    expect(workerResult.result.status).toBe("error");
+    expect(workerResult.result.error).toContain("no string response");
+    expect(workerResult.result.error).toContain(got);
+    expect(result.exitCode).toBe(1);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a review-only headless run refuses a run_worker action,
 // because that mode dispatches no worker, the same hard guard the interactive
 // path applies to --role worker. The check is observable: the run ends on exit 1,

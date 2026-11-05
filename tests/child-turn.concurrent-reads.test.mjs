@@ -123,6 +123,7 @@ test("a worker turn reads the work tree and the shared Git state concurrently", 
           reads.events.length = 0;
           reads.resetStatusGate();
           reads.slowStatus = true;
+          return "done";
         },
       ]),
     },

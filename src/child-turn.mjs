@@ -584,6 +584,15 @@ export async function runChild(options) {
     const shellDenied = role.shellDenied === true;
     // OpenCode sets `multiPartUnidentified` when the text arrived in several unidentified parts.
     const multiPartUnidentified = role.multiPartUnidentified === true;
+    // An adapter returns the turn response as a string. A missing or non-string response breaks
+    // that contract, so the turn fails instead of ending ok with a null report (#1496).
+    if (typeof response !== "string") {
+      throw new Error(
+        `the ${roleName} adapter returned no string response (got ${
+          response === null ? "null" : typeof response
+        })`,
+      );
+    }
     const report = reportForResult(response, multiPartUnidentified);
     return {
       role: roleName,
