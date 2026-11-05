@@ -64,12 +64,12 @@ const conclusionFirstRule =
 
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
- * body, and closing-block rules only. `task` adds the init task block.
+ * body, commit-link, staging, and closing-block rules only. `task` adds the init task block.
  */
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
-    // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the PR
-    // body rule and the named push rule. It repeats the closing block too, because a worker drifts from the block as the
+    // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
+    // repeats the PR body, named push, commit-link, and staging rules. It repeats the closing block too, because a worker drifts from the block as the
     // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
     // (issue #1179).
     return escapeLineSeparators(`${prompt}
