@@ -116,7 +116,14 @@ export function cleanRepoGit(command, args, options) {
       return answer(`${CLEAN_REPO_BRANCH}\n`);
     case '["status","--porcelain=v1","-z","--untracked-files=all"]':
     case '["ls-files","--stage","-z"]':
+    case '["ls-files","-z","--cached","--others","--exclude-standard"]':
+    case '["config","-z","--list","--show-scope"]':
       return answer("");
+    // No branch remote is set and no `origin` remote exists, as in a repository with no remote.
+    case '["config","--get","branch.main.remote"]':
+      return { exitCode: 1, stdout: "", stderr: "" };
+    case '["remote","get-url","origin"]':
+      return { exitCode: 2, stdout: "", stderr: "" };
     // The directory is the only work tree, on branch `main`, in the `--porcelain -z`
     // format: NUL-ended `worktree`, `HEAD`, and `branch` fields, then an empty field.
     // The init copy of local files has no main work tree to copy from.
