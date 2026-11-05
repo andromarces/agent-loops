@@ -18,7 +18,7 @@ import { exec } from "../src/lib/exec.mjs";
 import { readContinuation } from "../src/lib/continuation.mjs";
 import { sessionRecordPath } from "../src/lib/session-record.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
@@ -37,8 +37,10 @@ vi.mock("../src/lib/process-ancestry.mjs", async (importOriginal) => ({
 }));
 
 // Fails `git status` from its `failFrom`-th call on, so a test can break the snapshot that follows a
-// turn. The real `execa` answers every other call.
+// turn. While `gitDouble.answer` is set, it answers every other `git` call from memory. The real
+// `execa` answers the rest.
 const git = vi.hoisted(() => ({ statusCalls: 0, failFrom: Infinity }));
+const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
@@ -47,7 +49,9 @@ vi.mock("execa", async (importOriginal) => {
       if (command === "git" && args[0] === "status" && ++git.statusCalls >= git.failFrom) {
         return Promise.resolve({ exitCode: 128, stdout: "", stderr: "git read failed" });
       }
-      return real.execa(command, args, options);
+      return gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options);
     },
   };
 });
@@ -64,8 +68,17 @@ let repo;
 let scratch;
 const exitCode = process.exitCode;
 
-beforeEach(async () => {
+// A case starts on a directory whose `git` calls are answered from memory. A case that asserts a
+// real Git result, such as the mutation check, calls `useRealRepo` first.
+async function useRealRepo() {
+  await removePath(repo);
+  gitDouble.answer = null;
   repo = await realpath(await createTempRepo());
+}
+
+beforeEach(async () => {
+  repo = await realpath(await createCleanRepoDir());
+  gitDouble.answer = cleanRepoGit;
   scratch = await realpath(await mkdtemp(join(tmpdir(), "session-persist-")));
   vi.stubEnv("CLAUDE_CONFIG_DIR", join(scratch, "claude-config"));
   vi.mocked(exec).mockReset();
@@ -80,6 +93,7 @@ afterEach(async () => {
   process.exitCode = exitCode;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  gitDouble.answer = null;
   await removePath(repo);
   await rm(scratch, { recursive: true, force: true });
 });
@@ -283,6 +297,7 @@ const expectRecorded = (role, midTurn) => {
 // Usefulness: verifies an in-tree transcript gives --continue-from the pre-assigned id before a
 // Claude reviewer CLI starts, and the turn passes its mutation check (issue #581).
 test("an in-tree transcript is written before a Claude reviewer turn without a mutation failure", async () => {
+  await useRealRepo();
   const transcript = join(repo, "run.json");
   const midTurn = await reviewerRun(transcript, repo);
   expect(process.exitCode).toBe(0);
@@ -292,6 +307,7 @@ test("an in-tree transcript is written before a Claude reviewer turn without a m
 
 // Usefulness: verifies the same for a Claude orchestrator first turn, the other turn under the check.
 test("an in-tree transcript is written before a Claude orchestrator turn without a mutation failure", async () => {
+  await useRealRepo();
   const transcript = join(repo, "run.json");
   let midTurn;
   vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
@@ -310,6 +326,7 @@ test("an in-tree transcript is written before a Claude orchestrator turn without
 // Usefulness: verifies the mutation check stays exact: a reviewer that writes another file in an
 // in-tree transcript run still fails the check (issue #581).
 test("an in-tree transcript leaves the mutation check exact for every other path", async () => {
+  await useRealRepo();
   const transcript = join(repo, "run.json");
   await reviewerRun(transcript, repo, () => writeFile(join(repo, "leak.txt"), "leak\n"));
   expect(process.exitCode).toBe(1);
@@ -322,6 +339,7 @@ test("an in-tree transcript leaves the mutation check exact for every other path
 // Usefulness: verifies a transcript inside the repository but outside --cwd counts as in tree,
 // because the mutation snapshot covers the whole Git work tree.
 test("a transcript inside the repository but outside --cwd is written before the reviewer turn", async () => {
+  await useRealRepo();
   const cwd = join(repo, "sub");
   await mkdir(cwd);
   const transcript = join(repo, "run.json");
@@ -333,6 +351,7 @@ test("a transcript inside the repository but outside --cwd is written before the
 
 // Usefulness: verifies a work tree directory whose name starts with two dots counts as in tree.
 test("a transcript in a directory named '..records' inside the work tree is written before the reviewer turn", async () => {
+  await useRealRepo();
   const dir = join(repo, "..records");
   await mkdir(dir);
   const transcript = join(dir, "run.json");
@@ -360,6 +379,7 @@ async function addSubmodule() {
 test.skipIf(process.platform === "win32")(
   "a transcript named '<HEAD>' inside the work tree still reports a reviewer commit",
   async () => {
+    await useRealRepo();
     const transcript = join(repo, "<HEAD>");
     await reviewerRun(transcript, repo, () =>
       git_(
@@ -381,6 +401,7 @@ test.skipIf(process.platform === "win32")(
 
 // Usefulness: verifies a transcript path that names a submodule never hides a change inside it.
 test("a transcript path that names a submodule still reports a reviewer change inside it", async () => {
+  await useRealRepo();
   await addSubmodule();
   await reviewerRun(join(repo, "sub"), repo, () =>
     writeFile(join(repo, "sub", "f.txt"), "changed\n"),
@@ -391,6 +412,7 @@ test("a transcript path that names a submodule still reports a reviewer change i
 // Usefulness: verifies a transcript inside a submodule causes no mutation failure, although the
 // outer snapshot sees a write there as a dirty submodule.
 test("a transcript inside a submodule causes no reviewer mutation failure", async () => {
+  await useRealRepo();
   await addSubmodule();
   await reviewerRun(join(repo, "sub", "run.json"), repo);
   expect(process.exitCode).toBe(0);
@@ -408,6 +430,7 @@ async function caseInsensitive() {
 // Usefulness: verifies a case alias of the transcript path causes no mutation failure on a
 // case-insensitive file system.
 test("a case alias of an in-tree transcript causes no reviewer mutation failure", async (ctx) => {
+  await useRealRepo();
   if (!(await caseInsensitive())) ctx.skip();
   await writeFile(join(repo, "run.json"), "{}");
   await reviewerRun(join(repo, "RUN.json"), repo);
@@ -447,6 +470,7 @@ async function restoreDisk(transcript, files) {
 test.each(["orchestrator", "reviewer"])(
   "--continue-from resumes a %s turn that a parent crash left with an in-tree transcript",
   async (role) => {
+    await useRealRepo();
     const transcript = join(repo, "run.json");
     let killedId;
     let disk;
@@ -673,6 +697,7 @@ test("--continue-from refuses a recorded orchestrator id that no session file ba
 // Usefulness: verifies a rejected id leaves no record, and the withdrawal writes no in-tree file,
 // so the reviewer turn passes its mutation check.
 test("a rejected id leaves no record for an in-tree reviewer turn", async () => {
+  await useRealRepo();
   const transcript = join(repo, "run.json");
   vi.mocked(exec).mockImplementationOnce(async (_command, args) => {
     throw Object.assign(new Error("exit 1"), {

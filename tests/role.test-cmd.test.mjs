@@ -10,7 +10,8 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
-  newRunRepo,
+  newCleanRunRepo,
+  newRunRepo as newRealRunRepo,
   readRepoState,
   recordingAdapter,
   reviewerTurn,
@@ -24,7 +25,27 @@ import { createBarrierTest } from "./barrier-helpers.mjs";
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
 
-afterEach(cleanup);
+// Answers `git` from memory for the cases that use `newRunRepo`: they assert the test command and
+// its result, never a Git result. A case that asserts changed paths uses `newRealRunRepo` and real
+// `git`. Every other command reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newRunRepo = () => newCleanRunRepo(gitDouble);
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 // Interactive behavior of `--test-cmd` (issue #420, ADR 0017).
 const node = (body) => `node -e "${body}"`;
@@ -45,8 +66,8 @@ afterEach(async () => {
   }
 });
 
-async function start(extra = []) {
-  const repo = await newRunRepo();
+async function start(extra = [], newRepo = newRunRepo) {
+  const repo = await newRepo();
   const reviewer = recordingAdapter([]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
   const init = await executeRoleCommand(
@@ -207,7 +228,7 @@ test("a later call rejects a changed or added test command", async () => {
 // (issue #420, ADR 0017).
 test("an adapter error keeps the test result in the envelope and the state", async () => {
   const cmd = node("require('fs').writeFileSync('generated.txt', 'x'); console.log('9 passed')");
-  const repo = await newRunRepo();
+  const repo = await newRealRunRepo();
   const failing = {
     async run() {
       throw new Error("reviewer CLI crashed");
@@ -256,7 +277,7 @@ test("a cancel during the command keeps the test result in the envelope and the 
   const cmd = node(
     `require('fs').writeFileSync('early.txt', 'x'); require('fs').writeFileSync('${started.replaceAll("\\", "/")}', 'y'); setTimeout(() => {}, 60000)`,
   );
-  const { repo, agents } = await start(["--test-cmd", cmd]);
+  const { repo, agents } = await start(["--test-cmd", cmd], newRealRunRepo);
   const controller = new AbortController();
   const pending = executeRoleCommand(
     withRepo(dispatchArgv(["--test-cmd", cmd], "reviewer"), repo),

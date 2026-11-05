@@ -1,10 +1,25 @@
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for every case here: a case asserts the sandbox mode, never a Git result.
+// Every other command reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
-  newRunRepo,
+  newCleanRunRepo,
   readRepoState,
   recordingAdapter,
   reviewerTurn,
@@ -12,7 +27,12 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 
-afterEach(cleanup);
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
+
+const newRunRepo = () => newCleanRunRepo(gitDouble);
 
 // Interactive behavior of the Codex reviewer sandbox mode (issue #421, ADR 0019, ADR 0038).
 const INIT = [

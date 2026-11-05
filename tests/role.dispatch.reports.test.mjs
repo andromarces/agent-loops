@@ -10,6 +10,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newCleanRunRepo,
   newRunRepo,
   readRepoState,
   recordingAdapter,
@@ -21,15 +22,16 @@ import {
 import { removePath } from "./fs-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
-// Answers `git` from memory for the tests that switch it on (see
-// `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.
+// Answers `git` from memory for the tests that switch it on (see `gitWhileDotGitExists` in
+// git-helpers.mjs, and `newCleanRunRepo` for the cases that assert no Git result). Every other
+// test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) =>
-      gitDouble.answer
+      gitDouble.answer && command === "git"
         ? gitDouble.answer(command, args, options)
         : real.execa(command, args, options),
   };
@@ -37,6 +39,8 @@ vi.mock("execa", async (importOriginal) => {
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
+
+const newCleanRepo = () => newCleanRunRepo(gitDouble);
 
 afterEach(async () => {
   gitDouble.answer = null;
@@ -81,7 +85,7 @@ test.each([
   { name: "missing", reply: async () => undefined, got: "undefined" },
   { name: "non-string", reply: async () => ({ ok: true }), got: "object" },
 ])("worker dispatch fails on a $name response", async ({ reply, got }) => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const worker = recordingAdapter([reply]);
 
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -503,7 +507,7 @@ test("a failed shared Git read warns without a marker and reports no shared Git 
 // and Deferred labels from a reviewer turn into the envelope (issue #214,
 // issue #217).
 test("reviewer dispatch carries the optional Checks, Notes, and Deferred labels", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -552,7 +556,7 @@ test.each([
     expected: "dropped item",
   },
 ])("worker dispatch carries $name into raw", async ({ extra, expected }) => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const worker = recordingAdapter([]);
   worker.run = async (state) => {
@@ -571,7 +575,7 @@ test.each([
 // Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so
 // the fail-closed rule needs a bold-only parse (issue #1483).
 test("worker dispatch keeps a plain report across unidentified parts", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const worker = recordingAdapter([
     async (state) => {
       state.multiPartUnidentified = true;
@@ -589,7 +593,7 @@ test("worker dispatch keeps a plain report across unidentified parts", async () 
 // Usefulness: verifies a bold-only report from a multi-part unidentified turn fails closed into
 // raw, so the parser's bold support cannot accept that stream (issue #1483).
 test("worker dispatch fails closed for a bold-only report across unidentified parts", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const response = "**Conclusion:** done\n**Why:** ok\n**Blockers:** none";
   const worker = recordingAdapter([
     async (state) => {
@@ -609,7 +613,7 @@ test("worker dispatch fails closed for a bold-only report across unidentified pa
 // Usefulness: verifies the same bold-only report in one part keeps its parsed fields, so the
 // fail-closed rule applies only to multi-part unidentified turns (issue #1483).
 test("worker dispatch keeps a bold-only report from one unidentified part", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const response = "**Conclusion:** done\n**Why:** ok\n**Blockers:** none";
   const worker = recordingAdapter([async () => response]);
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -631,7 +635,7 @@ test("worker dispatch keeps a bold-only report from one unidentified part", asyn
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.
 test("reviewer dispatch exposes a null report and the raw response when the block does not parse", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -654,7 +658,7 @@ test("reviewer dispatch exposes a null report and the raw response when the bloc
 // flagged line still fails safe when the block is long (issue #268). A tail-only
 // fallback loses the head of the block, so this test fails against that behavior.
 test("worker dispatch carries the whole response in raw when the closing block is long", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const response = [
     "Conclusion: done",
@@ -680,7 +684,7 @@ test("worker dispatch carries the whole response in raw when the closing block i
 
 // Usefulness: verifies requirement "a denied shell call shows in the result of the turn" (issue #713) at the envelope: the parent sees `shellDenied`, and the role state keeps no stale flag.
 test("worker dispatch carries shellDenied in the envelope when the adapter flags a denied shell call", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const worker = recordingAdapter([]);
   worker.run = async (state) => {
@@ -701,7 +705,7 @@ test("worker dispatch carries shellDenied in the envelope when the adapter flags
 
 // Usefulness: verifies requirement "the flag follows read-only turns too" (issue #713, ADR 0035): a reviewer envelope carries `shellDenied`, and a later reviewer turn with no denial carries none.
 test("reviewer dispatch carries shellDenied only for the turn that had it", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const reviewer = recordingAdapter([
     (state) => {
@@ -723,7 +727,7 @@ test("reviewer dispatch carries shellDenied only for the turn that had it", asyn
 
 // Usefulness: verifies requirement "the envelope names a transient failure" (issue #1012): a reviewer turn that fails with a flagged error carries `transient`, the step stays charged, and a later plain failure carries no field.
 test("reviewer dispatch carries transient in the error envelope only for a flagged failure", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
 
   const reviewer = recordingAdapter([
     () => {
@@ -751,7 +755,7 @@ test("reviewer dispatch carries transient in the error envelope only for a flagg
 // none carries no field" (issue #1024). The child-turn tests cover the read; only a dispatch
 // covers the envelope and the state file.
 test("reviewer dispatch reports a directory left in the inherited temporary directory", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "role-dispatch-inherited-"));
   try {
     await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());

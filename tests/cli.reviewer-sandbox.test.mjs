@@ -2,9 +2,24 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
+
+// Answers `git` from memory for every case here: a case asserts the sandbox mode, never a Git result.
+// Every other command reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { main } from "../src/cli.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
@@ -59,13 +74,15 @@ let paths = [];
 const exitCode = process.exitCode;
 afterEach(async () => {
   process.exitCode = exitCode;
+  gitDouble.answer = null;
   vi.restoreAllMocks();
   await Promise.all(paths.map(removePath));
   paths = [];
 });
 
 async function workspace() {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   const out = await mkdtemp(join(tmpdir(), "reviewer-sandbox-"));
   paths.push(repo, out);
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
