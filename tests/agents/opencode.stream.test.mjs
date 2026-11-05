@@ -5,7 +5,7 @@ import { expect, test, vi } from "vite-plus/test";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import {} from "../../src/lib/log.mjs";
-import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import { isAcceptedReview, parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { textEvent, trackDispatchPaths } from "./opencode-helpers.mjs";
@@ -720,6 +720,118 @@ test("opencode refuses a bold label that spans unidentified parts", async () => 
   expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
   expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
   expect(bold.message).toContain("**Checks:** tests passed");
+});
+
+// Usefulness: verifies a fenced bold conclusion does not become the guard block start. The real
+// block's label lines still span two parts and the stream refuses (issue #1483).
+test("opencode refuses a stream whose fenced bold conclusion is not the block start", async () => {
+  const first = "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: tests passed\n";
+  const second = "```\n**Conclusion:** example\n```\nVerdict: accept";
+  const error = await runWithEvents(textEvent(first), textEvent(second)).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies inline bold field text in a later part stays in the field above. The join
+// never invents a Checks line or turns acceptance on (issue #1483).
+test("opencode keeps inline bold field text in the field above", async () => {
+  const response = await runWithEvents(
+    textEvent("Conclusion: done\nWhy: Reviewed ", "msg-1"),
+    textEvent("**Checks:** tests passed\nBlockers: none\nVerdict: accept", "msg-1"),
+  );
+
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "Reviewed **Checks:** tests passed",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(parseVerdict(response)).toBe("accept");
+  expect(isAcceptedReview(response)).toBe(false);
+});
+
+// The origin/main result for each OpenCode guard fixture: an error line, or a report and verdict.
+const GUARD_PARITY = [
+  {
+    name: "plain split Checks",
+    events: [textEvent(`${CLOSING_BLOCK}\nChe`), textEvent("cks: pnpm test\nVerdict: accept")],
+    error: UNIDENTIFIED_REFUSAL,
+  },
+  {
+    name: "plain split Verdict label",
+    events: [textEvent(`${CLOSING_BLOCK}\nVer`), textEvent("dict: accept")],
+    error: UNIDENTIFIED_REFUSAL,
+  },
+  {
+    name: "plain split verdict value",
+    events: [textEvent(`${CLOSING_BLOCK}\nVerdict: acc`), textEvent("ept")],
+    error: UNIDENTIFIED_REFUSAL,
+  },
+  {
+    name: "prose Verdict mention",
+    events: [textEvent("Remember that the Verdict: line is required."), textEvent(ACCEPTED_BLOCK)],
+    report: BLOCK_VALUES,
+    verdict: "accept",
+  },
+  {
+    name: "prose Checks mention",
+    events: [textEvent("Checks: will follow below."), textEvent(ACCEPTED_BLOCK)],
+    report: BLOCK_VALUES,
+    verdict: "accept",
+  },
+  {
+    name: "late CRLF",
+    events: [textEvent(ACCEPTED_BLOCK), textEvent("\r\nThe watcher finished.\r\n")],
+    report: BLOCK_VALUES,
+    verdict: "accept",
+  },
+  {
+    name: "late bare CR",
+    events: [textEvent(ACCEPTED_BLOCK), textEvent("\rThe watcher.")],
+    report: BLOCK_VALUES,
+    verdict: "unknown",
+  },
+  {
+    name: "whole block one part",
+    events: [textEvent("Working on it."), textEvent(`${ACCEPTED_BLOCK}\n`)],
+    report: BLOCK_VALUES,
+    verdict: "accept",
+  },
+  {
+    name: "bold split Checks",
+    events: [
+      textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n"),
+      textEvent("**Checks:** tests passed"),
+    ],
+    error: UNIDENTIFIED_REFUSAL,
+  },
+  {
+    name: "fenced bold Conclusion",
+    events: [
+      textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nChecks: tests passed\n"),
+      textEvent("```\n**Conclusion:** example\n```\nVerdict: accept"),
+    ],
+    error: UNIDENTIFIED_REFUSAL,
+  },
+];
+
+// Usefulness: verifies every existing OpenCode guard fixture keeps the origin/main outcome, so
+// bold handling changes no guard decision (issue #1483).
+test.each(GUARD_PARITY)("opencode keeps the origin/main guard result: $name", async (fixture) => {
+  const outcome = await runWithEvents(...fixture.events).catch((err) => err);
+  if (fixture.error) {
+    expect(outcome).toBeInstanceOf(Error);
+    expect(outcome.message.split("\n")[0]).toBe(fixture.error);
+    return;
+  }
+  expect(outcome).not.toBeInstanceOf(Error);
+  expect(parseVerdict(outcome)).toBe(fixture.verdict);
+  if (fixture.report) {
+    expect(parseReportBlock(outcome)).toEqual(fixture.report);
+  }
 });
 
 // Usefulness: verifies a block that sits whole in one unidentified part still parses as accept, so

@@ -762,6 +762,68 @@ const MALFORMED_SHAPES = [
   `${REPORT}\nVerdict: accept`,
 ];
 
+// The origin/main result for each malformed shape: report, verdict, and acceptance.
+const MALFORMED_RESULTS = [
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [
+    { conclusion: "c", why: "w", blockers: "one; two", checks: null, notes: null, deferred: null },
+    "unknown",
+    false,
+  ],
+  [null, "unknown", false],
+  [
+    { conclusion: "c", why: "w", blockers: "none", checks: null, notes: null, deferred: null },
+    "unknown",
+    false,
+  ],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [
+    {
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    },
+    "unknown",
+    false,
+  ],
+  [
+    {
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    },
+    "accept",
+    false,
+  ],
+];
+
 // Usefulness: ties the closing-block attempt rule to the parser (issue #449): whenever the parser sees a closing block or treats a label line as part of one, the response counts as an attempt, so a malformed final report is never replaced by an earlier one.
 test("hasClosingBlockAttempt holds for every malformed or parseable closing block shape", () => {
   for (const shape of MALFORMED_SHAPES) {
@@ -781,6 +843,17 @@ test("hasClosingBlockAttempt is false for prose and lists with no label", () => 
   ]) {
     expect(hasClosingBlockAttempt(prose), prose).toBe(false);
   }
+});
+
+// Usefulness: verifies every malformed parser fixture keeps its origin/main report, verdict, and
+// acceptance result, so bold handling changes no fail-closed shape (issue #1483).
+test("parseReportBlock keeps the origin/main result for every malformed fixture", () => {
+  MALFORMED_SHAPES.forEach((shape, index) => {
+    const [report, verdict, accepted] = MALFORMED_RESULTS[index];
+    expect(parseReportBlock(shape), shape).toEqual(report);
+    expect(parseVerdict(shape), shape).toBe(verdict);
+    expect(isAcceptedReview(shape), shape).toBe(accepted);
+  });
 });
 
 // Usefulness: verifies a spaceless bullet under an empty Checks line never supplies the Checks

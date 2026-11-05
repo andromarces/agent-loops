@@ -22,31 +22,30 @@ const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
 const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
 const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 
-// A line that opens a report label at column 0, plain or bold, for example `Why:` or `**Why:**`.
-const REPORT_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}):|${BOLD_LABEL})`, "i");
-
-// A line that opens a report label at column 0, plain or bold, or a plain `Verdict:` line.
-const BLOCK_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL})`, "i");
-
-// A line that starts a closing block, plain or bold `Conclusion`.
-const BLOCK_START = new RegExp(`^(?:Conclusion:|\\*\\*Conclusion:\\*\\*)\\s*`, "i");
+// A line that opens a known report label or a plain `Verdict` line at column 0, plain or bold.
+const KNOWN_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL})`, "i");
 
 // A line that opens a plain report label at column 0.
-const KNOWN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
+const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
 
-/** True when the line opens a report label at column 0, plain or bold (issue #1483). */
-export function opensReportLabel(line) {
-  return REPORT_LABEL_LINE.test(line);
+/**
+ * True when `line` opens a known report label or a plain `Verdict` line at column 0, plain or bold.
+ * A line inside a fenced code block is no known label (issue #1483).
+ * @param {string} line
+ * @param {boolean} [fenced]
+ * @returns {boolean}
+ */
+export function isKnownLabelLine(line, fenced = false) {
+  return !fenced && KNOWN_LABEL_LINE.test(line);
 }
 
-/** True when the line opens a report label or a plain `Verdict` line at column 0 (issue #1483). */
-export function opensBlockLabel(line) {
-  return BLOCK_LABEL_LINE.test(line);
-}
-
-/** True when the line starts a closing block, plain or bold `Conclusion` (issue #1483). */
-export function startsClosingBlock(line) {
-  return BLOCK_START.test(line);
+/**
+ * Fenced-code flags for `lines`, with the fence rules the parser uses (issue #1483).
+ * @param {string[]} lines
+ * @returns {boolean[]}
+ */
+export function fencedLineFlags(lines) {
+  return fencedLines(lines);
 }
 
 // Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
@@ -75,7 +74,7 @@ function fencedLines(lines) {
  * @param {string} text
  * @returns {string}
  */
-export function normalizeReportLabels(text) {
+function normalizeReportLabels(text) {
   const lines = text.split(/\r?\n/);
   const fenced = fencedLines(lines);
   return lines
@@ -83,7 +82,9 @@ export function normalizeReportLabels(text) {
       if (!BOLD_LABEL_LINE.test(line)) {
         return line;
       }
-      return fenced[index] ? `x${line}` : line.replace(BOLD_LABEL_LINE, "$1:$2");
+      return isKnownLabelLine(line, fenced[index])
+        ? line.replace(BOLD_LABEL_LINE, "$1:$2")
+        : `x${line}`;
     })
     .join("\n");
 }
@@ -239,7 +240,7 @@ function closingBlock(response, { unlabeled = false } = {}) {
   if (!unlabeled) {
     return null;
   }
-  const first = lines.findIndex((line) => KNOWN_LABEL_LINE.test(line));
+  const first = lines.findIndex((line) => PLAIN_LABEL_LINE.test(line));
   if (first === -1) {
     return null;
   }
