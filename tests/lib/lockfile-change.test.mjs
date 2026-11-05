@@ -89,9 +89,11 @@ vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
 
 const { diffLockfiles, readLockfiles } = await import("../../src/lib/lockfile-change.mjs");
 
+// A case creates the repository it needs, so a case that reads no Git path starts no process
+// and its hooks carry no Git work.
 let repo;
 beforeEach(async () => {
-  repo = await createTempRepo();
+  repo = undefined;
 });
 afterEach(async () => {
   hashing.stall = false;
@@ -106,7 +108,8 @@ afterEach(async () => {
   roots.delayMs = null;
   vi.useRealTimers();
   vi.restoreAllMocks();
-  await removePath(repo);
+  if (repo) await removePath(repo);
+  repo = undefined;
 });
 
 // Bounds the wait for the first hash read, so a stalled start fails by name, not at the test timeout.
@@ -176,6 +179,11 @@ async function startHashRead({ rootDelayMs = 0 } = {}) {
 // would hold the worker turn after a cancel. A lockfile whose hash did not end in time is reported,
 // never read as absent.
 test("a stalled lockfile hash read ends at the bound and reports every lockfile", async () => {
+  repo = await mkdtemp(join(tmpdir(), "lockfile-change-"));
+  // The root and list reads are answered without `git`, so the case starts no process; the
+  // stalled hash read is its subject.
+  roots.delayMs = 0;
+  gitList.output = "";
   const before = await readLockfiles(repo);
   await writeFile(join(repo, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -191,6 +199,7 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
 // (issue #1440): a root read slower than the bound in real time must still start a hash read, or
 // the two cases below fail under load. A root-read timer at the bound fails this case by name.
 test("a root read slower than the bound in real time still starts a hash read", async () => {
+  repo = await createTempRepo();
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
   const read = await startHashRead({ rootDelayMs: 300 });
@@ -202,6 +211,7 @@ test("a root read slower than the bound in real time still starts a hash read", 
 // Usefulness: verifies requirement "the bound aborts the signal of a hash read" (issue #1225), so a
 // read that has not started its request stops. It shows the signal, not release of an open handle.
 test("a hash read still pending at the bound receives an aborted signal", async () => {
+  repo = await createTempRepo();
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
   const read = await startHashRead();
@@ -213,6 +223,7 @@ test("a hash read still pending at the bound receives an aborted signal", async 
 // Usefulness: verifies requirement "the bound aborts with its named reason" (#1269): the helper
 // shared by three reads must not change the lockfile read's abort reason.
 test("the bound aborts a pending hash read with the lockfile read reason", async () => {
+  repo = await createTempRepo();
   vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.captureSignal = true;
   const read = await startHashRead();
@@ -227,6 +238,7 @@ test("the bound aborts a pending hash read with the lockfile read reason", async
 // parent reads only the envelope, so a null read would look like "no change". An unread root counts
 // as changed for every lockfile, like an unreadable lockfile.
 test("an unread work tree root reports every lockfile as changed", async () => {
+  repo = await createTempRepo();
   const before = await readLockfiles(repo);
   const outside = await mkdtemp(join(tmpdir(), "agent-loops-no-repo-"));
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -251,6 +263,7 @@ test("an unread work tree root reports every lockfile as changed", async () => {
 // #1180): the parent reads only the envelope, so a warning alone would leave an edited lockfile with
 // no reinstall signal. A reinstall is harmless and a missed one is the failure the field targets.
 test("an edited lockfile whose hash read fails is still reported", async () => {
+  repo = await createTempRepo();
   const before = await readLockfiles(repo);
   await writeFile(join(repo, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   hashing.failing.add("pnpm-lock.yaml");
@@ -263,6 +276,7 @@ test("an edited lockfile whose hash read fails is still reported", async () => {
 // Usefulness: verifies the same when the read before the turn failed, so a lockfile with an unknown
 // start state is reported too.
 test("a lockfile whose hash read failed before the turn is reported", async () => {
+  repo = await createTempRepo();
   hashing.failing.add("pnpm-lock.yaml");
   vi.spyOn(console, "error").mockImplementation(() => {});
   const before = await readLockfiles(repo);
@@ -279,6 +293,7 @@ test("two lockfile reads that failed report no change", () => {
 // Usefulness: verifies a non-Node dependency file in a subdirectory reports its change, so the
 // parent reinstalls the right toolchain. An unchanged file stays out of the field.
 test("a subdirectory requirements file reports only a real change", async () => {
+  repo = await createTempRepo();
   await mkdir(join(repo, "sub"), { recursive: true });
   await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
   const before = await readLockfiles(repo);
@@ -290,6 +305,7 @@ test("a subdirectory requirements file reports only a real change", async () => 
 // Usefulness: verifies an added and a deleted dependency file both reach the field, so neither
 // change is lost when the two sides list different paths.
 test("an added and a deleted dependency file are both reported", async () => {
+  repo = await createTempRepo();
   await writeFile(join(repo, "constraints.txt"), "one\n");
   await mkdir(join(repo, "sub"), { recursive: true });
   await writeFile(join(repo, "sub", "poetry.lock"), "one\n");
@@ -306,6 +322,7 @@ test("an added and a deleted dependency file are both reported", async () => {
 // Usefulness: verifies an ignored dependency file is never read, while a tracked-path change is.
 // The ignored directory holds a matching name, so a list read without the exclude rule fails.
 test("an ignored dependency file is not reported", async () => {
+  repo = await createTempRepo();
   await writeFile(join(repo, ".gitignore"), "ignored/\n");
   await mkdir(join(repo, "ignored"), { recursive: true });
   await writeFile(join(repo, "ignored", "requirements.txt"), "one\n");
@@ -320,6 +337,7 @@ test("an ignored dependency file is not reported", async () => {
 // Usefulness: verifies a look-alike name stays out of the field, while a listed name is reported.
 // A substring match must not report requirements.md or my-poetry.lock.
 test("a file name that only resembles the list is not reported", async () => {
+  repo = await createTempRepo();
   await writeFile(join(repo, "requirements.md"), "one\n");
   await mkdir(join(repo, "sub"), { recursive: true });
   await writeFile(join(repo, "sub", "my-poetry.lock"), "one\n");
@@ -334,6 +352,7 @@ test("a file name that only resembles the list is not reported", async () => {
 // Usefulness: verifies hostile path names are read through -z and reported exactly, so a space,
 // a non-ASCII character, or a newline cannot change which file the parent sees.
 test("a hostile dependency path is reported exactly", async () => {
+  repo = await createTempRepo();
   const paths = ["sub dir/requirements dev.txt", "sub-é/requirements.txt"];
   if (process.platform !== "win32") paths.push("sub\nline/requirements.txt");
   for (const path of paths) {
@@ -350,6 +369,7 @@ test("a hostile dependency path is reported exactly", async () => {
 // Usefulness: verifies a failed dependency file list reports every known dependency path, so a
 // list failure never reads as no change.
 test("a failed dependency file list reports every known path", async () => {
+  repo = await createTempRepo();
   await mkdir(join(repo, "sub"), { recursive: true });
   await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
   const before = await readLockfiles(repo);
@@ -376,6 +396,7 @@ test("a failed dependency file list reports every known path", async () => {
 // Usefulness: verifies a dependency file list read past the bound fails closed, so a timeout
 // never reads as no change.
 test("a dependency file list read past the bound reports every known path", async () => {
+  repo = await mkdtemp(join(tmpdir(), "lockfile-change-"));
   await mkdir(join(repo, "sub"), { recursive: true });
   await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
   gitList.output = "sub/requirements.txt\0";
@@ -412,6 +433,7 @@ test("a dependency file list read past the bound reports every known path", asyn
 // Usefulness: verifies the dependency file cap reports the overflow, so a silent no change cannot
 // hide a file above the cap.
 test("dependency files above the cap are reported as changed", async () => {
+  repo = await createTempRepo();
   const many = join(repo, "many");
   await mkdir(many, { recursive: true });
   const names = Array.from(
@@ -429,6 +451,7 @@ test("dependency files above the cap are reported as changed", async () => {
 // Usefulness: verifies every listed non-Node name matches at any depth, so a typo cannot leave
 // one toolchain outside the field.
 test("every listed non-Node dependency name is reported", async () => {
+  repo = await createTempRepo();
   const names = [
     "requirements-dev.txt",
     "constraints-prod.txt",

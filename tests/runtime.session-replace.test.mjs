@@ -247,6 +247,8 @@ test.each([
   "a %s turn that fails after the adapter succeeded clears the replacement mark",
   async (name, action) => {
     const repo = await createTempRepo();
+    // The turn reads `git` from memory (`cleanRepoGit`), so no snapshot process runs.
+    gitDouble.answer = cleanRepoGit;
     try {
       const orch = scripted([JSON.stringify({ action, prompt: "go" }), ORCHESTRATOR_FINISH]);
       const child = {
@@ -281,6 +283,7 @@ test.each([
 
       expect(roles[name].conversationReplaced).toBeUndefined();
     } finally {
+      gitDouble.answer = null;
       await removePath(repo);
     }
   },
