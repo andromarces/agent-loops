@@ -328,6 +328,18 @@ Apply these parent rules:
   the compare, and nothing else in the run distinguishes an omitted marker from a
   verified finish, so always set it.
 
+## Check waits
+
+An `--all` pass has a second hold. It holds while a `github-actions` check suite on the head is not completed. It also holds while the head has no `github-actions` suite. A dependent job of that workflow then needs no `--expect`.
+
+One proof is enough to skip a workflow. The text names no `pull_request` trigger, or a `paths` list matches no PR file. A `paths-ignore` list can match every PR file, or a `branches` list can omit the base branch. A `branches-ignore` list can name the base branch.
+
+A `types` filter never skips. A trigger or filter form that the command cannot settle holds the pass. So does a workflow file that the PR changes. So does a read that fails or cannot be parsed. The hold ends at the bound with `timedOut: true`, never a pass.
+
+The suite read is pinned to the head SHA, like the check-run and status reads. Only a `github-actions` suite holds the pass, so a suite of another app never holds it. `--expect` stays needed for a check of a third-party app.
+
+The hold ignores a workflow that runs only on `push`. That workflow never holds the pass, whatever its `branches` or `paths` filters say. `--expect` stays needed for its check. These rules cover every `--all` wait.
+
 ## Work tree ownership
 
 The parent creates the run's work tree and owns it. Keep that work tree in place
