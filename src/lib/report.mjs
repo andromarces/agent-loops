@@ -1,4 +1,4 @@
-// Parses the closing block that reportBlock (src/prompts/report.mjs) requires
+// Parses the closing block that reportBlock (src/prompts/rules.mjs) requires
 // from every child turn, plus the reviewer Verdict line. Both parse only the
 // final block, which starts at the last `Conclusion:` line, so labels or
 // verdicts in earlier prose can never produce a verdict.
@@ -88,7 +88,7 @@ function hasTablePair(lines) {
 // `*Note*:x`, and `*emph*.2`. A non-ASCII digit (`*emph*.٢`, `*file*.٢`) carries
 // no `\d`, so it does not flag. The cost is not only a reporting loss: a null
 // block has no Checks line, so the `--require-accept` gate also refuses.
-// `acceptGateReason` in src/role-finish.mjs returns "the accepted review has no Checks
+// `acceptGateReason` in src/role/finish.mjs returns "the accepted review has no Checks
 // line", and `isAcceptedReview` in this file returns false. Both
 // directions fail closed, but the report loses its text to `raw`, and the
 // `acceptGateReason` refusal names the wrong cause.

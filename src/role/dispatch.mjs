@@ -2,15 +2,15 @@
 // one child turn under the state lock, recording the result in the state file.
 import { appendFile, readFile, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { normalizeAgent } from "./agents/index.mjs";
-import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "./lib/args.mjs";
-import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
-import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
-import { sha256 } from "./lib/hash.mjs";
-import { copyLocalFiles, findDifferingLocalFiles } from "./lib/local-files.mjs";
-import { logInfo, logWarn, logWarnFull } from "./lib/log.mjs";
-import { processStartTime } from "./lib/process-identity.mjs";
-import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
+import { normalizeAgent } from "../agents/index.mjs";
+import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
+import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
+import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
+import { sha256 } from "../lib/hash.mjs";
+import { copyLocalFiles, findDifferingLocalFiles } from "../lib/local-files.mjs";
+import { logInfo, logWarn, logWarnFull } from "../lib/log.mjs";
+import { processStartTime } from "../lib/process-identity.mjs";
+import { parseReportBlock, parseVerdict } from "../lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
   readClaudeSessions,
@@ -18,32 +18,32 @@ import {
   statePaths,
   writeSessionEntry,
   writeState,
-} from "./lib/runstate.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
-import { withStateLock } from "./lib/state-lock.mjs";
-import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "./lib/test-cmd.mjs";
-import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
-import { runChild } from "./child-turn.mjs";
+} from "../lib/runstate.mjs";
+import { assertGitWorkTree } from "../lib/snapshot.mjs";
+import { withStateLock } from "../lib/state-lock.mjs";
+import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "../lib/test-cmd.mjs";
+import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
+import { runChild } from "../child-turn.mjs";
 import {
   failedTurnEvidence,
   turnResultFields,
   TURN_EVIDENCE_FIELDS,
-} from "./lib/turn-evidence.mjs";
+} from "../lib/turn-evidence.mjs";
 import {
   normalizedLocalPaths,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
   storedReviewerSandbox,
   validateInitFlags,
-} from "./role-args.mjs";
-import { RoleError } from "./role-envelope.mjs";
+} from "./args.mjs";
+import { RoleError } from "./envelope.mjs";
 import {
   acquireWorkTreeLock,
   readStdin,
   refuseUnreadableGate,
   releaseWorkTreeLock,
   requireState,
-} from "./role-state.mjs";
+} from "./state.mjs";
 
 /**
  * Init detection is keyed on `--task` alone: the first call carries the task;

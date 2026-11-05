@@ -1,6 +1,6 @@
 // The JSON envelope of `agent-loop role`: the error result for a thrown value and the stdout write.
 import { writeSync } from "node:fs";
-import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "./lib/error-message.mjs";
+import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "../lib/error-message.mjs";
 
 // The refusal that `agent-loop role` reports as a one-line error envelope.
 export class RoleError extends Error {}

@@ -6,16 +6,16 @@ import {
   REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
   REVIEW_ONLY_GATE_REFUSAL,
   unresolvedCompareReason,
-} from "./lib/args.mjs";
-import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
-import { isJsonObject } from "./lib/json.mjs";
-import { logInfo } from "./lib/log.mjs";
-import { acceptanceFailure } from "./lib/report.mjs";
-import { writeState } from "./lib/runstate.mjs";
-import { reviewedState, snapshot } from "./lib/snapshot.mjs";
-import { validateAction } from "./contracts/orchestrator-action.mjs";
-import { RoleError } from "./role-envelope.mjs";
-import { releaseWorkTreeLock } from "./role-state.mjs";
+} from "../lib/gate-refusal.mjs";
+import { checkCi, checkPrHead } from "../lib/ci-gate.mjs";
+import { isJsonObject } from "../lib/json.mjs";
+import { logInfo } from "../lib/log.mjs";
+import { acceptanceFailure } from "../lib/report.mjs";
+import { writeState } from "../lib/runstate.mjs";
+import { reviewedState, snapshot } from "../lib/snapshot.mjs";
+import { validateAction } from "../contracts/orchestrator-action.mjs";
+import { RoleError } from "./envelope.mjs";
+import { releaseWorkTreeLock } from "./state.mjs";
 
 // V8 `JSON.parse` message heads that carry no input text, observed on Node 26 (#839).
 const JSON_POSITION_PHRASES = [

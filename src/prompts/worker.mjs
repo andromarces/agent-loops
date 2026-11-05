@@ -9,7 +9,7 @@ import {
   tempPathRule,
   tempRemovalRule,
   testSlotRule,
-} from "./report.mjs";
+} from "./rules.mjs";
 
 // A closing keyword in a commit message closes the issue at merge, even after the PR body changes
 // to `Refs` (issue #1296).

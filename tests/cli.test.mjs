@@ -20,7 +20,7 @@ vi.mock("execa", async (importOriginal) => {
 
 import { execa } from "execa";
 import { main } from "../src/cli.mjs";
-import { parseRoleArgs } from "../src/role.mjs";
+import { parseRoleArgs } from "../src/role/index.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo, createWithContinueRepo, untrackedFilesGit } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";

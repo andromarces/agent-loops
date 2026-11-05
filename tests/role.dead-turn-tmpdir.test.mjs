@@ -16,7 +16,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { readProcessCommands, readProcessTable } from "../src/lib/process-ancestry.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { withTurnTmpdir } from "../src/lib/turn-tmpdir.mjs";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -49,7 +49,7 @@ vi.mock("../src/lib/atomic-write.mjs", async (importOriginal) => {
   };
 });
 
-const ROLE = fileURLToPath(new URL("../src/role.mjs", import.meta.url));
+const ROLE = fileURLToPath(new URL("../src/role/index.mjs", import.meta.url));
 const scratches = [];
 // Every spawned dispatch, so teardown ends it on every path, a startup timeout included.
 const dispatches = [];

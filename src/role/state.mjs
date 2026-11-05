@@ -1,10 +1,11 @@
 // Shared run state and work tree lock helpers of `agent-loop role`: the required state read, the
 // unreadable-gate refusal, the prompt stdin read, and the acquire and release of the run lock.
-import { readStdinText, unreadableGateRefusal } from "./lib/args.mjs";
-import { unreadableGateReason } from "./lib/ci-gate.mjs";
-import { cwdHash } from "./lib/runstate.mjs";
-import { lockWorkTree, unlockWorkTree } from "./lib/work-tree-lock.mjs";
-import { RoleError } from "./role-envelope.mjs";
+import { readStdinText } from "../lib/args.mjs";
+import { unreadableGateReason } from "../lib/ci-gate.mjs";
+import { unreadableGateRefusal } from "../lib/gate-refusal.mjs";
+import { cwdHash } from "../lib/runstate.mjs";
+import { lockWorkTree, unlockWorkTree } from "../lib/work-tree-lock.mjs";
+import { RoleError } from "./envelope.mjs";
 
 // The recovery that the interactive path owns when it cannot declare the PR: the runtime compares
 // the head, where the headless path has only the parent's marker (#1098).

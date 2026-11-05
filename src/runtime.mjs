@@ -1,11 +1,11 @@
 import { defaultAgents } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
+import { DEFAULT_MAX_STEPS } from "./lib/args.mjs";
 import {
   COMPARE_HEAD_INPUT_REFUSAL,
-  DEFAULT_MAX_STEPS,
   REVIEW_ONLY_WORKER_REFUSAL,
   unreadableGateRefusal,
-} from "./lib/args.mjs";
+} from "./lib/gate-refusal.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { unreadableGateReason } from "./lib/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";

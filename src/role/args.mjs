@@ -1,7 +1,7 @@
 // Arguments of `agent-loop role`: parsing, the refusal of a flag that belongs to another operation,
 // the checks that run at init, and the refusal of an init flag that a later call changes.
 import { resolve } from "node:path";
-import { normalizeAgent, supportedAgents } from "./agents/index.mjs";
+import { normalizeAgent, supportedAgents } from "../agents/index.mjs";
 import {
   CHILD_ROLE_KINDS,
   ROLE_FLAG_BY_OPTION,
@@ -11,11 +11,11 @@ import {
   parseFlags,
   recordedReviewerSandbox,
   roleFlags,
-} from "./lib/args.mjs";
-import { isFullSha } from "./lib/git-sha.mjs";
-import { sha256 } from "./lib/hash.mjs";
-import { normalizeLocalPath } from "./lib/local-files.mjs";
-import { RoleError } from "./role-envelope.mjs";
+} from "../lib/args.mjs";
+import { isFullSha } from "../lib/git-sha.mjs";
+import { sha256 } from "../lib/hash.mjs";
+import { normalizeLocalPath } from "../lib/local-files.mjs";
+import { RoleError } from "./envelope.mjs";
 
 const INIT_FIELDS = [
   "task",
@@ -200,7 +200,7 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
  * validation runs later through `validateInitFlags`. Semantics that depend on the state file (init
  * detection, change rejection) are checked at execution time, not parse time.
  */
-export function parseRoleArgs(argv, operations) {
+export function parseRoleArgsWithOperations(argv, operations) {
   const names = operations.map((operation) => operation.name);
   const args = {
     operation: names[0],

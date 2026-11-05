@@ -6,7 +6,7 @@ import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import {} from "../../src/lib/log.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { textEvent, trackDispatchPaths } from "./opencode-helpers.mjs";
 
@@ -127,7 +127,7 @@ test("opencode joins parts of one message without a line break", async () => {
 // Usefulness: verifies a part that opens a closing-block label starts its own line, so the
 // dispatch envelope carries the parsed report instead of falling through to `raw` (issue #316).
 // The assertions read the response through the same two functions `dispatchPayload`
-// (src/role.mjs) calls, so a caller sees exactly the `report` and `raw` fields asserted here.
+// (src/role/index.mjs) calls, so a caller sees exactly the `report` and `raw` fields asserted here.
 // A single part carries the block unchanged, so the same test also covers the no-separator case.
 test("opencode keeps a closing-block label at the start of its own line", async () => {
   const single = await runWithText(CLOSING_BLOCK);

@@ -161,8 +161,8 @@ Andro Marces
 
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
 - Implementation:
-  - Source: `missingGateRefusal` in `src/lib/args.mjs`
-  - Source: The finish gate in `src/role-finish.mjs`
+  - Source: `missingGateRefusal` in `src/lib/gate-refusal.mjs`
+  - Source: The finish gate in `src/role/finish.mjs`
   - Source: The `--pr` flag in `src/cli.mjs`
   - Source: The prompt block in `src/prompts/orchestrator.mjs`
   - Test: `tests/runtime*.test.mjs`
@@ -173,7 +173,7 @@ Andro Marces
   - Documented in `docs/orchestrator-instructions.md`
   - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
   - Documented in [Options](../docs/reference/usage.md#options)
-- [Issue #337: Reject --require-ci and --pr on a review-only headless run](https://github.com/andromarces/agent-loops/issues/337) — the headless `--mode`, the two refusals, and the shared refusal wording in `src/lib/args.mjs`
+- [Issue #337: Reject --require-ci and --pr on a review-only headless run](https://github.com/andromarces/agent-loops/issues/337) — the headless `--mode`, the two refusals, and the shared refusal wording. That wording lives in `src/lib/gate-refusal.mjs`.
 - [Issue #286: An omitted unresolvedCompare marker reads as a verified finish](https://github.com/andromarces/agent-loops/issues/286)
 - [PR #293](https://github.com/andromarces/agent-loops/pull/293)
 - Partially superseded by [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md)

@@ -12,7 +12,7 @@ import {
   tempPathRule,
   tempRemovalRule,
   testSlotRule,
-} from "./report.mjs";
+} from "./rules.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra. The

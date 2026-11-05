@@ -4,37 +4,33 @@
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
-import { defaultAgents } from "./agents/index.mjs";
-import { CHILD_ROLE_KINDS, REVIEW_ONLY_PR_REFUSAL, openCodeOptionsError } from "./lib/args.mjs";
-import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
-import { isSpawnedByRun } from "./lib/exec.mjs";
-import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
+import { defaultAgents } from "../agents/index.mjs";
+import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
+import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
+import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
+import { isSpawnedByRun } from "../lib/exec.mjs";
+import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
 import {
   TERMINAL_LIFECYCLES,
   cwdHash,
   readState,
   statePaths,
   writeState,
-} from "./lib/runstate.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
-import { withStateLock } from "./lib/state-lock.mjs";
-import { withTimeBound } from "./lib/time-bound.mjs";
-import { cancelOnSigInt } from "./lib/sigint.mjs";
-import { recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
+} from "../lib/runstate.mjs";
+import { assertGitWorkTree } from "../lib/snapshot.mjs";
+import { withStateLock } from "../lib/state-lock.mjs";
+import { withTimeBound } from "../lib/time-bound.mjs";
+import { cancelOnSigInt } from "../lib/sigint.mjs";
+import { recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
-  parseRoleArgs as parseRoleArgsWithOperations,
+  parseRoleArgsWithOperations,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
-} from "./role-args.mjs";
-import { dispatch } from "./role-dispatch.mjs";
-import { RoleError, printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
-import { finishRun } from "./role-finish.mjs";
-import {
-  readStdin,
-  refuseUnreadableGate,
-  releaseWorkTreeLock,
-  requireState,
-} from "./role-state.mjs";
+} from "./args.mjs";
+import { dispatch } from "./dispatch.mjs";
+import { RoleError, printEnvelope, errorResult, writeAllSync } from "./envelope.mjs";
+import { finishRun } from "./finish.mjs";
+import { readStdin, refuseUnreadableGate, releaseWorkTreeLock, requireState } from "./state.mjs";
 
 // Every operation of `agent-loop role`, in default-first usage order. `runEnding` marks an
 // operation that ends, extends, or changes the PR or a model of a run; a child process of that run

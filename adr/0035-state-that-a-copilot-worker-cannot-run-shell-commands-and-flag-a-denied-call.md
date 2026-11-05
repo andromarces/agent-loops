@@ -91,6 +91,6 @@ Andro Marces
 - [Issue #710: Verification checklist: live runs](https://github.com/andromarces/agent-loops/issues/710)
 - [Issue #713: A Copilot worker turn is denied shell commands that the worker contract requires](https://github.com/andromarces/agent-loops/issues/713)
 - [ADR 0014: Extend the step budget of a live run](0014-extend-the-step-budget-of-a-live-run.md)
-- Implementation: `runCopilot` in `src/agents/copilot.mjs`, `invoke` and `runChild` in `src/child-turn.mjs`, `dispatchPayload` in `src/role-dispatch.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`, and the worker preamble in `src/prompts/worker.mjs`. The rule is also stated in `docs/orchestrator-instructions.md` and [Supported agents](../docs/reference/architecture.md#supported-agents).
+- Implementation: `runCopilot` in `src/agents/copilot.mjs`, `invoke` and `runChild` in `src/child-turn.mjs`, `dispatchPayload` in `src/role/dispatch.mjs`, `resultPrompt` in `src/prompts/orchestrator.mjs`, and the worker preamble in `src/prompts/worker.mjs`. The rule is also stated in `docs/orchestrator-instructions.md` and [Supported agents](../docs/reference/architecture.md#supported-agents).
 - Live checks: the denial event stream is recorded under Consequences on macOS. The scoped allow flag is recorded there on a Windows host.
 - [ADR Index](README.md)
