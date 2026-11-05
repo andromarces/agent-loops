@@ -16,6 +16,8 @@ import { execa } from "execa";
 import {
   copyLocalFiles,
   findDifferingLocalFiles,
+  findLocalFileChanges,
+  hashCopiedLocalFiles,
   MAX_WALKED_ENTRIES,
 } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
@@ -1217,6 +1219,103 @@ test("a name missing from both work trees is not reported", async () => {
   const { linked } = await createLinked({ ignore: [".env"] });
 
   expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([]);
+});
+
+// Usefulness: verifies the fail-closed cases of issue #1501: a legacy or malformed init hash
+// and a missing side never report no change.
+// Not redundant: the role tests cover the three proven sides and the unchanged case only.
+test("the side-aware compare fails closed on a missing hash or a missing file", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  expect(typeof baseline[".env"]).toBe("string");
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([]);
+  expect(await findLocalFileChanges(linked, [".env"], undefined)).toEqual([
+    { path: ".env", changed: "unknown" },
+  ]);
+  expect(await findLocalFileChanges(linked, [".env"], { ".env": "not-a-hash" })).toEqual([
+    { path: ".env", changed: "unknown" },
+  ]);
+
+  await rm(join(linked, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "copy" },
+  ]);
+  await writeFile(join(linked, ".env"), "same\n");
+  await rm(join(main, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "source" },
+  ]);
+  await rm(join(linked, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that a deleted source and an edited copy report both sides.
+// Not redundant: the other deletion tests leave the second side unchanged.
+test("a deleted source and an edited copy report both", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  await rm(join(main, ".env"));
+  await writeFile(join(linked, ".env"), "copy edit\n");
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that an edited source and a deleted copy report both sides.
+// Not redundant: it reverses the two changed sides of the test above.
+test("an edited source and a deleted copy report both", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  await writeFile(join(main, ".env"), "source edit\n");
+  await rm(join(linked, ".env"));
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that deleting both sides reports both.
+// Not redundant: it covers two deletions together, not a deletion with an edit.
+test("a deleted source and a deleted copy report both", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  await rm(join(main, ".env"));
+  await rm(join(linked, ".env"));
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that one deleted side with an unchanged other side reports that side.
+// Not redundant: the both-deleted test checks two deletions, not one.
+test("a deleted side with the other side unchanged reports that side", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+  await rm(join(main, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "source" },
+  ]);
+  await writeFile(join(main, ".env"), "same\n");
+  await rm(join(linked, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "copy" },
+  ]);
 });
 
 // Usefulness: verifies an ancestor that is swapped for a junction after the checks and before the

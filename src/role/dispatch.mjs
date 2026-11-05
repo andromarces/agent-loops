@@ -7,9 +7,10 @@ import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
 import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
 import { sha256 } from "../lib/hash.mjs";
-import { copyLocalFiles, findDifferingLocalFiles } from "../lib/local-files.mjs";
+import { copyLocalFiles, findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-files.mjs";
 import { logInfo, logWarn, logWarnFull } from "../lib/log.mjs";
 import { processStartTime } from "../lib/process-identity.mjs";
+import { redactAndClean } from "../lib/redact.mjs";
 import { parseReportBlock, parseVerdict } from "../lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
@@ -450,8 +451,21 @@ async function applyInitSideEffects(
       { signal, extraPaths: state.copyLocalPaths ?? [] },
     );
     if (localFiles) {
-      // Names only, so a later dispatch can compare each copy with its source.
+      // Names only, so a later dispatch can compare each copy with its source. The init hash of
+      // each copy stays in the state file and never reaches an envelope or a log line.
       state.localFilesCopied = localFiles.copied;
+      try {
+        state.localFilesCopiedSha256 = await hashCopiedLocalFiles(args.cwd, localFiles.copied, {
+          signal,
+        });
+      } catch (err) {
+        if (readProp(err, "isCanceled")) {
+          throw err;
+        }
+        // A present but empty map fails closed for every later compare.
+        state.localFilesCopiedSha256 = {};
+        logWarn(`local files: the init hash could not be recorded (${err.code ?? "error"})`);
+      }
       onEvent({ type: "local-files", ...localFiles });
     }
   }
@@ -498,33 +512,49 @@ function recordRoleSession(target, source) {
 }
 
 /**
- * Names the copied local files that differ from the main work tree now. Read-only: nothing is
- * replaced. A failed comparison is a warning, not a failed dispatch, but a cancel propagates.
+ * Names the copied local files whose source or copy differs from the init hash. Read-only: nothing
+ * is replaced. A failed comparison is a warning, not a failed dispatch, and fails closed: every
+ * copied name is reported as `unknown`. A cancel propagates.
  */
 async function differingLocalFiles(state, cwd, signal) {
   if (!state.copyLocalFiles || !state.localFilesCopied?.length) {
     return [];
   }
   try {
-    return await findDifferingLocalFiles(cwd, state.localFilesCopied, { signal });
+    return await findLocalFileChanges(cwd, state.localFilesCopied, state.localFilesCopiedSha256, {
+      signal,
+    });
   } catch (err) {
     if (readProp(err, "isCanceled")) {
       throw err;
     }
     logWarn(`local files: the comparison with the main work tree failed (${err.code ?? "error"})`);
-    return [];
+    return state.localFilesCopied.map((path) => ({ path: String(path), changed: "unknown" }));
   }
+}
+
+// The most path entries that a local-files report names, the same bound as the other path fields.
+const MAX_LOCAL_FILE_ENTRIES = 20;
+
+/** Redacts and caps the side-aware entries, the same as the other path fields. */
+function reportedLocalFileChanges(changes) {
+  return changes
+    .map((entry) => ({ path: redactAndClean(String(entry.path)), changed: entry.changed }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .slice(0, MAX_LOCAL_FILE_ENTRIES);
 }
 
 /**
  * Adds the copied and skipped path names of the init copy to the envelope. On a later dispatch it
- * adds the names of copies that differ from the main work tree.
+ * adds the names and sides of copies that differ from the init hash.
  */
 function withLocalFiles(payload, localFiles, localFilesDiffer) {
   return {
     ...payload,
     ...(localFiles ? { localFiles } : {}),
-    ...(localFilesDiffer.length > 0 ? { localFilesDiffer } : {}),
+    ...(localFilesDiffer.length > 0
+      ? { localFilesDiffer: reportedLocalFileChanges(localFilesDiffer) }
+      : {}),
   };
 }
 
