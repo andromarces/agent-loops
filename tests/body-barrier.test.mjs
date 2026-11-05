@@ -2,7 +2,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { createBodyBarrier } from "./body-barrier.mjs";
 
-describe("createBodyBarrier", () => {
+// The second test reads what the first test sets up, so this suite opts out of shuffle.
+describe("createBodyBarrier", { shuffle: false }, () => {
   const barrier = createBodyBarrier();
   let lateCleanupDone = false;
   beforeEach(() => barrier.settled());
