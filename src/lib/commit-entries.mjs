@@ -19,6 +19,15 @@ const CHECK_RUN_STATUSES = new Set([
 ]);
 const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"]);
 
+const CHECK_SUITE_STATUSES = new Set([
+  "queued",
+  "in_progress",
+  "completed",
+  "waiting",
+  "requested",
+  "pending",
+]);
+
 // The status read, the check wait, and the source probe parse the check-run and commit-status
 // replies strictly. The gate accepts a missing or malformed field as an empty list. In strict mode,
 // a reply that is not the paginated shape, or that holds an entry the judgment cannot read, throws.
@@ -88,6 +97,17 @@ const isWellFormedStatus = (status) =>
   COMMIT_STATUS_STATES.has(status.state) &&
   isOrderable(status, STATUS_TIME_FIELDS);
 
+// A suite is pinned to the commit that the read names, so a reply about another commit is malformed.
+const isWellFormedSuite = (suite, sha) =>
+  isJsonObject(suite) &&
+  Number.isFinite(suite.id) &&
+  suite.head_sha === sha &&
+  CHECK_SUITE_STATUSES.has(suite.status) &&
+  (suite.status !== "completed" || typeof suite.conclusion === "string") &&
+  isJsonObject(suite.app) &&
+  typeof suite.app.slug === "string" &&
+  suite.app.slug !== "";
+
 /** The check runs of `sha`, every page. `strict` makes a malformed reply throw. */
 export const checkRuns = (gh, slug, sha, cwd, strict = false) =>
   commitList(gh, slug, sha, cwd, strict, {
@@ -104,6 +124,15 @@ export const commitStatuses = (gh, slug, sha, cwd, strict = false) =>
     field: "statuses",
     what: "commit status",
     isWellFormed: isWellFormedStatus,
+  });
+
+/** The check suites of `sha`, every page. `strict` makes a malformed reply throw. */
+export const checkSuites = (gh, slug, sha, cwd, strict = false) =>
+  commitList(gh, slug, sha, cwd, strict, {
+    endpoint: "check-suites",
+    field: "check_suites",
+    what: "check-suites",
+    isWellFormed: (suite) => isWellFormedSuite(suite, sha),
   });
 
 /**
