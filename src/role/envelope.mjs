@@ -1,6 +1,6 @@
 // The JSON envelope of `agent-loop role`: the error result for a thrown value and the stdout write.
 import { writeSync } from "node:fs";
-import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "./lib/error-message.mjs";
+import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "../lib/error-message.mjs";
 
 // The refusal that `agent-loop role` reports as a one-line error envelope.
 export class RoleError extends Error {}
@@ -14,8 +14,8 @@ export function errorResult(err) {
     return { exitCode: 130, payload: { status: "error", error: "Interrupted by SIGINT" } };
   }
   try {
-    // A wait that failed with a `gh` child whose exit it never observed says so, so the parent
-    // settles that process before it starts another wait.
+    // A wait that failed with a `gh` child whose exit it never observed says so. The parent
+    // then settles that process before it starts another wait.
     return {
       exitCode: 1,
       payload: {
@@ -39,8 +39,8 @@ export function errorResult(err) {
 
 /**
  * Writes the envelope as one stdout line and sets the exit code. A failed write
- * cannot be retried on the same stream, so it is reported on stderr and turns a
- * zero exit code into 1; any other exit code, such as 130, is kept. `console.log` swallows a write error, so the write
+ * cannot be retried on the same stream. It is reported on stderr and turns a
+ * zero exit code into 1. Any other exit code, such as 130, is kept. `console.log` swallows a write error, so the write
  * callback is the only place the failure shows.
  */
 export async function printEnvelope(payload, exitCode) {

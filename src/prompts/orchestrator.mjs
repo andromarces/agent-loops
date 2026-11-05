@@ -8,7 +8,7 @@ import {
   REQUIRE_CI_GATE_SENTENCE,
   SHELL_ONLY_LIMIT_SENTENCE,
   cliCommandForms,
-} from "./report.mjs";
+} from "./rules.mjs";
 import { actionFormats, SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
 import { turnResultFields, TURN_EVIDENCE_FIELDS } from "../lib/turn-evidence.mjs";
 import { agentHas } from "../lib/agent-kinds.mjs";

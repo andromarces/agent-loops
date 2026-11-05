@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
-import { testSlotRule } from "../../src/prompts/report.mjs";
+import { testSlotRule } from "../../src/prompts/rules.mjs";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
 

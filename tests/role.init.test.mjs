@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, expect } from "vite-plus/test";
 import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,

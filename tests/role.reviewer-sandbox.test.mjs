@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,

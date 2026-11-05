@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { MutationError } from "../src/lib/snapshot.mjs";
-import { testSlotRule } from "../src/prompts/report.mjs";
+import { testSlotRule } from "../src/prompts/rules.mjs";
 import { reviewerPrompt } from "../src/prompts/reviewer.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";

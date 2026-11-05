@@ -6,9 +6,6 @@ import { defaultAgents, supportedAgents } from "./agents/index.mjs";
 import {
   DEFAULT_MAX_STEPS,
   DEFAULT_TIMEOUT,
-  COMPARE_HEAD_INPUT_REFUSAL,
-  REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
-  REVIEW_ONLY_GATE_REFUSAL,
   ROLE_KINDS as ROLES,
   initRefusal,
   parseFlags,
@@ -19,6 +16,11 @@ import {
   STOP_FLAG_WALK,
   TASK_SOURCE_CONFLICT,
 } from "./lib/args.mjs";
+import {
+  COMPARE_HEAD_INPUT_REFUSAL,
+  REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
+  REVIEW_ONLY_GATE_REFUSAL,
+} from "./lib/gate-refusal.mjs";
 import {
   declaredPrFromTranscript,
   refuseDeclaredPrConflict,
@@ -45,7 +47,7 @@ import { createTranscriptWriter } from "./lib/transcript.mjs";
 import { printHelp } from "./help.mjs";
 import { runProbeTurn } from "./child-turn.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
-import { main as runRoleMain } from "./role.mjs";
+import { main as runRoleMain } from "./role/index.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
 const noForceExitWrite = () => {};

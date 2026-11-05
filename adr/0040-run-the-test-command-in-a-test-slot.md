@@ -52,5 +52,5 @@ Andro Marces
 - Implementation:
   - Source: `runTestCmd` in `src/lib/test-cmd.mjs`
   - Source: `holdTestSlot` and `testSlotOptions` in `src/lib/test-slot.mjs`
-  - Source: `testSlotRule` and `cliCommandForms` in `src/prompts/report.mjs`
+  - Source: `testSlotRule` and `cliCommandForms` in `src/prompts/rules.mjs`
 - [ADR Index](README.md)

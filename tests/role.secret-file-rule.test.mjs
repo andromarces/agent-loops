@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vite-plus/test";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
