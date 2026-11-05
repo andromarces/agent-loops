@@ -6,7 +6,7 @@ import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the cases that switch it on (see `cleanRepoGit` in
-// git-helpers.mjs), so a case that reads no Git state starts no `git` process.
+// git-helpers.mjs). A case that reads no Git state then starts no `git` process.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -737,7 +737,7 @@ test("a secret value in the command text is redacted on every headless output pa
 });
 
 // Usefulness: verifies the headless path gives the worker and the reviewer the full-suite rule with
-// the test slot wrapper, the same text as the role path (issue #848). The repository is answered
+// the test slot wrapper. The text matches the role path (issue #848). The repository is answered
 // from memory, so the case starts no `git` process.
 test("headless worker and reviewer turns carry the test slot rule", async () => {
   const repo = await createCleanRepoDir();

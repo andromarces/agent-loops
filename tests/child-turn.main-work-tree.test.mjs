@@ -2,8 +2,8 @@ import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
-// Answers `git` from memory for the case that switches it on (see `cutLinkedReads` below), so
-// that case starts no process for the shared Git and lockfile reads.
+// Answers `git` from memory for the case that switches it on (see `cutLinkedReads` below). That
+// case then starts no process for the shared Git and lockfile reads.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -139,8 +139,8 @@ test("a worker turn that writes a tracked main work tree file reports its path",
   }
 });
 
-// Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError, so a
-// timed-out hook reports one failure and not a teardown error.
+// Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError. A
+// timed-out hook then reports one failure and not a teardown error.
 test("a setup that did not finish leaves the cleanup without a TypeError", async () => {
   const created = tree;
   tree = undefined;
