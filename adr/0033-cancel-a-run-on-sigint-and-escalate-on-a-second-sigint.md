@@ -22,12 +22,12 @@ PR #689 recorded this decision in ADR 0029 (decision 8 and a SIGINT sentence in 
 2. The first SIGINT aborts the run signal. The process-table read of the held-session check (ADR 0031) also ends on the cancel signal of the run, and a cancel is not a warning. It ends the run before any turn. The exit code is 130.
 3. A second SIGINT escalates and does not abandon the run. It does these steps in this order.
    - Force-kill the process tree of every live child.
+     - The kill is SIGKILL to the process group on POSIX, and `taskkill /pid <pid> /T /F` with `spawnSync` on Windows (`killLiveTrees` in `src/lib/exec-tree.mjs`, ADR 0028).
+     - It reaches each child that `killTreeOnExit` records: `exec`, `runGh`, `assertGitWorkTree`, and the test command.
    - Write the transcript or envelope that the run holds.
+     - `src/lib/transcript.mjs` writes the transcript with `exitCode` 130 and the error `Interrupted by SIGINT`. It includes the events and session ids that the run holds, by a synchronous temp-file write and rename (`writeFileAtomicSync`).
+     - `src/role/index.mjs` writes one error envelope with the same error.
    - Exit with code 130.
-     The kill is SIGKILL to the process group on POSIX, and `taskkill /pid <pid> /T /F` with `spawnSync` on Windows (`killLiveTrees` in `src/lib/exec-tree.mjs`, ADR 0028).
-   - It reaches each child that `killTreeOnExit` records: `exec`, `runGh`, `assertGitWorkTree`, and the test command.
-   - `src/lib/transcript.mjs` writes the transcript with `exitCode` 130 and the error `Interrupted by SIGINT`. It includes the events and session ids that the run holds, by a synchronous temp-file write and rename (`writeFileAtomicSync`).
-   - `src/role/index.mjs` writes one error envelope with the same error.
 4. The second SIGINT keeps:
    - A SIGKILL to each recorded child. Exit code 130.
    - An earlier transcript whole, because the write is a rename. A file symlink at the transcript path, dangling or not, keeps its link and the write lands at its final target, as in the async write. A transcript that names the `--continue-from` file is replaced as in a normal exit.

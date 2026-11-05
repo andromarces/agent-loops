@@ -22,7 +22,7 @@ const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 
 const linkedWithEnv = () => createLinkedWithEnv(SECRET, repos);
 
-// Usefulness: verifies acceptance 1. An init on a linked work tree copies the
+// Usefulness: verifies acceptance 1 — an init on a linked work tree copies the
 // file before the first child turn, and names it, with no content, in the
 // envelope. The adapter reads the file inside the turn to prove the order.
 // Not redundant: it runs the interactive init and reads the file inside the first child turn. The lib tests call the copy directly.

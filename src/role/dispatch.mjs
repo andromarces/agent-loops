@@ -396,7 +396,7 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
     );
     state.resumeDecision = { at: new Date().toISOString() };
   } else if (state.lifecycle === "dispatched") {
-    // `withStateLock` throws when a live owner holds the lock, so the previous
+    // A live lock owner makes `withStateLock` throw, so the previous
     // turn ended uncertainly. The first call after the crash always marks
     // `interrupted`, exits non-zero, and spawns no child. A maintainer can
     // resume from `interrupted` on a later call.

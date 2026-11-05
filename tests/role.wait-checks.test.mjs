@@ -21,7 +21,7 @@ const NO_REQUIRED_CHECKS_READ = {
 };
 
 // Usefulness: verifies `role wait-checks` prints one bounded envelope with the
-// check states. It creates no run state, so a parent can wait for the required
+// check states and creates no run state, so a parent can wait for the required
 // checks before the first dispatch (issue #329).
 test("wait-checks returns the check envelope and writes no run state", async () => {
   const repo = await newRunRepo();

@@ -61,7 +61,7 @@ afterEach(() => {
   gitDouble.answer = null;
 });
 
-// A directory with a `.git` directory stands in for a repo. `git` is answered
+// A directory with a `.git` directory stands in for a repo, and `git` is answered
 // from memory until the test ends, so the test starts no `git` process. `answer`
 // replaces `cleanRepoGit` where the test needs another repo state.
 async function useCleanRepo(answer = cleanRepoGit) {

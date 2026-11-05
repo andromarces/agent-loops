@@ -38,10 +38,10 @@ import { deadPid } from "./process-helpers.mjs";
 
 afterEach(cleanup);
 
-// Usefulness: verifies acceptance. A crash injected between CLI start and the
-// state write leaves `dispatched` plus a dead-pid lock. The next call removes
-// the stale lock, sets `interrupted`, exits non-zero, and spawns no CLI. A
-// following plain dispatch is rejected, and abort is accepted.
+// Usefulness: verifies acceptance — a crash injected between CLI start and the
+// state write leaves `dispatched` plus a dead-pid lock; the next call removes
+// the stale lock, sets `interrupted`, exits non-zero, and spawns no CLI; a
+// following plain dispatch is rejected; abort is accepted.
 test("crash aftermath: interrupted lifecycle, stale lock removal, abort path", async () => {
   const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });

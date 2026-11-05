@@ -333,7 +333,7 @@ function requireStoredParentSession(args, state) {
  * `--expect <name>` (repeatable, with `--all`) waits until each named check has a run on the head,
  * so a late check is not missed (#978).
  * `--head <sha>` waits until the PR head is that commit, and the result names that commit in `head` (#961).
- * It reads status only, so it touches no run state and needs no init, and it applies the `--cwd` rule of `dispatch`.
+ * It reads status only, so it touches no run state and needs no init, and it applies the same `--cwd` rule as `dispatch`.
  * The bound starts at command entry, defaults to 300 seconds, and refuses `--timeout 0` (#329).
  */
 async function waitChecksOperation(

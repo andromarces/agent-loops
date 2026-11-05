@@ -4,8 +4,8 @@ import { testSlotRule } from "../../src/prompts/rules.mjs";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
 
-// The file-change rule is scoped (issue #837). A tracked file, an unignored untracked file (a cache
-// included), and Git state stay off limits. A command is allowed when every write goes to an
+// The file-change rule is scoped (issue #837): a tracked file, an unignored untracked file (a cache
+// included), and Git state stay off limits, and a command is allowed when every write goes to an
 // ignored path or to a temporary file outside the repository.
 const FILE_CHANGE_RULE =
   "Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state.";
