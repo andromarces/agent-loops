@@ -12,13 +12,24 @@
  * @param {(bound: { signal: AbortSignal, stopped: Promise<never> }) => Promise<T>} run
  * @returns {Promise<T>}
  */
-export async function withTimeBound(boundMs, message, run) {
+export async function withTimeBound(boundMs, message, run, { start = null } = {}) {
   const bound = new AbortController();
-  const timer = setTimeout(
-    () => (message === undefined ? bound.abort() : bound.abort(new Error(message))),
-    boundMs,
-  );
-  timer.unref();
+  let timer;
+  let settled = false;
+  const arm = () => {
+    if (settled) return;
+    timer = setTimeout(
+      () => (message === undefined ? bound.abort() : bound.abort(new Error(message))),
+      boundMs,
+    );
+    timer.unref();
+  };
+  // The caller can gate the timer start; production starts it at once (issue #1465).
+  if (start === null) arm();
+  else
+    Promise.resolve(start)
+      .then(arm)
+      .catch(() => {});
   const stopped = new Promise((_, reject) => {
     bound.signal.addEventListener("abort", () => reject(bound.signal.reason), { once: true });
   });
@@ -26,6 +37,7 @@ export async function withTimeBound(boundMs, message, run) {
   try {
     return await run({ signal: bound.signal, stopped });
   } finally {
+    settled = true;
     clearTimeout(timer);
   }
 }

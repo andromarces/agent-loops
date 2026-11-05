@@ -65,6 +65,7 @@ import { firstErrorLine, readableErrorText } from "../../src/lib/error-message.m
 import { diffSharedGit, readSharedGit } from "../../src/lib/shared-git.mjs";
 import { removePath, trackedTempDir } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
+import { pollUntil } from "../wait-helpers.mjs";
 import {
   endOwnedProcess,
   processExists,
@@ -625,14 +626,25 @@ test("the deadline aborts the git calls with the default abort reason", async ()
 // them running past the end of a canceled turn.
 test("every git process of the read has ended when the read rejects at its deadline", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
-  await withGitHangingAfter(1, async ({ shimDir }) => {
-    // Warm the shim so the read's two hung calls start before the short deadline (issue #1465).
-    await execa("git", ["--version"]);
+  await withGitHangingAfter(0, async ({ shimDir }) => {
+    let openDeadline;
+    const deadlineGate = new Promise((resolve) => {
+      openDeadline = resolve;
+    });
     // The case waits out this 200 ms deadline because the deadline ending the hang is what it tests.
-    const failure = await readSharedGit(linked, { deadlineMs: 200 }).catch((err) => err);
+    const read = readSharedGit(linked, { deadlineMs: 200, deadlineStart: deadlineGate }).catch(
+      (err) => err,
+    );
+    // The gate starts the deadline only after both hung calls recorded their start (issue #1465).
+    await pollUntil(async () => {
+      const found = await shimCallRecords(shimDir);
+      return found.length === 2 ? found : undefined;
+    }, 10_000);
+    openDeadline();
+    const failure = await read;
     expect(failure).toBeInstanceOf(Error);
     expect(failure.message).toMatch(/200 ms/);
-    const records = (await shimCallRecords(shimDir)).filter(({ number }) => number > 0);
+    const records = await shimCallRecords(shimDir);
     expect(records).toHaveLength(2);
     try {
       // `readWithin` awaits both git reads before it throws (`src/lib/shared-git.mjs` line 50), so

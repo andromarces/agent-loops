@@ -76,21 +76,27 @@ function redactKeyName(key) {
  * `git` process reads the main work tree's worktree config after the common directory resolves.
  * @returns {Promise<{ hooksPath: string, hooks: Record<string, string | null>, remotes: Record<string, string>, sharedKeys: Record<string, { name: string, digest: string }> }>}
  */
-export async function readSharedGit(cwd, { deadlineMs, signal, ...bound } = {}) {
+export async function readSharedGit(cwd, { deadlineMs, deadlineStart, signal, ...bound } = {}) {
   if (deadlineMs === undefined) return readWithin(cwd, { ...bound, signal });
-  return withTimeBound(deadlineMs, undefined, async ({ signal: deadline }) => {
-    try {
-      return await readWithin(cwd, {
-        ...bound,
-        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
-      });
-    } catch (err) {
-      if (deadline.aborted) {
-        throw new SnapshotError(`the shared Git read took over ${deadlineMs} ms`);
+  return withTimeBound(
+    deadlineMs,
+    undefined,
+    async ({ signal: deadline }) => {
+      try {
+        return await readWithin(cwd, {
+          ...bound,
+          signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+        });
+      } catch (err) {
+        if (deadline.aborted) {
+          throw new SnapshotError(`the shared Git read took over ${deadlineMs} ms`);
+        }
+        throw err;
       }
-      throw err;
-    }
-  });
+    },
+    // The test can gate the deadline start; production starts it at the call (issue #1465).
+    { start: deadlineStart ?? null },
+  );
 }
 
 async function readWithin(cwd, bound) {
