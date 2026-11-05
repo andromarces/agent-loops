@@ -14,30 +14,36 @@ const hashing = vi.hoisted(() => ({
   releaseFirstStart: null,
 }));
 // The dependency file list read: `fail` throws, and `stall` waits for the bound signal.
-// `releaseStart` fires when a stalled read starts.
-const gitList = vi.hoisted(() => ({ fail: false, stall: false, releaseStart: null }));
+// `releaseStart` fires when a list read starts, and `output` is a controlled list result.
+const gitList = vi.hoisted(() => ({
+  fail: false,
+  stall: false,
+  output: null,
+  releaseStart: null,
+}));
 vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     gitRead: async (cwd, args, options = {}) => {
       if (args?.[0] === "ls-files") {
+        gitList.releaseStart?.();
+        gitList.releaseStart = null;
         if (gitList.fail) throw new Error("git ls-files failed");
         if (gitList.stall) {
-          gitList.releaseStart?.();
-          gitList.releaseStart = null;
           return new Promise((_, reject) => {
             options.signal?.addEventListener("abort", () => reject(options.signal.reason), {
               once: true,
             });
           });
         }
+        if (gitList.output !== null) return { stdout: gitList.output };
       }
       return actual.gitRead(cwd, args, options);
     },
   };
 });
-// null reads the real work tree root; a number replaces it with a read of that many real
+// null reads the real work tree root. 0 resolves at once, and another number waits that many real
 // milliseconds, so no case waits on `git`.
 const roots = vi.hoisted(() => ({ delayMs: null }));
 vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
@@ -48,6 +54,7 @@ vi.mock("../../src/lib/snapshot.mjs", async (importOriginal) => {
     // with its own `timeoutMs` ends at that shorter bound, as the real `workTreeRoot` does.
     workTreeRoot: (cwd, options = {}) => {
       if (roots.delayMs === null) return actual.workTreeRoot(cwd, options);
+      if (roots.delayMs === 0) return Promise.resolve(cwd);
       return new Promise((resolve, reject) => {
         let deadline;
         const timer = realSetTimeout(() => {
@@ -94,6 +101,7 @@ afterEach(async () => {
   hashing.releaseFirstStart = null;
   gitList.fail = false;
   gitList.stall = false;
+  gitList.output = null;
   gitList.releaseStart = null;
   roots.delayMs = null;
   vi.useRealTimers();
@@ -370,9 +378,11 @@ test("a failed dependency file list reports every known path", async () => {
 test("a dependency file list read past the bound reports every known path", async () => {
   await mkdir(join(repo, "sub"), { recursive: true });
   await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
+  gitList.output = "sub/requirements.txt\0";
+  roots.delayMs = 0;
   const before = await readLockfiles(repo);
   gitList.stall = true;
-  // The bound waits for the list read to start, so no real-time root read race decides the case.
+  // Supply the root without a spawn or timer, and let the bound wait for the list read to start.
   vi.useFakeTimers();
   const listStarted = new Promise((resolve) => {
     gitList.releaseStart = resolve;
@@ -381,6 +391,7 @@ test("a dependency file list read past the bound reports every known path", asyn
   const started = Date.now();
   const pending = readLockfiles(repo, { boundMs: 100 });
   await listStarted;
+  await vi.advanceTimersByTimeAsync(0);
   await vi.advanceTimersByTimeAsync(100);
   const after = await pending;
   expect(Date.now() - started).toBeLessThan(5_000);
