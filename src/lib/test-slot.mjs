@@ -25,10 +25,11 @@ const SLOT_FILE = /^slot-(\d+)\.lock$/;
 export const usageError = (message) => Object.assign(new Error(message), { usage: true });
 
 export function slotCount(value, name) {
-  if (!/^\d+$/.test(value) || Number(value) < 1) {
+  const count = Number(value);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
     throw usageError(`${name} must be a positive integer, got "${value}".`);
   }
-  return Number(value);
+  return count;
 }
 
 export function waitSeconds(value, name) {

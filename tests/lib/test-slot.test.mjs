@@ -497,3 +497,85 @@ test("--if-held runs directly when the slot directory does not exist", async () 
   expect((await done).code).toBe(0);
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
 }, 30_000);
+
+// Returns the usage error that `run` throws, so a test checks its flag and message.
+function usageRefusal(run) {
+  try {
+    run();
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected a usage refusal");
+}
+
+// Usefulness: acceptance (#1469) — the inline form parses to the same options and command as the
+// separated form, so every caller can use either spelling.
+test("--slots=3 and --wait=0 parse the same as the separated forms", () => {
+  const separated = parseTestSlotArgs(["--slots", "3", "--wait", "0", "--", "x"], {});
+  expect(parseTestSlotArgs(["--slots=3", "--wait=0", "--", "x"], {})).toEqual(separated);
+  expect(separated).toEqual({ slots: 3, waitSeconds: 0, ifHeld: false, command: "x" });
+  expect(parseTestSlotArgs(["--slots=3", "--", "run --slots=3"], {})).toEqual({
+    slots: 3,
+    waitSeconds: 1800,
+    ifHeld: false,
+    command: "run --slots=3",
+  });
+});
+
+// Usefulness: acceptance (#1469) — a count above Number.MAX_SAFE_INTEGER rounds in a double, so
+// the parser refuses the flag value as a usage error rather than accept a rounded count.
+test("a --slots value above Number.MAX_SAFE_INTEGER is refused with usage: true", () => {
+  const tooLarge = String(Number.MAX_SAFE_INTEGER + 1);
+  const error = usageRefusal(() => parseTestSlotArgs([`--slots=${tooLarge}`, "--", "x"], {}));
+  expect(error.usage).toBe(true);
+  expect(error.message).toBe(`--slots must be a positive integer, got "${tooLarge}".`);
+});
+
+// Usefulness: issue #1469 — the same unsafe count arrives through AGENT_LOOP_TEST_SLOTS, so the
+// environment path gets the refusal too and never rounds a slot count.
+test("an unsafe AGENT_LOOP_TEST_SLOTS value is refused with usage: true", () => {
+  const tooLarge = String(Number.MAX_SAFE_INTEGER + 1);
+  const error = usageRefusal(() =>
+    parseTestSlotArgs(["--", "x"], { AGENT_LOOP_TEST_SLOTS: tooLarge }),
+  );
+  expect(error.usage).toBe(true);
+  expect(error.message).toBe(
+    `AGENT_LOOP_TEST_SLOTS must be a positive integer, got "${tooLarge}".`,
+  );
+});
+
+// Usefulness: issue #1469 — each inline edge case keeps its refusal, so the new form accepts no
+// value that the separated form refuses.
+test.each([
+  ["--slots=", '--slots must be a positive integer, got "".'],
+  ["--wait=", '--wait must be a number of seconds of 0 or more, got "".'],
+  ["--slots==3", '--slots must be a positive integer, got "=3".'],
+  ["--wait=-1", '--wait must be a number of seconds of 0 or more, got "-1".'],
+  ["--slots=0", '--slots must be a positive integer, got "0".'],
+  ["--slots=1e3", '--slots must be a positive integer, got "1e3".'],
+])("%s is refused as a usage error", (arg, message) => {
+  const error = usageRefusal(() => parseTestSlotArgs([arg, "--", "x"], {}));
+  expect(error.usage).toBe(true);
+  expect(error.message).toBe(message);
+});
+
+// Usefulness: issue #1469 — a repeated flag in both forms keeps the last value, as the separated
+// loop already does, so the inline form adds no new precedence rule.
+test("a repeated --slots flag in both forms keeps the last value", () => {
+  expect(parseTestSlotArgs(["--slots", "2", "--slots=3", "--", "x"], {}).slots).toBe(3);
+  expect(parseTestSlotArgs(["--slots=3", "--slots", "2", "--", "x"], {}).slots).toBe(2);
+});
+
+// Usefulness: issue #1469 — a boolean flag keeps its plain unknown-option refusal, so the inline
+// value belongs to the value flags only.
+test("--if-held=1 keeps its unknown-option refusal", () => {
+  const error = usageRefusal(() => parseTestSlotArgs(["--if-held=1", "--", "x"], {}));
+  expect(error.usage).toBe(true);
+  expect(error.message).toBe("Unknown option --if-held=1.");
+});
+
+// Usefulness: issue #1469 — help wins after an inline value flag, as it does after the separated
+// form, so an inline flag before --help does not hide the help text.
+test("--help after an inline value flag prints help", () => {
+  expect(parseTestSlotArgs(["--slots=3", "--help", "x"], {})).toEqual({ help: true });
+});
