@@ -487,7 +487,7 @@ of this file.
 
 ## Selecting issues for a batch
 
-A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects. The list command defaults to 30 entries, so pass `--limit 1000`, which covers every open PR of a repository with 1000 or fewer:
+A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects. The list command defaults to 30 entries, so pass a limit at least as large as the open PR count. `--limit 1000` covers every open PR of a repository with 1000 or fewer:
 
 ```bash
 gh pr list --state open --json number,closingIssuesReferences --limit 1000
