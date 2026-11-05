@@ -546,6 +546,65 @@ test.each([
   expect(result.payload.raw).toContain(expected);
 });
 
+// Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so
+// the fail-closed rule needs a bold-only parse (issue #1483).
+test("worker dispatch keeps a plain report across unidentified parts", async () => {
+  const repo = await newRunRepo();
+  const worker = recordingAdapter([
+    async (state) => {
+      state.multiPartUnidentified = true;
+      return REPORT;
+    },
+  ]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.payload.report).toMatchObject({ conclusion: "done", why: "tests pass" });
+});
+
+// Usefulness: verifies a bold-only report from a multi-part unidentified turn fails closed into
+// raw, so the parser's bold support cannot accept that stream (issue #1483).
+test("worker dispatch fails closed for a bold-only report across unidentified parts", async () => {
+  const repo = await newRunRepo();
+  const response = "**Conclusion:** done\n**Why:** ok\n**Blockers:** none";
+  const worker = recordingAdapter([
+    async (state) => {
+      state.multiPartUnidentified = true;
+      return response;
+    },
+  ]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toBe(response);
+});
+
+// Usefulness: verifies the same bold-only report in one part keeps its parsed fields, so the
+// fail-closed rule applies only to multi-part unidentified turns (issue #1483).
+test("worker dispatch keeps a bold-only report from one unidentified part", async () => {
+  const repo = await newRunRepo();
+  const response = "**Conclusion:** done\n**Why:** ok\n**Blockers:** none";
+  const worker = recordingAdapter([async () => response]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.payload.report).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies the dispatch seam when the closing block does not parse
 // — the payload carries a null report and the raw response, so a caller can
 // still inspect what the child returned instead of guessing.

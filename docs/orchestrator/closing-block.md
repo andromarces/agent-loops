@@ -55,6 +55,10 @@ report label becomes `Conclusion`. Earlier prose stays out of the report. A bloc
 label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
 last-occurrence-wins rule.
 
+A report that parses only because bold labels were normalized fails closed into `raw` when its
+OpenCode response has more than one unidentified part. The report is null in that case. A
+single-part response, and every response with only plain labels, keeps its result.
+
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label
 (issue #1006). The same line outside such a run, and any other decorated label,

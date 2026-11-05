@@ -5,6 +5,7 @@ import {
   isAcceptedReview,
   parseReportBlock,
   parseVerdict,
+  parsesOnlyWithBoldLabels,
 } from "../../src/lib/report.mjs";
 
 const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
@@ -1386,6 +1387,18 @@ test("parseReportBlock does not read a bold non-label name as a label", () => {
   expect(
     parseReportBlock("Conclusion: done\nWhy:\n- a\n**Rule:** b\n- c\nBlockers: none"),
   ).toBeNull();
+});
+
+// Usefulness: verifies the fail-closed helper is true only when the report needs bold labels. A
+// plain report never fails closed for a multi-part turn (issue #1483).
+test("parsesOnlyWithBoldLabels is true only for a bold-only report", () => {
+  expect(parsesOnlyWithBoldLabels("**Conclusion:** done\n**Why:** ok\n**Blockers:** none")).toBe(
+    true,
+  );
+  expect(
+    parsesOnlyWithBoldLabels("Conclusion: done\n**Checks:** tests passed\nWhy: ok\nBlockers: none"),
+  ).toBe(true);
+  expect(parsesOnlyWithBoldLabels(REPORT)).toBe(false);
 });
 
 // Usefulness: verifies only the six report labels gain a bold form. A bold Verdict line stays

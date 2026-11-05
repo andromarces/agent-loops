@@ -35,17 +35,8 @@ const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
  * @param {boolean} [fenced]
  * @returns {boolean}
  */
-export function isKnownLabelLine(line, fenced = false) {
+function isKnownLabelLine(line, fenced = false) {
   return !fenced && KNOWN_LABEL_LINE.test(line);
-}
-
-/**
- * Fenced-code flags for `lines`, with the fence rules the parser uses (issue #1483).
- * @param {string[]} lines
- * @returns {boolean[]}
- */
-export function fencedLineFlags(lines) {
-  return fencedLines(lines);
 }
 
 // Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
@@ -70,11 +61,16 @@ function fencedLines(lines) {
 
 /**
  * Returns `text` with each column-0 bold report label normalized to its plain form. A bold label
- * inside a fenced code block stays text (issue #1483).
+ * inside a fenced code block stays text (issue #1483). With `boldLabels` false, the text is
+ * unchanged, which reads a bold label as origin/main did.
  * @param {string} text
+ * @param {boolean} [boldLabels]
  * @returns {string}
  */
-function normalizeReportLabels(text) {
+function normalizeReportLabels(text, boldLabels = true) {
+  if (!boldLabels) {
+    return text;
+  }
   const lines = text.split(/\r?\n/);
   const fenced = fencedLines(lines);
   return lines
@@ -223,11 +219,11 @@ export function hasClosingBlockAttempt(response) {
  * and that line becomes `Conclusion`. A bold label inside a fenced code block stays text (issue
  * #1483).
  * @param {string} response
- * @param {{ unlabeled?: boolean }} [options]
+ * @param {{ unlabeled?: boolean, boldLabels?: boolean }} [options]
  * @returns {string[] | null}
  */
-function closingBlock(response, { unlabeled = false } = {}) {
-  const lines = normalizeReportLabels(response).split("\n");
+function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
+  const lines = normalizeReportLabels(response, boldLabels).split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (/^Conclusion:\s*/i.test(lines[i])) {
@@ -296,10 +292,11 @@ function closingBlock(response, { unlabeled = false } = {}) {
  * The same line outside a run still blanks the block, because the decorated-label
  * check runs again on the folded lines. Any other decorated form blanks the block, folded or not.
  * @param {string} response
+ * @param {{ boldLabels?: boolean }} [options]
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
-export function parseReportBlock(response) {
-  const block = closingBlock(response, { unlabeled: true });
+export function parseReportBlock(response, { boldLabels = true } = {}) {
+  const block = closingBlock(response, { unlabeled: true, boldLabels });
   if (!block) {
     return null;
   }
@@ -328,6 +325,19 @@ export function parseReportBlock(response) {
     report[key] = found.value;
   }
   return report;
+}
+
+/**
+ * True when `response` parses only because bold report labels were normalized. A response that
+ * also parses without bold labels is not bold-dependent.
+ * @param {string} response
+ * @returns {boolean}
+ */
+export function parsesOnlyWithBoldLabels(response) {
+  return (
+    parseReportBlock(response) !== null &&
+    parseReportBlock(response, { boldLabels: false }) === null
+  );
 }
 
 // A report label line, empty or with a value, for example `Notes:` or `Notes: none`. The reviewer

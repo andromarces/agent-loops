@@ -1,11 +1,5 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
-import {
-  REPORT_LABEL_NAMES,
-  fencedLineFlags,
-  hasClosingBlockAttempt,
-  isKnownLabelLine,
-  parseVerdict,
-} from "../lib/report.mjs";
+import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
 
 /** Returns a matcher for a line that opens one of the labels `names`, plain at column 0. */
@@ -15,6 +9,7 @@ const labelLine = (names) => new RegExp(`^(?:${names.join("|")}):`, "i");
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
 // than becoming a verdict the model never wrote on its own line (issue #316).
 const LABEL_LINE = labelLine(REPORT_LABEL_NAMES);
+const BLOCK_LABEL_LINE = labelLine([...REPORT_LABEL_NAMES, "Verdict"]);
 const BLOCK_START = /^Conclusion:\s*/i;
 
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
@@ -99,8 +94,7 @@ function joinMessages(messages) {
  * block starts at the last `Conclusion:` line, as parseReportBlock reads it. A label line touches
  * every part that holds one of its characters, so a label cut across parts counts both. A line
  * terminator or trailing space is no character of the line. Text before the block and plain prose
- * after it touch no label line. A known label line is plain or bold and outside a fence (issue
- * #1483).
+ * after it touch no label line.
  */
 function labelLinePartCount(parts) {
   const spans = [];
@@ -117,13 +111,11 @@ function labelLinePartCount(parts) {
     return { line, span };
   });
   const start = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
-  const fenced = fencedLineFlags(lines.map(({ line }) => line));
   const touched = new Set();
-  for (let index = Math.max(start, 0); index < lines.length; index += 1) {
-    const { line, span } = lines[index];
-    if (start === -1 || !isKnownLabelLine(line, fenced[index])) continue;
-    spans.forEach(([from, to], partIndex) => {
-      if (from < span[1] && span[0] < to) touched.add(partIndex);
+  for (const { line, span } of lines.slice(Math.max(start, 0))) {
+    if (start === -1 || !BLOCK_LABEL_LINE.test(line)) continue;
+    spans.forEach(([from, to], index) => {
+      if (from < span[1] && span[0] < to) touched.add(index);
     });
   }
   return touched.size;

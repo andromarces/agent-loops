@@ -129,6 +129,11 @@ export async function runOpenCode(state, prompt, options = {}) {
   throwIfCanceled(signal, "opencode");
 }
 
+/** True when the text events hold more than one part with no valid message id. */
+function hasMultipleUnidentifiedParts(events) {
+  return events.filter((event) => !isNonEmptyString(event.part?.messageID)).length > 1;
+}
+
 /** Returns the first truthy `sessionID` of the events, which may hold non-object entries. */
 function firstSessionId(events) {
   return events.map((event) => event?.sessionID).find(Boolean);
@@ -187,9 +192,13 @@ async function settleTurn(state, events, { requestedSessionId, execOptions, star
     throw failure;
   }
 
-  const text = joinTextParts(
-    events.filter((event) => event.type === "text" && typeof event.part?.text === "string"),
+  const textEvents = events.filter(
+    (event) => event.type === "text" && typeof event.part?.text === "string",
   );
+  const text = joinTextParts(textEvents);
+  if (hasMultipleUnidentifiedParts(textEvents)) {
+    state.multiPartUnidentified = true;
+  }
 
   if (!text.trim()) {
     throw new Error("opencode did not return response text.");

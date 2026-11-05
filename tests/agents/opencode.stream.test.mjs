@@ -5,7 +5,12 @@ import { expect, test, vi } from "vite-plus/test";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import {} from "../../src/lib/log.mjs";
-import { isAcceptedReview, parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
+import {
+  isAcceptedReview,
+  parseReportBlock,
+  parseVerdict,
+  parsesOnlyWithBoldLabels,
+} from "../../src/lib/report.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { textEvent, trackDispatchPaths } from "./opencode-helpers.mjs";
@@ -46,6 +51,14 @@ async function runWithEvents(...events) {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: events.join("\n"), stderr: "" });
   const state = { kind: "opencode", sessionId: null, model: null, effort: null };
   return runOpenCode(state, "oc prompt", { cwd: "/dir" });
+}
+
+/** Runs one opencode turn and returns the response text with the adapter state it set. */
+async function runWithState(...events) {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: events.join("\n"), stderr: "" });
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  const response = await runOpenCode(state, "oc prompt", { cwd: "/dir" });
+  return { response, state };
 }
 
 /** Streams `text` as the response of an opencode turn and returns the response text. */
@@ -225,6 +238,49 @@ test("an opencode stream split before the closing block reaches the dispatch env
     deferred: "none",
   });
   expect(result.payload.raw).toBeUndefined();
+});
+
+// Usefulness: verifies the fail-closed rule reaches the dispatch envelope, so an all-bold block
+// split across unidentified parts yields report null and raw text (issue #1483).
+test("an all-bold stream split across unidentified parts fails closed into raw", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
+  dispatchPaths.push(runsRoot);
+  const repo = await createTempRepo();
+  dispatchPaths.push(repo);
+  process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+
+  const init = parseRoleArgs([
+    "dispatch",
+    "--role",
+    "worker",
+    "--cwd",
+    repo,
+    "--task",
+    "Fix the part join.",
+    "--parent-session",
+    "sess-parent-bold",
+    "--worker",
+    "opencode",
+    "--reviewer",
+    "opencode",
+  ]);
+  const stdin = async () => "continue working";
+  vi.mocked(exec).mockResolvedValue({ stdout: "", stderr: "" });
+  await executeRoleCommand(init, { agents: { opencode: { run: runOpenCode } }, stdin });
+
+  const split = [
+    textEvent("**Conclusion:** done\n**Why:** ok\n**Blockers:** none\n"),
+    textEvent("**Checks:** tests passed\nVerdict: accept"),
+  ].join("\n");
+  vi.mocked(exec).mockResolvedValue({ stdout: split, stderr: "" });
+  const result = await executeRoleCommand(
+    parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo]),
+    { agents: { opencode: { run: runOpenCode } }, stdin },
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toContain("**Conclusion:** done");
 });
 
 // Usefulness: verifies a part boundary inside a sentence does not promote mid-line text to a
@@ -704,22 +760,28 @@ test("opencode refuses an accept that spans unidentified parts", async () => {
   expect(error.message).toContain("Checks: pnpm test");
 });
 
-// Usefulness: verifies a bold label in a later unidentified part triggers the same fail-closed
-// guard as its plain twin. The bold form cannot turn the turn into an accept (issue #1483).
-test("opencode refuses a bold label that spans unidentified parts", async () => {
-  const first = "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n";
-  const plain = await runWithEvents(textEvent(first), textEvent("Checks: tests passed")).catch(
-    (err) => err,
-  );
-  const bold = await runWithEvents(textEvent(first), textEvent("**Checks:** tests passed")).catch(
-    (err) => err,
+// Usefulness: verifies a plain label in a later unidentified part triggers the #509 guard. The
+// plain twin still refuses, and no accept can span the parts (issue #509).
+test("opencode refuses a plain label that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n"),
+    textEvent("Checks: tests passed"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a bold label in a later unidentified part marks the turn for the fail-closed
+// rule. Origin/main returns raw text for the same stream (issue #1483).
+test("opencode marks a bold label that spans unidentified parts", async () => {
+  const { response, state } = await runWithState(
+    textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n"),
+    textEvent("**Checks:** tests passed"),
   );
 
-  expect(plain).toBeInstanceOf(Error);
-  expect(bold).toBeInstanceOf(Error);
-  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
-  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
-  expect(bold.message).toContain("**Checks:** tests passed");
+  expect(state.multiPartUnidentified).toBe(true);
+  expect(parsesOnlyWithBoldLabels(response)).toBe(true);
 });
 
 // Usefulness: verifies a fenced bold conclusion does not become the guard block start. The real
@@ -731,6 +793,62 @@ test("opencode refuses a stream whose fenced bold conclusion is not the block st
 
   expect(error).toBeInstanceOf(Error);
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a fenced verdict stays countable by the guard. A real block's Checks and
+// Verdict lines still span two parts, so the stream refuses (issue #1483).
+test("opencode refuses a fenced verdict that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nChecks: tests passed\n```\n"),
+    textEvent("Verdict: accept\n```"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies an all-bold report split across unidentified parts marks the turn. The
+// dispatch layer can fail it closed, while the same block in one part parses (issue #1483).
+test("opencode marks an all-bold report split across unidentified parts", async () => {
+  const { response, state } = await runWithState(
+    textEvent("**Conclusion:** done\n**Why:** ok\n**Blockers:** none\n"),
+    textEvent("**Checks:** tests passed\nVerdict: accept"),
+  );
+
+  expect(state.multiPartUnidentified).toBe(true);
+  expect(parsesOnlyWithBoldLabels(response)).toBe(true);
+});
+
+// Usefulness: verifies the observed all-bold shape in one unidentified part parses with every
+// field and sets no fail-closed mark (issue #1483).
+test("opencode keeps the observed all-bold shape in one part", async () => {
+  const observed = [
+    "PR #328 is open against `main` and closes #319.",
+    "",
+    "**Blockers:** none",
+    "",
+    "**Why:**",
+    "- **Rule:** keep every field",
+    "",
+    "**Checks:**",
+    "- `pnpm test` ran 3 files",
+    "",
+    "**Notes:**",
+    "- none",
+    "",
+    "**Deferred:** nothing",
+  ].join("\n");
+  const { response, state } = await runWithState(textEvent(observed));
+
+  expect(state.multiPartUnidentified).toBeUndefined();
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "PR #328 is open against `main` and closes #319.",
+    why: "**Rule:** keep every field",
+    blockers: "none",
+    checks: "`pnpm test` ran 3 files",
+    notes: "none",
+    deferred: "nothing",
+  });
 });
 
 // Usefulness: verifies inline bold field text in a later part stays in the field above. The join
@@ -806,7 +924,7 @@ const GUARD_PARITY = [
       textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n"),
       textEvent("**Checks:** tests passed"),
     ],
-    error: UNIDENTIFIED_REFUSAL,
+    boldOnly: true,
   },
   {
     name: "fenced bold Conclusion",
@@ -825,6 +943,12 @@ test.each(GUARD_PARITY)("opencode keeps the origin/main guard result: $name", as
   if (fixture.error) {
     expect(outcome).toBeInstanceOf(Error);
     expect(outcome.message.split("\n")[0]).toBe(fixture.error);
+    return;
+  }
+  if (fixture.boldOnly) {
+    expect(outcome).not.toBeInstanceOf(Error);
+    expect(parseReportBlock(outcome, { boldLabels: false })).toBeNull();
+    expect(parsesOnlyWithBoldLabels(outcome)).toBe(true);
     return;
   }
   expect(outcome).not.toBeInstanceOf(Error);

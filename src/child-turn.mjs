@@ -133,7 +133,12 @@ export async function runProbeTurn({
  * `onTurnChild(pid)` is called once the CLI has started, so the dispatcher can
  * record which process the directory belongs to. A rejection warns and never changes the turn.
  * @param {object} options
- * @returns {Promise<{ role: string, status: "ok", response: string, shellDenied?: true, reviewed?: object, workTree?: object, prChecks?: object } & TurnEvidence | { role: string, status: "error", error: string, transient?: string } & TurnEvidence>}
+ * @returns {Promise<
+ *   { role: string, status: "ok", response: string, shellDenied?: true,
+ *     multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
+ *   TurnEvidence |
+ *   { role: string, status: "error", error: string, transient?: string } & TurnEvidence
+ * >}
  */
 export async function runChild(options) {
   const {
@@ -567,11 +572,14 @@ export async function runChild(options) {
     throwIfCanceled(signal, roleName);
     // An adapter sets `shellDenied` when the turn reported a refused tool call (ADR 0035).
     const shellDenied = role.shellDenied === true;
+    // OpenCode sets `multiPartUnidentified` when the text arrived in several unidentified parts.
+    const multiPartUnidentified = role.multiPartUnidentified === true;
     return {
       role: roleName,
       status: "ok",
       response,
       ...(shellDenied ? { shellDenied } : {}),
+      ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
       ...(reviewed ? { reviewed } : {}),
       ...(workTree ? { workTree } : {}),
       ...(prChecks ? { prChecks } : {}),
@@ -657,5 +665,6 @@ export async function runChild(options) {
   } finally {
     if (!keepReplacedMark) delete role.conversationReplaced;
     delete role.shellDenied;
+    delete role.multiPartUnidentified;
   }
 }
