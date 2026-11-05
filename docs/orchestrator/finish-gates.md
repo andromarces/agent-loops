@@ -49,7 +49,9 @@ and each flag fails with a clear error.
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is
   exact with the same `head` and `digest`. The `head` and `digest` comparison
-  detects a change to an uncommitted state at the same commit.
+  detects a change to an uncommitted state at the same commit. A worker turn
+  after the last review resets the accept, so the refusal names that turn order
+  and the reviewer accept on the current state that must come before `finish`.
 - `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
   reviewed tree is clean, the PR is not behind its base under a strict rule, has no
   merge conflicts, the merge state is one the gate can read and is not blocked, and

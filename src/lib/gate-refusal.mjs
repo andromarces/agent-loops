@@ -10,6 +10,10 @@ export const REVIEW_ONLY_GATE_REFUSAL =
 // The review-only worker refusal, worded after the interactive `--role worker` guard it mirrors, so
 // a parent reads one rule on both paths.
 export const REVIEW_ONLY_WORKER_REFUSAL = "mode review-only rejects a run_worker action";
+// The `--require-accept` refusal for a worker turn that ran after the last review. It is shared so
+// the interactive and headless paths cannot drift (#1516).
+export const WORKER_AFTER_REVIEW_ACCEPT_REFUSAL =
+  "a worker turn ran after the last review, and a reviewer accept with a Checks line on the current state must come before finish";
 
 /**
  * The refusal of a declaration of a PR that the gate can never pass. `label` names the refused

@@ -454,6 +454,26 @@ test.each([
   expect(prompt).toContain("A read-only query changes nothing, so it stays allowed.");
 });
 
+// Usefulness: verifies every reviewer turn bars contact with a host or service the task does not
+// name. The rule keeps the GitHub reads that the rules allow. It routes a check that needs one to
+// Checks and Deferred (issue #1522). A reviewer with no sandbox has shell network and the user's
+// SSH keys.
+test.each([
+  ["a PR input", () => reviewerPrompt({ prompt: "review PR 1522" })],
+  ["no PR input", () => reviewerPrompt({ prompt: "review the change" })],
+  ["a supplied status", () => reviewerPrompt({ prompt: "review PR 1522", prChecks: FAILING_READ })],
+  [
+    "a sandboxed turn",
+    () => reviewerPrompt({ prompt: "review the change", sandboxMode: "read-only" }),
+  ],
+])("reviewer prompt bars contact with an unnamed host or service with %s", (_name, render) => {
+  const prompt = render();
+  expect(prompt).toContain("Contact no host or service that the task does not name.");
+  expect(prompt).toContain("GitHub reads that the rules allow stay allowed.");
+  expect(prompt).toContain("A local process or loopback server that a check starts stays allowed.");
+  expect(prompt).toContain("Put a check that needs one in Checks as unverified and in Deferred.");
+});
+
 // Usefulness: verifies the reviewer prompt requires each blocker inside the Blockers line itself,
 // because the parent reads only the closing block and cannot follow a pointer such as "the defects
 // above" to body text it never receives (issue #434).

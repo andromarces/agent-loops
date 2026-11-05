@@ -3,6 +3,7 @@ import {
   compareHeadConflict,
   missingGateRefusal,
   unresolvedCompareReason,
+  WORKER_AFTER_REVIEW_ACCEPT_REFUSAL,
 } from "./lib/gate-refusal.mjs";
 import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
@@ -130,12 +131,18 @@ export async function evaluateFinish({
   if (requireAccept && (gate.workerRan ? !gate.acceptedSinceWorker : !gate.reviewerRan)) {
     needsChildTurn = true;
     refusals.push({
-      reason: gate.workerRan
-        ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
-        : "no reviewer report on the state",
-      recovery: `Dispatch the reviewer, obtain ${
-        gate.workerRan ? "Verdict: accept with a Checks line on that state" : "a reviewer report"
-      } on that state, then finish.`,
+      reason: gate.workerAfterReview
+        ? WORKER_AFTER_REVIEW_ACCEPT_REFUSAL
+        : gate.workerRan
+          ? "no reviewer accept with a Checks line on the latest changed state after a worker turn"
+          : "no reviewer report on the state",
+      recovery: gate.workerAfterReview
+        ? "Dispatch the reviewer, obtain Verdict: accept with a Checks line on the current state, then finish."
+        : `Dispatch the reviewer, obtain ${
+            gate.workerRan
+              ? "Verdict: accept with a Checks line on that state"
+              : "a reviewer report"
+          } on that state, then finish.`,
     });
   }
   // The `--pr` declaration is the run's PR input, so the gate is the only

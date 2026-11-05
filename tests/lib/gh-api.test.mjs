@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  bodyClassOf,
   ghApiFailure,
   ghReadError,
   isCleanServerError,
@@ -54,6 +55,22 @@ describe("isTransportFailure", () => {
         failed("gh: the reply could not be parsed", '{"message":"Get \\"https://x\\": EOF"}'),
       ),
     ).toBe(false);
+  });
+});
+
+describe("bodyClassOf", () => {
+  // Usefulness: the class a failed 5xx read reports, and the retry rule, depend on telling a
+  // truncated JSON value from a complete value followed by text (issue #1519).
+  it("names the shape of a reply body without a byte of it", () => {
+    expect(bodyClassOf("")).toBe("empty");
+    expect(bodyClassOf('{"message":"x"}')).toBe("JSON");
+    expect(bodyClassOf('{"message":"x"')).toBe("truncated JSON");
+    expect(bodyClassOf('{"message":"x"\n')).toBe("truncated JSON");
+    expect(bodyClassOf("[1,2")).toBe("truncated JSON");
+    expect(bodyClassOf("{}\n{}")).toBe("unparseable JSON");
+    expect(bodyClassOf('{"message":"x"}\ntrailing')).toBe("unparseable JSON");
+    expect(bodyClassOf("<html></html>")).toBe("other text");
+    expect(bodyClassOf("Bad Gateway")).toBe("other text");
   });
 });
 
