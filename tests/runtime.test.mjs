@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `cleanRepoGit` in git-helpers.mjs); every other test reaches the real `execa`.
@@ -25,11 +25,27 @@ import { workerPrompt } from "../src/prompts/worker.mjs";
 import { setVerbose } from "../src/lib/log.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { cleanRepoGit, createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
+import {
+  cleanRepoGit,
+  createCleanRepoDir,
+  createTempRepo,
+  gitAbortingPostTurn,
+} from "./git-helpers.mjs";
+
+afterEach(() => {
+  gitDouble.answer = null;
+});
+
+// A directory with a `.git` directory, with `git` answered from memory. A case that does not
+// assert a Git result starts no `git` process. The caller removes the directory with `removePath`.
+async function cleanRepo() {
+  gitDouble.answer = cleanRepoGit;
+  return createCleanRepoDir();
+}
 
 // 1. Usefulness: verifies orchestrator dispatches worker first.
 test("orchestrator dispatches worker first", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "start work" }),
@@ -67,7 +83,7 @@ test("orchestrator dispatches worker first", async () => {
 // Usefulness: #826. The headless worker, like a role worker, gets the run task once, on its first
 // turn, so the two paths keep one prompt contract.
 test("a headless worker sees the run task on its first turn only", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const finish = JSON.stringify({
       action: "finish",
@@ -103,7 +119,7 @@ test("a headless worker sees the run task on its first turn only", async () => {
 // Usefulness: acceptance #1494 on the headless path. The first worker turn carries the work tree
 // edit rule, so a headless worker edits its run work tree and maps a path from another checkout.
 test("a headless worker preamble limits every edit to the run work tree", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchAdapter = scripted([
       JSON.stringify({ action: "run_worker", prompt: "start work" }),
@@ -143,7 +159,7 @@ test("a headless worker preamble limits every edit to the run work tree", async 
 // a budget of one step, a run_worker that holds an unknown key is repaired and the repaired dispatch
 // still runs, so the refusal charged nothing.
 test("a refused run_worker charges no step and the repaired action runs", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const events = [];
     const orchAdapter = scripted([
@@ -179,7 +195,7 @@ test("a refused run_worker charges no step and the repaired action runs", async 
 
 // 2. Usefulness: verifies orchestrator dispatches reviewer first.
 test("orchestrator dispatches reviewer first", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_reviewer", prompt: "inspect repo" }),
@@ -256,7 +272,7 @@ test("headless reviewer result carries the runtime reviewed state", async () => 
 
 // 3. Usefulness: verifies reviewer findings go back to the worker with verbatim follow-up prompt.
 test("reviewer findings go back to worker", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_reviewer", prompt: "first review" }),
@@ -295,7 +311,7 @@ test("reviewer findings go back to worker", async () => {
 
 // 4. Usefulness: verifies reviewer reassesses without a worker turn (two run_reviewer).
 test("reviewer reassesses without worker turn", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_reviewer", prompt: "rev 1" }),
@@ -377,7 +393,7 @@ test("two consecutive worker turns", async () => {
 
 // 6. Usefulness: verifies finish returns exit 0 and summary object.
 test("finish returns exit 0 and summary object", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const summaryObj = {
       changed: "all",
@@ -410,7 +426,7 @@ test("finish returns exit 0 and summary object", async () => {
 
 // 7. Usefulness: verifies finish after rejecting findings with no worker turn.
 test("finish after rejecting finding without worker turn", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_reviewer", prompt: "review" }),
@@ -449,7 +465,7 @@ test("finish after rejecting finding without worker turn", async () => {
 
 // 8. Usefulness: verifies abort returns exit 1 and reason.
 test("abort returns exit 1 and reason", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [JSON.stringify({ action: "abort", reason: "spec contradiction" })];
     const result = await runLoop({
@@ -479,7 +495,7 @@ test.each([
   { name: "missing", reply: async () => undefined, got: "undefined" },
   { name: "non-string", reply: async () => ({ ok: true }), got: "object" },
 ])("a headless worker turn fails on a $name response", async ({ reply, got }) => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const events = [];
     const result = await runLoop({
@@ -518,7 +534,7 @@ test.each([
 // the emitted events carry the refusal, no worker turn runs, and the
 // orchestrator is not asked again (issue #337).
 test("a review-only run refuses a run_worker action", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchAdapter = scripted([
       JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
@@ -561,7 +577,7 @@ test("a review-only run refuses a run_worker action", async () => {
 // Usefulness: verifies a run with no --mode still dispatches the worker, so the
 // review-only refusal reaches only the runs that asked for it (issue #337).
 test("a run with no mode still dispatches the worker", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchAdapter = scripted([
       JSON.stringify({ action: "run_worker", prompt: "edit the file" }),
@@ -598,7 +614,7 @@ test("a run with no mode still dispatches the worker", async () => {
 // refusal prompt tells the orchestrator what to do, and the run then finishes
 // once the reviewer has run (issue #337).
 test("a review-only run refuses a finish with no reviewer report", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchAdapter = scripted([
       JSON.stringify({
@@ -650,7 +666,7 @@ test("a review-only run refuses a finish with no reviewer report", async () => {
 // resumed session can open a new conversation without the initial prompt, which
 // the agy fallback does (issue #422).
 test("every orchestrator turn prompt carries the remote-write rule", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const finish = JSON.stringify({
       action: "finish",
@@ -701,7 +717,7 @@ test("every orchestrator turn prompt carries the remote-write rule", async () =>
 // finish gate uses: a second refusal with no child turn in between ends the run
 // on exit 1 (issue #337).
 test("a review-only run ends on a repeated finish with no reviewer report", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const finish = JSON.stringify({
       action: "finish",
@@ -738,7 +754,7 @@ test("a review-only run ends on a repeated finish with no reviewer report", asyn
 // run, so a run with no --mode keeps finishing with no reviewer turn, and so
 // does a work-first run (issue #337).
 test("a run with no mode and a work-first run still finish with no reviewer turn", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     for (const mode of [undefined, "work-first"]) {
       const orchAdapter = scripted([
@@ -770,7 +786,7 @@ test("a run with no mode and a work-first run still finish with no reviewer turn
 
 // 9. Usefulness: verifies step limit enforcement (exit 2).
 test("step limit reached refuses further child dispatch and returns exit 2", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "step 1" }),
@@ -800,7 +816,7 @@ test("step limit reached refuses further child dispatch and returns exit 2", asy
 
 // 10. Usefulness: verifies last step allows finish for exit 0.
 test("finish on stepsRemaining 0 returns exit 0", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "only step" }),
@@ -831,7 +847,7 @@ test("finish on stepsRemaining 0 returns exit 0", async () => {
 
 // 11. Usefulness: verifies separate session IDs across 3 roles on same kind.
 test("separate session IDs preserved per role", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     let idGen = 0;
     const multiAgent = {
@@ -868,7 +884,7 @@ test("separate session IDs preserved per role", async () => {
 
 // 12. Usefulness: verifies child failure surfaces as error status and run continues.
 test("child adapter failure surfaces to orchestrator", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "fail please" }),
@@ -952,7 +968,7 @@ test("child timeout surfaces with timeout message", async () => {
 
 // 14. Usefulness: verifies orchestrator failure is fatal.
 test("orchestrator failure throws fatal error", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const orchAdapter = scripted([
       () => {
@@ -982,7 +998,7 @@ test("orchestrator failure throws fatal error", async () => {
 // reaches the caller as the original error. A getter that throws inside the catch
 // block would replace it with the getter error (issue #475).
 test("orchestrator error with a throwing message getter stays the run result", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const hostile = new Error("hidden");
     Object.defineProperty(hostile, "message", {
@@ -1022,7 +1038,7 @@ test("orchestrator error with a throwing message getter stays the run result", a
 // conversion of the serialized message throws inside the catch block (issue #475
 // review).
 test("orchestrator error with a non-string toString-key message stays the run result", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const hostile = Object.assign(new Error("hidden"), { message: { toString: 1 } });
 
@@ -1054,7 +1070,7 @@ test("orchestrator error with a non-string toString-key message stays the run re
 
 // 15. Usefulness: verifies cancel signal aborts loop.
 test("cancel signal stops loop", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   try {
     const orchReplies = [JSON.stringify({ action: "run_worker", prompt: "wait signal" })];
@@ -1087,7 +1103,7 @@ test("cancel signal stops loop", async () => {
 // Usefulness: verifies a cancel that lands after the worker CLI exits ends the loop as canceled and
 // records no ok result for that turn (#587); the cancel is not left for the next spawn to find.
 test("a cancel after the worker returns ends the loop with no ok result", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   const events = [];
   try {
@@ -1132,7 +1148,7 @@ test("a cancel after the worker returns ends the loop with no ok result", async 
 // Usefulness: verifies a cancel that lands during the post-turn snapshot of a reviewer turn ends the
 // loop as canceled with no ok result for that turn (#587).
 test("a cancel during the reviewer post-turn snapshot ends the loop with no ok result", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   const post = gitAbortingPostTurn(controller);
   gitDouble.answer = post.git;
@@ -1179,7 +1195,7 @@ test("a cancel during the reviewer post-turn snapshot ends the loop with no ok r
 // Usefulness: verifies a cancel that lands during the post-turn snapshot of an orchestrator turn does
 // not let the finish action it returned end the run with exit 0 (#587).
 test("a cancel during the orchestrator post-turn snapshot does not finish the run", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   const post = gitAbortingPostTurn(controller);
   gitDouble.answer = post.git;
@@ -1220,7 +1236,7 @@ test("a cancel during the orchestrator post-turn snapshot does not finish the ru
 // Usefulness: verifies a cancel during the post-turn snapshot of a reviewer turn that ran in a replaced
 // conversation keeps the id the CLI reported and the replaced mark, as ADR 0027 requires (#587).
 test("a cancel during the reviewer snapshot keeps the reported id and the replaced mark", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   const post = gitAbortingPostTurn(controller);
   gitDouble.answer = post.git;
@@ -1263,7 +1279,7 @@ test("a cancel during the reviewer snapshot keeps the reported id and the replac
 // Usefulness: verifies the same for an orchestrator turn: a cancel during its post-turn snapshot keeps
 // the reported id and the replaced mark of a replaced conversation (#587, ADR 0027).
 test("a cancel during the orchestrator snapshot keeps the reported id and the replaced mark", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   const post = gitAbortingPostTurn(controller);
   gitDouble.answer = post.git;
@@ -1306,7 +1322,7 @@ test("a cancel during the orchestrator snapshot keeps the reported id and the re
 // Usefulness: verifies a cancel of the instruction rerun after an orchestrator conversation replacement
 // keeps the reported id and the replaced mark, so the next orchestrator turn carries the instructions (#587).
 test("a canceled instruction rerun keeps the replacement id and the replaced mark", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   const roles = {
     orchestrator: { kind: "orch", sessionId: "earlier-conversation" },
@@ -1349,7 +1365,7 @@ test("a canceled instruction rerun keeps the replacement id and the replaced mar
 // Usefulness: verifies a cancel of the preamble-only turn of a replaced worker conversation keeps the
 // replaced mark, and the next worker turn then sends the preamble with its task and clears the mark (#587).
 test("a canceled preamble turn keeps the mark and the next worker turn sends the preamble", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const controller = new AbortController();
   try {
     const role = { kind: "work", sessionId: "gone" };
@@ -1402,7 +1418,7 @@ test("a canceled preamble turn keeps the mark and the next worker turn sends the
 
 // 23. Usefulness: verifies issue #26 acceptance — a timed-out child produces a log line naming the role and "timed out".
 test("timed-out child logs a line naming the role and timed out", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     const orchReplies = [
@@ -1445,7 +1461,7 @@ test("timed-out child logs a line naming the role and timed out", async () => {
 // 24. Usefulness: verifies issue #26 acceptance — with the debug gate on, snapshot debug lines appear
 // around each reviewer and orchestrator turn (reviewer/orchestrator turns are mutation-checked).
 test("verbose mode logs snapshot debug lines around reviewer and orchestrator turns", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   setVerbose(true);
   try {
@@ -1487,6 +1503,7 @@ test("verbose mode logs snapshot debug lines around reviewer and orchestrator tu
 const expectMutationLoggedOnce = async (action) => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
+    // Real repository and real `git`: the asserted MutationError comes from a real snapshot diff.
     const repo = await createTempRepo();
     try {
       const mutate = async () => {

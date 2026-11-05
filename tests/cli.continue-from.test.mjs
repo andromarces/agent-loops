@@ -23,7 +23,12 @@ import { main, parseArgs } from "../src/cli.mjs";
 import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
 import { continueAgents } from "./agent-doubles.mjs";
 import { removePath, symlinkOrSkip } from "./fs-helpers.mjs";
-import { createTempRepo, createWithContinueRepo } from "./git-helpers.mjs";
+import {
+  cleanRepoGit,
+  createCleanRepoDir,
+  createTempRepo,
+  createWithContinueRepo,
+} from "./git-helpers.mjs";
 import { createPsShim } from "./process-helpers.mjs";
 import { within } from "./wait-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
@@ -319,7 +324,8 @@ test(
 test(
   "--continue-from ignores a forged gate record that claims an accept",
   async () => {
-    const repo = await createTempRepo();
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
     const transcriptPath = join(transcriptDir, "run.json");
     const origExitCode = process.exitCode;
@@ -379,6 +385,7 @@ test(
       process.exitCode = origExitCode;
       logSpy.mockRestore();
       errSpy.mockRestore();
+      gitDouble.answer = null;
       await removePath(repo);
       await removePath(transcriptDir);
     }
@@ -399,7 +406,8 @@ const RUN_REVIEWER = JSON.stringify({ action: "run_reviewer", prompt: "r" });
 // the gate refuses unless it restored an accept. It returns the reviewer calls of the continuation
 // and the exit code. The transcript sits outside the work tree, so the tree stays unchanged.
 async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
   const transcriptPath = join(transcriptDir, "run.json");
   const origExitCode = process.exitCode;
@@ -437,6 +445,7 @@ async function continueAfterEdit({ firstOrch, reviewerReplies, tamper }) {
     process.exitCode = origExitCode;
     logSpy.mockRestore();
     errSpy.mockRestore();
+    gitDouble.answer = null;
     await removePath(repo);
     await removePath(transcriptDir);
   }
@@ -682,9 +691,11 @@ test("--continue-from refuses a changed resolved model and keeps the transcript"
 
 // Runs a first headless run that stops on the step limit. It then records a resolved model for the
 // worker in its transcript, as a Claude or Copilot turn does. `fn(repo, transcriptPath, errorSpy)`
-// then continues the run.
-async function withRecordedModel(fn, recordedModel = "model-1") {
-  const repo = await createTempRepo();
+// then continues the run. `git` is answered from memory unless `realGit` is set, for a test that
+// asserts a real work tree change.
+async function withRecordedModel(fn, recordedModel = "model-1", realGit = false) {
+  const repo = realGit ? await createTempRepo() : await createCleanRepoDir();
+  gitDouble.answer = realGit ? null : cleanRepoGit;
   const transcriptPath = join(await mkdtemp(join(tmpdir(), "cli-test-probe-")), "run.json");
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -704,6 +715,7 @@ async function withRecordedModel(fn, recordedModel = "model-1") {
     process.exitCode = origExitCode;
     errorSpy.mockRestore();
     logSpy.mockRestore();
+    gitDouble.answer = null;
     await removePath(repo);
     await removePath(dirname(transcriptPath));
   }
@@ -725,20 +737,24 @@ const continueArgs = (repo, transcriptPath) => [
 test(
   "--continue-from halts when the probe changes the work tree",
   async () => {
-    await withRecordedModel(async (repo, transcriptPath, errorSpy) => {
-      const before = await readFile(transcriptPath, "utf8");
-      const seen = { codex: [], claude: [], agy: [] };
-      const agents = sessionAgents([FINISH], seen);
-      agents.claude.run = async () => {
-        await writeFile(join(repo, "probe-leak.txt"), "leak\n");
-        return "OK";
-      };
-      await main(continueArgs(repo, transcriptPath), agents);
-      expect(process.exitCode).toBe(1);
-      expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/mutat/i);
-      expect(seen.codex).toEqual([]);
-      expect(await readFile(transcriptPath, "utf8")).toBe(before);
-    });
+    await withRecordedModel(
+      async (repo, transcriptPath, errorSpy) => {
+        const before = await readFile(transcriptPath, "utf8");
+        const seen = { codex: [], claude: [], agy: [] };
+        const agents = sessionAgents([FINISH], seen);
+        agents.claude.run = async () => {
+          await writeFile(join(repo, "probe-leak.txt"), "leak\n");
+          return "OK";
+        };
+        await main(continueArgs(repo, transcriptPath), agents);
+        expect(process.exitCode).toBe(1);
+        expect(errorSpy.mock.calls.flat().join("\n")).toMatch(/mutat/i);
+        expect(seen.codex).toEqual([]);
+        expect(await readFile(transcriptPath, "utf8")).toBe(before);
+      },
+      "model-1",
+      true,
+    );
   },
   CONTINUE_AFTER_EDIT_TIMEOUT_MS,
 );
@@ -1019,7 +1035,8 @@ test("--continue-from rewrites a large written transcript with every earlier eve
 });
 
 async function expectEarlierEventsSurvive(ctx, linkRole) {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   const out = await mkdtemp(join(tmpdir(), "continue-link-"));
   const origExitCode = process.exitCode;
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1047,6 +1064,7 @@ async function expectEarlierEventsSurvive(ctx, linkRole) {
     expect(later.slice(0, earlier.length)).toEqual(earlier);
   } finally {
     process.exitCode = origExitCode;
+    gitDouble.answer = null;
     vi.restoreAllMocks();
     await Promise.all([removePath(repo), removePath(out)]);
   }

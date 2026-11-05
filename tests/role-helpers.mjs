@@ -6,7 +6,7 @@ import { statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import { restoreRunsRoot } from "./env-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
@@ -103,6 +103,19 @@ export async function newRunRepo() {
   await setup();
   const repo = await createTempRepo();
   repos.push(repo);
+  return repo;
+}
+
+/**
+ * Like `newRunRepo`, for a test file whose hoisted `execa` mock reads `gitDouble.answer`. The repo
+ * is a directory with a `.git` directory and `git` is answered from memory (`cleanRepoGit`), so the
+ * case starts no `git` process. The caller resets `gitDouble.answer` to null after the case.
+ */
+export async function newCleanRunRepo(gitDouble) {
+  await setup();
+  const repo = await createCleanRepoDir();
+  repos.push(repo);
+  gitDouble.answer = cleanRepoGit;
   return repo;
 }
 

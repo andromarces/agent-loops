@@ -8,6 +8,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newCleanRunRepo,
   newRunRepo,
   recordingAdapter,
   REPORT,
@@ -18,7 +19,27 @@ import {
 import { removePath } from "./fs-helpers.mjs";
 import { SUMMARY } from "./run-fixtures.mjs";
 
-afterEach(cleanup);
+// Answers `git` from memory for the cases that open their repo with `newCleanRunRepo`: they assert
+// the init task delivery, never a Git result. Every other case, and every other command, reaches the
+// real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
+
+const newCleanRepo = () => newCleanRunRepo(gitDouble);
 
 const TASK_BLOCK = "Init task:\nFix the flaky test.";
 
@@ -28,7 +49,7 @@ const workerTurn = (repo, agents, overrides = []) =>
 // Usefulness: acceptance of #826. A worker that gets only "continue working" still learns the task,
 // once, and a resumed turn of the same role does not repeat it.
 test("the first worker turn shows the init task under its own label and a later turn does not", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
 
@@ -44,7 +65,7 @@ test("the first worker turn shows the init task under its own label and a later 
 // Usefulness: acceptance of #826 for the reviewer, whose prompt is rebuilt on every turn and so
 // needs its own once-only rule.
 test("the first reviewer turn shows the init task under its own label and a later turn does not", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const reviewer = recordingAdapter([`${REPORT}\nVerdict: accept`]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
 
@@ -62,7 +83,7 @@ test("the first reviewer turn shows the init task under its own label and a late
 // and the new conversation has never seen the task, so each rerun prompt must carry it again.
 for (const role of ["worker", "reviewer"]) {
   test(`a ${role} turn rerun as a first turn after a missing session shows the init task`, async () => {
-    const repo = await newRunRepo();
+    const repo = await newCleanRepo();
     const prompts = [];
     const flaky = {
       async run(state, prompt) {
@@ -103,7 +124,7 @@ for (const role of ["worker", "reviewer"]) {
 // the only way a real adapter reaches it: a first turn that failed before reporting a session.
 for (const role of ["worker", "reviewer"]) {
   test(`a ${role} turn in a new conversation after a failed first turn shows the init task`, async () => {
-    const repo = await newRunRepo();
+    const repo = await newCleanRepo();
     const prompts = [];
     const failsOnce = {
       async run(state, prompt) {
@@ -135,7 +156,7 @@ for (const role of ["worker", "reviewer"]) {
 // conversation mark, so the resumed turn repeats the preamble (ADR 0027). The task must still reach
 // that conversation once: the repeat would give one child conversation the task twice.
 test("a resumed turn does not resend the init task to a replacement conversation that got it", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const worker = recordingAdapter([
     REPORT,
     (state) => {
@@ -171,7 +192,7 @@ const cancelTurn = () => {
 // Usefulness: the delivery record must survive every cancel of the replacement path, so a second
 // cancel and the resumes after it never give the replacement conversation the task again.
 test("successive cancels in a replacement conversation never resend the init task", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const worker = recordingAdapter([
     REPORT,
     (state) => {
@@ -199,7 +220,7 @@ test("successive cancels in a replacement conversation never resend the init tas
 // Usefulness: #890. A replaced reviewer conversation gets the task in the same dispatch, so a run
 // that finishes on that accept never leaves the conversation without it, and a later turn does not repeat it.
 test("a replaced reviewer conversation gets the init task in the same dispatch and once", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const reviewer = recordingAdapter([
     `${REPORT}
 Verdict: accept`,
@@ -249,7 +270,7 @@ const replaceConversation = (reply) => (state) => {
 // Usefulness: #890 acceptance. A run that ends on a reviewer accept in a replacement conversation
 // finishes only after that conversation received the init task.
 test("a run finishes on a reviewer accept in a replacement conversation that has the init task", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const reviewer = recordingAdapter([ACCEPT, replaceConversation(ACCEPT)]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
 
@@ -264,6 +285,7 @@ test("a run finishes on a reviewer accept in a replacement conversation that has
   expect(last.prompt).toContain(TASK_BLOCK);
 });
 
+// This case keeps real `git`: the halt rests on the read-only check seeing the edit of a tracked file.
 // Usefulness: a reviewer write in the replaced turn must halt the run even when the task-only turn
 // restores it, so the follow-up never hides an edit from the read-only check.
 test("a reviewer edit in the replaced turn halts the run even when the task-only turn restores it", async () => {
@@ -294,7 +316,7 @@ test("a reviewer edit in the replaced turn halts the run even when the task-only
 // dispatch" (issue #1024): a directory that the task-only turn leaves in the inherited temporary
 // directory is reported, so a read before that turn cannot miss it.
 test("a directory that the task-only turn leaves in the inherited temporary directory is reported", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "first-turn-inherited-"));
   try {
     const reviewer = recordingAdapter([
@@ -323,7 +345,7 @@ test("a directory that the task-only turn leaves in the inherited temporary dire
 // Usefulness: a failed task-only turn must not count as delivery or as an accept, so the run cannot
 // finish on a verdict from a conversation without the task, and the next turn sends the task.
 test("a failed task-only turn is no accept and the next reviewer turn sends the init task", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const reviewer = recordingAdapter([
     ACCEPT,
     replaceConversation(ACCEPT),
@@ -350,7 +372,7 @@ test("a failed task-only turn is no accept and the next reviewer turn sends the 
 // task. A second replacement during the task-only turn leaves the verdict with a conversation
 // that never got the task, while the task is recorded for the new conversation and not repeated.
 test("a verdict from a conversation that the task-only turn replaced never counts and the task is not repeated", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const moveTo = (id, reply) => (state) => {
     state.sessionId = id;
     state.conversationReplaced = true;
@@ -380,7 +402,7 @@ test("a verdict from a conversation that the task-only turn replaced never count
 // Usefulness: a canceled task-only turn counts as delivered, as for any turn that carried the task
 // (#826), so the resumed turn never gives the same conversation the task twice.
 test("a cancel in the task-only turn does not make the next reviewer turn resend the init task", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const reviewer = recordingAdapter([ACCEPT, replaceConversation(ACCEPT), cancelTurn, ACCEPT]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
 
@@ -398,7 +420,7 @@ test("a cancel in the task-only turn does not make the next reviewer turn resend
 // Usefulness: a state file from before the task record, or one with a bad value, must not crash a
 // dispatch. The record then reads as unsent, so the reviewer conversation gets the task once.
 test("a state with no task record or a malformed one reads as unsent and records the delivery", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const reviewer = recordingAdapter([]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
   await workerTurn(repo, agents, INIT_OVERRIDES);
@@ -421,7 +443,7 @@ test("a state with no task record or a malformed one reads as unsent and records
 // Usefulness: a reviewer turn that carries the task and runs in a replacement conversation delivers
 // the task to that conversation, so the next turn must not send it again.
 test("two consecutive reviewer replacements deliver the init task once per conversation", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const replaceWith = (id) => (state) => {
     state.sessionId = id;
     state.conversationReplaced = true;
@@ -447,7 +469,7 @@ test("two consecutive reviewer replacements deliver the init task once per conve
 // Usefulness: the worker follows the same rule as the reviewer. A task-carrying resumed turn that
 // runs in a second replacement delivers the task there, so the preamble-only turn leaves it out.
 test("a worker turn that carries the init task into a replacement conversation does not repeat it", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const controller = new AbortController();
   const worker = recordingAdapter([
     REPORT,

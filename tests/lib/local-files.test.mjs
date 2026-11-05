@@ -13,6 +13,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
+
+// Answers `git` from memory for the tests that switch it on (see `createComparePair`). Every other
+// test, and every other command, reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import {
   copyLocalFiles,
   findDifferingLocalFiles,
@@ -28,6 +43,7 @@ const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
 
 afterEach(async () => {
+  gitDouble.answer = null;
   vi.restoreAllMocks();
   for (const dir of created.splice(0)) {
     await removePath(dir);
@@ -42,6 +58,36 @@ async function createLinked(options) {
   const tree = await createLinkedWorkTree(options);
   created.push(tree.base);
   return tree;
+}
+
+// Two plain directories, `main` with a `.git` directory, for a test of the file comparison. The
+// comparison reads only file bytes once Git has named the two work trees. The double names them in
+// the `--porcelain -z` format, so no `git` process runs. Any other `git` call throws.
+async function createComparePair() {
+  const base = await mkdtemp(join(tmpdir(), "compare-test-"));
+  created.push(base);
+  const main = join(base, "main");
+  const linked = join(base, "linked");
+  await mkdir(join(main, ".git"), { recursive: true });
+  await mkdir(linked);
+  const head = "1".repeat(40);
+  gitDouble.answer = (_command, args, options) => {
+    const answer = (stdout) => ({ exitCode: 0, stdout, stderr: "" });
+    switch (JSON.stringify(args)) {
+      case '["rev-parse","--show-toplevel"]':
+        return answer(`${options.cwd}\n`);
+      case '["rev-parse","--git-common-dir"]':
+        return answer(`${join(main, ".git")}\n`);
+      case '["worktree","list","--porcelain","-z"]':
+        return answer(
+          `worktree ${main}\0HEAD ${head}\0branch refs/heads/main\0\0` +
+            `worktree ${linked}\0HEAD ${head}\0branch refs/heads/run\0\0`,
+        );
+      default:
+        throw new Error(`unexpected git call: ${JSON.stringify(args)}`);
+    }
+  };
+  return { base, main, linked };
 }
 
 // Usefulness: verifies an untracked, ignored file and a directory of such files reach
@@ -1172,7 +1218,7 @@ test.skipIf(process.platform === "win32")(
 // the main work tree side is never read through, so equal bytes behind it do not hide a difference.
 // Not redundant: the other comparison tests use real directories only.
 test("a linked parent directory in the main work tree is reported and not read through", async () => {
-  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const { main, linked, base } = await createComparePair();
   const outside = join(base, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "settings.json"), "same\n");
@@ -1188,7 +1234,7 @@ test("a linked parent directory in the main work tree is reported and not read t
 // Usefulness: verifies the same guard on the run work tree side.
 // Not redundant: it covers the second root that the comparison reads from.
 test("a linked parent directory in the run work tree is reported and not read through", async () => {
-  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const { main, linked, base } = await createComparePair();
   const outside = join(base, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "settings.json"), "same\n");
@@ -1205,7 +1251,7 @@ test("a linked parent directory in the run work tree is reported and not read th
 // comparison is not an equal hash.
 // Not redundant: the other comparison tests use small files.
 test("two different files over the size cap are reported as differing", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   const size = 1024 * 1024 + 1;
   await writeFile(join(main, ".env"), Buffer.alloc(size, "a"));
   await writeFile(join(linked, ".env"), Buffer.alloc(size, "b"));
@@ -1216,7 +1262,7 @@ test("two different files over the size cap are reported as differing", async ()
 // Usefulness: verifies a name that is missing from both work trees is not reported.
 // Not redundant: it keeps the missing-on-both-sides case apart from a skipped comparison.
 test("a name missing from both work trees is not reported", async () => {
-  const { linked } = await createLinked({ ignore: [".env"] });
+  const { linked } = await createComparePair();
 
   expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([]);
 });
@@ -1225,7 +1271,7 @@ test("a name missing from both work trees is not reported", async () => {
 // and a missing side never report no change.
 // Not redundant: the role tests cover the three proven sides and the unchanged case only.
 test("the side-aware compare fails closed on a missing hash or a missing file", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -1257,7 +1303,7 @@ test("the side-aware compare fails closed on a missing hash or a missing file", 
 // Usefulness: verifies that a deleted source and an edited copy report both sides.
 // Not redundant: the other deletion tests leave the second side unchanged.
 test("a deleted source and an edited copy report both", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -1272,7 +1318,7 @@ test("a deleted source and an edited copy report both", async () => {
 // Usefulness: verifies that an edited source and a deleted copy report both sides.
 // Not redundant: it reverses the two changed sides of the test above.
 test("an edited source and a deleted copy report both", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -1287,7 +1333,7 @@ test("an edited source and a deleted copy report both", async () => {
 // Usefulness: verifies that deleting both sides reports both.
 // Not redundant: it covers two deletions together, not a deletion with an edit.
 test("a deleted source and a deleted copy report both", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -1302,7 +1348,7 @@ test("a deleted source and a deleted copy report both", async () => {
 // Usefulness: verifies that one deleted side with an unchanged other side reports that side.
 // Not redundant: the both-deleted test checks two deletions, not one.
 test("a deleted side with the other side unchanged reports that side", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -1322,7 +1368,7 @@ test("a deleted side with the other side unchanged reports that side", async () 
 // read is never read through, so equal bytes behind it do not hide a difference.
 // Not redundant: the static linked-ancestor tests link the directory before the comparison starts.
 test("an ancestor swapped for a link before the read is reported and not read through", async () => {
-  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const { main, linked, base } = await createComparePair();
   // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
   const mainReal = await realpath(main);
   const outside = join(base, "outside");
@@ -1354,7 +1400,7 @@ test("an ancestor swapped for a link before the read is reported and not read th
 // Not redundant: the earlier swap test undoes nothing but swaps before the open; this one swaps
 // between the ancestor check and the open and also asserts that the open stage is never reached.
 test("a link inserted after the ancestor check is rejected before any read starts", async () => {
-  const { main, linked, base } = await createLinked({ ignore: [".claude/"] });
+  const { main, linked, base } = await createComparePair();
   // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
   const mainReal = await realpath(main);
   const outside = join(base, "outside");
@@ -1390,7 +1436,7 @@ test("a link inserted after the ancestor check is rejected before any read start
 // reported as not comparable, not as missing from both sides.
 // Not redundant: the missing-from-both test removes the file before the comparison starts.
 test("a file that disappears after the first probe is reported, not treated as missing", async () => {
-  const { main, linked } = await createLinked({ ignore: [".env"] });
+  const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
 
@@ -1410,7 +1456,7 @@ test("a file that disappears after the first probe is reported, not treated as m
 test.skipIf(process.platform === "win32")(
   "an unchanged file is not reported when --cwd is reached through a linked parent directory",
   async () => {
-    const { main, linked, base } = await createLinked({ ignore: [".env"] });
+    const { main, linked, base } = await createComparePair();
     await writeFile(join(main, ".env"), "same\n");
     await writeFile(join(linked, ".env"), "same\n");
     const alias = join(base, "alias");

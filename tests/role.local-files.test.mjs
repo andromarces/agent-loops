@@ -7,6 +7,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newCleanRunRepo,
   newRunRepo,
   readRepoState,
   repos,
@@ -16,7 +17,24 @@ import {
 import { exists } from "./fs-helpers.mjs";
 import { createLinkedWithEnv, createLinkedWorkTree } from "./git-helpers.mjs";
 
-afterEach(cleanup);
+// Answers `git` from memory for the one case that asserts no Git result and no copy. Every other
+// case and every other command reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 
@@ -84,8 +102,7 @@ test("a later call cannot turn the copy off", async () => {
 // opted out is accepted, the same as a repeated matching init field.
 // Not redundant: it is the accepted repeat. The refusal test above would still pass if every later call that carries the flag were refused.
 test("a later call may repeat the opt-out of an opted-out run", async () => {
-  await setup();
-  const { linked } = await linkedWithEnv();
+  const linked = await newCleanRunRepo(gitDouble);
   await executeRoleCommand(
     withRepo(dispatchArgv([...INIT_OVERRIDES, "--no-copy-local-files"]), linked),
     basicDeps(),
