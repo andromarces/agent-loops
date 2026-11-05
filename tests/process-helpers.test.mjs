@@ -512,11 +512,20 @@ test.skipIf(process.platform === "win32")(
         ].join("\n"),
         { mode: 0o755 },
       );
-      const calls = await Promise.all([
-        execa("git", ["--version"], { reject: false, timeout: 2000 }),
-        execa("git", ["--version"], { reject: false, timeout: 2000 }),
-      ]);
-      const records = await shimCallRecords(shimDir);
+      const running = [
+        execa("git", ["--version"], { reject: false }),
+        execa("git", ["--version"], { reject: false }),
+      ];
+      const records = await pollUntil(async () => {
+        const found = await shimCallRecords(shimDir);
+        return found.length === 2 ? found : undefined;
+      }, 10_000);
+      const passing = await Promise.race(running.map((call, index) => call.then(() => index)));
+      const hung = running[1 - passing];
+      // The case waits out this 200 ms deadline because the deadline ending the hang is what it tests.
+      const deadline = setTimeout(() => hung.kill("SIGKILL"), 200);
+      const calls = await Promise.all(running);
+      clearTimeout(deadline);
       expect(calls.filter((call) => call.exitCode === 0)).toHaveLength(1);
       expect(records.map((record) => record.number).sort((a, b) => a - b)).toEqual([0, 1]);
     });
@@ -537,12 +546,27 @@ test.skipIf(process.platform === "win32")(
       const running = Array.from({ length: 2 * passes }, (_, index) =>
         execa("git", ["--version"], {
           reject: false,
-          timeout: 2000,
           env: { GIT_TRACE2_EVENT: join(shimDir, `trace-${index}`) },
         }),
       );
       const pids = running.map((call) => call.pid);
+      const settled = new Set();
+      running.forEach((call, index) => {
+        call.then(() => settled.add(index));
+      });
+      await pollUntil(async () => {
+        const found = await shimCallRecords(shimDir);
+        return found.length === 2 * passes ? found : undefined;
+      }, 20_000);
+      await pollUntil(() => (settled.size >= passes ? true : undefined), 20_000);
+      // The case waits out this 200 ms deadline because the deadline ending the hang is what it tests.
+      const deadline = setTimeout(() => {
+        running.forEach((call, index) => {
+          if (!settled.has(index)) call.kill("SIGKILL");
+        });
+      }, 200);
       const calls = await Promise.all(running);
+      clearTimeout(deadline);
       // The message names the call-* counts, the marker and step counts, and each exit code. It also
       // names the steps of each call without a record, so a CI recurrence records them. The reads
       // never throw, so the assertion below always runs. A timed-out call shows as "timeout".

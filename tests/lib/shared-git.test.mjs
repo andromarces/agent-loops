@@ -625,12 +625,14 @@ test("the deadline aborts the git calls with the default abort reason", async ()
 // them running past the end of a canceled turn.
 test("every git process of the read has ended when the read rejects at its deadline", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
-  await withGitHangingAfter(0, async ({ shimDir }) => {
-    // The short deadline is enough for both hung reads to start; process termination is under test.
-    const failure = await readSharedGit(linked, { deadlineMs: 2_000 }).catch((err) => err);
+  await withGitHangingAfter(1, async ({ shimDir }) => {
+    // Warm the shim so the read's two hung calls start before the short deadline (issue #1465).
+    await execa("git", ["--version"]);
+    // The case waits out this 200 ms deadline because the deadline ending the hang is what it tests.
+    const failure = await readSharedGit(linked, { deadlineMs: 200 }).catch((err) => err);
     expect(failure).toBeInstanceOf(Error);
-    expect(failure.message).toMatch(/2000 ms/);
-    const records = await shimCallRecords(shimDir);
+    expect(failure.message).toMatch(/200 ms/);
+    const records = (await shimCallRecords(shimDir)).filter(({ number }) => number > 0);
     expect(records).toHaveLength(2);
     try {
       // `readWithin` awaits both git reads before it throws (`src/lib/shared-git.mjs` line 50), so
