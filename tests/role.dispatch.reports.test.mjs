@@ -667,64 +667,108 @@ test.each([
 );
 
 // Usefulness: verifies a parsed report carries no missing-label field, so the field marks only a
-// null report that a required label caused (issue #1520). The cases include comment shapes A and B,
-// where every label is bold or only Why is bold.
-test.each([
-  { name: "the default report", reply: WORKER_REPLY },
-  {
-    name: "issue #1520 comment shape A",
-    reply: [
-      "The worker pushed the fix, and the checks are still pending.",
-      "",
-      "**Why:**",
-      "- **Rule:** the report keeps every field",
-      "- **Path safety:** nothing outside the work tree changed",
-      "",
-      "**Blockers:** none",
-      "",
-      "**Checks:** pnpm test passed",
-      "**Notes:** none",
-      "**Deferred:** nothing",
-    ].join("\n"),
-  },
-  {
-    name: "issue #1520 comment shape B with a text Why",
-    reply: [
-      "The worker pushed the fix, and the checks are still pending.",
-      "",
-      "**Why:** the report keeps every field and the path safety holds.",
-      "",
-      "Blockers: none",
-      "",
-      "Checks: pnpm test passed",
-      "Notes: none",
-      "Deferred: nothing",
-    ].join("\n"),
-  },
-  {
-    name: "issue #1520 comment shape B with a bullet Why",
-    reply: [
-      "The worker pushed the fix, and the checks are still pending.",
-      "",
-      "**Why:**",
-      "- **Rule:** the report keeps every field",
-      "- **Path safety:** nothing outside the work tree changed",
-      "",
-      "Blockers: none",
-      "",
-      "Checks: pnpm test passed",
-      "Notes: none",
-      "Deferred: nothing",
-    ].join("\n"),
-  },
-])("worker dispatch omits reportMissingLabels for $name", async ({ reply }) => {
+// null report that a required label caused (issue #1520).
+test("worker dispatch omits reportMissingLabels for a parsed report", async () => {
   const repo = await newCleanRepo();
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).not.toBeNull();
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
+// Usefulness: verifies issue #1520 comment shape A keeps every parsed field and carries no reportMissingLabels.
+test("worker dispatch keeps every field for issue #1520 comment shape A", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "**Blockers:** none",
+    "",
+    "**Checks:** pnpm test passed",
+    "**Notes:** none",
+    "**Deferred:** nothing",
+  ].join("\n");
   const worker = recordingAdapter([async () => reply]);
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     agents: { fake1: worker, fake2: recordingAdapter([]) },
     stdin: stdinPrompt,
   });
-  expect(result.payload.report).not.toBeNull();
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
+// Usefulness: verifies issue #1520 comment shape B with a text Why keeps every parsed field and no reportMissingLabels.
+test("worker dispatch keeps every field for issue #1520 comment shape B with a text Why", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:** the report keeps every field and the path safety holds.",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "the report keeps every field and the path safety holds.",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
+// Usefulness: verifies issue #1520 comment shape B with a bullet Why keeps every parsed field and no reportMissingLabels.
+test("worker dispatch keeps every field for issue #1520 comment shape B with a bullet Why", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
   expect(result.payload).not.toHaveProperty("reportMissingLabels");
 });
 

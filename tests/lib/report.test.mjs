@@ -1302,9 +1302,7 @@ test("parseReportBlock parses the observed all-bold shape from issue #1483", () 
   });
 });
 
-// Usefulness: verifies comment shape A from issue #1520 parses to a report, with every label bold
-// and Why a bullet list. The prose paragraph supplies the conclusion, so the observed null response
-// round-trips as a report.
+// Usefulness: verifies issue #1520 comment shape A with a bullet Why parses to a full report.
 test("parseReportBlock parses issue #1520 comment shape A with a bullet Why", () => {
   const response = [
     "PR #1524 carries the fix, and the checks are still pending.",
@@ -1329,8 +1327,7 @@ test("parseReportBlock parses issue #1520 comment shape A with a bullet Why", ()
   });
 });
 
-// Usefulness: verifies comment shape B from issue #1520 parses to a report, with only Why bold and
-// the other labels plain. The text Why keeps its value below the prose conclusion.
+// Usefulness: verifies issue #1520 comment shape B with a text Why parses to a full report.
 test("parseReportBlock parses issue #1520 comment shape B with a text Why", () => {
   const response = [
     "The worker pushed the fix, and the checks are still pending.",
@@ -1353,8 +1350,7 @@ test("parseReportBlock parses issue #1520 comment shape B with a text Why", () =
   });
 });
 
-// Usefulness: verifies comment shape B from issue #1520 parses to a report, with only Why bold and
-// Why a bullet list. The prose paragraph must still supply the conclusion.
+// Usefulness: verifies issue #1520 comment shape B with a bullet Why parses to a full report.
 test("parseReportBlock parses issue #1520 comment shape B with a bullet Why", () => {
   const response = [
     "The worker pushed the fix, and the checks are still pending.",
