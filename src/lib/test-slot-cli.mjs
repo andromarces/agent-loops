@@ -38,6 +38,7 @@ Options:
 
 A flag wins over its env, and an env value is read only when its flag is absent.
 An empty env value counts as unset, and an invalid one is a usage error.
+A value flag also accepts --slots=<n> and --wait=<seconds>.
 
 Slots are lock files under <os tmpdir>/agent-loops/test-slots (env
 AGENT_LOOP_TEST_SLOTS_ROOT overrides the directory). The directory is not per
@@ -84,15 +85,18 @@ export function parseTestSlotArgs(argv, env = process.env) {
       ifHeld = true;
       continue;
     }
-    if (arg === "--slots" || arg === "--wait") {
-      const value = argv[++i];
+    // A value flag also takes the inline `--flag=value` form, as every other value flag does.
+    const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    if (flag === "--slots" || flag === "--wait") {
+      const value = eq === -1 ? argv[++i] : arg.slice(eq + 1);
       if (value === undefined) {
-        throw usageError(`${arg} needs a value.`);
+        throw usageError(`${flag} needs a value.`);
       }
-      if (arg === "--slots") {
-        slots = slotCount(value, arg);
+      if (flag === "--slots") {
+        slots = slotCount(value, flag);
       } else {
-        wait = waitSeconds(value, arg);
+        wait = waitSeconds(value, flag);
       }
       continue;
     }

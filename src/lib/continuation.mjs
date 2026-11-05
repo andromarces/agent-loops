@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { agentHas, normalizeAgent } from "./agent-kinds.mjs";
 import { logInfo, logWarn } from "./log.mjs";
-import { readableErrorText, readProp } from "./error-message.mjs";
+import { readableErrorText } from "./error-message.mjs";
+import { isFatalTurnError } from "./snapshot.mjs";
 import { ROLE_KINDS, recordedReviewerSandbox } from "./args.mjs";
 import { sha256 } from "./hash.mjs";
 import { readSessionRecord } from "./session-record.mjs";
@@ -203,10 +204,7 @@ export async function verifyResolvedModels(roles, { probe }) {
     try {
       await probe(state, role);
     } catch (err) {
-      if (
-        ["MutationError", "SnapshotError"].includes(readProp(err, "name")) ||
-        readProp(err, "isCanceled")
-      ) {
+      if (isFatalTurnError(err)) {
         throw err;
       }
       throw new Error(`--continue-from: ${role} model probe failed: ${readableErrorText(err)}`);

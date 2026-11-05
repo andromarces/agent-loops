@@ -43,6 +43,8 @@ export function beginEvidenceRead(forceSignal) {
   };
 }
 
+const exit = () => process.exit(130);
+
 /**
  * Aborts `controller` on the first SIGINT. On a second SIGINT it escalates, in this order:
  * force-kills the process tree of every live child (`killLiveTrees`), runs `onForceExit` (a
@@ -85,7 +87,6 @@ export function cancelOnSigInt(controller, { onForceExit } = {}) {
     force.abort();
     endCommandTrees();
     killLiveTrees();
-    const exit = () => process.exit(130);
     let pending;
     try {
       pending = onForceExit?.();

@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { isJsonObject, parseJson, parseJsonLines, parseJsonObjects } from "../lib/json.mjs";
+import {
+  isJsonObject,
+  parseJson,
+  parseJsonLines,
+  parseJsonObjects,
+  tryParseJson,
+} from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
@@ -21,6 +27,8 @@ import {
   setUsageOrDelete,
   turnExecOptions,
 } from "./shared.mjs";
+
+const canonicalPath = async (path) => realpath(path).catch(() => resolve(path));
 
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
 const missingSession = (id) => `No conversation found with session ID: ${id}`;
@@ -73,8 +81,7 @@ async function ownsSession(id, cwd, role) {
     return false;
   }
   const projects = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects");
-  const canonical = async (path) => realpath(path).catch(() => resolve(path));
-  const wanted = await canonical(cwd ?? process.cwd());
+  const wanted = await canonicalPath(cwd ?? process.cwd());
   const wantedMarker = sessionMarker(id, role);
   let dirs;
   try {
@@ -89,7 +96,7 @@ async function ownsSession(id, cwd, role) {
         return (
           record.sessionId === id &&
           typeof record.cwd === "string" &&
-          (await canonical(record.cwd)) === wanted &&
+          (await canonicalPath(record.cwd)) === wanted &&
           JSON.stringify(record.message?.content ?? "").includes(wantedMarker)
         );
       }
@@ -164,12 +171,7 @@ export async function runClaude(state, prompt, options = {}) {
   } catch (err) {
     // A non-zero exit can still carry a result event with usage and the session id. Expose
     // both, then rethrow.
-    let failed;
-    try {
-      failed = JSON.parse(err?.stdout ?? "");
-    } catch {
-      failed = undefined;
-    }
+    const failed = tryParseJson(err?.stdout ?? "") ?? undefined;
     setUsage(state, findResultEvent(failed));
     // The kept session ran on whatever the failed output names for it, or on an unknown model, so
     // the record follows that unless the process never started.

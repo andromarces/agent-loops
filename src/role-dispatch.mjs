@@ -8,7 +8,7 @@ import { refuseHeldIds, refuseHeldSessions } from "./lib/command-line.mjs";
 import { readableErrorMessage, redactedText, readProp } from "./lib/error-message.mjs";
 import { sha256 } from "./lib/hash.mjs";
 import { copyLocalFiles, findDifferingLocalFiles } from "./lib/local-files.mjs";
-import { logInfo, logWarn } from "./lib/log.mjs";
+import { logInfo, logWarn, logWarnFull } from "./lib/log.mjs";
 import { processStartTime } from "./lib/process-identity.mjs";
 import { parseReportBlock, parseVerdict } from "./lib/report.mjs";
 import {
@@ -138,9 +138,9 @@ function createEventSink(transcriptFile) {
       await appendFile(transcriptFile, text, "utf8");
     } catch (err) {
       // Transcript failures must not change the command outcome.
-      console.error(
+      logWarnFull(
         redactedText(
-          `Warning: Failed to append transcript to ${transcriptFile}: ${redactedText(readProp(err, "message"))}`,
+          `Failed to append transcript to ${transcriptFile}: ${redactedText(readProp(err, "message"))}`,
         ),
       );
     }

@@ -341,6 +341,17 @@ test("agy does not mark a capacity line that a later error replaces", async () =
   expect(caught.transient).toBeUndefined();
 });
 
+// Usefulness: verifies a parsed JSON `null` is the terminal AGY_ERROR line, so a capacity line before it never marks the turn (issue #1323).
+test("agy does not mark a capacity line that a JSON null replaces", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    agyFailedTurn({ stderr: `${agyCapacityLine}\nAGY_ERROR: null\n` }),
+  );
+
+  const caught = await runAgy(agyState(), "p", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
 // Usefulness: verifies a non-capacity reply is never marked (issue #1323), because a wrong mark makes a parent retry a real fault.
 test.each([
   ["a provider 503", agyErrorLine("UNAVAILABLE (code 503): service unavailable")],

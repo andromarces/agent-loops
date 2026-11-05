@@ -15,7 +15,7 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { sha256 } from "./hash.mjs";
-import { tmpRoot } from "./tmp-root.mjs";
+import { rootPath } from "./root-pins.mjs";
 import { isJsonObject } from "./json.mjs";
 import { writeFileAtomic } from "./atomic-write.mjs";
 
@@ -61,7 +61,7 @@ export function statePaths({ cwd, parentSession } = {}) {
 }
 
 /** The directory of all run state: `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. */
-export const stateRoot = () => tmpRoot("AGENT_LOOP_RUNS_ROOT", "runs");
+export const stateRoot = () => rootPath("runs");
 
 /**
  * The name of the state directory of the run in one work tree, which is also the key that binds

@@ -48,6 +48,7 @@ import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
+const noForceExitWrite = () => {};
 
 /**
  * Parses the headless `agent-loop` argv into an options object and throws on an
@@ -339,7 +340,7 @@ export async function main(
   // Created before the continuation check, so a SIGINT during a probe turn cancels it.
   const controller = new AbortController();
   // Set once the transcript data exists. A refused continuation writes none, so it stays a no-op.
-  let writeTranscriptOnForceExit = () => {};
+  let writeTranscriptOnForceExit = noForceExitWrite;
   const removeSigIntListener = cancelOnSigInt(controller, {
     onForceExit: () => writeTranscriptOnForceExit(),
   });

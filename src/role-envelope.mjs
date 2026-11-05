@@ -5,6 +5,8 @@ import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "./lib/
 // The refusal that `agent-loop role` reports as a one-line error envelope.
 export class RoleError extends Error {}
 
+const consume = () => {};
+
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
 export function errorResult(err) {
   // A cancel outside the turn `try` block, such as the process-table read of a resume or an init (#725).
@@ -51,7 +53,6 @@ export async function printEnvelope(payload, exitCode) {
   }
   // Node also emits a failed write as a stream 'error' event after the callback. With no
   // listener that event crashes the process, so one stays until the event queue drains.
-  const consume = () => {};
   process.stdout.on("error", consume);
   const failure = await new Promise((resolve) => {
     try {

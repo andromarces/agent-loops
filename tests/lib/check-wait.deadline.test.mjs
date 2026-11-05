@@ -57,11 +57,27 @@ test("waitChecks reports an unconfirmed child exit when the ceiling expires", as
     pr: 42,
     cwd: ".",
     timeoutSeconds: 0.2,
+    childExitCeilingMs: 100,
     // Never settles, so the exit of this read is never observed.
     gh: () => new Promise(() => {}),
   });
   expect(result).toEqual({ timedOut: true, head: null, checks: [], childExitUnconfirmed: true });
 }, 20000);
+
+// Usefulness: verifies an injected child-exit ceiling ends an unconfirmed read at that short
+// ceiling, so the slow default is proved once below (issue #1465).
+test("waitChecks honors an injected child-exit ceiling", async () => {
+  const started = Date.now();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 0.2,
+    childExitCeilingMs: 100,
+    gh: () => new Promise(() => {}),
+  });
+  expect(result).toEqual({ timedOut: true, head: null, checks: [], childExitUnconfirmed: true });
+  expect(Date.now() - started).toBeLessThan(2000);
+}, 10000);
 
 // Usefulness: verifies a read abandoned on the bound is not reported before the
 // `gh` child exits. The command waits for the child, so a parent that runs the
@@ -87,7 +103,8 @@ test("waitChecks waits for an abandoned gh read to exit before it returns", asyn
 
 // Usefulness: verifies the child-exit ceiling. A read that never answers cannot
 // hold the command open forever, so the command returns within the bound plus
-// the ceiling and reports the bound (issue #329).
+// the ceiling and reports the bound (issue #329). This case keeps the production
+// child-exit ceiling, 5000 ms, because that default is the behavior under test (issue #1465).
 test("waitChecks returns within the bound plus the child-exit ceiling", async () => {
   const signals = [];
   const started = Date.now();
@@ -134,7 +151,13 @@ test("waitChecks reports an unconfirmed child of a sibling source read", async (
     }
     return inner(args, cwd, options);
   };
-  const result = await waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh });
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 0.3,
+    childExitCeilingMs: 100,
+    gh,
+  });
   expect(result).toMatchObject({ timedOut: true, childExitUnconfirmed: true });
 }, 20000);
 
@@ -160,6 +183,7 @@ test.each([
       pr: 42,
       cwd: ".",
       timeoutSeconds: 0.3,
+      childExitCeilingMs: 100,
       all,
       gh: hangingGh([{ status: 1, checks: [FAILED_ITEM] }], { all }),
     });
@@ -189,7 +213,9 @@ test("waitChecks marks an error with the unconfirmed child of a sibling read", a
     }
     return inner(args, cwd, options);
   };
-  await expect(waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh })).rejects.toMatchObject({
+  await expect(
+    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, childExitCeilingMs: 100, gh }),
+  ).rejects.toMatchObject({
     message: expect.stringContaining("HTTP 500"),
     childExitUnconfirmed: true,
   });
@@ -211,7 +237,9 @@ test("waitChecks marks a settled result with an unconfirmed sibling child", asyn
     }
     return inner(args, cwd, options);
   };
-  expect(await waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh })).toEqual({
+  expect(
+    await waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, childExitCeilingMs: 100, gh }),
+  ).toEqual({
     timedOut: false,
     head: null,
     checks: [],

@@ -250,7 +250,7 @@ async function returnsWithin(call, limitMs, message) {
 // record proves nothing and is reported as an unconfirmed exit. `gone` is true when
 // the test already proved the child ended. Returns the errors: the keep file removal,
 // and any exit that is not confirmed.
-async function stopShim(dir, gone, ceilingMs) {
+async function stopShim(dir, gone, ceilingMs, shimExitWaitMs = SHIM_EXIT_WAIT_MS) {
   const errors = [];
   try {
     await rm(join(dir, KEEP_FILE), { force: true });
@@ -260,7 +260,7 @@ async function stopShim(dir, gone, ceilingMs) {
   if (gone) {
     return errors;
   }
-  const deadline = Date.now() + SHIM_EXIT_WAIT_MS;
+  const deadline = Date.now() + shimExitWaitMs;
   const until = async (done) => {
     while (!(await done())) {
       if (Date.now() >= deadline) {
@@ -271,7 +271,7 @@ async function stopShim(dir, gone, ceilingMs) {
     return true;
   };
   const survivor = (pid) =>
-    `the shim in ${dir} (pid ${pid ?? "unknown"}) did not exit within ${SHIM_EXIT_WAIT_MS} ms of cleanup. ` +
+    `the shim in ${dir} (pid ${pid ?? "unknown"}) did not exit within ${shimExitWaitMs} ms of cleanup. ` +
     `The test does not own it and sends it no signal; its own hard wall-clock deadline of ${Math.ceil(hardDeadlineMs(ceilingMs) / 1000)} s ends it`;
   const pid = (await waitForRecord(join(dir, "started.txt"), 0))?.pid ?? null;
   if (!(await until(async () => existsSync(join(dir, EXITED_FILE))))) {
@@ -296,7 +296,7 @@ async function stopShim(dir, gone, ceilingMs) {
 // whatever the shim stop does. Every failure reaches the caller: the body error, the
 // shim stop errors, and the removal error. One error is rethrown as is, several as
 // an AggregateError, so a failed body never hides a surviving shim.
-async function runWithShimCleanup(dir, ceilingMs, body) {
+async function runWithShimCleanup(dir, ceilingMs, body, shimExitWaitMs = SHIM_EXIT_WAIT_MS) {
   const errors = [];
   let gone = false;
   let result;
@@ -308,7 +308,7 @@ async function runWithShimCleanup(dir, ceilingMs, body) {
     errors.push(error);
   }
   try {
-    errors.push(...(await stopShim(dir, gone, ceilingMs)));
+    errors.push(...(await stopShim(dir, gone, ceilingMs, shimExitWaitMs)));
   } catch (error) {
     errors.push(error);
   } finally {
@@ -351,23 +351,29 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
   const ceilingMs =
     options.ceilingMs ??
     boundMs + CALL_CEILING_MS + RECORD_VISIBLE_MS + FORCE_KILL_AFTER_DELAY_MS + TEARDOWN_MARGIN_MS;
-  return runWithShimCleanup(dir, ceilingMs, async (markGone) => {
-    const shim = await writeHangingShim(dir, command, ceilingMs);
-    return withShimOnPath(dir, async () => {
-      const result = await returnsWithin(
-        run(boundMs),
-        boundMs + CALL_CEILING_MS,
-        "the call did not return after its bound",
-      );
-      // The record was written before the bound expired, so a short wait only
-      // covers file visibility.
-      const record = await waitForRecord(shim.started, RECORD_VISIBLE_MS);
-      assert.notEqual(record, null, `the shim did not start within the ${boundMs} ms bound`);
-      await assertGone(record, FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
-      markGone();
-      return result;
-    });
-  });
+  // The test can shorten the cleanup wait; the default is the production ceiling (issue #1465).
+  return runWithShimCleanup(
+    dir,
+    ceilingMs,
+    async (markGone) => {
+      const shim = await writeHangingShim(dir, command, ceilingMs);
+      return withShimOnPath(dir, async () => {
+        const result = await returnsWithin(
+          run(boundMs),
+          boundMs + CALL_CEILING_MS,
+          "the call did not return after its bound",
+        );
+        // The record was written before the bound expired, so a short wait only
+        // covers file visibility.
+        const record = await waitForRecord(shim.started, RECORD_VISIBLE_MS);
+        assert.notEqual(record, null, `the shim did not start within the ${boundMs} ms bound`);
+        await assertGone(record, FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
+        markGone();
+        return result;
+      });
+    },
+    options.shimExitWaitMs,
+  );
 }
 
 /**
@@ -378,28 +384,36 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
  * delay plus the teardown margin after the call returns. Pass
  * ABORT_KILL_TEST_TIMEOUT_MS as the test timeout.
  */
-export async function expectAbortKillsShim(command, start) {
+export async function expectAbortKillsShim(command, start, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
+  // The test can shorten the modeled force-kill delay; the default is execa's 5000 ms (issue #1465).
+  const abortForceKillAfterDelayMs =
+    options.abortForceKillAfterDelayMs ?? ABORT_FORCE_KILL_AFTER_DELAY_MS;
   const ceilingMs =
-    START_WAIT_MS + CALL_CEILING_MS + ABORT_FORCE_KILL_AFTER_DELAY_MS + TEARDOWN_MARGIN_MS;
-  return runWithShimCleanup(dir, ceilingMs, async (markGone) => {
-    const shim = await writeHangingShim(dir, command, ceilingMs);
-    return withShimOnPath(dir, async () => {
-      const controller = new AbortController();
-      const pending = start(controller.signal);
-      const record = await waitForRecord(shim.started, START_WAIT_MS);
-      assert.notEqual(record, null, "the shim never started");
-      controller.abort();
-      const result = await returnsWithin(
-        pending,
-        CALL_CEILING_MS,
-        "the call did not return after the abort",
-      );
-      await assertGone(record, ABORT_FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
-      markGone();
-      return result;
-    });
-  });
+    START_WAIT_MS + CALL_CEILING_MS + abortForceKillAfterDelayMs + TEARDOWN_MARGIN_MS;
+  return runWithShimCleanup(
+    dir,
+    ceilingMs,
+    async (markGone) => {
+      const shim = await writeHangingShim(dir, command, ceilingMs);
+      return withShimOnPath(dir, async () => {
+        const controller = new AbortController();
+        const pending = start(controller.signal);
+        const record = await waitForRecord(shim.started, START_WAIT_MS);
+        assert.notEqual(record, null, "the shim never started");
+        controller.abort();
+        const result = await returnsWithin(
+          pending,
+          CALL_CEILING_MS,
+          "the call did not return after the abort",
+        );
+        await assertGone(record, abortForceKillAfterDelayMs, dir, ceilingMs);
+        markGone();
+        return result;
+      });
+    },
+    options.shimExitWaitMs,
+  );
 }
 
 const shellQuote = (text) => `'${text.replaceAll("'", "'\\''")}'`;

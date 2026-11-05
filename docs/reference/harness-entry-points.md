@@ -36,7 +36,7 @@ parent to read the file in full, and to read each reference section that the fil
 when its condition holds. The core is expected to fit in one read of the read
 tool. When the read tool caps a read, the skill tells the parent to read again
 with an offset until the end of the file. See
-[Parent guard details](../parent-guard.md) for every guard target.
+[Parent guard details](parent-guard.md) for every guard target.
 
 Live check (issue #710, PR #1059): on 2026-10-25, Claude Code 2.1.310 on Windows 11 ran
 `/agent-loop` from the installed user-scope skill. The parent read
@@ -137,13 +137,13 @@ A `codex exec` session in full access ran each check, in a throwaway Git reposit
   guard, so Copilot gets its own user hook file; install never relies on Copilot
   reading the Claude user settings.
 - The parent-edit guard (#57) reads `--parent-session` from the run's session
-  entry (see [Parent guard details](../parent-guard.md)). Every `role` init
+  entry (see [Parent guard details](parent-guard.md)). Every `role` init
   requires `--parent-session`; a legacy state written without one keeps its
   parent unguarded.
 
 ## Parent guard: hard read-only for the parent session
 
-The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](../parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
+The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
 
 ## Local files in a linked work tree
 

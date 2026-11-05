@@ -56,6 +56,14 @@ function codexEntry(guardPath) {
   };
 }
 
+// Builds the skill note; Claude and Codex differ only in the discovery sentences and harness.
+const skillNote = (discovery, command, label) =>
+  `${discovery} The skill sets \`metadata.opencode/autoinvoke: false\`, so OpenCode drops it ` +
+  "from the model's skill list and the OpenCode plugin command owns /agent-loop. The skill " +
+  `also runs the installed CLI by absolute path with \`harness-check ${command}\`. It starts ` +
+  `only when the nearest harness above the shell is ${label}. It stops for any other ` +
+  "harness, and when the check cannot run or finds no harness ancestor.";
+
 /**
  * Builds the full target list for one harness.
  * @param {string} harness
@@ -107,14 +115,6 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       ),
     });
   };
-
-  // Builds the skill note; Claude and Codex differ only in the discovery sentences and harness.
-  const skillNote = (discovery, command, label) =>
-    `${discovery} The skill sets \`metadata.opencode/autoinvoke: false\`, so OpenCode drops it ` +
-    "from the model's skill list and the OpenCode plugin command owns /agent-loop. The skill " +
-    `also runs the installed CLI by absolute path with \`harness-check ${command}\`. It starts ` +
-    `only when the nearest harness above the shell is ${label}. It stops for any other ` +
-    "harness, and when the check cannot run or finds no harness ancestor.";
 
   if (harness === "claude") {
     const skillsDir = join(home, ".claude", "skills");

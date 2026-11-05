@@ -103,7 +103,7 @@ test.skipIf(!posix)(
 // Usefulness: verifies the timeout of a read that already wrote output names only the reason
 // class, and that `exec` ends the stalled shim before its own ceiling, so the read outlives
 // neither the bound nor the force-kill delay that follows it. The shim ignores SIGTERM and ends
-// by itself at 20 s (21.2 s at most), well after the 6 s force kill.
+// by itself at 20 s (21.2 s at most), well after the injected 500 ms force kill.
 test.skipIf(!posix)(
   "readProcessCommands names the timeout and ends the stalled process",
   async () => {
@@ -111,12 +111,14 @@ test.skipIf(!posix)(
       ceilingSeconds: 20,
     });
     const started = Date.now();
-    const { error, printed } = await failureAndOutput(() => readProcessCommands({ timeout: 1 }));
+    const { error, printed } = await failureAndOutput(() =>
+      readProcessCommands({ timeout: 1, forceKillAfterDelay: 500 }),
+    );
     expect(error.reason).toBe("timed out after 1 second");
     expect(JSON.stringify([error.message, error.reason])).not.toContain(SENTINEL);
     expect(printed).not.toContain(SENTINEL);
-    // The shell ignores SIGTERM, so the read ends at the 1 s bound plus the 5 s force-kill delay.
-    expect(Date.now() - started).toBeLessThan(12_000);
+    // The shell ignores SIGTERM, so the read ends at the 1 s bound plus the injected 500 ms delay.
+    expect(Date.now() - started).toBeLessThan(4000);
     // Secondary evidence: the heartbeat of the shim stopped and its marker is absent.
     expect(await shim.heartbeatStopped()).toBe(true);
   },
