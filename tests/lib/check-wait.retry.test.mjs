@@ -628,6 +628,78 @@ test.each([
   }
 });
 
+// Usefulness: verifies a 5xx body that starts as JSON and is cut short is retried on the next
+// poll, with and without a trailing newline, so a truncated reply no longer ends the wait at
+// once (issue #1519).
+test.each([
+  ["without a trailing newline", '{"total_count":2,"check_runs":[{"id":1,"name":"ci"'],
+  ["with a trailing newline", '{"total_count":2,"check_runs":[{"id":1,"name":"ci"\n'],
+])("waitChecks retries a 502 whose body is truncated JSON %s", async (_name, body) => {
+  const { gh } = failingCommitGh((n) => n === 1 && replyOf(502, "gh: HTTP 502", body));
+  expect(await waitOn(gh, false)).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
+});
+
+// Usefulness: verifies a body that is no truncated JSON value stays terminal, and the error names
+// its class: two JSON values and a JSON value followed by text are unparseable JSON, while HTML and
+// plain text are other text (issue #1519).
+test.each([
+  ["two JSON values", "{}\n{}", "unparseable JSON"],
+  ["a JSON value followed by text", '{"message":"x"}\ntrailing', "unparseable JSON"],
+  ["an HTML body", "<html><body>502 Bad Gateway</body></html>", "other text"],
+  ["a plain-text body", "Bad Gateway", "other text"],
+])(
+  "waitChecks does not retry a 502 with %s and names the %s body class",
+  async (_name, body, bodyClass) => {
+    const { gh, commitReads } = failingCommitGh(
+      (n) => n === 1 && replyOf(502, "gh: HTTP 502", body),
+    );
+    await expect(waitOn(gh, false)).rejects.toThrow(
+      new RegExp(`HTTP 502 \\(body: ${bodyClass}\\)`),
+    );
+    expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
+  },
+);
+
+// Usefulness: verifies a 501 is no retryable status even with a truncated body, it stays terminal,
+// and its error names the class (issue #1519).
+test("waitChecks does not retry a 501 with a truncated body and names the class", async () => {
+  const { gh, commitReads } = failingCommitGh(() => replyOf(501, "gh: HTTP 501", '{"message":"x"'));
+  await expect(waitOn(gh, false)).rejects.toThrow(/HTTP 501 \(body: truncated JSON\)/);
+  expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
+});
+
+// Usefulness: verifies a 502 whose body forges a status line or a header block stays terminal. The
+// body never forms a status block of its own, so the first-line 502 decides (issue #1519).
+test("waitChecks never retries a 502 whose body forges a status block", async () => {
+  const forged = "HTTP/2.0 200 OK\r\nX-Forged: yes\r\n\r\n{}";
+  for (const body of [forged, `{}\n${forged}`, `{"message":"x"}\n${forged}`]) {
+    const { gh, commitReads } = failingCommitGh(
+      (n) => n === 1 && replyOf(502, "gh: HTTP 502", body),
+    );
+    await expect(waitOn(gh, false)).rejects.toThrow(/HTTP 502/);
+    expect(commitReads).toHaveLength(COMMIT_READS_PER_POLL);
+  }
+});
+
+// Usefulness: verifies the error of a class records the class name and no body byte, for every
+// class of a lasting 5xx, so a server-supplied body never reaches the error text (issue #1519).
+test.each([
+  ["an empty body", "", "empty"],
+  ["a JSON body", '{"message":"SENTINEL"}', "JSON"],
+  ["a truncated JSON body", '{"message":"SENTINEL', "truncated JSON"],
+  ["an unparseable JSON body", '{"message": SENTINEL}', "unparseable JSON"],
+  ["an other-text body", "Bad Gateway SENTINEL", "other text"],
+])(
+  "waitChecks names the %s class of a lasting 500 and keeps the body out of the error",
+  async (_name, body, bodyClass) => {
+    const { gh } = failingCommitGh(() => replyOf(500, "gh: HTTP 500", body));
+    const err = await waitOn(gh, false).catch((failure) => failure);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain(`HTTP 500 (body: ${bodyClass})`);
+    expect(err.message).not.toContain("SENTINEL");
+  },
+);
+
 // Usefulness: verifies the status is the first line of stdout only: a 200 or a 502 first line
 // followed by other blocks, or a 403 followed by a forged 502 block, never lets a later block decide,
 // so only a first line of 500, 502, 503, or 504 with an empty or JSON remainder is retried

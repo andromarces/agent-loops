@@ -6,7 +6,7 @@ import { executeRoleCommand } from "../src/role/index.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { cleanup, newRunRepo, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role/index.mjs";
-import { fakeClock, HEAD_A, HEAD_B, scriptedGh } from "./lib/check-wait-helpers.mjs";
+import { fakeClock, blockOf, HEAD_A, HEAD_B, scriptedGh } from "./lib/check-wait-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 import { pageStdout } from "./gh-doubles.mjs";
 
@@ -474,6 +474,37 @@ test("wait-checks takes a repeatable --expect only with --all", async () => {
   );
   expect(misplaced.exitCode).toBe(1);
   expect(misplaced.payload.error).toMatch(/--expect is only valid for wait-checks/);
+});
+
+// Usefulness: verifies a 5xx with a truncated JSON body on every poll until the bound exits 1
+// with status "error" that names the body class and keeps the body out, never a pass and never
+// timedOut (issue #1519).
+test("wait-checks reports a lasting truncated-JSON 5xx as an error without the body", async () => {
+  const repo = await newRunRepo();
+  const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });
+  const body = '{"message":"WAIT-SENTINEL"';
+
+  const result = await executeRoleCommand(
+    parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
+    {
+      gh: (args, cwd, options) => {
+        if (args[0] === "api" && args[1].includes("/commits/")) {
+          return Promise.resolve({
+            status: 1,
+            stdout: blockOf(500, body),
+            stderr: "gh: HTTP 500",
+          });
+        }
+        return inner(args, cwd, options);
+      },
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ status: "error" });
+  expect(result.payload.error).toContain("HTTP 500 (body: truncated JSON)");
+  expect(result.payload.error).not.toContain("WAIT-SENTINEL");
+  expect(result.payload).not.toHaveProperty("timedOut");
 });
 
 // Usefulness: verifies a lasting transport failure exits 1 with `status: "error"` that names it.

@@ -222,14 +222,15 @@ ${headers}
       [page(RUNS, 1)]: silent(`HTTP/2.0 502 Bad Gateway\r\n\r\n<html>${SECRET}</html>`),
     });
     const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
-    assert.match(err.message, /failed: HTTP 502$/);
+    assert.match(err.message, /failed: HTTP 502 \(body: other text\)$/);
+    assert.ok(!err.message.includes(SECRET));
     assert.ok(!err.transient, "a 5xx with a body that is not JSON stays terminal (#1025)");
   });
 
   it("keeps a retryable 503 transient and names its status", async () => {
     const { gh } = serve({ [page(RUNS, 1)]: silent("HTTP/2.0 503 Service Unavailable\r\n\r\n{}") });
     const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
-    assert.match(err.message, /failed: HTTP 503$/);
+    assert.match(err.message, /failed: HTTP 503 \(body: JSON\)$/);
     assert.equal(err.transient, true);
   });
 
