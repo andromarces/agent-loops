@@ -47,6 +47,18 @@ export const secretFileRule =
   "Never read, print, or quote `.env`, `.dev.vars`, or another ignored secret file. Check a configuration value by name and presence only. Keep a content search to tracked files, for example `git grep`, or `rg` without `--no-ignore` and `-u`.";
 
 /**
+ * Bars contact with a host or service that the task does not name (issue #1522). A reviewer keeps
+ * the GitHub reads of the review scope. A worker keeps the GitHub operations of its rules and a
+ * host or service that the task names.
+ */
+export function unnamedHostRule({ namesHost = false } = {}) {
+  const allowed = namesHost
+    ? "GitHub operations that the rules allow stay allowed, and so does a host or service that the task names."
+    : "GitHub reads that the rules allow stay allowed.";
+  return `Contact no host or service that the task does not name. ${allowed} A local process or loopback server that a check starts stays allowed. Put a check that needs one in Checks as unverified and in Deferred.`;
+}
+
+/**
  * Names the one way that a Codex shell command can reach the network despite the sandbox. The
  * orchestrator and reviewer prompts share it.
  */
