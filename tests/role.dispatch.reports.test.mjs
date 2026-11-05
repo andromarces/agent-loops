@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { snapshot } from "../src/lib/snapshot.mjs";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,

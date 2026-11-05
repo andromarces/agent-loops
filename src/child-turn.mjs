@@ -401,8 +401,8 @@ export async function runChild(options) {
   let mainBefore = null;
   // The post-turn lockfile paths, kept once read so a cancel after the read reuses them.
   let lockfilePaths = null;
-  // The post-turn main work tree paths, kept once read so a cancel after the read reuses them.
-  let mainPaths = null;
+  // The post-turn main work tree evidence, kept once read so a cancel after the read reuses it.
+  let mainEvidence = null;
   let tmpdirBefore = null;
   let storeBefore = null;
   // The post-turn advisory lists, kept once read so a cancel after the reads reuses them.
@@ -411,16 +411,25 @@ export async function runChild(options) {
   // The post-turn shared Git items, kept once read so a cancel after the read reuses them.
   let sharedGitItems = null;
 
-  /** Paths of the main work tree that differ from the pre-turn read, or [] when none or unread. */
+  /**
+   * Paths of the main work tree that differ from the pre-turn read, or the old and new head of a
+   * clean fast-forward. Both are empty or absent when the read found no change.
+   */
   const readMainWorkTreeChanged = async () => {
-    if (mainPaths === null) {
+    if (mainEvidence === null) {
       const after = mainBefore ? await readMainWorkTree(cwd, { since: mainBefore }) : null;
-      mainPaths = diffMainWorkTree(mainBefore, after);
-      if (mainPaths.length > 0) {
-        logWarn(`worker: the main work tree changed: ${mainPaths.join(", ")}`);
+      const fastForward = after?.fastForward ?? null;
+      const paths = fastForward ? [] : diffMainWorkTree(mainBefore, after);
+      mainEvidence = { mainWorkTreeChanged: paths, mainWorkTreeFastForward: fastForward };
+      if (paths.length > 0) {
+        logWarn(`worker: the main work tree changed: ${paths.join(", ")}`);
+      } else if (fastForward) {
+        logInfo(
+          `worker: the main work tree fast-forwarded from ${fastForward.before} to ${fastForward.after}`,
+        );
       }
     }
-    return mainPaths;
+    return mainEvidence;
   };
 
   /**
@@ -482,12 +491,12 @@ export async function runChild(options) {
    * main work tree, advisory. That is the order the reads ran in before they ran together.
    */
   const readFailedTurnEvidence = async () => {
-    const [sharedGitChanged, lockfileChanged, mainWorkTreeChanged, advisory] = await mapInBatches(
+    const [sharedGitChanged, lockfileChanged, mainChange, advisory] = await mapInBatches(
       [readSharedGitChanged, readLockfileChanged, readMainWorkTreeChanged, readAdvisory],
       4,
       (read) => read(),
     );
-    return { sharedGitChanged, lockfileChanged, mainWorkTreeChanged, ...advisory };
+    return { sharedGitChanged, lockfileChanged, ...mainChange, ...advisory };
   };
   try {
     let reviewed = null;
@@ -553,7 +562,7 @@ export async function runChild(options) {
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     // The four reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
-    const [workTree, sharedGitChanged, lockfileChanged, mainWorkTreeChanged] = await mapInBatches(
+    const [workTree, sharedGitChanged, lockfileChanged, mainChange] = await mapInBatches(
       [
         roleName === "worker" ? readWorkTree : null,
         readSharedGitChanged,
@@ -589,7 +598,7 @@ export async function runChild(options) {
       ...pickTurnEvidence({
         sharedGitChanged,
         lockfileChanged,
-        mainWorkTreeChanged,
+        ...mainChange,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,
@@ -631,6 +640,7 @@ export async function runChild(options) {
       sharedGitChanged,
       lockfileChanged,
       mainWorkTreeChanged,
+      mainWorkTreeFastForward,
       inheritedTmpdirEntries,
       packageStoreEntries,
     } = await readFailedTurnEvidence();
@@ -644,6 +654,7 @@ export async function runChild(options) {
         sharedGitChanged,
         lockfileChanged,
         mainWorkTreeChanged,
+        mainWorkTreeFastForward,
         inheritedTmpdirEntries,
         packageStoreEntries,
       });
@@ -660,6 +671,7 @@ export async function runChild(options) {
         sharedGitChanged,
         lockfileChanged,
         mainWorkTreeChanged,
+        mainWorkTreeFastForward,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,

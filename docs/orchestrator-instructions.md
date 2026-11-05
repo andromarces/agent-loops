@@ -22,6 +22,7 @@ Reference sections list below names each file and when to read it.
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+- The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
   other remote state. A status read, such as `agent-loop role wait-checks`,
@@ -267,6 +268,16 @@ Apply these parent rules:
   the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed
   between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
   the run, and leave the main work tree change to the user.
+  - For a clean fast-forward, report `mainWorkTreeFastForward` under open in the finish summary with
+    no stop. The `mainWorkTreeFastForward` field names the old and new head SHAs, and never content.
+  - The field holds only when the main work tree had no dirty, untracked, or unignored change before
+    and after the turn. It also requires the same checked-out branch and an ancestor old head. The
+    new head must equal the remote-tracking ref of the default branch read after the turn.
+  - The user, a `git pull`, or another process can cause the fast-forward, and the report does not
+    prove who moved the head.
+  - A dirty or untracked change with a fast-forward keeps the full `mainWorkTreeChanged` report. A
+    detached head, a branch switch, a reset to an older commit, and a non-fast-forward move keep the
+    field.
 - A worker envelope carries `lockfileChanged` when the turn changed a lockfile at the work tree root
   or a non-Node dependency file at any depth. Examples are `pnpm-lock.yaml` after a base branch
   merge and a `requirements.txt` in a subdirectory. The field names the lockfiles by path only, and
@@ -483,6 +494,24 @@ of this file.
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
+
+## Selecting issues for a batch
+
+A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects. The list command defaults to 30 entries, so pass a limit at least as large as the open PR count. `--limit 1000` covers every open PR of a repository with 1000 or fewer:
+
+```bash
+gh pr list --state open --json number,closingIssuesReferences --limit 1000
+```
+
+Exclude every issue that the list names in `closingIssuesReferences`.
+
+A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply. The paginated read covers every page that the API returns:
+
+```bash
+gh api --paginate "repos/{owner}/{repo}/pulls/<n>/commits" --jq '.[].commit.message'
+```
+
+Exclude every issue that a commit message closes. The commits endpoint returns at most 250 commits of a PR, so a read that returns 250 commits is incomplete. For that PR, stop issue selection and ask the user which issues the PR closes before you select any issue.
 
 ## Several runs at once
 

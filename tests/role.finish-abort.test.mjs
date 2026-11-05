@@ -20,7 +20,7 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import {
   ACCEPT,

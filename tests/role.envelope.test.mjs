@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
-import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
+import { executeRoleCommand, main as runRoleMain } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,

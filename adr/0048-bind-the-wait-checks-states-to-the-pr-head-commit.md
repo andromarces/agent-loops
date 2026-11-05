@@ -64,7 +64,7 @@ Andro Marces
 
 - [Issue #961: Name and pin the PR head that a wait-checks result describes](https://github.com/andromarces/agent-loops/issues/961)
 - [PR #968](https://github.com/andromarces/agent-loops/pull/968)
-- Implementation: `waitChecks` in `src/lib/check-wait.mjs`, `requiredResolutionRefusal`, `matchingEntries`, and `evaluateContext` in `src/lib/ci-gate.mjs`, the `wait-checks` operation in `src/role.mjs`, the error envelope in `src/role-envelope.mjs`; tests in `tests/lib/check-wait.test.mjs` and `tests/role.wait-checks.test.mjs`; documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
+- Implementation: `waitChecks` in `src/lib/check-wait.mjs`, and `requiredResolutionRefusal`, `matchingEntries`, and `evaluateContext` in `src/lib/ci-gate.mjs`. The `wait-checks` operation is in `src/role/index.mjs`, and the error envelope is in `src/role/envelope.mjs`. Tests are in `tests/lib/check-wait.test.mjs` and `tests/role.wait-checks.test.mjs`. Documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role).
 - [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md)
 - [Issue #1125: Read the required check names once per check-wait poll](https://github.com/andromarces/agent-loops/issues/1125)
 - [PR #1150](https://github.com/andromarces/agent-loops/pull/1150)

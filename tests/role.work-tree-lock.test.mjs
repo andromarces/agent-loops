@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { ExecError } from "../src/lib/exec.mjs";
 import { cwdHash } from "../src/lib/runstate.mjs";
 import { workTreeLockReason } from "../src/lib/work-tree-lock.mjs";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,

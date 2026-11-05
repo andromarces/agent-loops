@@ -17,7 +17,7 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
   ACCEPT,
   basicDeps,

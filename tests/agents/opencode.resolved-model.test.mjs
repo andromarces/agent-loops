@@ -7,7 +7,7 @@ import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import { logDebug, logInfo } from "../../src/lib/log.mjs";
 import { readState, statePaths } from "../../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import { runLoop } from "../../src/runtime.mjs";
 import { scripted } from "../agent-doubles.mjs";
 import { createTempRepo } from "../git-helpers.mjs";

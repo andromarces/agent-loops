@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
-import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,

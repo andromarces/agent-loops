@@ -4,7 +4,11 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
-import { failedMainWorkTreeChanged, readMainWorkTree } from "../src/lib/main-work-tree-change.mjs";
+import {
+  failedMainWorkTreeChanged,
+  failedMainWorkTreeFastForward,
+  readMainWorkTree,
+} from "../src/lib/main-work-tree-change.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createLinkedWorkTree } from "./git-helpers.mjs";
@@ -31,6 +35,19 @@ beforeEach(async () => {
       await execa("git", ["commit", "-am", "second"], { cwd: main });
       await execa("git", ["branch", "other"], { cwd: main });
       await execa("git", ["reset", "--hard", "HEAD~1"], { cwd: main });
+      // A remote-tracking ref of the default branch, as a clone sets up. No remote runs.
+      const branch = (await execa("git", ["symbolic-ref", "--short", "HEAD"], { cwd: main }))
+        .stdout;
+      const head = (await execa("git", ["rev-parse", "HEAD"], { cwd: main })).stdout;
+      await execa("git", ["remote", "add", "origin", "."], { cwd: main });
+      await execa("git", ["update-ref", `refs/remotes/origin/${branch}`, head], { cwd: main });
+      await execa(
+        "git",
+        ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${branch}`],
+        {
+          cwd: main,
+        },
+      );
     },
   });
 });
@@ -48,6 +65,19 @@ const turn = (act, cwd = tree.linked) =>
     prompt: "go",
     cwd,
   });
+
+/** The full ref name that `refs/remotes/origin/HEAD` names, such as `refs/remotes/origin/main`. */
+const remoteHeadRef = async () =>
+  (await execa("git", ["symbolic-ref", "refs/remotes/origin/HEAD"], { cwd: tree.main })).stdout;
+
+/** Fast-forwards the main work tree by one commit and moves the remote default ref to its head. */
+const fastForwardMain = async (content) => {
+  await writeFile(join(tree.main, "init.txt"), content);
+  await execa("git", ["commit", "-am", content.trim()], { cwd: tree.main });
+  const after = (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.main })).stdout;
+  await execa("git", ["update-ref", await remoteHeadRef(), after], { cwd: tree.main });
+  return after;
+};
 
 // Usefulness: verifies requirement "a worker turn that writes a tracked file of the main work tree
 // reports that path" (issue #1448). The linked work tree stays clean, so no other field shows it.
@@ -167,6 +197,80 @@ test("a worker turn that switches the main work tree branch reports its path", a
     await execa("git", ["checkout", "other"], { cwd: tree.main });
   });
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies a clean fast-forward reports both heads apart from a worker edit (issue #1485).
+test("a clean fast-forward of the main work tree reports the old and new head", async () => {
+  const before = (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.main })).stdout;
+  const result = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+  });
+  const after = (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.main })).stdout;
+  expect(result.mainWorkTreeFastForward).toEqual({ before, after });
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
+// Usefulness: verifies a fast-forward with an untracked file keeps the path report (issue #1485).
+test("a fast-forward with an untracked file keeps the full main work tree change report", async () => {
+  const result = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+    await writeFile(join(tree.main, "notes.txt"), "new\n");
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt", "notes.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeFastForward");
+});
+
+// Usefulness: verifies a local commit on top of a fast-forward keeps the path report (issue #1485).
+test("a local commit on top of a fast-forward keeps the main work tree change report", async () => {
+  const result = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+    await writeFile(join(tree.main, "init.txt"), "local\n");
+    await execa("git", ["commit", "-am", "local"], { cwd: tree.main });
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeFastForward");
+});
+
+// Usefulness: verifies a remote default ref away from the new head keeps the path report (issue #1485).
+test("a remote default ref that moves away keeps the main work tree change report", async () => {
+  const result = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+    const other = (await execa("git", ["rev-parse", "other"], { cwd: tree.main })).stdout;
+    await execa("git", ["update-ref", await remoteHeadRef(), other], { cwd: tree.main });
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeFastForward");
+});
+
+// Usefulness: verifies a main work tree on another branch keeps the path report (issue #1485).
+test("a main work tree on another branch keeps the main work tree change report", async () => {
+  await execa("git", ["checkout", "other"], { cwd: tree.main });
+  const result = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeFastForward");
+});
+
+// Usefulness: verifies a failed worker turn carries the clean fast-forward (issue #1485).
+test("a failed worker turn carries the clean fast-forward", async () => {
+  const result = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+    throw new Error("adapter failed");
+  });
+  expect(result).toMatchObject({ status: "error" });
+  expect(result.mainWorkTreeFastForward).toMatchObject({ before: expect.any(String) });
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
+// Usefulness: verifies a canceled worker turn carries the clean fast-forward (issue #1485).
+test("a canceled worker turn carries the clean fast-forward", async () => {
+  const error = await turn(async () => {
+    await fastForwardMain("forwarded\n");
+    throw new ExecError("canceled", { isCanceled: true });
+  }).catch((err) => err);
+  expect(error).toMatchObject({ isCanceled: true });
+  expect(failedMainWorkTreeFastForward(error)).toMatchObject({ before: expect.any(String) });
 });
 
 // Usefulness: verifies requirement "a failed worker turn carries the main work tree change"

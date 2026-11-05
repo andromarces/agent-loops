@@ -18,7 +18,7 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role.mjs";
+import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
