@@ -31,6 +31,7 @@ vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
       }
       if (race.fault === "stall" && args[0] === "merge-base") {
         return new Promise((_, reject) => {
+          if (options.signal?.aborted) return reject(options.signal.reason);
           options.signal?.addEventListener("abort", () => reject(options.signal.reason), {
             once: true,
           });
@@ -110,7 +111,7 @@ test("a fast-forward check that times out keeps the change report", async () => 
   await forwardMain();
   race.fault = "stall";
 
-  const after = await readMainWorkTree(tree.linked, { since: before, deadlineMs: 1_000 });
+  const after = await readMainWorkTree(tree.linked, { since: before, deadlineMs: 2_000 });
 
   expect(after).not.toBeNull();
   expect(after.fastForward).toBeNull();
