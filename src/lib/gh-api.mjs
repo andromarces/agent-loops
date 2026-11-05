@@ -86,18 +86,19 @@ function tagRetry(err, { transient, transport }) {
  * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did, or
  * when the failure is a transport failure. A `terminal` result never becomes transport. Only a
  * result marked `include`, a failed `gh api --include` read, passes its stdout on for a status line
- * (#1246). The stdout of any other read is a reply body. A failed 5xx read appends its body class
- * (`bodyClassOf`), never a body byte (#1519).
+ * (#1246). The stdout of any other read is a reply body. A failed 5xx read names only its
+ * first-line status and its body class (`bodyClassOf`), never server-supplied text or a body byte
+ * (#1519).
  */
 export function ghApiFailure(
   endpoint,
   { status, stdout, stderr, transient, include, terminal, bodyClass, replyStatus },
 ) {
-  const text = ghFailureText({ status, stdout: include ? stdout : undefined, stderr });
-  const classDetail =
-    bodyClass !== undefined && replyStatus >= 500 && replyStatus <= 599
-      ? ` (body: ${bodyClass})`
-      : "";
+  const serverError = replyStatus >= 500 && replyStatus <= 599;
+  const text = serverError
+    ? `HTTP ${replyStatus}`
+    : ghFailureText({ status, stdout: include ? stdout : undefined, stderr });
+  const classDetail = serverError && bodyClass !== undefined ? ` (body: ${bodyClass})` : "";
   const err = new Error(`gh api ${endpoint} failed: ${text}${classDetail}`);
   const transport = !terminal && isTransportFailure({ stdout, stderr });
   return tagRetry(err, { transient, transport });

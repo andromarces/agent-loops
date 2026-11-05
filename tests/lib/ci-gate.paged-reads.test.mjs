@@ -248,7 +248,7 @@ ${headers}
     const err = await requiredContexts(gh, SLUG, "main", 42, ".").catch((error) =>
       failureOf(error),
     );
-    assert.match(err.message, /HTTP 500$/);
+    assert.match(err.message, /failed: HTTP 500 \(body: other text\)$/);
     assert.ok(!err.message.includes(SECRET));
   });
 

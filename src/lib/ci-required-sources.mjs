@@ -142,10 +142,17 @@ async function readRequiredSource(
   cwd,
   { absentOnError, classify, malformed = () => false },
 ) {
-  const { status, stdout, stderr, unreadable, transient, include, terminal } = await gh(
-    ["api", ...args],
-    cwd,
-  );
+  const {
+    status,
+    stdout,
+    stderr,
+    unreadable,
+    transient,
+    include,
+    terminal,
+    bodyClass,
+    replyStatus,
+  } = await gh(["api", ...args], cwd);
   if (status !== 0) {
     if (unreadable) {
       return { state: UNKNOWN, contexts: [], unparsed: true };
@@ -156,7 +163,16 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw ghApiFailure(args[0], { status, stdout, stderr, transient, include, terminal });
+    throw ghApiFailure(args[0], {
+      status,
+      stdout,
+      stderr,
+      transient,
+      include,
+      terminal,
+      bodyClass,
+      replyStatus,
+    });
   }
   const text = stdout.trim();
   if (text === "") {

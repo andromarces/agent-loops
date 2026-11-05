@@ -405,7 +405,7 @@ test.each([
   async (_mode, all) => {
     const { gh, commitReads } = failingCommitGh(() => serverError(500), { all });
     await expect(waitOn(gh, all)).rejects.toThrow(
-      /gh api repos\/owner\/repo\/commits\/.+ failed: gh: HTTP 500/,
+      /gh api repos\/owner\/repo\/commits\/.+ failed: HTTP 500 \(body: JSON\)/,
     );
     expect(commitReads.length).toBeGreaterThan(1);
   },
@@ -700,6 +700,20 @@ test.each([
   },
 );
 
+// Usefulness: verifies a failed 5xx error carries no server-supplied text, only the status and the
+// body class, so a JSON message that `gh` copies into stderr never reaches the error (issue #1519).
+test("waitChecks keeps a 5xx message out of the error and names the status and class", async () => {
+  const marker = "SENTINEL-SERVER-TEXT";
+  const { gh } = failingCommitGh(() =>
+    replyOf(500, `gh: ${marker} (HTTP 500)`, JSON.stringify({ message: marker })),
+  );
+  const err = await waitOn(gh, false).catch((failure) => failure);
+  expect(err.message).toMatch(
+    /^gh api repos\/owner\/repo\/commits\/[a-f0-9]+\/check-runs failed: HTTP 500 \(body: JSON\)$/,
+  );
+  expect(err.message).not.toContain(marker);
+});
+
 // Usefulness: verifies the status is the first line of stdout only: a 200 or a 502 first line
 // followed by other blocks, or a 403 followed by a forged 502 block, never lets a later block decide,
 // so only a first line of 500, 502, 503, or 504 with an empty or JSON remainder is retried
@@ -834,5 +848,5 @@ test("waitChecks ends with the earlier error when the next commit read hangs", a
       gh,
       sleep: async () => {},
     }),
-  ).rejects.toMatchObject({ message: expect.stringContaining("failed: gh: HTTP 500") });
+  ).rejects.toMatchObject({ message: expect.stringContaining("failed: HTTP 500 (body: JSON)") });
 }, 20000);

@@ -507,6 +507,43 @@ test("wait-checks reports a lasting truncated-JSON 5xx as an error without the b
   expect(result.payload).not.toHaveProperty("timedOut");
 });
 
+// Usefulness: verifies a lasting 500 on either required-check source carries its body class to the
+// error, keeps the server text and the body out, and is never a pass or timedOut (issue #1519).
+test.each([
+  ["ruleset", [SETTLED], "rules"],
+  [
+    "classic protection",
+    [{ status: 1, stdout: "", stderr: "no checks reported on the 'feat/x' branch\n" }],
+    "protection",
+  ],
+])(
+  "wait-checks names the body class of a lasting 500 on the %s source read",
+  async (which, reads, source) => {
+    const repo = await newRunRepo();
+    const marker = "SOURCE-SENTINEL";
+    const sourceFailure = {
+      status: 1,
+      stdout: blockOf(500, `{"message":"${marker}"`),
+      stderr: `gh: ${marker} (HTTP 500)`,
+      timedOut: false,
+    };
+    const inner = scriptedGh(reads, {
+      commits: { [HEAD_A]: SETTLED.checks },
+      ...(source === "rules" ? { rules: sourceFailure } : { protection: sourceFailure }),
+    });
+
+    const result = await executeRoleCommand(
+      parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "60"]),
+      { gh: inner, ...fakeClock() },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.payload).toMatchObject({ status: "error" });
+    expect(result.payload.error).toContain("HTTP 500 (body: truncated JSON)");
+    expect(result.payload.error).not.toContain(marker);
+    expect(result.payload).not.toHaveProperty("timedOut");
+  },
+);
+
 // Usefulness: verifies a lasting transport failure exits 1 with `status: "error"` that names it.
 // It is never `timedOut: true` and never a pass (issue #1312).
 test("wait-checks reports a transport failure that lasts to the bound as an error", async () => {
