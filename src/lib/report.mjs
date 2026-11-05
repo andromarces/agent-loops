@@ -78,7 +78,7 @@ function hasTablePair(lines) {
 //   (issues #259 and #264).
 // - A letter before the close tells a real emphasis run from a spaceless bullet.
 //   That bullet's later `*` is a wildcard or multiplication (`*glob src/*.mjs`,
-//   `*use 2* 3`). Without the letter, the item drops with no `raw` signal.
+//   `*use 2* 3`). Without the letter requirement, the item drops with no `raw` signal.
 // - The letter requirement also keeps a spaceless bullet with a later ` * ` a list.
 // - The close must not be glued to a following token that carries a letter or an
 //   ASCII digit. A spaceless bullet whose later `*` a letter precedes and a
