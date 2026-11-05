@@ -501,7 +501,7 @@ A closing keyword in a PR commit message also closes an issue at merge. `closing
 gh api --paginate "repos/{owner}/{repo}/pulls/<n>/commits" --jq '.[].commit.message'
 ```
 
-The commit list endpoint returns at most 250 commits of a PR, so a PR with more commits leaves the rest unseen. Exclude every issue that a commit message closes.
+The commits endpoint returns at most 250 commits of a PR, so a read that returns 250 commits is incomplete. For that PR, read the title and body with `gh pr view <n> --json title,body`. Exclude every issue that the title, body, or returned commits name. Do not select from the batch on the commits read alone for that PR.
 
 ## Several runs at once
 
