@@ -1,14 +1,29 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`cleanRepoGit` in git-helpers.mjs), so a case that asserts
+// invocation events starts no `git` process.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
 
 import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 
 // 26. Usefulness: verifies one invocation event per CLI call, including the orchestrator repair
 // turn, carrying the usage the adapter exposed (issue #47).
 test("runtime emits an invocation event per CLI call with adapter usage", async () => {
-  const repo = await createTempRepo();
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
   try {
     const finish = JSON.stringify({
       action: "finish",
@@ -30,6 +45,7 @@ test("runtime emits an invocation event per CLI call with adapter usage", async 
       task: "Task 26",
       cwd: repo,
       maxSteps: 5,
+      copyLocalFiles: false,
       roles: {
         orchestrator: { kind: "orch", sessionId: null },
         worker: { kind: "work", sessionId: null },
@@ -68,13 +84,15 @@ test("runtime emits an invocation event per CLI call with adapter usage", async 
     // Usage is consumed per invocation and never lingers on the role state.
     expect(orchAdapter.recorded.length).toBe(3);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
 
 // 27. Usefulness: verifies a failed CLI call still produces an invocation event with error status.
 test("runtime emits an error invocation event when the CLI call throws", async () => {
-  const repo = await createTempRepo();
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
   try {
     const orchAdapter = scripted([
       JSON.stringify({ action: "run_worker", prompt: "fail" }),
@@ -94,6 +112,7 @@ test("runtime emits an error invocation event when the CLI call throws", async (
       task: "Task 27",
       cwd: repo,
       maxSteps: 5,
+      copyLocalFiles: false,
       roles: {
         orchestrator: { kind: "orch", sessionId: null },
         worker: { kind: "work", sessionId: null },
@@ -108,6 +127,7 @@ test("runtime emits an error invocation event when the CLI call throws", async (
       { type: "invocation", role: "worker", status: "error", stepsUsed: 1 },
     ]);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
@@ -115,7 +135,8 @@ test("runtime emits an error invocation event when the CLI call throws", async (
 // 28. Usefulness: verifies usage an adapter exposed before throwing reaches the error invocation
 // event and is cleared from the role state (issue #47).
 test("runtime keeps adapter usage on an error invocation event and clears it from state", async () => {
-  const repo = await createTempRepo();
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
   try {
     const orchAdapter = scripted([
       JSON.stringify({ action: "run_worker", prompt: "fail" }),
@@ -141,6 +162,7 @@ test("runtime keeps adapter usage on an error invocation event and clears it fro
       task: "Task 28",
       cwd: repo,
       maxSteps: 5,
+      copyLocalFiles: false,
       roles,
       agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
       onEvent: (event) => events.push(event),
@@ -158,6 +180,7 @@ test("runtime keeps adapter usage on an error invocation event and clears it fro
     ]);
     expect(roles.worker.usage).toBeUndefined();
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
