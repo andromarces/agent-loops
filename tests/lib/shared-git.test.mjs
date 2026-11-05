@@ -626,9 +626,10 @@ test("the deadline aborts the git calls with the default abort reason", async ()
 test("every git process of the read has ended when the read rejects at its deadline", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
   await withGitHangingAfter(0, async ({ shimDir }) => {
-    const failure = await readSharedGit(linked, { deadlineMs: 5_000 }).catch((err) => err);
+    // The short deadline is enough for both hung reads to start; process termination is under test.
+    const failure = await readSharedGit(linked, { deadlineMs: 2_000 }).catch((err) => err);
     expect(failure).toBeInstanceOf(Error);
-    expect(failure.message).toMatch(/5000 ms/);
+    expect(failure.message).toMatch(/2000 ms/);
     const records = await shimCallRecords(shimDir);
     expect(records).toHaveLength(2);
     try {
