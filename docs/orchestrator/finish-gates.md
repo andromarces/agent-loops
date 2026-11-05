@@ -39,7 +39,8 @@ condition skips it, because that condition means no gate for this run's PR.
 Running the gate is not the same as reading GitHub: the gate checks its own local
 conditions first, and only then reads. Those local conditions are exactly two. The
 gate refuses with no GitHub call when the latest reviewer turn has no reviewed
-state, and when the reviewed work tree is not clean. Every other condition it
+state. That case includes a worker turn after the last review. The gate also
+refuses when the reviewed work tree is not clean. Every other condition it
 checks needs a read to settle it, the PR head comparison included, because it reads
 the PR first. In `review-only`, a `finish` without them keeps the current behavior,
 and each flag fails with a clear error.

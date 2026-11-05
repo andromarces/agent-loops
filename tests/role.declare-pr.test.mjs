@@ -260,6 +260,20 @@ async function useAcceptedPrRun() {
   return run;
 }
 
+const REJECT = "Conclusion: fails.\nWhy: incomplete.\nBlockers: none.\nVerdict: reject";
+
+/** Dispatches one worker turn in `repo` after the reviewer turn. */
+function dispatchWorker(repo) {
+  return executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+}
+
+const NO_GH = async () => {
+  throw new Error("gh must not run: the gate refused locally.");
+};
+
 describe("finish on a run that declares a PR", () => {
   // Usefulness: verifies a declared run finishes on a base branch with no required
   // check, and records the absence in the envelope and the state file. Thus a
@@ -331,5 +345,52 @@ describe("finish on a run that declares a PR", () => {
     const result = await finishCall(repo, ["--require-ci", "42"], { gh: prGateGh(head) });
     expect(result.exitCode).toBe(0);
     expect((await readRepoState(repo)).lifecycle).toBe("finished");
+  });
+
+  // Usefulness: verifies the interactive gate names a worker turn after an accept, so the two
+  // finish paths share one refusal reason (#1509).
+  test("a worker turn after an accepted review names the turn order", async () => {
+    await setup();
+    const { repo } = await useAcceptedPrRun();
+    await dispatchWorker(repo);
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: NO_GH });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain(
+      "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+    );
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies the interactive gate names a worker turn after a reject too, so the
+  // refusal does not depend on the verdict (#1509).
+  test("a worker turn after a rejected review names the turn order", async () => {
+    await setup();
+    const { repo } = await useDeclaredPrRun();
+    await dispatchReviewer(repo, REJECT);
+    await dispatchWorker(repo);
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: NO_GH });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain(
+      "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+    );
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies a failed reviewer turn keeps the origin/main refusal when no worker turn
+  // follows it, so only the turn order changes the wording (#1509).
+  test("a failed reviewer turn keeps the no-reviewed-state refusal", async () => {
+    await setup();
+    const { repo } = await useDeclaredPrRun();
+    await dispatchReviewer(repo, () => {
+      throw new Error("reviewer CLI failed");
+    });
+
+    const result = await finishCall(repo, ["--require-ci", "42"], { gh: NO_GH });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain("the latest reviewer turn has no reviewed state");
+    expect(result.payload.error).not.toContain("a worker turn ran after the last review");
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
   });
 });

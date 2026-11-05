@@ -8,6 +8,7 @@ import {
   unresolvedCompareReason,
 } from "../lib/gate-refusal.mjs";
 import { checkCi, checkPrHead } from "../lib/ci-gate.mjs";
+import { workerFollowedReview } from "../lib/gate.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { logInfo } from "../lib/log.mjs";
 import { acceptanceFailure } from "../lib/report.mjs";
@@ -118,6 +119,14 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   // `pr`, so an absent declaration keeps the marker-only behavior.
   const declaredPr = state.pr ?? null;
   const reviewed = state.lastResult?.reviewed ?? null;
+  // The turn order of the state file names a worker turn after a reviewer turn.
+  // The headless gate reads the same fact from its own gate state. The state file
+  // is read once, here.
+  const turns = Array.isArray(state.turns) ? state.turns : [];
+  const workerAfterReview = workerFollowedReview({
+    reviewerTurnDispatched: turns.some((turn) => turn.role === "reviewer"),
+    lastRole: state.lastResult?.role ?? null,
+  });
   // The headless gate refuses the same combination with the same words, so the
   // message is one function rather than two copies (#293). A finish that carries
   // `unresolvedCompare` is refused under `--require-ci` and for a declared PR,
@@ -165,6 +174,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     const gate = await checkCi({
       pr: args.requireCi,
       reviewed,
+      workerAfterReview,
       cwd: args.cwd,
       gh,
       signal,
@@ -178,6 +188,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     const compare = await checkPrHead({
       pr: args.compareHead,
       reviewed,
+      workerAfterReview,
       cwd: args.cwd,
       gh,
       signal,

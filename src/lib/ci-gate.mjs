@@ -35,9 +35,13 @@ function fail(reason) {
 const label = ({ context }) => contextLabel(context.name, context.appId);
 
 /** The refusal for a reviewed state that cannot finish, or null when it is a clean reviewed commit. */
-function reviewedRefusal(reviewed) {
+function reviewedRefusal(reviewed, workerAfterReview) {
   if (!reviewed) {
-    return fail("the latest reviewer turn has no reviewed state");
+    return fail(
+      workerAfterReview
+        ? "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish"
+        : "the latest reviewer turn has no reviewed state",
+    );
   }
   return reviewed.clean ? null : fail("the reviewed work tree is not clean");
 }
@@ -116,18 +120,20 @@ const RULESETS_UNREADABLE =
  * The reads end after `timeoutMs` and when `signal` aborts. A cancel wins over every other outcome,
  * a local refusal and a gate result included: an aborted `signal` starts no read, and the call
  * rejects with `isCanceled` set. A deadline rejects with `timedOut` set and a timeout message (#1181).
- * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
+ * `workerAfterReview` names a worker turn after the last review, so the refusal states the turn order.
+ * @param {{ pr: number, reviewed: object | null, workerAfterReview?: boolean, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
 export async function checkCi({
   pr,
   reviewed,
+  workerAfterReview = false,
   cwd,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
-  return boundedGateRead({ reviewed, gh, timeoutMs, signal }, (call) =>
+  return boundedGateRead({ reviewed, workerAfterReview, gh, timeoutMs, signal }, (call) =>
     judgeCi({ pr, reviewed, cwd, gh: call }),
   );
 }
@@ -142,19 +148,20 @@ export async function checkCi({
  * The read ends after `timeoutMs` and when `signal` aborts, with the cancel and timeout rules of `checkCi`: an
  * aborted `signal` starts no read and the call rejects with `isCanceled` set, and a deadline rejects with
  * `timedOut` set, never a verified compare (#1200).
- * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
+ * @param {{ pr: number, reviewed: object | null, workerAfterReview?: boolean, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
 export async function checkPrHead({
   pr,
   reviewed,
+  workerAfterReview = false,
   cwd,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
   return boundedGateRead(
-    { reviewed, gh, timeoutMs, signal },
+    { reviewed, workerAfterReview, gh, timeoutMs, signal },
     (call) => prInfo(call, pr, cwd),
     (info) => {
       if (info.state !== "OPEN") {
@@ -196,12 +203,12 @@ function readExpired(call, err) {
 // before the read, when the reviewed state refuses, and after the read. `read(call)` runs on the
 // bounded runner, and `judge(value)` runs on its value once the cancel check has passed.
 async function boundedGateRead(
-  { reviewed, gh, timeoutMs, signal },
+  { reviewed, workerAfterReview, gh, timeoutMs, signal },
   read,
   judge = (value) => value,
 ) {
   throwIfCanceled(signal);
-  const refused = reviewedRefusal(reviewed);
+  const refused = reviewedRefusal(reviewed, workerAfterReview);
   if (refused) {
     return refused;
   }
