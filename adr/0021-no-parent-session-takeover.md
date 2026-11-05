@@ -45,7 +45,7 @@ A takeover command cannot meet the second requirement:
    covers only a child during its own turn, and the state lock already blocks that
    case. An idle run stays open.
 3. Session evidence exists in the guard hooks, but not on shell calls, and it would
-   not identify a child. What each harness hands its guard (`docs/parent-guard.md`):
+   not identify a child. What each harness hands its guard (`docs/reference/parent-guard.md`):
    - Claude Code, Codex CLI, and Copilot CLI: `session_id` in the `PreToolUse`
      input, on the tools the installed matcher selects. Those are the file-edit
      tools (`Edit|Write|MultiEdit|NotebookEdit`, `^apply_patch$`, `Edit|Write`).
@@ -72,7 +72,7 @@ A takeover command cannot meet the second requirement:
      session, and a session id does not.
 4. The environment does not tell them apart either, per the repository docs. The
    [Interactive orchestrator: harness entry points](../docs/reference/harness-entry-points.md#interactive-orchestrator-harness-entry-points) states that a nested harness inherits `CODEX_THREAD_ID`, and
-   `docs/parent-guard.md` states that child processes inherit
+   `docs/reference/parent-guard.md` states that child processes inherit
    `ANTIGRAVITY_CONVERSATION_ID`. ADR 0014 point 8 states the run marker. It names a child of the run and does
    not identify a new user session.
 5. A secret that only the old parent holds does not reach the new session, which is

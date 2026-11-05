@@ -29,7 +29,6 @@ version.
 - [Child dispatch](reference/role.md)
   - [Interactive child dispatch: `agent-loop role`](reference/role.md#interactive-child-dispatch-agent-loop-role)
   - [`wait-checks`](reference/wait-checks.md)
-  - [Finish gates: absence rule](reference/finish-gates.md)
 - [Interactive parent session](reference/harness-entry-points.md)
   - [Interactive orchestrator: harness entry points](reference/harness-entry-points.md#interactive-orchestrator-harness-entry-points)
   - [Parent guard: hard read-only for the parent session](reference/harness-entry-points.md#parent-guard-hard-read-only-for-the-parent-session)
@@ -55,5 +54,5 @@ Other documents:
 - [Orchestrator instructions](orchestrator-instructions.md): the role rules for an
   interactive parent session. The core names the reference sections under
   `orchestrator/` and when to read each.
-- [Parent guard details](parent-guard.md): every guard target and matcher.
+- [Parent guard details](reference/parent-guard.md): every guard target and matcher.
 - [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md).
