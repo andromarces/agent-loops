@@ -19,15 +19,35 @@ const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
 // A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
 // Only the six report labels gain this form, so a bold lead with another name stays text (issue
 // #1483).
+const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
 const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 
-// The start of a known report label line, plain or bold, at column 0.
-const KNOWN_LABEL_LINE = new RegExp(
-  `^(?:(?:${LABEL_NAMES}):|\\*\\*(?:${LABEL_NAMES}):\\*\\*)`,
-  "i",
-);
+// A line that opens a report label at column 0, plain or bold, for example `Why:` or `**Why:**`.
+const REPORT_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}):|${BOLD_LABEL})`, "i");
 
-const BOLD_CONCLUSION_LINE = /^\*\*Conclusion:\*\*/i;
+// A line that opens a report label at column 0, plain or bold, or a plain `Verdict:` line.
+const BLOCK_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL})`, "i");
+
+// A line that starts a closing block, plain or bold `Conclusion`.
+const BLOCK_START = new RegExp(`^(?:Conclusion:|\\*\\*Conclusion:\\*\\*)\\s*`, "i");
+
+// A line that opens a plain report label at column 0.
+const KNOWN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
+
+/** True when the line opens a report label at column 0, plain or bold (issue #1483). */
+export function opensReportLabel(line) {
+  return REPORT_LABEL_LINE.test(line);
+}
+
+/** True when the line opens a report label or a plain `Verdict` line at column 0 (issue #1483). */
+export function opensBlockLabel(line) {
+  return BLOCK_LABEL_LINE.test(line);
+}
+
+/** True when the line starts a closing block, plain or bold `Conclusion` (issue #1483). */
+export function startsClosingBlock(line) {
+  return BLOCK_START.test(line);
+}
 
 // Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
 // label inside a fence stays text (issue #1483).
@@ -49,15 +69,23 @@ function fencedLines(lines) {
   return fenced;
 }
 
-// Converts a column-0 bold report label line to its plain form. A bold label inside a fence gains
-// a leading `x`, so it is neither a label nor a decorated label (issue #1483).
-function normalizeBoldLabels(lines, fenced) {
-  return lines.map((line, index) => {
-    if (!BOLD_LABEL_LINE.test(line)) {
-      return line;
-    }
-    return fenced[index] ? `x${line}` : line.replace(BOLD_LABEL_LINE, "$1:$2");
-  });
+/**
+ * Returns `text` with each column-0 bold report label normalized to its plain form. A bold label
+ * inside a fenced code block stays text (issue #1483).
+ * @param {string} text
+ * @returns {string}
+ */
+export function normalizeReportLabels(text) {
+  const lines = text.split(/\r?\n/);
+  const fenced = fencedLines(lines);
+  return lines
+    .map((line, index) => {
+      if (!BOLD_LABEL_LINE.test(line)) {
+        return line;
+      }
+      return fenced[index] ? `x${line}` : line.replace(BOLD_LABEL_LINE, "$1:$2");
+    })
+    .join("\n");
 }
 
 // A report label that indentation or markdown decoration hides from the strict
@@ -187,18 +215,18 @@ export function hasClosingBlockAttempt(response) {
 }
 
 /**
- * The closing block: the lines from the last `Conclusion:` line to the end of
- * the response, or null when the response has no `Conclusion:` line at all.
- * With `unlabeled`, a response without a `Conclusion:` label starts at the non-blank line directly
- * before the first known report label, and that line becomes `Conclusion`. A column-0 bold label
- * line is normalized to its plain form, except inside a fenced code block (issue #1483).
+ * The closing block: the lines from the last `Conclusion:` line to the end of the response. It is
+ * null when the response has no `Conclusion:` line at all. The whole response is normalized first,
+ * so a bold label starts a block as its plain form does. With `unlabeled`, a response without a
+ * `Conclusion:` label starts at the non-blank line directly before the first known report label,
+ * and that line becomes `Conclusion`. A bold label inside a fenced code block stays text (issue
+ * #1483).
  * @param {string} response
  * @param {{ unlabeled?: boolean }} [options]
  * @returns {string[] | null}
  */
 function closingBlock(response, { unlabeled = false } = {}) {
-  const lines = response.split(/\r?\n/);
-  const fenced = fencedLines(lines);
+  const lines = normalizeReportLabels(response).split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (/^Conclusion:\s*/i.test(lines[i])) {
@@ -206,17 +234,14 @@ function closingBlock(response, { unlabeled = false } = {}) {
     }
   }
   if (start !== -1) {
-    return normalizeBoldLabels(lines.slice(start), fenced.slice(start));
+    return lines.slice(start);
   }
   if (!unlabeled) {
     return null;
   }
-  const first = lines.findIndex((line, index) => !fenced[index] && KNOWN_LABEL_LINE.test(line));
+  const first = lines.findIndex((line) => KNOWN_LABEL_LINE.test(line));
   if (first === -1) {
     return null;
-  }
-  if (BOLD_CONCLUSION_LINE.test(lines[first])) {
-    return normalizeBoldLabels(lines.slice(first), fenced.slice(first));
   }
   let before = first - 1;
   while (before >= 0 && lines[before].trim() === "") {
@@ -225,7 +250,7 @@ function closingBlock(response, { unlabeled = false } = {}) {
   if (before < 0 || !isPlainProseLine(lines[before])) {
     return null;
   }
-  const block = normalizeBoldLabels(lines.slice(before), fenced.slice(before));
+  const block = lines.slice(before);
   block[0] = `Conclusion: ${lines[before].trim()}`;
   return block;
 }

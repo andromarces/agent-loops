@@ -704,6 +704,24 @@ test("opencode refuses an accept that spans unidentified parts", async () => {
   expect(error.message).toContain("Checks: pnpm test");
 });
 
+// Usefulness: verifies a bold label in a later unidentified part triggers the same fail-closed
+// guard as its plain twin. The bold form cannot turn the turn into an accept (issue #1483).
+test("opencode refuses a bold label that spans unidentified parts", async () => {
+  const first = "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n";
+  const plain = await runWithEvents(textEvent(first), textEvent("Checks: tests passed")).catch(
+    (err) => err,
+  );
+  const bold = await runWithEvents(textEvent(first), textEvent("**Checks:** tests passed")).catch(
+    (err) => err,
+  );
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message).toContain("**Checks:** tests passed");
+});
+
 // Usefulness: verifies a block that sits whole in one unidentified part still parses as accept, so
 // the fail-closed rule of issue #509 does not reject an ordinary no-id stream.
 test("opencode accepts a whole block held by one unidentified part", async () => {
