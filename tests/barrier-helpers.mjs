@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { beforeEach, expect, test } from "vite-plus/test";
+import { beforeEach, describe, expect, test } from "vite-plus/test";
 import { createBodyBarrier } from "./body-barrier.mjs";
 
 /**
@@ -14,7 +14,8 @@ import { createBodyBarrier } from "./body-barrier.mjs";
  *
  * Call it once at the top of the file, before any other hook, so the wait runs first. The result
  * accepts the `test(name, fn, options)`, `test.each(table)(...)`, and `test.skipIf(cond)(...)` forms.
- * Side effect: registers one pair of tests that fails when a file does not wait for a timed-out body.
+ * Side effect: registers one pair of tests, in a fixed order, that fails when a file does not wait
+ * for a timed-out body.
  */
 export function createBarrierTest({ barrier = createBodyBarrier() } = {}) {
   let lateBodyStarted = false;
@@ -65,20 +66,24 @@ export function createBarrierTest({ barrier = createBodyBarrier() } = {}) {
       test.skipIf(condition)(name, ...guard(rest));
   guarded.fails = (name, ...rest) => test.fails(name, ...guard(rest));
 
-  // Usefulness: sets up the leak that the next test checks, a body that outlives its own timeout.
-  // `fails` expects the timeout, so only an unexpected pass or error shows in the report.
-  guarded.fails("a body past its timeout keeps running", { timeout: 20 }, async () => {
-    lateBodyStarted = true;
-    await gate;
-    await delay(10);
-    lateCleanupDone = true;
-  });
-  // Usefulness: verifies that this file starts a test only after an earlier timed-out body ended,
-  // so its late cleanup cannot change the spy calls or the exit code that the test reads. The late
-  // body ends a timer tick after the hook of this test opens its gate, and the hook reads the state
-  // as the wait returns, so only the wait can make the state true.
-  guarded("a test starts after an earlier timed-out body has ended", () => {
-    expect(doneWhenTestStarted).toBe(true);
+  // The second test reads what the first test sets up, so the pair keeps its order under shuffle.
+  // The `shuffle: false` option on this suite overrides the file-wide shuffle (Vitest 5.1.0).
+  describe("the barrier regression pair", { shuffle: false }, () => {
+    // Usefulness: sets up the leak that the next test checks, a body that outlives its own timeout.
+    // `fails` expects the timeout, so only an unexpected pass or error shows in the report.
+    guarded.fails("a body past its timeout keeps running", { timeout: 20 }, async () => {
+      lateBodyStarted = true;
+      await gate;
+      await delay(10);
+      lateCleanupDone = true;
+    });
+    // Usefulness: verifies that this file starts a test only after an earlier timed-out body ended,
+    // so its late cleanup cannot change the spy calls or the exit code that the test reads. The late
+    // body ends a timer tick after the hook of this test opens its gate, and the hook reads the state
+    // as the wait returns, so only the wait can make the state true.
+    guarded("a test starts after an earlier timed-out body has ended", () => {
+      expect(doneWhenTestStarted).toBe(true);
+    });
   });
   return guarded;
 }
