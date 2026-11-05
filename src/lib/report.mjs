@@ -258,20 +258,42 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
 }
 
 /**
+ * The closing block with the parser's list folding applied, plus the value each report label reads
+ * there. It is null when no closing block attempt exists. `parseReportBlock` and the missing-label
+ * diagnosis share this step. A label is present exactly when the parser's label scan reads a value
+ * for it (issue #1520).
+ * @param {string} response
+ * @param {{ boldLabels?: boolean, diagnose?: boolean }} [options]
+ * @returns {{ block: string[], lines: string[] | null, labels: Array<{ key: string, label: string, optional: boolean, value: string | null }> } | null}
+ */
+function foldedReportBlock(response, { boldLabels = true, diagnose = false } = {}) {
+  const block = closingBlock(response, { unlabeled: true, boldLabels, diagnose });
+  if (!block) {
+    return null;
+  }
+  const lines = foldEmptyLabelLists(block);
+  const labels = REPORT_LABELS.map(([key, label, optional]) => {
+    const value = lastLabeled(lines ?? block, label)?.value ?? "";
+    return { key, label, optional, value: value === "" ? null : value };
+  });
+  return { block, lines, labels };
+}
+
+/**
  * The closing block of `response` as report values, or null when the block does not parse.
  * @param {string} response
  * @param {{ boldLabels?: boolean }} [options]
  * @returns {{ report: object } | null}
  */
 function reportDetail(response, { boldLabels = true } = {}) {
-  const block = closingBlock(response, { unlabeled: true, boldLabels });
-  if (!block) {
+  const shared = foldedReportBlock(response, { boldLabels });
+  if (!shared) {
     return null;
   }
+  const { block, lines, labels } = shared;
   if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !BOLD_DASH_ITEM.test(line))) {
     return null;
   }
-  const lines = foldEmptyLabelLists(block);
   if (
     !lines ||
     lines.some((line) => DECORATED_LABEL_LINE.test(line)) ||
@@ -281,16 +303,15 @@ function reportDetail(response, { boldLabels = true } = {}) {
     return null;
   }
   const report = {};
-  for (const [key, label, optional] of REPORT_LABELS) {
-    const found = lastLabeled(lines, label);
-    if (!found?.value) {
+  for (const { key, optional, value } of labels) {
+    if (!value) {
       if (optional) {
         report[key] = null;
         continue;
       }
       return null;
     }
-    report[key] = found.value;
+    report[key] = value;
   }
   return { report };
 }
@@ -350,13 +371,13 @@ export function parseReportBlock(response, { boldLabels = true } = {}) {
  * @returns {string[]}
  */
 export function missingRequiredReportLabels(response) {
-  const block = closingBlock(response, { unlabeled: true, diagnose: true });
-  if (!block) {
+  const shared = foldedReportBlock(response, { diagnose: true });
+  if (!shared) {
     return [];
   }
-  return REPORT_LABELS.filter(
-    ([, label, optional]) => !optional && !lastLabeled(block, label)?.value,
-  ).map(([, label]) => label);
+  return shared.labels
+    .filter(({ optional, value }) => !optional && value === null)
+    .map(({ label }) => label);
 }
 
 /**

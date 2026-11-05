@@ -591,6 +591,8 @@ test.each([
     name: "a block that starts at Why",
     response: "Why: tests pass\nBlockers: none\nChecks: npm test",
     labels: ["Conclusion"],
+    warning: "lacks the required label Conclusion",
+    absent: null,
   },
   {
     name: "a block without Why",
@@ -605,15 +607,26 @@ test.each([
       "Deferred: none",
     ].join("\n"),
     labels: ["Why"],
+    warning: "lacks the required label Why",
+    absent: null,
+  },
+  {
+    name: "a folded list under Why",
+    response: "Conclusion: done\nWhy:\n- tests pass\nChecks: npm test",
+    labels: ["Blockers"],
+    warning: "lacks the required label Blockers",
+    absent: "Why",
   },
   {
     name: "a block without Conclusion and Blockers",
     response: "Why: tests pass\nChecks: npm test",
     labels: ["Conclusion", "Blockers"],
+    warning: "lacks the required labels Conclusion, Blockers",
+    absent: null,
   },
 ])(
   "worker dispatch names every required label missing from $name",
-  async ({ response, labels }) => {
+  async ({ response, labels, warning, absent }) => {
     const repo = await newCleanRepo();
     const worker = recordingAdapter([async () => response]);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -628,7 +641,8 @@ test.each([
       expect(result.payload.reportMissingLabels).toEqual(labels);
       expect((await readRepoState(repo)).lastResult.reportMissingLabels).toEqual(labels);
       const logs = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
-      expect(logs).toContain(labels.join(", "));
+      expect(logs).toContain(warning);
+      if (absent !== null) expect(logs).not.toContain(absent);
       expect(logs).not.toContain("tests pass");
     } finally {
       errorSpy.mockRestore();

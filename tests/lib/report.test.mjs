@@ -62,12 +62,32 @@ test("missingRequiredReportLabels names Conclusion when the block starts at Why"
   expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
 });
 
+// Usefulness: verifies a folded list under a required label counts as present, so the reviewer
+// case names only Blockers (issue #1520). A raw label scan reports Why as missing and fails.
+test("missingRequiredReportLabels reads a folded list under a required label", () => {
+  const response = "Conclusion: done\nWhy:\n- tests pass\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Blockers"]);
+});
+
+// Usefulness: verifies a folded list under each required label counts as present and the block
+// parses (issue #1520). A label is present exactly when the parser reads a value for it.
+test.each([
+  ["Conclusion", "Conclusion:\n- done\nWhy: ok\nBlockers: none"],
+  ["Why", "Conclusion: done\nWhy:\n- ok\nBlockers: none"],
+  ["Blockers", "Conclusion: done\nWhy: ok\nBlockers:\n- none"],
+])("missingRequiredReportLabels reads a folded list under %s", (_label, response) => {
+  expect(parseReportBlock(response)).not.toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
 // Usefulness: verifies the parser names Why when a block has every other required label
 // (issue #1520).
 test("missingRequiredReportLabels names Why", () => {
   const response = "Conclusion: done\nBlockers: none\nChecks: npm test";
   expect(parseReportBlock(response)).toBeNull();
   expect(missingRequiredReportLabels(response)).toEqual(["Why"]);
+  expect(missingRequiredReportLabels("Conclusion: done\nWhy:\nBlockers: none")).toEqual(["Why"]);
 });
 
 // Usefulness: verifies the parser names Blockers when a block has Conclusion and Why
