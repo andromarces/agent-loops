@@ -249,8 +249,10 @@ test("a cancel kills the command and its child process", async () => {
 test(
   "a cancel during the before snapshot ends the run as canceled",
   async () => {
-    const error = await expectAbortKillsShim("git", (signal) =>
-      runTestCmd({ command: node(""), cwd: tmpdir(), signal }).catch((err) => err),
+    const error = await expectAbortKillsShim(
+      "git",
+      (signal) => runTestCmd({ command: node(""), cwd: tmpdir(), signal }).catch((err) => err),
+      { abortForceKillAfterDelayMs: 500 },
     );
     expect(error.isCanceled).toBe(true);
   },

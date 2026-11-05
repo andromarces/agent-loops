@@ -350,7 +350,15 @@ function requireStoredParentSession(args, state) {
  */
 async function waitChecksOperation(
   args,
-  { gh, signal, now = Date.now, sleep, assertWorkTree = assertGitWorkTree } = {},
+  {
+    gh,
+    signal,
+    now = Date.now,
+    sleep,
+    assertWorkTree = assertGitWorkTree,
+    // Injectable so a test can use a short ceiling; production keeps the wait default (issue #1465).
+    childExitCeilingMs,
+  } = {},
 ) {
   rejectMisplacedFlags(args, "wait-checks");
   if (args.pr === null) {
@@ -385,6 +393,7 @@ async function waitChecksOperation(
     gh,
     now,
     sleep,
+    childExitCeilingMs,
     signal,
   });
   return { exitCode: 0, payload: { status: "ok", pr: args.pr, ...result } };

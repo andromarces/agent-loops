@@ -81,7 +81,10 @@ afterEach(async () => {
 // Usefulness: verifies a hung start-time query yields null after the bound and leaves
 // no query process alive, which a bare execFile timeout does not guarantee for a tree.
 test("a hung start-time query returns null and leaves no query process", async (ctx) => {
-  await expect(processStartTime(process.pid)).resolves.toBeNull();
+  const started = Date.now();
+  // The injected query bound ends the hung read without the 5 s production wait (issue #1465).
+  await expect(processStartTime(process.pid, { timeoutMs: 500 })).resolves.toBeNull();
+  expect(Date.now() - started).toBeLessThan(3000);
 
   // On a loaded host the bound can fire before the fake query starts and writes its pid.
   // No process then exists to observe, so the test skips instead of passing vacuously.
