@@ -680,6 +680,7 @@ test.each([
       pr: 42,
       cwd: ".",
       timeoutSeconds: 0.3,
+      childExitCeilingMs: 100,
       all,
       gh,
       sleep: async () => {},
@@ -721,6 +722,7 @@ test.each([
       pr: 42,
       cwd: ".",
       timeoutSeconds: 0.3,
+      childExitCeilingMs: 100,
       all,
       gh,
       sleep: async () => {},
@@ -752,6 +754,13 @@ test("waitChecks ends with the earlier error when the next commit read hangs", a
     return inner(args, cwd, options);
   };
   await expect(
-    waitChecks({ pr: 42, cwd: ".", timeoutSeconds: 0.3, gh, sleep: async () => {} }),
+    waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 0.3,
+      childExitCeilingMs: 100,
+      gh,
+      sleep: async () => {},
+    }),
   ).rejects.toMatchObject({ message: expect.stringContaining("failed: gh: HTTP 500") });
 }, 20000);

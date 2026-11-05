@@ -100,8 +100,10 @@ test(
 test(
   "assertGitWorkTree ends a hung probe on cancel and reports a cancel",
   async () => {
-    const error = await expectAbortKillsShim("git", (signal) =>
-      assertGitWorkTree(tmpdir(), { signal }).catch((err) => err),
+    const error = await expectAbortKillsShim(
+      "git",
+      (signal) => assertGitWorkTree(tmpdir(), { signal }).catch((err) => err),
+      { abortForceKillAfterDelayMs: 500 },
     );
     expect(error).toBeInstanceOf(SnapshotError);
     expect(error.isCanceled).toBe(true);
@@ -128,8 +130,10 @@ test(
 test(
   "snapshot ends a hung git read on cancel and reports a cancel",
   async () => {
-    const error = await expectAbortKillsShim("git", (signal) =>
-      snapshot(tmpdir(), { signal }).catch((err) => err),
+    const error = await expectAbortKillsShim(
+      "git",
+      (signal) => snapshot(tmpdir(), { signal }).catch((err) => err),
+      { abortForceKillAfterDelayMs: 500 },
     );
     expect(error).toBeInstanceOf(SnapshotError);
     expect(error.isCanceled).toBe(true);

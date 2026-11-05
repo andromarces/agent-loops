@@ -4,19 +4,32 @@ import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 
-// The order in which the post-turn `git` reads start and end. `slowStatus` delays the end of the
-// work tree status read, as a large work tree does.
-const reads = vi.hoisted(() => ({ events: [], slowStatus: false }));
+// The order in which the post-turn `git` reads start and end. `slowStatus` holds the end of the
+// work tree status read until the shared Git read starts, as a large work tree does.
+const reads = vi.hoisted(() => ({
+  events: [],
+  slowStatus: false,
+  statusGate: Promise.resolve(),
+  releaseStatus: () => {},
+  resetStatusGate() {
+    this.statusGate = new Promise((resolve) => {
+      this.releaseStatus = resolve;
+    });
+  },
+}));
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execBounded: async (command, args, ...rest) => {
       if (command !== "git") return real.execBounded(command, args, ...rest);
-      if (args.includes("--git-common-dir")) reads.events.push("shared read started");
+      if (args.includes("--git-common-dir")) {
+        reads.events.push("shared read started");
+        reads.releaseStatus();
+      }
       const result = await real.execBounded(command, args, ...rest);
       if (args[0] === "status" && reads.slowStatus) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await reads.statusGate;
         reads.events.push("work tree status ended");
       }
       return result;
@@ -96,6 +109,7 @@ beforeEach(async () => {
 afterEach(async () => {
   holds.release();
   reads.slowStatus = false;
+  reads.resetStatusGate();
   await removePath(repo);
 });
 
@@ -107,6 +121,7 @@ test("a worker turn reads the work tree and the shared Git state concurrently", 
       fake: scripted([
         async () => {
           reads.events.length = 0;
+          reads.resetStatusGate();
           reads.slowStatus = true;
         },
       ]),

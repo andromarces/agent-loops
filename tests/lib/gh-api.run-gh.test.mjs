@@ -166,8 +166,10 @@ test(
 test(
   "runGh terminates the gh child when its abort signal fires",
   async () => {
-    const result = await expectAbortKillsShim("gh", (signal) =>
-      runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
+    const result = await expectAbortKillsShim(
+      "gh",
+      (signal) => runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
+      { abortForceKillAfterDelayMs: 500 },
     );
     expect(result.status).not.toBe(0);
     expect(result.timedOut).toBe(false);

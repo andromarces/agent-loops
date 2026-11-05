@@ -1,6 +1,6 @@
 import { entryCarrier } from "./entry-report.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { execBounded } from "./exec.mjs";
+import { execBounded, KILL_GRACE_MS } from "./exec.mjs";
 import { logError, logInfo, logWarn } from "./log.mjs";
 import { redactAndClean } from "./redact.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
@@ -175,13 +175,23 @@ export async function runTestCmd({
   cwd,
   signal,
   forceSignal = forceCancelSignal(signal),
+  // Injectable so a test can shorten the settle bound; production keeps 10 s (issue #1465).
+  killGraceMs = KILL_GRACE_MS,
 }) {
   const { slot, testRun: notStarted } = await holdSlotFor(command, signal);
   if (notStarted) {
     return notStarted;
   }
   try {
-    return await runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, env: slot.env });
+    return await runInSlot({
+      command,
+      timeoutSeconds,
+      cwd,
+      signal,
+      forceSignal,
+      env: slot.env,
+      killGraceMs,
+    });
   } finally {
     // A failed release never replaces the result or the cancel of the command. The slot then stays
     // held until this process exits, when the stale-owner rules reclaim it.
@@ -191,7 +201,7 @@ export async function runTestCmd({
   }
 }
 
-async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, env }) {
+async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, env, killGraceMs }) {
   const before = await snapshot(cwd, { signal });
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
@@ -207,6 +217,7 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
     // `killBound` arms the settle bound of `execBounded` from the same timeout and cancel,
     // so a command that no kill ends settles 10 s later (issue #1307).
     killBound: { timeoutMs: timeoutSeconds * 1000, signal },
+    killGraceMs,
   });
   // The runtime owns the bound and the cancel, and kills what it owns and nothing else. execa
   // starts the command as the leader of a process group of its own on POSIX, so SIGKILL to that

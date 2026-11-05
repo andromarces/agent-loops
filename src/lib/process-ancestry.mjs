@@ -78,7 +78,7 @@ const PROCESS_COLUMNS = {
  */
 async function readProcessColumns(
   columns,
-  { signal, timeout = PROCESS_READ_TIMEOUT_SECONDS } = {},
+  { signal, timeout = PROCESS_READ_TIMEOUT_SECONDS, forceKillAfterDelay } = {},
 ) {
   const windows = process.platform === "win32";
   const specs = columns.map((column) => PROCESS_COLUMNS[column]);
@@ -98,6 +98,8 @@ async function readProcessColumns(
     ({ stdout } = await exec(command, args, {
       signal,
       timeout,
+      // Injectable so a test can shorten the delay; production keeps execa's 5000 ms default.
+      forceKillAfterDelay,
       maxBuffer: PROCESS_TABLE_MAX_BUFFER,
     }));
   } catch (err) {

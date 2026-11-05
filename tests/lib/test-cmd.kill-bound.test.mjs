@@ -99,7 +99,14 @@ const waitForChild = () =>
 // exit code, so the reviewer dispatch never waits on it (issue #1307 acceptance).
 test("a test command that survives the timeout kill settles as timed-out", async () => {
   const cwd = await setup();
-  const run = await runTestCmd({ command: "stuck-command", timeoutSeconds: 0.05, cwd });
+  const started = Date.now();
+  // The injected kill grace settles the run without the 10 s production wait (issue #1465).
+  const run = await runTestCmd({
+    command: "stuck-command",
+    timeoutSeconds: 0.05,
+    cwd,
+    killGraceMs: 100,
+  });
   expect(run).toMatchObject({
     status: "timed-out",
     timedOut: true,
@@ -108,6 +115,7 @@ test("a test command that survives the timeout kill settles as timed-out", async
     changedPaths: [],
     changedCount: 0,
   });
+  expect(Date.now() - started).toBeLessThan(5000);
   const child = state.child;
   child.nodeChildProcess.emit("exit", 0, null);
   expect(run.status).toBe("timed-out");
@@ -122,16 +130,20 @@ test("a test command that survives the timeout kill settles as timed-out", async
 test("a test command that survives the cancel kill settles as canceled", async () => {
   const cwd = await setup();
   const controller = new AbortController();
+  const started = Date.now();
+  // The injected kill grace settles the cancel without the 10 s production wait (issue #1465).
   const pending = runTestCmd({
     command: "stuck-command",
     timeoutSeconds: 600,
     cwd,
     signal: controller.signal,
+    killGraceMs: 100,
   });
   const outcome = pending.catch((err) => err);
   await waitForChild();
   controller.abort();
   const error = await outcome;
+  expect(Date.now() - started).toBeLessThan(5000);
   expect(error.isCanceled).toBe(true);
   expect(error.testRun).toMatchObject({
     status: "canceled",

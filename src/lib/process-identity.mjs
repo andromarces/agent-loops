@@ -48,10 +48,10 @@ const START_TIME_QUERY_MS = 5000;
 // Output of `command` run under TZ=UTC and LC_ALL=C, trimmed; "" when the command
 // fails, times out after START_TIME_QUERY_MS, overflows its output buffer (a cut
 // read, which execa can report with exit code 0), or prints nothing.
-async function queryOutput(command, args) {
+async function queryOutput(command, args, timeoutMs = START_TIME_QUERY_MS) {
   const result = await execBounded(command, args, {
     env: { TZ: "UTC", LC_ALL: "C" },
-    timeoutMs: START_TIME_QUERY_MS,
+    timeoutMs,
     windowsHide: true,
   });
   return result.exitCode === 0 && !result.timedOut && !result.isCanceled && !result.isMaxBuffer
@@ -165,22 +165,29 @@ async function linuxProcStamp(pid) {
  *   likewise not exercised under a clock step).
  * Any other platform has no stamp, and its locks read as alive. No native dependency.
  */
-export async function processStartTime(pid) {
+export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } = {}) {
+  // Injectable so a test can shorten the query bound; production keeps the 5000 ms default.
   try {
     if (process.platform === "linux") {
       return await linuxProcStamp(pid);
     }
     if (process.platform === "darwin") {
-      const time = parseLstart(await queryOutput("ps", ["-o", "lstart=", "-p", String(pid)]));
+      const time = parseLstart(
+        await queryOutput("ps", ["-o", "lstart=", "-p", String(pid)], timeoutMs),
+      );
       return time === null ? null : `darwin-lstart:${time}`;
     }
     if (process.platform === "win32") {
-      const text = await queryOutput("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `[DateTimeOffset]::new([System.Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeSeconds()`,
-      ]);
+      const text = await queryOutput(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `[DateTimeOffset]::new([System.Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeSeconds()`,
+        ],
+        timeoutMs,
+      );
       return /^\d{1,15}$/.test(text) ? `win32-creation:${text}` : null;
     }
   } catch {

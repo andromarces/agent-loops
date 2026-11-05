@@ -433,9 +433,12 @@ test("wait-checks marks an error envelope with an unconfirmed child", async () =
   const repo = await newRunRepo();
   const inner = scriptedGh([SETTLED], { commits: { [HEAD_A]: SETTLED.checks } });
 
+  const started = Date.now();
   const result = await executeRoleCommand(
     parseRoleArgs(["wait-checks", "--cwd", repo, "--pr", "42", "--timeout", "1"]),
     {
+      // The injected child-exit ceiling keeps this unconfirmed-child case at its 1 s bound.
+      childExitCeilingMs: 100,
       gh: (args, cwd, options) => {
         if (args[0] === "api" && args[1].includes("/rules/branches/")) {
           return Promise.resolve({ status: 1, stdout: "", stderr: "gh: Server Error (HTTP 500)" });
@@ -447,6 +450,7 @@ test("wait-checks marks an error envelope with an unconfirmed child", async () =
       },
     },
   );
+  expect(Date.now() - started).toBeLessThan(5000);
   expect(result.exitCode).toBe(1);
   expect(result.payload).toMatchObject({ status: "error", childExitUnconfirmed: true });
 }, 20000);

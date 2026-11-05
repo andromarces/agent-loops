@@ -6,14 +6,21 @@ import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 
-// The order in which the `git` reads start and end. `slowShared` delays the end of the shared Git
-// read, as a slow remote read does. `beforeLockfileRoot` runs before the second lockfile root read
-// (the one after the turn), which the lockfile read marks by its 10 s bound.
+// The order in which the `git` reads start and end. `slowShared` holds the end of the shared Git
+// read until the first lockfile root read releases it. `beforeLockfileRoot` runs before the second
+// lockfile root read (the one after the turn), which the lockfile read marks by its 10 s bound.
 const reads = vi.hoisted(() => ({
   events: [],
   slowShared: false,
   lockfileRoots: 0,
   beforeLockfileRoot: null,
+  sharedGate: Promise.resolve(),
+  releaseShared: () => {},
+  resetSharedGate() {
+    this.sharedGate = new Promise((resolve) => {
+      this.releaseShared = resolve;
+    });
+  },
 }));
 // A synthetic changed dependency path, so a control character reaches the caller warning.
 const hostile = vi.hoisted(() => ({ path: null, calls: 0 }));
@@ -37,14 +44,16 @@ vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
       const shared = args.includes("--git-common-dir");
       if (args.includes("--show-toplevel")) {
         reads.events.push("root read");
-        if (rest[0]?.timeoutMs === 10_000 && ++reads.lockfileRoots === 2) {
-          await reads.beforeLockfileRoot?.();
+        if (rest[0]?.timeoutMs === 10_000) {
+          reads.lockfileRoots += 1;
+          if (reads.lockfileRoots === 1) reads.releaseShared();
+          if (reads.lockfileRoots === 2) await reads.beforeLockfileRoot?.();
         }
       }
       if (shared) reads.events.push("shared read started");
       const result = await real.execBounded(command, args, ...rest);
       if (shared && reads.slowShared) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await reads.sharedGate;
         reads.events.push("shared read ended");
       }
       return result;
@@ -61,6 +70,7 @@ afterEach(async () => {
   reads.slowShared = false;
   reads.lockfileRoots = 0;
   reads.beforeLockfileRoot = null;
+  reads.resetSharedGate();
   hostile.path = null;
   hostile.calls = 0;
   vi.restoreAllMocks();
@@ -80,6 +90,7 @@ const runTurn = (roleName, act = async () => {}) =>
 // (issue #1268), since neither depends on the other; the result of the turn is unchanged.
 test("a worker turn starts the lockfile read before the shared Git read ends", async () => {
   reads.slowShared = true;
+  reads.resetSharedGate();
   const result = await runTurn("worker");
   expect(result.status).toBe("ok");
   const preTurn = reads.events.slice(0, reads.events.indexOf("shared read ended"));

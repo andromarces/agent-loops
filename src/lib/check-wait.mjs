@@ -308,7 +308,7 @@ class BoundReached extends Error {
  * with the read still unaccounted for, which is a claim the command does not
  * make on the parent's behalf (#329).
  */
-async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
+async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv, childExitCeilingMs) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort, { once: true });
@@ -334,7 +334,7 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv) {
       const settled = await Promise.race([
         read.then(() => true),
         new Promise((resolve) => {
-          ceiling = setTimeout(() => resolve(false), CHILD_EXIT_CEILING_MS);
+          ceiling = setTimeout(() => resolve(false), childExitCeilingMs);
         }),
       ]);
       return settled ? { timedOut: true } : { timedOut: true, childExitUnconfirmed: true };
@@ -515,6 +515,8 @@ export async function waitChecks({
   gh = runGh,
   now = Date.now,
   sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
+  // Injectable so a test can use a short bound; production keeps the 5000 ms default (issue #1465).
+  childExitCeilingMs = CHILD_EXIT_CEILING_MS,
   signal = null,
 }) {
   if (head !== null && !isFullSha(head)) {
@@ -565,6 +567,7 @@ export async function waitChecks({
       remaining,
       options.signal ?? null,
       options.dropEnv,
+      childExitCeilingMs,
     );
     if (result.timedOut) {
       unconfirmed ||= Boolean(result.childExitUnconfirmed);

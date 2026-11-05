@@ -89,7 +89,7 @@ const STDIO_DRAIN_GRACE_MS = 3000;
 // Bound on the wait for a child to exit after the timeout or the cancel killed it. It exceeds the
 // force-kill delays of `exec` (5 s) and `execBounded` (1 s). A child that no kill ends, for example
 // one stuck in a kernel I/O request, never emits `exit` (issue #1302).
-const KILL_GRACE_MS = 10_000;
+export const KILL_GRACE_MS = 10_000;
 
 /**
  * Waits for `subprocess` like `await subprocess`, with two added bounds that never change a run
@@ -106,7 +106,10 @@ const KILL_GRACE_MS = 10_000;
  * A descendant that left the process group survives both bounds. A Windows descendant of an
  * exited child survives them too. Neither Node nor execa can reach them (ADR 0017).
  */
-function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
+function settleWithin(
+  subprocess,
+  { timeoutMs = 0, signal = null, label, killGraceMs = KILL_GRACE_MS },
+) {
   const child = subprocess.nodeChildProcess ?? subprocess;
   const timers = new Set();
   let stopWaiting;
@@ -128,7 +131,7 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
     for (const stream of pipes) stream.push(null);
   };
   const giveUp = (reason) => {
-    logWarn(`${label}: the child did not exit ${KILL_GRACE_MS}ms after ${reason}; not waiting`);
+    logWarn(`${label}: the child did not exit ${killGraceMs}ms after ${reason}; not waiting`);
     endPipes();
     for (const stream of pipes) stream.destroy();
     child.unref?.();
@@ -159,12 +162,12 @@ function settleWithin(subprocess, { timeoutMs = 0, signal = null, label }) {
     exited = true;
     armDrain();
   };
-  const onAbort = () => after(KILL_GRACE_MS, () => giveUp("the cancel"));
+  const onAbort = () => after(killGraceMs, () => giveUp("the cancel"));
 
   for (const stream of pipes) stream.on("data", onRead);
   if (child.exitCode != null || child.signalCode != null) onExit();
   else child.once?.("exit", onExit);
-  if (timeoutMs > 0) after(timeoutMs + KILL_GRACE_MS, () => giveUp("the timeout"));
+  if (timeoutMs > 0) after(timeoutMs + killGraceMs, () => giveUp("the timeout"));
   if (signal?.aborted) onAbort();
   else signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -259,7 +262,18 @@ export function execFailureCause(command, failure, timeout) {
  * ADR 0071). It reaches a descendant that left the child's process group.
  */
 export async function exec(command, args = [], options = {}) {
-  const { cwd, input, timeout, signal, role, env, maxBuffer, onSpawn, treeEnd } = options;
+  const {
+    cwd,
+    input,
+    timeout,
+    signal,
+    role,
+    env,
+    maxBuffer,
+    onSpawn,
+    treeEnd,
+    forceKillAfterDelay,
+  } = options;
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -298,6 +312,11 @@ export async function exec(command, args = [], options = {}) {
 
   if (typeof timeout === "number" && timeout > 0) {
     execaOptions.timeout = timeout * 1000;
+  }
+
+  // Injectable so a test can shorten the delay; production keeps execa's 5000 ms default (issue #1465).
+  if (forceKillAfterDelay !== undefined) {
+    execaOptions.forceKillAfterDelay = forceKillAfterDelay;
   }
 
   if (signal) {
@@ -388,7 +407,14 @@ export async function exec(command, args = [], options = {}) {
 export function execBounded(
   command,
   args,
-  { cwd, timeoutMs = 0, signal = null, killBound = null, ...execaOptions } = {},
+  {
+    cwd,
+    timeoutMs = 0,
+    signal = null,
+    killBound = null,
+    killGraceMs = KILL_GRACE_MS,
+    ...execaOptions
+  } = {},
 ) {
   const options = { cwd, reject: false, cleanup: true, killDescendants: true, ...execaOptions };
   if (timeoutMs > 0) {
@@ -405,6 +431,7 @@ export function execBounded(
     timeoutMs: killBound?.timeoutMs ?? timeoutMs,
     signal: killBound?.signal ?? signal,
     label: `${command} (bounded)`,
+    killGraceMs,
   });
   for (const method of ["then", "catch", "finally"]) {
     subprocess[method] = (...callbacks) => settled[method](...callbacks);
