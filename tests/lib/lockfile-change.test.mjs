@@ -14,7 +14,8 @@ const hashing = vi.hoisted(() => ({
   releaseFirstStart: null,
 }));
 // The dependency file list read: `fail` throws, and `stall` waits for the bound signal.
-const gitList = vi.hoisted(() => ({ fail: false, stall: false }));
+// `releaseStart` fires when a stalled read starts, so a case can hold the bound until then.
+const gitList = vi.hoisted(() => ({ fail: false, stall: false, releaseStart: null }));
 vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -23,6 +24,8 @@ vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
       if (args?.[0] === "ls-files") {
         if (gitList.fail) throw new Error("git ls-files failed");
         if (gitList.stall) {
+          gitList.releaseStart?.();
+          gitList.releaseStart = null;
           return new Promise((_, reject) => {
             options.signal?.addEventListener("abort", () => reject(options.signal.reason), {
               once: true,
@@ -91,6 +94,7 @@ afterEach(async () => {
   hashing.releaseFirstStart = null;
   gitList.fail = false;
   gitList.stall = false;
+  gitList.releaseStart = null;
   roots.delayMs = null;
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -368,9 +372,37 @@ test("a dependency file list read past the bound reports every known path", asyn
   await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
   const before = await readLockfiles(repo);
   gitList.stall = true;
+  // The bound waits for the list read to start, so a real-time root read cannot end the read first.
+  vi.useFakeTimers();
+  const listStarted = new Promise((resolve) => {
+    gitList.releaseStart = resolve;
+  });
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   const started = Date.now();
-  const after = await readLockfiles(repo, { boundMs: 100 });
+  const pending = readLockfiles(repo, { boundMs: 100 });
+  let guard;
+  const guardExpired = new Promise((resolve) => {
+    guard = realSetTimeout(() => resolve("stalled"), START_GUARD_MS);
+  });
+  let outcome;
+  try {
+    outcome = await Promise.race([
+      listStarted.then(() => "started"),
+      pending.then(() => "settled"),
+      guardExpired,
+    ]);
+  } finally {
+    realClearTimeout(guard);
+  }
+  if (outcome === "settled") {
+    throw new Error("the lockfile read ended before the list read started");
+  }
+  if (outcome === "stalled") {
+    await releasePendingRead(pending);
+    throw new Error(`no dependency file list read started within ${START_GUARD_MS} ms`);
+  }
+  await vi.advanceTimersByTimeAsync(100);
+  const after = await pending;
   expect(Date.now() - started).toBeLessThan(5_000);
   expect(diffLockfiles(before, after)).toEqual([
     "bun.lock",
