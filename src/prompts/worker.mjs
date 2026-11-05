@@ -18,6 +18,11 @@ const commitLinkRule =
 
 const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
+// A worker ran the test suite and committed an unignored Vitest report with `git add -A`
+// (issue #1510).
+const stageOnlyNeededPathsRule =
+  "Stage only the paths that the change needs, by name. Never stage with `git add -A`, `git add .`, or `git commit -a`. Before each commit, read `git diff --cached --stat`, and unstage any generated, cache, or test output file. When a run leaves untracked generated output that the repository does not ignore, report it in `Notes`, and do not commit it.";
+
 // Under `push.default=matching`, a plain `git push` also pushes other local branches. Those are the
 // branches that have a remote branch of the same name. A linked work tree shares such a default
 // branch with the main checkout (issue #1226). A named refspec keeps the push on the PR branch.
@@ -77,6 +82,8 @@ ${prBodyRule}
 
 ${commitLinkRule}
 
+${stageOnlyNeededPathsRule}
+
 ${conclusionFirstRule}
 
 ${reportBlock}`);
@@ -102,6 +109,7 @@ Your role:
 - ${matchingPushNote}
 - ${prBodyRule}
 - ${commitLinkRule}
+- ${stageOnlyNeededPathsRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of

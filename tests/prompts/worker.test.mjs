@@ -401,6 +401,23 @@ test("worker turns push only with a named refspec and never a plain git push", (
   }
 });
 
+// Usefulness: acceptance #1510: a worker ran `git add -A` after the test suite and committed an
+// unignored Vitest report, so an extra worker and reviewer turn removed it. Every turn that can
+// commit stages only the paths the change needs and names leftover generated output in Notes.
+test("worker turns stage only the paths the change needs", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain("Stage only the paths that the change needs, by name.");
+    expect(prompt).toContain("Never stage with `git add -A`, `git add .`, or `git commit -a`.");
+    expect(prompt).toContain(
+      "Before each commit, read `git diff --cached --stat`, and unstage any generated, cache, or test output file.",
+    );
+    expect(prompt).toContain(
+      "When a run leaves untracked generated output that the repository does not ignore, report it in `Notes`, and do not commit it.",
+    );
+  }
+});
+
 // Usefulness: verifies requirement "a worker keeps closing keywords out of commit messages" (issue
 // #1296): a commit message with `Closes #N` closes the issue at merge even after the PR body changes
 // to `Refs`. Every turn that can commit carries the rule.
