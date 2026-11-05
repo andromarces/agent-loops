@@ -264,6 +264,19 @@ test("first worker turn bars an unbounded CI wait", () => {
   );
 });
 
+// Usefulness: verifies the worker preamble bars contact with a host or service the task does not
+// name. The rule keeps a host or service that the task does name, and routes a check that needs one
+// to Checks and Deferred (issue #1522).
+test("first worker turn bars contact with an unnamed host or service", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("Contact no host or service that the task does not name.");
+  expect(prompt).toContain(
+    "GitHub operations that the rules allow stay allowed, and so does a host or service that the task names.",
+  );
+  expect(prompt).toContain("A local process or loopback server that a check starts stays allowed.");
+  expect(prompt).toContain("Put a check that needs one in Checks as unverified and in Deferred.");
+});
+
 // Usefulness: verifies requirement "a worker runs a full suite only through the test slot" (issue
 // #848): the first turn names the wrapper of this run, built from the Node binary and the CLI
 // script, so the rule works where `agent-loop` is not on PATH.

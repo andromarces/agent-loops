@@ -25,6 +25,11 @@ from the base branch is hardening: it goes in `Notes`, not in `Blockers`
 
 A blocker needs a concrete failure scenario. A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in `Notes`, not in `Blockers`, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers (issue #1194).
 
+The fixed review scope also bars contact with a host or service that the task
+does not name. GitHub reads that the rules allow stay allowed. A local process
+or loopback server that a check starts stays allowed. A check that needs such a
+contact goes in `Checks` as unverified and in `Deferred` (issue #1522).
+
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed

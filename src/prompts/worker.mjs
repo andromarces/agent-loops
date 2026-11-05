@@ -9,6 +9,7 @@ import {
   tempPathRule,
   tempRemovalRule,
   testSlotRule,
+  unnamedHostRule,
 } from "./rules.mjs";
 
 // A closing keyword in a commit message closes the issue at merge, even after the PR body changes
@@ -98,6 +99,7 @@ Your role:
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
 - ${ciWaitRule}
+- ${unnamedHostRule({ namesHost: true })}
 - ${ownNodeModulesRule}
 - ${probeCopyRule("work tree")}
 - ${pnpmRunRule}
