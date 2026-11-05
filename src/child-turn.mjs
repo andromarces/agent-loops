@@ -1,6 +1,7 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
 import { mapInBatches } from "./lib/batches.mjs";
+import { reportedEntryNames } from "./lib/entry-report.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { readRequiredChecks } from "./lib/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
@@ -9,6 +10,7 @@ import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./lib/tmpdir
 import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockfile-change.mjs";
+import { hashCopiedLocalSources } from "./lib/local-files.mjs";
 import { diffMainWorkTree, readMainWorkTree } from "./lib/main-work-tree-change.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { reportForResult } from "./lib/report.mjs";
@@ -120,14 +122,46 @@ export async function runProbeTurn({
  * @param {ChildEvidenceState} state
  */
 async function readBeforeTurn(state) {
-  [state.sharedBefore, state.lockfilesBefore, state.mainBefore] = state.isWorker
-    ? await Promise.all([readShared(state), readLockfiles(state.cwd), readMainWorkTree(state.cwd)])
-    : [null, null, null];
-  if (state.isReviewer) {
-    [state.tmpdirBefore, state.storeBefore] = await Promise.all([
-      snapshotInheritedTmpdir(),
-      snapshotPackageStore({ cwd: state.cwd }),
+  if (state.isWorker) {
+    const [copiedSources, shared, lockfiles, main] = await Promise.all([
+      readCopiedSources(state, { signal: state.signal }),
+      readShared(state),
+      readLockfiles(state.cwd),
+      readMainWorkTree(state.cwd),
     ]);
+    state.localSourcesBefore = copiedSources;
+    state.sharedBefore = shared;
+    state.lockfilesBefore = lockfiles;
+    state.mainBefore = main;
+    return;
+  }
+  const [copiedSources, tmpdir, store] = await Promise.all([
+    readCopiedSources(state, { signal: state.signal }),
+    snapshotInheritedTmpdir(),
+    snapshotPackageStore({ cwd: state.cwd }),
+  ]);
+  state.localSourcesBefore = copiedSources;
+  state.tmpdirBefore = tmpdir;
+  state.storeBefore = store;
+}
+
+/**
+ * Hashes the copied sources in the main work tree, or null when the read failed. A turn window
+ * compares the pre-turn and post-turn results. A source that cannot be hashed is left out, so the
+ * compare reports no path it cannot prove.
+ * @param {ChildEvidenceState} state
+ * @param {{ signal?: AbortSignal }} [bound]
+ */
+async function readCopiedSources(state, { signal } = {}) {
+  if (state.localFilesCopied.length === 0) {
+    return {};
+  }
+  try {
+    return await hashCopiedLocalSources(state.cwd, state.localFilesCopied, { signal });
+  } catch (err) {
+    if (readProp(err, "isCanceled")) throw err;
+    logWarn(`local files: the copied source read failed (${err.code ?? "error"})`);
+    return null;
   }
 }
 
@@ -226,6 +260,34 @@ async function readLockfileChanged(state) {
 }
 
 /**
+ * Paths of the copied local sources that differ from the pre-turn read, redacted and capped, or
+ * [] when none or unread. A source that changed inside the turn window is named by path only. The
+ * read proves no actor: the user or another process can cause the change too.
+ * @param {ChildEvidenceState} state
+ */
+async function readLocalSourceChangedInTurn(state) {
+  if (state.localSourcePaths === null) {
+    state.localSourcePaths = [];
+    if (state.localSourcesBefore !== null && state.localFilesCopied.length > 0) {
+      // No turn signal: a cancel during the turn keeps the evidence, and the read changes no outcome.
+      const after = await readCopiedSources(state);
+      if (after !== null) {
+        const changed = new Set([...Object.keys(state.localSourcesBefore), ...Object.keys(after)]);
+        state.localSourcePaths = reportedEntryNames(
+          [...changed].filter((path) => state.localSourcesBefore[path] !== after[path]),
+        );
+        if (state.localSourcePaths.length > 0) {
+          logWarn(
+            `${state.isWorker ? "worker" : "reviewer"}: a copied local source changed in the turn: ${state.localSourcePaths.join(", ")}`,
+          );
+        }
+      }
+    }
+  }
+  return state.localSourcePaths;
+}
+
+/**
  * Names that a reviewer turn left in the inherited temporary directory, or [] when none or unread.
  * @param {ChildEvidenceState} state
  */
@@ -265,18 +327,32 @@ async function readAdvisory(state) {
 }
 
 /**
- * Reads the shared Git change, the lockfile change, the main work tree change, and both advisory
- * lists together for a turn that failed. A rejected read throws in the order shared Git, lockfile,
- * main work tree, advisory. That is the order the reads ran in before they ran together.
+ * Reads the shared Git change, the lockfile change, the main work tree change, the copied source
+ * change, and both advisory lists together for a turn that failed. A rejected read throws in the
+ * order shared Git, lockfile, main work tree, copied source, advisory. That is the order the reads
+ * ran in before they ran together.
  * @param {ChildEvidenceState} state
  */
 async function readFailedTurnEvidence(state) {
-  const [sharedGitChanged, lockfileChanged, mainChange, advisory] = await mapInBatches(
-    [readSharedGitChanged, readLockfileChanged, readMainWorkTreeChanged, readAdvisory],
-    4,
-    (read) => read(state),
-  );
-  return { sharedGitChanged, lockfileChanged, ...mainChange, ...advisory };
+  const [sharedGitChanged, lockfileChanged, mainChange, localSourceChangedInTurn, advisory] =
+    await mapInBatches(
+      [
+        readSharedGitChanged,
+        readLockfileChanged,
+        readMainWorkTreeChanged,
+        readLocalSourceChangedInTurn,
+        readAdvisory,
+      ],
+      5,
+      (read) => read(state),
+    );
+  return {
+    sharedGitChanged,
+    lockfileChanged,
+    ...mainChange,
+    localSourceChangedInTurn,
+    ...advisory,
+  };
 }
 
 /**
@@ -293,6 +369,8 @@ async function readFailedTurnEvidence(state) {
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
+ * `localFilesCopied` names the copied local paths whose sources the turn window hashes before and
+ * after the child call. An absent or empty list reads no source (issue #1504).
  * A reviewer turn gets one scratch folder, named in its prompt, that the runtime removes after the
  * post-turn snapshot on every outcome. A failed removal only warns (issue #920).
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
@@ -331,6 +409,7 @@ export async function runChild(options) {
     testCmd = null,
     reviewerSandbox = null,
     requiredCheckSourceUnreadable = false,
+    localFilesCopied = [],
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
@@ -544,10 +623,15 @@ export async function runChild(options) {
     signal,
     isWorker,
     isReviewer,
+    // The copied local paths that the turn window hashes on each side.
+    localFilesCopied,
     sharedGitReadBoundMs,
     sharedBefore: null,
     lockfilesBefore: null,
     mainBefore: null,
+    // The pre-turn source hashes, and the post-turn paths, kept once read.
+    localSourcesBefore: null,
+    localSourcePaths: null,
     // The post-turn lockfile paths, kept once read so a cancel after the read reuses them.
     lockfilePaths: null,
     // The post-turn main work tree evidence, kept once read so a cancel after the read reuses it.
@@ -610,16 +694,18 @@ export async function runChild(options) {
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     // The four reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
-    const [workTree, sharedGitChanged, lockfileChanged, mainChange] = await mapInBatches(
-      [
-        isWorker ? readWorkTree : null,
-        readSharedGitChanged,
-        readLockfileChanged,
-        readMainWorkTreeChanged,
-      ],
-      4,
-      (read) => (read === null ? null : read(evidence)),
-    );
+    const [workTree, sharedGitChanged, lockfileChanged, mainChange, localSourceChangedInTurn] =
+      await mapInBatches(
+        [
+          isWorker ? readWorkTree : null,
+          readSharedGitChanged,
+          readLockfileChanged,
+          readMainWorkTreeChanged,
+          readLocalSourceChangedInTurn,
+        ],
+        5,
+        (read) => (read === null ? null : read(evidence)),
+      );
     if (isReviewer && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -656,6 +742,7 @@ export async function runChild(options) {
         sharedGitChanged,
         lockfileChanged,
         ...mainChange,
+        localSourceChangedInTurn,
         inheritedTmpdirEntries,
         packageStoreEntries,
         testRun,

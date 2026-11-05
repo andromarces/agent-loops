@@ -157,9 +157,11 @@ export async function runLoop(options) {
 
   // Before the first child spawn and the first snapshot, so the copied files are
   // present for every turn. They are ignored, so no snapshot lists them.
+  let copiedLocalFiles = [];
   if (copyLocalFiles) {
     const report = await copyIntoWorkTree(cwd, {}, { signal });
     if (report) {
+      copiedLocalFiles = report.copied;
       onEvent({ type: "local-files", ...report });
     }
   }
@@ -348,6 +350,7 @@ export async function runLoop(options) {
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
         testCmd: testCmdInput(testCmdText, testCmdTimeout),
         reviewerSandbox: sandboxMode,
+        localFilesCopied: copiedLocalFiles,
         requiredCheckSourceUnreadable: compareHead !== null || undeclaredPr !== null,
         ...(assignedHook ? { onSessionAssigned: assignedHook(roleName) } : {}),
         gh,

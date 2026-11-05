@@ -829,17 +829,35 @@ async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
  * @returns {Promise<Record<string, string>>}
  */
 export async function hashCopiedLocalFiles(cwd, names, { signal, ...hooks } = {}) {
+  return hashCopiedNames(cwd, names, { signal, ...hooks }, (located) => located.rootReal);
+}
+
+/**
+ * Hashes each named source file in the main work tree of a linked `cwd`. The result shape and the
+ * failure rules match `hashCopiedLocalFiles`. A turn window compares two results to name the
+ * sources that a turn changed.
+ * @param {string} cwd
+ * @param {string[]} names
+ * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function hashCopiedLocalSources(cwd, names, { signal, ...hooks } = {}) {
+  return hashCopiedNames(cwd, names, { signal, ...hooks }, (located) => located.mainReal);
+}
+
+async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf) {
   const located = await locateWorkTrees(cwd, (dir, args, options) =>
     git(dir, args, { signal, ...options }),
   );
   if (located === null) {
     return {};
   }
+  const base = baseOf(located);
   const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
     if (!isPlainRelativeName(rel)) {
       return null;
     }
-    const hash = await sha256Of(located.rootReal, rel, hooks);
+    const hash = await sha256Of(base, rel, hooks);
     return typeof hash === "string" ? [rel, hash] : null;
   });
   return Object.fromEntries(pairs.filter(Boolean));
