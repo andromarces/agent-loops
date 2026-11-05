@@ -92,10 +92,16 @@ function linkedTreeGit(tree) {
   };
 }
 
-async function createLinked(options) {
+/**
+ * Creates a linked work tree for a case. `locationInMemory` is false for a case that asserts the
+ * path text that real `git` prints, so that every location read stays real.
+ */
+async function createLinked(options, { locationInMemory = true } = {}) {
   const tree = await createLinkedWorkTree(options);
   created.push(tree.base);
-  gitDouble.answer = linkedTreeGit(tree);
+  if (locationInMemory) {
+    gitDouble.answer = linkedTreeGit(tree);
+  }
   return tree;
 }
 
@@ -1178,10 +1184,10 @@ test.skipIf(process.platform === "win32")(
 test.skipIf(process.platform === "win32")(
   "copies nothing and reports it when the main work tree path holds a newline",
   async () => {
-    const { base, main, linked } = await createLinked({
-      ignore: [".env"],
-      mainName: "repo\nmain",
-    });
+    const { base, main, linked } = await createLinked(
+      { ignore: [".env"], mainName: "repo\nmain" },
+      { locationInMemory: false },
+    );
     await writeFile(join(main, ".env"), "REAL\n");
     await mkdir(join(base, "repo"));
     await writeFile(join(base, "repo", ".env"), "DECOY\n");
@@ -1223,7 +1229,10 @@ test.skipIf(process.platform === "win32")(
 test.skipIf(process.platform === "win32")(
   "copies into a linked work tree whose name ends in a space",
   async () => {
-    const { main, linked } = await createLinked({ ignore: [".env"], linkedName: "linked " });
+    const { main, linked } = await createLinked(
+      { ignore: [".env"], linkedName: "linked " },
+      { locationInMemory: false },
+    );
     await writeFile(join(main, ".env"), "A=1\n");
 
     const report = await copyLocalFiles(linked);

@@ -40,7 +40,6 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
       if (resolution.stall) return new Promise(() => {});
       // The linked tree's main work tree is known here; every other layout resolves through Git.
       if (tree && args[0] === tree.linked) return tree.mainReal;
-      if (tree && args[0] === tree.main) return null;
       return real.mainWorkTreePath(...args);
     },
   };
