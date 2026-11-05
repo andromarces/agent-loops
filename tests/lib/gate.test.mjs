@@ -56,6 +56,7 @@ test("gateFromTranscript replays the events to the recorded gate state", () => {
     reviewerRan: true,
     reviewerTurnDispatched: true,
     acceptedSinceWorker: true,
+    workerAfterReview: false,
     lastReviewed: REVIEWED,
   });
   expect(gateFromTranscript(withGate(turn("reviewer", "Verdict: reject")))).toMatchObject({
@@ -67,6 +68,24 @@ test("gateFromTranscript replays the events to the recorded gate state", () => {
       .workerRan,
   ).toBe(true);
   expect(gateFromTranscript(withGate([invocation("orchestrator"), ...events]))).not.toBeNull();
+});
+
+// Usefulness: verifies the shared gate state records a worker turn after a reviewer turn, so both
+// finish paths read one fact (#1509).
+test("applyResult records a worker turn that followed a reviewer turn", () => {
+  const reviewed = applyResult(freshGate(), "reviewer", {
+    status: "ok",
+    response: ACCEPT,
+    reviewed: REVIEWED,
+  });
+  expect(reviewed.workerAfterReview).toBe(false);
+  const worker = applyResult(reviewed, "worker", { status: "ok" });
+  expect(worker.workerAfterReview).toBe(true);
+  expect(worker.lastReviewed).toBeNull();
+  expect(applyResult(freshGate(), "worker", { status: "ok" }).workerAfterReview).toBe(false);
+  expect(
+    applyResult(worker, "reviewer", { status: "error", error: "boom" }).workerAfterReview,
+  ).toBe(false);
 });
 
 // Usefulness: a `continued` event restarts the replay at the reset state (#362), so a same-file

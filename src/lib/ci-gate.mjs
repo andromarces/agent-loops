@@ -35,9 +35,13 @@ function fail(reason) {
 const label = ({ context }) => contextLabel(context.name, context.appId);
 
 /** The refusal for a reviewed state that cannot finish, or null when it is a clean reviewed commit. */
-function reviewedRefusal(reviewed) {
+function reviewedRefusal(reviewed, workerAfterReview) {
   if (!reviewed) {
-    return fail("the latest reviewer turn has no reviewed state");
+    return fail(
+      workerAfterReview
+        ? "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish"
+        : "the latest reviewer turn has no reviewed state",
+    );
   }
   return reviewed.clean ? null : fail("the reviewed work tree is not clean");
 }
@@ -93,68 +97,51 @@ const RULESETS_UNREADABLE =
   "the repository rulesets could not be read, so the gate cannot tell which required checks the base branch requires";
 
 /**
- * Refuses unless the PR head equals the reviewed commit, the reviewed tree is
- * clean, the PR is not behind its base under a strict rule, has no merge
- * conflicts, is not in an unknown merge state, and every required check passed
- * on the commit GitHub evaluates. A blocked merge state refuses after the
- * per-check pass, so a named check refusal keeps its name; any remaining block
- * (a required check that never reported, a required review, or another required
- * rule) fails closed.
- *
- * An unknown repository-rulesets read refuses the finish whatever the rest of the
- * union holds. That reply can carry a required-status rule this caller
- * never saw. A non-empty union from another source must not let the per-check
- * pass judge only the names it saw (issue #336).
- *
- * An empty union of required checks refuses when the classic-protection source
- * settled nothing, so a source this caller cannot read fails closed and the reason
- * names it. An empty union over sources that each stated they hold no required check
- * is an established absence, which passes and reports `noRequiredChecks: true` so a
- * caller can tell it apart from a gated pass on a branch that required a check
- * (issue #336).
- *
- * The reads end after `timeoutMs` and when `signal` aborts. A cancel wins over every other outcome,
- * a local refusal and a gate result included: an aborted `signal` starts no read, and the call
- * rejects with `isCanceled` set. A deadline rejects with `timedOut` set and a timeout message (#1181).
- * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
+ * Refuses unless the PR head equals the reviewed commit, the reviewed tree is clean, and every
+ * required check passed. It also refuses a PR behind its base under a strict rule, with merge
+ * conflicts, or in an unknown or blocked merge state. A failed named check keeps its name, and
+ * any remaining block fails closed. An unreadable repository-rulesets read refuses, whatever the
+ * other sources hold. An empty required-check union fails closed unless every source stated that it
+ * holds none. The call rejects with `isCanceled` on a cancel and `timedOut` after `timeoutMs`.
+ * @param {{ pr: number, reviewed: object | null, workerAfterReview?: boolean, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string, noRequiredChecks?: true } | { ok: false, reason: string }>}
  */
 export async function checkCi({
   pr,
   reviewed,
+  workerAfterReview = false,
   cwd,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
-  return boundedGateRead({ reviewed, gh, timeoutMs, signal }, (call) =>
+  return boundedGateRead({ reviewed, workerAfterReview, gh, timeoutMs, signal }, (call) =>
     judgeCi({ pr, reviewed, cwd, gh: call }),
   );
 }
 
 /**
- * Refuses unless the PR is open, the PR head equals the reviewed commit, and the reviewed tree is
- * clean. A closed or merged PR refuses even when its head is unchanged (#1111). This is the
- * head part of `checkCi` alone: it makes the one PR read, whose merge-state field it ignores, so no
- * required-check source is read and no merge state or check result is evaluated or claimed. It serves a repository whose required-check sources
- * settle nothing, where `checkCi` refuses every finish (#1098).
- *
- * The read ends after `timeoutMs` and when `signal` aborts, with the cancel and timeout rules of `checkCi`: an
- * aborted `signal` starts no read and the call rejects with `isCanceled` set, and a deadline rejects with
- * `timedOut` set, never a verified compare (#1200).
- * @param {{ pr: number, reviewed: object | null, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
+ * Refuses unless the PR is open, its head equals the reviewed commit, and the reviewed tree is
+ * clean. A closed or merged PR refuses even when its head is unchanged (#1111). This is the head
+ * part of `checkCi` alone, so it reads no required-check source. It evaluates no merge state and
+ * claims no check result. It serves a repository whose required-check sources settle nothing, where
+ * `checkCi` refuses every finish (#1098). The call rejects with `isCanceled` on a cancel and
+ * `timedOut` after `timeoutMs` (#1200).
+ * @param {{ pr: number, reviewed: object | null, workerAfterReview?: boolean, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
 export async function checkPrHead({
   pr,
   reviewed,
+  workerAfterReview = false,
   cwd,
   gh = runGh,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   signal = null,
 }) {
   return boundedGateRead(
-    { reviewed, gh, timeoutMs, signal },
+    { reviewed, workerAfterReview, gh, timeoutMs, signal },
+    // The one PR read: its merge-state field is ignored, so no merge state is evaluated or claimed.
     (call) => prInfo(call, pr, cwd),
     (info) => {
       if (info.state !== "OPEN") {
@@ -195,13 +182,16 @@ function readExpired(call, err) {
 // The bounded read that `checkCi` and `checkPrHead` share. A cancel wins over every other outcome:
 // before the read, when the reviewed state refuses, and after the read. `read(call)` runs on the
 // bounded runner, and `judge(value)` runs on its value once the cancel check has passed.
+// The read ends after timeoutMs and when signal aborts; a cancel starts no read and rejects with isCanceled.
+// A deadline rejects with timedOut set and a timeout message (#1181), never a verified compare (#1200).
 async function boundedGateRead(
-  { reviewed, gh, timeoutMs, signal },
+  { reviewed, workerAfterReview, gh, timeoutMs, signal },
   read,
   judge = (value) => value,
 ) {
   throwIfCanceled(signal);
-  const refused = reviewedRefusal(reviewed);
+  // workerAfterReview names a worker turn after the last review, so the refusal states the turn order.
+  const refused = reviewedRefusal(reviewed, workerAfterReview);
   if (refused) {
     return refused;
   }
@@ -310,12 +300,14 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
   // A blocked merge state still refuses below, so an absent check set cannot pass a
   // pull request another required rule blocks.
   const absence = requiredAbsence(preamble.required);
+  // An unproven source is named in the refusal, so a reader sees which source settled nothing.
   if (absence?.unproven) {
     return fail(
       `no required checks were found for the base branch, and ${absence.unproven.join(" and ")} did not state that it holds no required check, so the gate cannot tell a base branch with no required check from one whose check it never saw`,
     );
   }
   const noRequiredChecks = absence?.absent === true;
+  // An established absence passes with noRequiredChecks: true, which a caller can tell apart from a gated pass on a checked branch.
   if (noRequiredChecks) {
     if (info.mergeStateStatus === "BLOCKED") {
       return fail(

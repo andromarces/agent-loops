@@ -96,7 +96,7 @@ A `local-files` event records the paths the init copy of local files copied and 
 
 A `no-required-checks` event records a finish the `--require-ci` gate passed because every required-check source stated that the base branch has no required check, and the merge state was one the gate could read, so the gate verified the PR head, the clean reviewed tree, and the merge state, and no check status at all. It carries the gated `pr` and the `stepsUsed`, and is emitted on an accepted finish only, so a run on a branch that does require a check never carries it and a refused finish never reports an absence. Without the event a finish on such a branch reads exactly like one whose checks passed, which is the gap issue #336 closed (issue #336).
 
-A `gate` event is the last event of a run that returned an exit code. It holds `workerRan`, `reviewerRan`, `reviewerTurnDispatched`, `acceptedSinceWorker`, and `lastReviewed`, the final gate state, and `--continue-from` checks it against a replay of the events (see Continue a run). A run that ended on a thrown error writes none.
+A `gate` event is the last event of a run that returned an exit code. It holds the final gate state: `workerRan`, `reviewerRan`, `reviewerTurnDispatched`, `acceptedSinceWorker`, `workerAfterReview`, and `lastReviewed`. A `--continue-from` run checks it against a replay of the events (see Continue a run). A run that ended on a thrown error writes none. A record written before `workerAfterReview` existed omits that field.
 
 An `invocation` event exists for every CLI call: orchestrator attempts, orchestrator repair turns, and child turns, with `status` `ok` or `error`. When the adapter exposes usage, the event carries a `usage` object. The Claude and Copilot adapters map it from the CLI result:
 

@@ -13,6 +13,7 @@ export const freshGate = () => ({
   reviewerRan: false,
   reviewerTurnDispatched: false,
   acceptedSinceWorker: false,
+  workerAfterReview: false,
   lastReviewed: null,
 });
 
@@ -20,11 +21,22 @@ export const freshGate = () => ({
 export const resetGate = () => ({ ...freshGate(), workerRan: true });
 
 /**
+ * Whether a worker turn ran after a reviewer turn, from the turn order of one run.
+ * The fact names the turn order alone: a worker turn before every review is false.
+ * @param {{ reviewerTurnDispatched: boolean, lastRole: "worker" | "reviewer" | null }} order
+ * @returns {boolean}
+ */
+export function workerFollowedReview({ reviewerTurnDispatched, lastRole }) {
+  return lastRole === "worker" && reviewerTurnDispatched === true;
+}
+
+/**
  * The gate transition for one child result. `runLoop` and the replay in
  * `gateFromTranscript` both apply it, so the two cannot drift apart. A worker
  * turn clears the accept. A reviewer turn sets `reviewerRan` when it ended `ok`,
  * and sets or clears the accept from its verdict and Checks line. Every turn
- * replaces the reviewed state with the one it carries, or none.
+ * replaces the reviewed state with the one it carries, or none. A worker turn
+ * records whether a reviewer turn preceded it.
  * @param {object} state a gate state; not mutated
  * @param {"worker" | "reviewer"} role
  * @param {{ status: string, response?: string, report?: object | null, reviewed?: object }} result
@@ -32,8 +44,18 @@ export const resetGate = () => ({ ...freshGate(), workerRan: true });
  */
 export function applyResult(state, role, result) {
   const lastReviewed = result.reviewed ?? null;
+  const workerAfterReview = workerFollowedReview({
+    reviewerTurnDispatched: state.reviewerTurnDispatched,
+    lastRole: role,
+  });
   if (role === "worker") {
-    return { ...state, workerRan: true, acceptedSinceWorker: false, lastReviewed };
+    return {
+      ...state,
+      workerRan: true,
+      acceptedSinceWorker: false,
+      workerAfterReview,
+      lastReviewed,
+    };
   }
   const ok = result.status === "ok";
   return {
@@ -41,6 +63,7 @@ export function applyResult(state, role, result) {
     reviewerTurnDispatched: true,
     reviewerRan: state.reviewerRan || ok,
     acceptedSinceWorker: ok && acceptanceFailure(result.response, result.report) === null,
+    workerAfterReview,
     lastReviewed,
   };
 }
@@ -109,7 +132,13 @@ export function gateFromTranscript(earlier) {
         childOpen = false;
       }
     }
-    const recorded = Object.keys(state).every((key) => isDeepStrictEqual(record[key], state[key]));
+    // A record written before `workerAfterReview` existed lacks that field.
+    // Only an absent field counts as legacy; a present value must equal the replay.
+    const recorded = Object.keys(state).every((key) =>
+      key === "workerAfterReview" && !Object.hasOwn(record, key)
+        ? true
+        : isDeepStrictEqual(record[key], state[key]),
+    );
     return childOpen || !recorded ? null : state;
   } catch {
     return null;

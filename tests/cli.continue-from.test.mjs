@@ -24,11 +24,13 @@ import { readProcessCommands } from "../src/lib/process-ancestry.mjs";
 import { continueAgents } from "./agent-doubles.mjs";
 import { removePath, symlinkOrSkip } from "./fs-helpers.mjs";
 import {
+  CLEAN_REPO_HEAD,
   cleanRepoGit,
   createCleanRepoDir,
   createTempRepo,
   createWithContinueRepo,
 } from "./git-helpers.mjs";
+import { freePlanGh, prGateGh } from "./gh-doubles.mjs";
 import { createPsShim } from "./process-helpers.mjs";
 import { within } from "./wait-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
@@ -400,6 +402,85 @@ const GATE_REJECT = "Conclusion: no.\nWhy: no.\nBlockers: none.\nChecks: t\nVerd
 const RUN_WORKER = JSON.stringify({ action: "run_worker", prompt: "w" });
 
 const RUN_REVIEWER = JSON.stringify({ action: "run_reviewer", prompt: "r" });
+
+// Runs a first headless run that records a reviewed accept, lets `mutate` edit its gate record, then
+// continues with `extra` and a finish. Returns the continuation exit code and stderr.
+async function continueWithEditedRecord({ extra, gh, replies, mutate }) {
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
+  const transcriptPath = join(transcriptDir, "run.json");
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const agents = (orchReplies) => {
+      let call = 0;
+      return {
+        codex: { run: async () => orchReplies[call++] },
+        claude: { run: async () => "worker ok" },
+        agy: { run: async () => GATE_ACCEPT },
+      };
+    };
+    const args = [...CONTINUE_BASE, "--cwd", repo, "--transcript", transcriptPath];
+    await main(args, agents([RUN_WORKER, RUN_REVIEWER, FINISH]));
+    expect(process.exitCode).toBe(0);
+    const transcript = JSON.parse(await readFile(transcriptPath, "utf8"));
+    const record = transcript.events.at(-1);
+    expect(record.type).toBe("gate");
+    mutate(record);
+    await writeFile(transcriptPath, JSON.stringify(transcript));
+    await main([...args, "--continue-from", transcriptPath, ...extra], agents(replies), { gh });
+    return { exitCode: process.exitCode, stderr: errSpy.mock.calls.flat().join("\n") };
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    gitDouble.answer = null;
+    await removePath(repo);
+    await removePath(transcriptDir);
+  }
+}
+
+// Usefulness: verifies a gate record written before `workerAfterReview` existed restores its
+// accepted review, so a continuation passes both PR finish gates as on origin/main (#1509).
+test.each([
+  ["--compare-head", ["--compare-head", "42"], () => freePlanGh(CLEAN_REPO_HEAD)],
+  ["--require-ci", ["--require-ci", "42"], () => prGateGh(CLEAN_REPO_HEAD)],
+])(
+  "--continue-from restores an origin/main gate record for %s",
+  async (_name, extra, makeGh) => {
+    const { exitCode } = await continueWithEditedRecord({
+      extra,
+      gh: makeGh(),
+      replies: [FINISH],
+      mutate: (record) => {
+        delete record.workerAfterReview;
+      },
+    });
+    expect(exitCode).toBe(0);
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
+
+// Usefulness: verifies a present `workerAfterReview` value that is not the replayed boolean still
+// fails closed, so the legacy exception covers an absent field only (#1509).
+test(
+  "--continue-from rejects a gate record with a malformed workerAfterReview",
+  async () => {
+    const { exitCode, stderr } = await continueWithEditedRecord({
+      extra: ["--compare-head", "42"],
+      gh: freePlanGh(CLEAN_REPO_HEAD),
+      replies: [FINISH, FINISH],
+      mutate: (record) => {
+        record.workerAfterReview = "true";
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("the latest reviewer turn has no reviewed state");
+  },
+  CONTINUE_AFTER_EDIT_TIMEOUT_MS,
+);
 
 // Runs a --require-accept headless run whose reviewer replies come from `reviewerReplies`. It lets
 // `tamper(transcript)` edit the written transcript. It then continues the run with a finish that

@@ -29,6 +29,7 @@ import {
   initPrRun,
   initWorkerRun,
   readRepoState,
+  recordingAdapter,
   repos,
   REVIEW_ONLY_OVERRIDES,
   setup,
@@ -60,6 +61,16 @@ function gitWithStatus(status) {
     args[0] === "status"
       ? { exitCode: 0, stdout: status, stderr: "" }
       : cleanRepoGit(command, args, options);
+}
+
+const REJECT = "Conclusion: fails.\nWhy: incomplete.\nBlockers: none.\nVerdict: reject";
+
+/** Dispatches one worker turn in `repo` after the reviewer turn. */
+function dispatchWorker(repo) {
+  return executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: async () => "continue working",
+  });
 }
 
 describe("finish --compare-head", () => {
@@ -178,6 +189,67 @@ describe("finish --compare-head", () => {
     });
     expect(result.exitCode).toBe(1);
     expect(result.payload.error).toContain("no reviewed state");
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies the interactive compare names a worker turn after an accept, as the headless
+  // path does (#1509).
+  test("a worker turn after an accepted review names the turn order", async () => {
+    await setup();
+    const repo = await useCleanRepo();
+    await initWorkerRun(repo);
+    await dispatchReviewer(repo, ACCEPT);
+    await dispatchWorker(repo);
+
+    const calls = [];
+    const result = await finishCall(repo, ["--compare-head", "42"], {
+      gh: headGh(CLEAN_REPO_HEAD, calls),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain(
+      "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+    );
+    expect(calls).toEqual([]);
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies the interactive compare names a worker turn after a reject too, so the
+  // wording does not depend on the verdict (#1509).
+  test("a worker turn after a rejected review names the turn order", async () => {
+    await setup();
+    const repo = await useCleanRepo();
+    await initWorkerRun(repo);
+    await dispatchReviewer(repo, REJECT);
+    await dispatchWorker(repo);
+
+    const result = await finishCall(repo, ["--compare-head", "42"], {
+      gh: headGh(CLEAN_REPO_HEAD, []),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain(
+      "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+    );
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  });
+
+  // Usefulness: verifies a failed reviewer turn keeps the origin/main refusal when no worker turn
+  // follows it, so only the turn order changes the wording (#1509).
+  test("a failed reviewer turn keeps the no-reviewed-state refusal", async () => {
+    await setup();
+    const repo = await useCleanRepo();
+    await initWorkerRun(repo);
+    await dispatchReviewer(repo, () => {
+      throw new Error("reviewer CLI failed");
+    });
+
+    const calls = [];
+    const result = await finishCall(repo, ["--compare-head", "42"], {
+      gh: headGh(CLEAN_REPO_HEAD, calls),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain("the latest reviewer turn has no reviewed state");
+    expect(result.payload.error).not.toContain("a worker turn ran after the last review");
+    expect(calls).toEqual([]);
     expect((await readRepoState(repo)).lifecycle).toBe("active");
   });
 

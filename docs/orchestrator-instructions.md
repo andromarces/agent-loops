@@ -571,6 +571,10 @@ concurrent run, and state its limit there. That rule narrows the race and does n
 - `review-only`: reviewer, then report. Findings alone never authorize edits;
   the subcommand rejects worker dispatch in this mode.
 
+Dispatch a remote-only worker edit, such as a checklist item, before the final
+reviewer turn. A worker turn after the review resets the reviewed state, so that
+order avoids an extra reviewer step.
+
 Both paths name the mode with `--mode <mode>`, with the same three values: on the
 `role` init call and on the headless `agent-loop` command. The headless `--mode`
 is off by default, so a run without the flag keeps the current behavior. A

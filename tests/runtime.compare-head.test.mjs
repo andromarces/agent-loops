@@ -26,7 +26,7 @@ import {
   createTempRepo,
 } from "./git-helpers.mjs";
 import { freePlanGh } from "./gh-doubles.mjs";
-import { gateRoles, REVIEW_ACCEPT, SUMMARY } from "./run-fixtures.mjs";
+import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./run-fixtures.mjs";
 
 const OTHER_HEAD = "2".repeat(40);
 
@@ -39,7 +39,16 @@ const REVIEW_THEN_FINISH = [
 ];
 
 /** Runs a headless `--compare-head 42` run on a clean repository, and returns the result and the events. */
-async function runCompare(gh, { orchReplies = REVIEW_THEN_FINISH, maxSteps = 5, ...extra } = {}) {
+async function runCompare(
+  gh,
+  {
+    orchReplies = REVIEW_THEN_FINISH,
+    maxSteps = 5,
+    workReplies = [],
+    revReplies = [REVIEW_ACCEPT],
+    ...extra
+  } = {},
+) {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
   const orch = scripted(orchReplies);
@@ -53,7 +62,7 @@ async function runCompare(gh, { orchReplies = REVIEW_THEN_FINISH, maxSteps = 5, 
       copyLocalFiles: false,
       gh,
       roles: gateRoles(),
-      agents: { orch, work: scripted([]), rev: scripted([REVIEW_ACCEPT]) },
+      agents: { orch, work: scripted(workReplies), rev: scripted(revReplies) },
       onEvent: (event) => events.push(event),
       ...extra,
     });
@@ -130,6 +139,63 @@ test("a headless compare-head run refuses a finish before any reviewer turn", as
   });
   expect(result.exitCode).toBe(1);
   expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+});
+
+// Usefulness: verifies a worker turn after an accept names the turn order, so the refused compare
+// does not read as a reviewer fault (#1509).
+test("a headless compare-head run names a worker turn after an accepted review", async () => {
+  const { result } = await runCompare(freePlanGh(CLEAN_REPO_HEAD), {
+    orchReplies: [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ],
+    workReplies: ["worker edited after the review"],
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.reason).toContain(
+    "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+  );
+});
+
+// Usefulness: verifies a worker turn after a reject names the turn order too, so the compare wording
+// does not depend on the verdict (#1509).
+test("a headless compare-head run names a worker turn after a rejected review", async () => {
+  const { result } = await runCompare(freePlanGh(CLEAN_REPO_HEAD), {
+    orchReplies: [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ],
+    workReplies: ["worker edited after the review"],
+    revReplies: [REVIEW_REJECT],
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.reason).toContain(
+    "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+  );
+});
+
+// Usefulness: verifies a failed reviewer turn keeps the origin/main refusal when no worker turn
+// follows it, so the compare still reports a missing review (#1509).
+test("a headless compare-head run keeps the no-reviewed-state refusal after a failed reviewer turn", async () => {
+  const { result } = await runCompare(freePlanGh(CLEAN_REPO_HEAD), {
+    orchReplies: [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ],
+    revReplies: [
+      () => {
+        throw new Error("reviewer CLI failed");
+      },
+    ],
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+  expect(result.reason).not.toContain("a worker turn ran after the last review");
 });
 
 // Usefulness: verifies the marker is refused beside the compare, so one head never records two outcomes.

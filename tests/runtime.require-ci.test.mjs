@@ -114,10 +114,9 @@ test("--require-ci passes a finish whose PR head is the reviewed commit", async 
   }
 });
 
-// 45. Usefulness: verifies a worker turn after the reviewer turn clears the
-// reviewed state the gate reads, so a commit made after the review cannot pass
-// against the older reviewed head, matching the interactive gate (#293).
-test("--require-ci refuses a finish after a worker turn follows the review", async () => {
+// 45. Usefulness: verifies a worker turn after the reviewer accept names the turn order (#1509).
+// The commit after the review still cannot pass against the older reviewed head (#293).
+test("--require-ci names a worker turn after an accepted review", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
   try {
@@ -146,7 +145,87 @@ test("--require-ci refuses a finish after a worker turn follows the review", asy
     });
 
     expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain(
+      "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+    );
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
+// 45a. Usefulness: verifies a worker turn after a reviewer reject names the same turn order (#1509).
+// A rejected review followed by a worker edit then reads as turn order, not a missing review.
+test("--require-ci names a worker turn after a rejected review", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const head = CLEAN_REPO_HEAD;
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "PR work: address issue 1509 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: prGateGh(head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker edited after the review"]),
+        rev: scripted([REVIEW_REJECT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain(
+      "a worker turn ran after the last review, and a reviewer turn on the current state must come before finish",
+    );
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
+// 45b. Usefulness: verifies a failed reviewer turn keeps the origin/main refusal with no later worker turn (#1509).
+// The turn-order wording then does not cover a missing review.
+test("--require-ci keeps the no-reviewed-state refusal after a failed reviewer turn", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const head = CLEAN_REPO_HEAD;
+    const orchReplies = [
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "PR work: address issue 1509 through PR 42.",
+      cwd: repo,
+      maxSteps: 5,
+      requireCi: 42,
+      gh: prGateGh(head),
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted([]),
+        rev: scripted([
+          () => {
+            throw new Error("reviewer CLI failed");
+          },
+        ]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("the latest reviewer turn has no reviewed state");
+    expect(result.reason).not.toContain("a worker turn ran after the last review");
   } finally {
     gitDouble.answer = null;
     await removePath(repo);
