@@ -75,7 +75,7 @@ Accepted gaps of the two sandboxed modes, as ADR 0019 states them (the no-sandbo
 - Remote GitHub writes. Shell network is off here, so the opt-in does not open the shell path for `gh` and `git`, except under the user-rule exception in this item. Exception, seen on one machine only (issue #640): a user Codex rule that allows `bash -c`, `sh -c`, or `zsh -c` ran a shell command with an expansion such as `$$` or `$HOME` outside the sandbox, with network and with a write outside the work tree. The runtime does not prevent that.
   - The sandbox does not block a channel outside it, for example a GitHub app connector or another model-side tool, and the local snapshot does not see a remote write over any channel, so a push, a merge, a review, or a comment could change remote state unseen. Codex is the only adapter that blocks shell network in a read-only turn today. Issue #422 holds the rule against remote writes, which is advisory and not enforced.
 - A larger prompt-injection blast radius. Reviewed content that holds an instruction can steer a command that writes, not only one that reads.
-- Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/parent-guard.md`). The probe above shows a failed child `node` spawn and a pnpm store lock failure. Not verified for a test runner.
+- Likely no gain on the unelevated Windows sandbox, which blocks a child spawn with `EPERM` under `workspace-write` (`docs/reference/parent-guard.md`). The probe above shows a failed child `node` spawn and a pnpm store lock failure. Not verified for a test runner.
 
 #### Safety trade-off of the no-sandbox mode
 
@@ -130,7 +130,7 @@ Reports recorded in issue #342, not re-observed: the reviewer turns of the #301,
 `Vitest failed at startup (spawn EPERM)`. Some also reported `pnpm` blocked by a
 store lock and `oxfmt` failing with `spawn EPERM`. Their reviewer `Checks` lines
 therefore excluded the test suite, and the accepts rested on `git diff`, static
-checks, and in-process probes. `docs/parent-guard.md` records the same class on
+checks, and in-process probes. `docs/reference/parent-guard.md` records the same class on
 the `workspace-write` path: the unelevated Windows sandbox blocks a child spawn
 with `EPERM`.
 

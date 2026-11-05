@@ -369,11 +369,8 @@ test("the --all surfaces state the same hold rule and limits", async () => {
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const roleDoc = await readFile(
-    join(dirname(instructionsPath), "reference/wait-checks.md"),
-    "utf8",
-  );
-  for (const text of [prompt, instructions, roleDoc]) {
+  const waitDoc = await readFile(join(referenceSectionsDir, "waiting-for-checks.md"), "utf8");
+  for (const text of [prompt, instructions, waitDoc]) {
     expect(wordsOf(text)).toContain(wordsOf(HOLD_RULE_PASSAGE));
   }
 });
@@ -414,11 +411,8 @@ test("the noCheckSource rule names the merged PR head read and its limit on ever
     waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
   });
   const instructions = await readInstructions();
-  const roleDoc = await readFile(
-    join(dirname(instructionsPath), "reference/wait-checks.md"),
-    "utf8",
-  );
-  for (const text of [prompt, instructions, roleDoc]) {
+  const waitDoc = await readFile(join(referenceSectionsDir, "waiting-for-checks.md"), "utf8");
+  for (const text of [prompt, instructions, waitDoc]) {
     expectRule(text, /merged PR/i, /latest/i);
     expectRule(text, /base head and one merged PR head are two commits/i, /stays unseen/i);
   }
@@ -621,16 +615,13 @@ for (const [name, load] of RULE_SURFACES) {
   });
 }
 
-// Usefulness: verifies the reference finish-gates page links to the orchestrator absence rule
-// instead of restating it, so the two copies cannot drift again (#1397). It also resolves the
-// relative path and the heading anchor, so a moved section fails here.
-test("the reference finish-gates page links to the single absence rule", async () => {
-  const reference = await readFile(
-    join(dirname(instructionsPath), "reference/finish-gates.md"),
-    "utf8",
-  );
+// Usefulness: verifies the role reference links to the orchestrator absence rule instead of
+// restating it, so the two copies cannot drift again (#1397). It also resolves the relative path
+// and the heading anchor, so a moved section fails here.
+test("the role reference links to the single absence rule", async () => {
+  const reference = await readFile(join(dirname(instructionsPath), "reference/role.md"), "utf8");
   const link = reference.match(/\]\((\.\.\/orchestrator\/finish-gates\.md)#([a-z0-9-]+)\)/);
-  expect(link, "the reference page has no anchored link to the orchestrator guide").not.toBeNull();
+  expect(link, "the role reference has no anchored link to the orchestrator guide").not.toBeNull();
   const section = await readFile(join(referenceSectionsDir, "finish-gates.md"), "utf8");
   const anchors = [...section.matchAll(/^#{1,6}\s+(.+)$/gm)].map(([, title]) =>
     title
@@ -1218,7 +1209,10 @@ const SANDBOX_GAPS = [
   ],
   ["remote GitHub writes", [/remote/i, /push.*merge.*review.*comment/i, /#422/]],
   ["prompt-injection blast radius", [/prompt-injection/i]],
-  ["unelevated Windows sandbox", [/unelevated Windows/i, /EPERM/, /docs\/parent-guard\.md/]],
+  [
+    "unelevated Windows sandbox",
+    [/unelevated Windows/i, /EPERM/, /docs\/reference\/parent-guard\.md/],
+  ],
 ];
 
 // Usefulness: verifies ADR 0019 names all five accepted gaps of the issue, so the record of what
@@ -1284,10 +1278,10 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   expect(text).toMatch(/--max-steps/);
   expect(text).toMatch(/one repair turn/i);
   expect(text).toMatch(/changed, verified, deferred, notDone, open|`changed`, `verified`/);
-  const row = (n) => index.split("\n").find((line) => line.includes(`[${n}](`));
-  expect(row("0001")).toMatch(/\|\s*superseded\s*\|/);
+  const row = (n) => index.split("\n").find((line) => line.startsWith(`- ${n} — [`));
+  expect(row("0001")).toMatch(/ — superseded — /);
   expect(row("0001")).toMatch(/ADR 0019/);
-  expect(row("0019")).toMatch(/\|\s*partially-superseded\s*\|/);
+  expect(row("0019")).toMatch(/ — partially-superseded — /);
   expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });
 
@@ -1297,7 +1291,7 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
-  ["docs/parent-guard.md", () => readRepoFile("docs/parent-guard.md")],
+  ["docs/reference/parent-guard.md", () => readRepoFile("docs/reference/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
   ["no-mode reviewer prompt", async () => reviewerPrompt({ prompt: "x", sandboxMode: null })],
