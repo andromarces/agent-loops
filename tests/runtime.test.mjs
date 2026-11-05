@@ -3,9 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
-// Answers `git` from memory for the tests that switch it on (see
-// `cleanRepoGit` in git-helpers.mjs); every other test, and every other command, reaches the real
-// `execa`.
+// Answers `git` from memory for the tests that switch it on (see `cleanRepoGit` in
+// git-helpers.mjs). Every other test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();

@@ -23,9 +23,10 @@ import { removePath } from "./fs-helpers.mjs";
 import { roleReadsGit } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
-// Answers `git` from memory for the tests that switch it on (see `gitWhileDotGitExists` in
-// git-helpers.mjs, `roleReadsGit` for an unasserted read group, and `newCleanRunRepo` for the cases
-// that assert no Git result). Every other test, and every other command, reaches the real `execa`.
+// Answers `git` from memory for the tests that switch it on. See `gitWhileDotGitExists` in
+// git-helpers.mjs, `roleReadsGit` for an unasserted read group, and `newCleanRunRepo` for the
+// cases that assert no Git result. Every other test, and every other command, reaches the real
+// `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
