@@ -15,6 +15,19 @@ const reads = vi.hoisted(() => ({
   lockfileRoots: 0,
   beforeLockfileRoot: null,
 }));
+// A synthetic changed dependency path, so a control character reaches the caller warning.
+const hostile = vi.hoisted(() => ({ path: null, calls: 0 }));
+vi.mock("../src/lib/lockfile-change.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    readLockfiles: async (cwd, options) => {
+      if (hostile.path === null) return real.readLockfiles(cwd, options);
+      hostile.calls++;
+      return { "pnpm-lock.yaml": null, [hostile.path]: hostile.calls === 1 ? "one" : "two" };
+    },
+  };
+});
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
@@ -48,6 +61,9 @@ afterEach(async () => {
   reads.slowShared = false;
   reads.lockfileRoots = 0;
   reads.beforeLockfileRoot = null;
+  hostile.path = null;
+  hostile.calls = 0;
+  vi.restoreAllMocks();
   await removePath(repo);
 });
 
@@ -105,4 +121,18 @@ test("a worker turn whose subdirectory cwd is removed before the post-turn lockf
     "pnpm-lock.yaml",
     "yarn.lock",
   ]);
+});
+
+// Usefulness: verifies the caller warning cleans a control character from a changed dependency
+// path, so the terminal never receives the raw escape sequence.
+test("a changed dependency path with an escape character warns without the control character", async () => {
+  hostile.path = "\u001b[31m/requirements.txt";
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const result = await runTurn("worker");
+  const warning = warn.mock.calls
+    .map((call) => String(call[0]))
+    .find((line) => line.includes("lockfile changed"));
+  expect(warning).toBeDefined();
+  expect(warning).not.toContain("\u001b");
+  expect(result.lockfileChanged).toEqual(["[31m/requirements.txt"]);
 });

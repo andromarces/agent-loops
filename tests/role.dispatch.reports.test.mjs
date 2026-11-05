@@ -40,6 +40,7 @@ const test = createBarrierTest();
 
 afterEach(async () => {
   gitDouble.answer = null;
+  vi.unstubAllEnvs();
   await cleanup();
 });
 
@@ -230,6 +231,59 @@ test("worker dispatch reports a lockfile change by path and omits the field othe
     stdin: stdinPrompt,
   });
   expect(edited.payload.lockfileChanged).toEqual(["pnpm-lock.yaml"]);
+});
+
+// Usefulness: verifies a secret-named environment value in a dependency path is redacted in the
+// envelope field, so the parent never receives the value.
+test("worker dispatch redacts a secret value in a dependency path", async () => {
+  const repo = await newRunRepo();
+  const secretName = "AGENT_LOOP_TEST_TOKEN";
+  const secretValue = "d1s7-very-secret-value";
+  vi.stubEnv(secretName, secretValue);
+  const secretWorker = recordingAdapter([
+    async (_state, _prompt, options) => {
+      const dir = join(options.cwd, secretValue);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "requirements.txt"), "one\n");
+      return WORKER_REPLY;
+    },
+  ]);
+  const agents = { fake1: secretWorker, fake2: recordingAdapter([]) };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.lockfileChanged).toEqual([`[redacted:${secretName}]/requirements.txt`]);
+  expect(result.payload.lockfileChanged.join(" ")).not.toContain(secretValue);
+});
+
+// Usefulness: verifies a secret value that matches a fixed root lockfile name does not change that
+// name, while the non-Node path is redacted.
+test("worker dispatch keeps a fixed root lockfile name byte-identical", async () => {
+  const repo = await newRunRepo();
+  const secretName = "AGENT_LOOP_TEST_TOKEN";
+  const secretValue = "lock.yaml";
+  vi.stubEnv(secretName, secretValue);
+  const secretWorker = recordingAdapter([
+    async (_state, _prompt, options) => {
+      const dir = join(options.cwd, secretValue);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "requirements.txt"), "one\n");
+      await writeFile(join(options.cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+      return WORKER_REPLY;
+    },
+  ]);
+  const agents = { fake1: secretWorker, fake2: recordingAdapter([]) };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.lockfileChanged).toEqual([
+    `[redacted:${secretName}]/requirements.txt`,
+    "pnpm-lock.yaml",
+  ]);
 });
 
 // Usefulness: verifies requirement "an interrupted worker dispatch reports the lockfile change in the

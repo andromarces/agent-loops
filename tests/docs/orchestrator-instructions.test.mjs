@@ -177,9 +177,30 @@ const SHARED_PARENT_RULES = [
   // reinstalls before the next reviewer dispatch.
   (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),
   (text) => expectRule(text, /lockfiles by path only/i),
-  (text) => expectRule(text, /lockfile install/i, /before the next reviewer dispatch/i),
+  // Issue #1457: the setup is by toolchain, so a repository with no Node lockfile still gets one.
+  (text) => expectRule(text, /dependency setup/i, /repository documents/i, /tests/i),
+  (text) => expectRule(text, /Node lockfile install/i),
+  // Issue #1457: the field covers non-Node dependency files at any depth, and the parent reruns
+  // the matching toolchain setup.
+  (text) => expectRule(text, /non-Node/i, /dependency file/i, /any depth/i),
+  (text) => expectRule(text, /non-Node file/i, /toolchain/i, /before the next reviewer dispatch/i),
+  // Issue #1457: the field redacts each path like the other path fields, and a fixed root lockfile
+  // name stays byte-identical.
+  (text) => expectRule(text, /redacts each path/i, /other path fields/i),
+  (text) => expectRule(text, /at most 20 paths/i),
+  (text) => expectRule(text, /fixed root lockfile name/i, /byte-identical/i),
+  // Issue #1457: the setup keeps its deadline in both texts, before the first dispatch and
+  // before the next reviewer dispatch after a changed lockfile.
+  (text) => expectRule(text, /dependency setup/i, /before the first dispatch/i),
+  (text) =>
+    expectRule(
+      text,
+      /dependency setup/i,
+      /Node lockfile install/i,
+      /before the next reviewer dispatch/i,
+    ),
   // Issue #1225: an unread work tree root names every lockfile, so the parent still reinstalls.
-  (text) => expectRule(text, /could not read the work tree root/i, /every lockfile/i),
+  (text) => expectRule(text, /cannot read the work tree root/i, /every lockfile/i),
   // Issue #1024: a reviewer envelope names the entries that appeared in the inherited temporary
   // directory, as advisory evidence that the runtime cannot attribute, and the parent reports it.
   (text) =>
@@ -789,7 +810,7 @@ const REFUSED_CWD_BLOCKS = {
       'Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or `git push -u origin <pr branch>` for an existing PR branch. Never let the worker run a plain `git push`. Before the first dispatch, read `git -C "<work tree>" config push.default`. If it prints `matching`, state the named push in the task text.',
       "The named push closes the gap only when the worker follows it. A worker that runs a plain `git push` anyway can push the default branch under `matching`.",
       "A run on an existing pull request, such as a review or a correction of PR #N, must run on the PR head branch. A repository with no remote has no `origin/<default>`. The setup for both, and the per-work-tree `push.default` override, are in [Work tree setup details](orchestrator/work-tree-setup.md).",
-      "The parent installs the dependencies of the work tree, and no worker or reviewer does. After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`. The work tree then has its own `node_modules` for every turn. Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
+      "The parent installs the work tree's own dependencies, such as `node_modules`, for every turn, and no worker or reviewer does. After you create the work tree and before the first dispatch, run inside it the dependency setup that the repository documents for its tests. For a Node project, that is the lockfile install, for example `pnpm install --frozen-lockfile`. For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file. Never link or junction the `node_modules` of another checkout into the work tree. Never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
       '`dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`.',
       "A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.",
       "When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree that `--cwd` ignores, such as agent instructions and `.env`, into `--cwd`. Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env` into the run work tree, so remove that work tree when the run ends. The copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in [Local files copied into the work tree](orchestrator/local-files-copy.md).",
@@ -960,17 +981,50 @@ test("instructions and headless prompt name the work tree install owner and bar 
     instructions.indexOf(" ## Reference sections"),
   );
   expect(ownership).toContain(
-    "After you create the work tree and before the first dispatch, run the repository's lockfile install inside the work tree, for example `pnpm install --frozen-lockfile`.",
+    "After you create the work tree and before the first dispatch, run inside it the dependency setup that the repository documents for its tests.",
   );
   expect(ownership).toContain(
-    "Never link or junction the `node_modules` of another checkout into the work tree, and never run an install in another checkout",
+    "For a Node project, that is the lockfile install, for example `pnpm install --frozen-lockfile`.",
+  );
+  expect(ownership).toContain(
+    "For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file.",
+  );
+  expect(ownership).toContain(
+    "Never link or junction the `node_modules` of another checkout into the work tree.",
+  );
+  expect(ownership).toContain(
+    "Never run an install in another checkout: a tool such as `vp` can rewrite links in the `node_modules` that the junction points to.",
   );
   expect(prompt).toContain(
-    "the operator that created it ran the repository's lockfile install in it before the first dispatch, and no worker or reviewer installs them.",
+    "Before the first dispatch, the operator that created it ran the dependency setup that the repository documents for its tests.",
   );
+  expect(prompt).toContain(
+    "For a Node project, that is the lockfile install, for example `pnpm install --frozen-lockfile`.",
+  );
+  expect(prompt).toContain(
+    "For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file.",
+  );
+  expect(prompt).toContain("No worker or reviewer installs them.");
   expect(prompt).toContain(
     "Never tell a worker to link or junction the `node_modules` of another checkout into the work tree, or to run an install in another checkout.",
   );
+});
+
+// Usefulness: verifies the instructions state the non-Node coverage and the rerun action, so a
+// requirements change reaches the parent. The removed gap text stays gone.
+test("instructions state the non-Node lockfileChanged coverage and action", async () => {
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
+  expect(instructions).toContain(
+    "The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.",
+  );
+  expect(instructions).toContain(
+    "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+  );
+  expect(instructions).toContain(
+    "The field redacts each path like the other path fields, names at most 20 paths, and keeps a fixed root lockfile name byte-identical.",
+  );
+  expect(instructions).not.toContain("asks for no reinstall");
+  expect(instructions).not.toContain("gap is accepted");
 });
 
 // Usefulness: verifies the instructions name the work tree removal step and a delete that never

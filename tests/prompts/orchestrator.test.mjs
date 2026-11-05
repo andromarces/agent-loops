@@ -219,6 +219,34 @@ test("initialPrompt states the reviewed-state parent rules", () => {
   expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
+// Usefulness: verifies the headless prompt names the parent's setup duty by toolchain (#1457).
+// A repository with no Node lockfile then runs its documented test setup.
+test("initialPrompt states the parent's dependency setup by toolchain", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain(
+    "Before the first dispatch, the operator that created it ran the dependency setup that the repository documents for its tests.",
+  );
+  expect(prompt).toContain(
+    "For a Node project, that is the lockfile install, for example `pnpm install --frozen-lockfile`.",
+  );
+  expect(prompt).toContain(
+    "For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file.",
+  );
+  expect(prompt).toContain("No worker or reviewer installs them.");
+  expect(prompt).toContain(
+    "When the field appears, run the dependency setup the repository documents for its tests, such as the Node lockfile install, before the next reviewer dispatch.",
+  );
+  expect(prompt).toContain(
+    "lockfileChanged also covers a non-Node dependency file at any depth, such as a requirements file in a subdirectory.",
+  );
+  expect(prompt).toContain(
+    "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+  );
+  expect(prompt).toContain(
+    "It redacts each path like the other path fields, names at most 20 paths, and keeps a fixed root lockfile name byte-identical.",
+  );
+});
+
 // Usefulness: verifies the headless prompt names the machine-readable marker the
 // parent sets when it records an unresolved PR-head compare, and shows it inside
 // the finish action object, so the runtime can turn it into a distinct

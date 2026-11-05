@@ -1,6 +1,6 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { clearTimeout as realClearTimeout, setTimeout as realSetTimeout } from "node:timers";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { removePath } from "../fs-helpers.mjs";
@@ -13,6 +13,27 @@ const hashing = vi.hoisted(() => ({
   signals: [],
   releaseFirstStart: null,
 }));
+// The dependency file list read: `fail` throws, and `stall` waits for the bound signal.
+const gitList = vi.hoisted(() => ({ fail: false, stall: false }));
+vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    gitRead: async (cwd, args, options = {}) => {
+      if (args?.[0] === "ls-files") {
+        if (gitList.fail) throw new Error("git ls-files failed");
+        if (gitList.stall) {
+          return new Promise((_, reject) => {
+            options.signal?.addEventListener("abort", () => reject(options.signal.reason), {
+              once: true,
+            });
+          });
+        }
+      }
+      return actual.gitRead(cwd, args, options);
+    },
+  };
+});
 // null reads the real work tree root; a number replaces it with a read of that many real
 // milliseconds, so no case waits on `git`.
 const roots = vi.hoisted(() => ({ delayMs: null }));
@@ -68,6 +89,8 @@ afterEach(async () => {
   hashing.signals.length = 0;
   hashing.failing.clear();
   hashing.releaseFirstStart = null;
+  gitList.fail = false;
+  gitList.stall = false;
   roots.delayMs = null;
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -239,4 +262,172 @@ test("a lockfile whose hash read failed before the turn is reported", async () =
 // Usefulness: verifies an unread lockfile state is never compared, so a failed read reports no change.
 test("two lockfile reads that failed report no change", () => {
   expect(diffLockfiles(null, null)).toEqual([]);
+});
+
+// Usefulness: verifies a non-Node dependency file in a subdirectory reports its change, so the
+// parent reinstalls the right toolchain. An unchanged file stays out of the field.
+test("a subdirectory requirements file reports only a real change", async () => {
+  await mkdir(join(repo, "sub"), { recursive: true });
+  await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
+  const before = await readLockfiles(repo);
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual([]);
+  await writeFile(join(repo, "sub", "requirements.txt"), "two\n");
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual(["sub/requirements.txt"]);
+});
+
+// Usefulness: verifies an added and a deleted dependency file both reach the field, so neither
+// change is lost when the two sides list different paths.
+test("an added and a deleted dependency file are both reported", async () => {
+  await writeFile(join(repo, "constraints.txt"), "one\n");
+  await mkdir(join(repo, "sub"), { recursive: true });
+  await writeFile(join(repo, "sub", "poetry.lock"), "one\n");
+  const before = await readLockfiles(repo);
+  await rm(join(repo, "constraints.txt"));
+  await mkdir(join(repo, "app"), { recursive: true });
+  await writeFile(join(repo, "app", "Pipfile.lock"), "one\n");
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual([
+    "app/Pipfile.lock",
+    "constraints.txt",
+  ]);
+});
+
+// Usefulness: verifies an ignored dependency file is never read, while a tracked-path change is.
+// The ignored directory holds a matching name, so a list read without the exclude rule fails.
+test("an ignored dependency file is not reported", async () => {
+  await writeFile(join(repo, ".gitignore"), "ignored/\n");
+  await mkdir(join(repo, "ignored"), { recursive: true });
+  await writeFile(join(repo, "ignored", "requirements.txt"), "one\n");
+  await mkdir(join(repo, "src"), { recursive: true });
+  await writeFile(join(repo, "src", "requirements.txt"), "one\n");
+  const before = await readLockfiles(repo);
+  await writeFile(join(repo, "ignored", "requirements.txt"), "two\n");
+  await writeFile(join(repo, "src", "requirements.txt"), "two\n");
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual(["src/requirements.txt"]);
+});
+
+// Usefulness: verifies a look-alike name stays out of the field, while a listed name is reported.
+// A substring match must not report requirements.md or my-poetry.lock.
+test("a file name that only resembles the list is not reported", async () => {
+  await writeFile(join(repo, "requirements.md"), "one\n");
+  await mkdir(join(repo, "sub"), { recursive: true });
+  await writeFile(join(repo, "sub", "my-poetry.lock"), "one\n");
+  await writeFile(join(repo, "poetry.lock"), "one\n");
+  const before = await readLockfiles(repo);
+  await writeFile(join(repo, "requirements.md"), "two\n");
+  await writeFile(join(repo, "sub", "my-poetry.lock"), "two\n");
+  await writeFile(join(repo, "poetry.lock"), "two\n");
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual(["poetry.lock"]);
+});
+
+// Usefulness: verifies hostile path names are read through -z and reported exactly, so a space,
+// a non-ASCII character, or a newline cannot change which file the parent sees.
+test("a hostile dependency path is reported exactly", async () => {
+  const paths = ["sub dir/requirements dev.txt", "sub-é/requirements.txt"];
+  if (process.platform !== "win32") paths.push("sub\nline/requirements.txt");
+  for (const path of paths) {
+    await mkdir(join(repo, dirname(path)), { recursive: true });
+    await writeFile(join(repo, ...path.split("/")), "one\n");
+  }
+  const before = await readLockfiles(repo);
+  for (const path of paths) {
+    await writeFile(join(repo, ...path.split("/")), "two\n");
+  }
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual([...paths].sort());
+});
+
+// Usefulness: verifies a failed dependency file list reports every known dependency path, so a
+// list failure never reads as no change.
+test("a failed dependency file list reports every known path", async () => {
+  await mkdir(join(repo, "sub"), { recursive: true });
+  await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
+  const before = await readLockfiles(repo);
+  gitList.fail = true;
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const after = await readLockfiles(repo);
+  expect(diffLockfiles(before, after)).toEqual([
+    "bun.lock",
+    "bun.lockb",
+    "npm-shrinkwrap.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "sub/requirements.txt",
+    "yarn.lock",
+  ]);
+  expect(
+    warn.mock.calls.some((call) => String(call[0]).includes("dependency file list read failed")),
+  ).toBe(true);
+  expect(warn.mock.calls.every((call) => !String(call[0]).includes("sub/requirements.txt"))).toBe(
+    true,
+  );
+});
+
+// Usefulness: verifies a dependency file list read past the bound fails closed, so a timeout
+// never reads as no change.
+test("a dependency file list read past the bound reports every known path", async () => {
+  await mkdir(join(repo, "sub"), { recursive: true });
+  await writeFile(join(repo, "sub", "requirements.txt"), "one\n");
+  const before = await readLockfiles(repo);
+  gitList.stall = true;
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const started = Date.now();
+  const after = await readLockfiles(repo, { boundMs: 100 });
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(diffLockfiles(before, after)).toEqual([
+    "bun.lock",
+    "bun.lockb",
+    "npm-shrinkwrap.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "sub/requirements.txt",
+    "yarn.lock",
+  ]);
+  expect(
+    warn.mock.calls.some((call) => String(call[0]).includes("dependency file list read failed")),
+  ).toBe(true);
+});
+
+// Usefulness: verifies the dependency file cap reports the overflow, so a silent no change cannot
+// hide a file above the cap.
+test("dependency files above the cap are reported as changed", async () => {
+  const many = join(repo, "many");
+  await mkdir(many, { recursive: true });
+  const names = Array.from(
+    { length: 257 },
+    (_, index) => `requirements-${String(index).padStart(3, "0")}.txt`,
+  );
+  for (const name of names) await writeFile(join(many, name), "one\n");
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  const before = await readLockfiles(repo);
+  const after = await readLockfiles(repo);
+  expect(diffLockfiles(before, after)).toEqual(["many/requirements-256.txt"]);
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("257"))).toBe(true);
+});
+
+// Usefulness: verifies every listed non-Node name matches at any depth, so a typo cannot leave
+// one toolchain outside the field.
+test("every listed non-Node dependency name is reported", async () => {
+  const names = [
+    "requirements-dev.txt",
+    "constraints-prod.txt",
+    "Pipfile.lock",
+    "poetry.lock",
+    "pdm.lock",
+    "uv.lock",
+    "Cargo.lock",
+    "go.sum",
+    "Gemfile.lock",
+    "composer.lock",
+  ];
+  for (const [index, name] of names.entries()) {
+    const dir = join(repo, `tool-${index}`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, name), "one\n");
+  }
+  const before = await readLockfiles(repo);
+  for (const [index, name] of names.entries()) {
+    await writeFile(join(repo, `tool-${index}`, name), "two\n");
+  }
+  expect(diffLockfiles(before, await readLockfiles(repo))).toEqual(
+    names.map((name, index) => `tool-${index}/${name}`).sort(),
+  );
 });
