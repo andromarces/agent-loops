@@ -45,6 +45,16 @@ whitespace, and a colon. A `**bold** note` line with trailing text is no heading
 A paragraph holds a bold lead and more prose on the same line. With its own dash list between two
 labels it makes the block unparseable: put the paragraph and its list under one label (issue #1386).
 
+A column-0 label line whose name and colon sit inside `**...**` is that label, for example
+`**Blockers:** none` (issue #1483). Only the six report labels gain this form, so `**Rule:**`
+stays text. `**Blockers**:` with the colon outside the bold still makes the block unparseable.
+A bold label inside a fenced code block stays text.
+
+When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
+report label becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
+label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
+last-occurrence-wins rule.
+
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label
 (issue #1006). The same line outside such a run, and any other decorated label,

@@ -14,6 +14,52 @@ const REPORT_LABELS = [
 
 export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 
+const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
+
+// A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
+// Only the six report labels gain this form, so a bold lead with another name stays text (issue
+// #1483).
+const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
+
+// The start of a known report label line, plain or bold, at column 0.
+const KNOWN_LABEL_LINE = new RegExp(
+  `^(?:(?:${LABEL_NAMES}):|\\*\\*(?:${LABEL_NAMES}):\\*\\*)`,
+  "i",
+);
+
+const BOLD_CONCLUSION_LINE = /^\*\*Conclusion:\*\*/i;
+
+// Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
+// label inside a fence stays text (issue #1483).
+function fencedLines(lines) {
+  const fenced = Array.from({ length: lines.length }, () => false);
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence !== null) {
+      fenced[i] = true;
+      if (match && match[1][0] === fence[0] && match[1].length >= fence.length) {
+        fence = null;
+      }
+    } else if (match) {
+      fenced[i] = true;
+      fence = match[1];
+    }
+  }
+  return fenced;
+}
+
+// Converts a column-0 bold report label line to its plain form. A bold label inside a fence gains
+// a leading `x`, so it is neither a label nor a decorated label (issue #1483).
+function normalizeBoldLabels(lines, fenced) {
+  return lines.map((line, index) => {
+    if (!BOLD_LABEL_LINE.test(line)) {
+      return line;
+    }
+    return fenced[index] ? `x${line}` : line.replace(BOLD_LABEL_LINE, "$1:$2");
+  });
+}
+
 // A report label that indentation or markdown decoration hides from the strict
 // match, for example `**Deferred**: x`, `*Deferred:* x`, `### Deferred: x`,
 // `> Deferred: x`, or `  Deferred: x`. Such a value would otherwise be dropped,
@@ -143,18 +189,45 @@ export function hasClosingBlockAttempt(response) {
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of
  * the response, or null when the response has no `Conclusion:` line at all.
+ * With `unlabeled`, a response without a `Conclusion:` label starts at the non-blank line directly
+ * before the first known report label, and that line becomes `Conclusion`. A column-0 bold label
+ * line is normalized to its plain form, except inside a fenced code block (issue #1483).
  * @param {string} response
+ * @param {{ unlabeled?: boolean }} [options]
  * @returns {string[] | null}
  */
-function closingBlock(response) {
+function closingBlock(response, { unlabeled = false } = {}) {
   const lines = response.split(/\r?\n/);
+  const fenced = fencedLines(lines);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (/^Conclusion:\s*/i.test(lines[i])) {
       start = i;
     }
   }
-  return start === -1 ? null : lines.slice(start);
+  if (start !== -1) {
+    return normalizeBoldLabels(lines.slice(start), fenced.slice(start));
+  }
+  if (!unlabeled) {
+    return null;
+  }
+  const first = lines.findIndex((line, index) => !fenced[index] && KNOWN_LABEL_LINE.test(line));
+  if (first === -1) {
+    return null;
+  }
+  if (BOLD_CONCLUSION_LINE.test(lines[first])) {
+    return normalizeBoldLabels(lines.slice(first), fenced.slice(first));
+  }
+  let before = first - 1;
+  while (before >= 0 && lines[before].trim() === "") {
+    before--;
+  }
+  if (before < 0 || !isPlainProseLine(lines[before])) {
+    return null;
+  }
+  const block = normalizeBoldLabels(lines.slice(before), fenced.slice(before));
+  block[0] = `Conclusion: ${lines[before].trim()}`;
+  return block;
 }
 
 /**
@@ -200,7 +273,7 @@ function closingBlock(response) {
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response) {
-  const block = closingBlock(response);
+  const block = closingBlock(response, { unlabeled: true });
   if (!block) {
     return null;
   }
