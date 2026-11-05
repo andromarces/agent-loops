@@ -18,6 +18,11 @@ const commitLinkRule =
 
 const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
+// A worker ran the test suite and committed an unignored Vitest report with `git add -A`
+// (issue #1510).
+const stageOnlyNeededPathsRule =
+  "Stage only the paths that the change needs, by name. Never stage with `git add -A`, `git add .`, or `git commit -a`. Before each commit, read `git diff --cached --stat`, and unstage any generated, cache, or test output file. When a run leaves untracked generated output that the repository does not ignore, report it in `Notes`, and do not commit it.";
+
 // Under `push.default=matching`, a plain `git push` also pushes other local branches. Those are the
 // branches that have a remote branch of the same name. A linked work tree shares such a default
 // branch with the main checkout (issue #1226). A named refspec keeps the push on the PR branch.
@@ -59,12 +64,12 @@ const conclusionFirstRule =
 
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
- * body, and closing-block rules only. `task` adds the init task block.
+ * body, commit-link, staging, and closing-block rules only. `task` adds the init task block.
  */
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
-    // A later turn can push a fix in a conversation that has no preamble yet, so it repeats the PR
-    // body rule and the named push rule. It repeats the closing block too, because a worker drifts from the block as the
+    // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
+    // repeats the PR body, named push, commit-link, and staging rules. It repeats the closing block too, because a worker drifts from the block as the
     // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
     // (issue #1179).
     return escapeLineSeparators(`${prompt}
@@ -76,6 +81,8 @@ ${matchingPushNote}
 ${prBodyRule}
 
 ${commitLinkRule}
+
+${stageOnlyNeededPathsRule}
 
 ${conclusionFirstRule}
 
@@ -102,6 +109,7 @@ Your role:
 - ${matchingPushNote}
 - ${prBodyRule}
 - ${commitLinkRule}
+- ${stageOnlyNeededPathsRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of
