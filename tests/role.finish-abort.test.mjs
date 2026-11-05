@@ -354,7 +354,51 @@ test("--require-accept refuses a finish after a worker turn with no later review
 
   const result = await finishCall(repo, ["--require-accept"]);
   expect(result.exitCode).toBe(1);
-  expect(result.payload.error).toContain("no reviewer turn");
+  expect(result.payload.error).toBe(
+    "Finish refused: no reviewer turn after the latest worker turn.",
+  );
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+});
+
+// Usefulness: verifies the interactive finish names a worker turn after an
+// accepted review, so the refusal states the turn order rather than a missing
+// review (#1516). A later reviewer accept still passes, so only the wording
+// changes.
+test("--require-accept names a worker turn after an accepted review", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, ACCEPT);
+  await dispatchWorker(repo, "edited a checklist item on the issue");
+
+  const refused = await finishCall(repo, ["--require-accept"]);
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain(
+    "a worker turn ran after the last review, and a reviewer accept with a Checks line on the current state must come before finish",
+  );
+  expect(refused.payload.error).not.toContain("no reviewer turn after the latest worker turn");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+
+  await dispatchReviewer(repo, ACCEPT);
+  const accepted = await finishCall(repo, ["--require-accept"]);
+  expect(accepted.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
+// Usefulness: verifies the interactive finish names a worker turn after a
+// rejected review too, so the wording does not depend on the verdict (#1516).
+test("--require-accept names a worker turn after a rejected review", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  await dispatchReviewer(repo, REJECT);
+  await dispatchWorker(repo, "edited a checklist item on the issue");
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain(
+    "a worker turn ran after the last review, and a reviewer accept with a Checks line on the current state must come before finish",
+  );
   expect((await readRepoState(repo)).lifecycle).toBe("active");
 });
 

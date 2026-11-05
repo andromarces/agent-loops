@@ -6,6 +6,7 @@ import {
   REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
   REVIEW_ONLY_GATE_REFUSAL,
   unresolvedCompareReason,
+  WORKER_AFTER_REVIEW_ACCEPT_REFUSAL,
 } from "../lib/gate-refusal.mjs";
 import { checkCi, checkPrHead } from "../lib/ci-gate.mjs";
 import { workerFollowedReview } from "../lib/gate.mjs";
@@ -152,7 +153,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     }
   }
   if (args.requireAccept) {
-    const reason = await acceptGateReason(state, args.cwd, signal);
+    const reason = await acceptGateReason(state, args.cwd, signal, workerAfterReview);
     if (reason) {
       refusals.push(reason);
     }
@@ -242,11 +243,14 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
  * The current snapshot is compared against the reviewed head and digest, so a
  * change to an uncommitted state at the same head is detected. Returns null
  * when the gate holds, or a reason that names the failing condition.
+ * @param {boolean} workerAfterReview a worker turn ran after the last reviewer turn
  */
-async function acceptGateReason(state, cwd, signal) {
+async function acceptGateReason(state, cwd, signal, workerAfterReview) {
   const last = state.lastResult;
   if (!last || last.role !== "reviewer" || last.status !== "ok") {
-    return "no reviewer turn after the latest worker turn";
+    return workerAfterReview
+      ? WORKER_AFTER_REVIEW_ACCEPT_REFUSAL
+      : "no reviewer turn after the latest worker turn";
   }
   const failure = acceptanceFailure(last.response, last.report);
   if (failure === "verdict") {
