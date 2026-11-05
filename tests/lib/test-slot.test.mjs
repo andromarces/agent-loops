@@ -522,8 +522,8 @@ test("--slots=3 and --wait=0 parse the same as the separated forms", () => {
   });
 });
 
-// Usefulness: acceptance (#1469) — a count above Number.MAX_SAFE_INTEGER rounds in a double, so
-// the parser refuses the flag value as a usage error rather than accept a rounded count.
+// Usefulness: acceptance (#1469) — a count above Number.MAX_SAFE_INTEGER rounds in a double.
+// The parser refuses that flag value as a usage error instead of accepting a rounded count.
 test("a --slots value above Number.MAX_SAFE_INTEGER is refused with usage: true", () => {
   const tooLarge = String(Number.MAX_SAFE_INTEGER + 1);
   const error = usageRefusal(() => parseTestSlotArgs([`--slots=${tooLarge}`, "--", "x"], {}));
@@ -560,7 +560,7 @@ test.each([
 });
 
 // Usefulness: issue #1469 — a repeated flag in both forms keeps the last value, as the separated
-// loop already does, so the inline form adds no new precedence rule.
+// loop already does. The inline form adds no new precedence rule.
 test("a repeated --slots flag in both forms keeps the last value", () => {
   expect(parseTestSlotArgs(["--slots", "2", "--slots=3", "--", "x"], {}).slots).toBe(3);
   expect(parseTestSlotArgs(["--slots=3", "--slots", "2", "--", "x"], {}).slots).toBe(2);
@@ -575,7 +575,7 @@ test("--if-held=1 keeps its unknown-option refusal", () => {
 });
 
 // Usefulness: issue #1469 — help wins after an inline value flag, as it does after the separated
-// form, so an inline flag before --help does not hide the help text.
+// form. An inline flag before --help does not hide the help text.
 test("--help after an inline value flag prints help", () => {
   expect(parseTestSlotArgs(["--slots=3", "--help", "x"], {})).toEqual({ help: true });
 });
