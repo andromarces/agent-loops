@@ -77,7 +77,7 @@ afterEach(async () => {
   await removePath(repo);
 });
 
-const runTurn = (roleName, act = async () => {}) =>
+const runTurn = (roleName, act = async () => "done") =>
   runChild({
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
@@ -118,7 +118,7 @@ test("a worker turn whose subdirectory cwd is removed before the post-turn lockf
   await writeFile(join(sub, "a.txt"), "a\n");
   reads.beforeLockfileRoot = () => rm(sub, { recursive: true, force: true });
   const result = await runChild({
-    agents: { fake: scripted([async () => {}]) },
+    agents: { fake: scripted([async () => "done"]) },
     role: { kind: "fake", sessionId: null },
     roleName: "worker",
     prompt: "go",

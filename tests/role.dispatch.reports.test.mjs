@@ -74,6 +74,28 @@ test("worker dispatch reports the work tree state from after the turn", async ()
   expect(state.lastResult.workTree.head).toMatch(/^[0-9a-f]{40}$/);
 });
 
+// Usefulness: verifies requirement "a worker turn whose adapter returns no string response fails"
+// (issue #1496). The dispatch exits non-zero with `status: "error"`.
+// The error names the missing string response, instead of `ok` with `report: null`.
+test.each([
+  { name: "missing", reply: async () => undefined, got: "undefined" },
+  { name: "non-string", reply: async () => ({ ok: true }), got: "object" },
+])("worker dispatch fails on a $name response", async ({ reply, got }) => {
+  const repo = await newRunRepo();
+  const worker = recordingAdapter([reply]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({ role: "worker", status: "error" });
+  expect(result.payload.error).toContain("no string response");
+  expect(result.payload.error).toContain(got);
+  expect(result.payload).not.toHaveProperty("report");
+});
+
 // Usefulness: verifies requirement "a worker turn that changes shared Git state reports the item
 // names beside workTree, and a turn that changes none carries no field" (issue #984). The
 // work tree snapshot alone shows clean: true for a hook or remote change made from a linked work tree.

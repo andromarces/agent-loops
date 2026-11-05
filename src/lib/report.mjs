@@ -350,9 +350,6 @@ export function parsesOnlyWithBoldLabels(response) {
  * @returns {ReturnType<typeof parseReportBlock>}
  */
 export function reportForResult(response, multiPartUnidentified = false) {
-  if (typeof response !== "string") {
-    return null;
-  }
   return multiPartUnidentified && parsesOnlyWithBoldLabels(response)
     ? null
     : parseReportBlock(response);
