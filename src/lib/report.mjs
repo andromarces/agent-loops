@@ -255,6 +255,44 @@ function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
 }
 
 /**
+ * The closing block of `response` as report values, or the first missing required label.
+ * @param {string} response
+ * @param {{ boldLabels?: boolean }} [options]
+ * @returns {{ report: object, missing?: undefined } | { report: null, missing: string } | null}
+ */
+function reportDetail(response, { boldLabels = true } = {}) {
+  const block = closingBlock(response, { unlabeled: true, boldLabels });
+  if (!block) {
+    return null;
+  }
+  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !BOLD_DASH_ITEM.test(line))) {
+    return null;
+  }
+  const lines = foldEmptyLabelLists(block);
+  if (
+    !lines ||
+    lines.some((line) => DECORATED_LABEL_LINE.test(line)) ||
+    hasDroppedList(lines) ||
+    hasTablePair(lines)
+  ) {
+    return null;
+  }
+  const report = {};
+  for (const [key, label, optional] of REPORT_LABELS) {
+    const found = lastLabeled(lines, label);
+    if (!found?.value) {
+      if (optional) {
+        report[key] = null;
+        continue;
+      }
+      return { report: null, missing: label };
+    }
+    report[key] = found.value;
+  }
+  return { report };
+}
+
+/**
  * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`.
  * Each label is matched case-insensitively at line start inside the closing
  * block only; the last occurrence in that range wins. `conclusion`, `why`, and
@@ -298,35 +336,19 @@ function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
 export function parseReportBlock(response, { boldLabels = true } = {}) {
-  const block = closingBlock(response, { unlabeled: true, boldLabels });
-  if (!block) {
-    return null;
-  }
-  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !BOLD_DASH_ITEM.test(line))) {
-    return null;
-  }
-  const lines = foldEmptyLabelLists(block);
-  if (
-    !lines ||
-    lines.some((line) => DECORATED_LABEL_LINE.test(line)) ||
-    hasDroppedList(lines) ||
-    hasTablePair(lines)
-  ) {
-    return null;
-  }
-  const report = {};
-  for (const [key, label, optional] of REPORT_LABELS) {
-    const found = lastLabeled(lines, label);
-    if (!found?.value) {
-      if (optional) {
-        report[key] = null;
-        continue;
-      }
-      return null;
-    }
-    report[key] = found.value;
-  }
-  return report;
+  return reportDetail(response, { boldLabels })?.report ?? null;
+}
+
+/**
+ * The first required label that a null report lacks, in report order: `Conclusion`, `Why`, or
+ * `Blockers`. It is null when the report parses, when no closing block is found, and when another
+ * rule makes the block unparseable, so a structural failure never reads as a missing label
+ * (issue #1520).
+ * @param {string} response
+ * @returns {string | null}
+ */
+export function missingRequiredReportLabel(response) {
+  return reportDetail(response)?.missing ?? null;
 }
 
 /**

@@ -436,6 +436,29 @@ test("--require-accept refuses a finish that relies on a worker Checks line", as
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// Usefulness: verifies the interactive gate refuses a reviewer accept whose report is null for the
+// missing Why label, names Why in the dispatch envelope, and accepts a later reviewer report that
+// carries Why and Checks (issue #1520).
+test("--require-accept refuses an accept with no Why label and names Why", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  const noWhy = "Conclusion: done\nBlockers: none\nChecks: npm test\nVerdict: accept";
+
+  const refusedReview = await dispatchReviewer(repo, noWhy);
+  expect(refusedReview.payload.report).toBeNull();
+  expect(refusedReview.payload.reportMissingLabel).toBe("Why");
+  const refused = await finishCall(repo, ["--require-accept"]);
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("Checks");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+
+  await dispatchReviewer(repo, ACCEPT);
+  const accepted = await finishCall(repo, ["--require-accept"]);
+  expect(accepted.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
 // Usefulness: verifies --require-accept refuses a finish when the work tree
 // changed after the accepted review, including an uncommitted state at the same
 // head (issue #218).

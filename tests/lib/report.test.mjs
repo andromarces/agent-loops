@@ -3,6 +3,7 @@ import {
   hasClosingBlockAttempt,
   acceptanceFailure,
   isAcceptedReview,
+  missingRequiredReportLabel,
   parseReportBlock,
   parseVerdict,
   parsesOnlyWithBoldLabels,
@@ -50,6 +51,28 @@ test("parseReportBlock maps an empty optional label to null", () => {
     notes: null,
     deferred: null,
   });
+});
+
+// Usefulness: verifies the parser names the required label that a null report lacks, so a turn
+// result can say which label is missing without repeating the response text (issue #1520).
+test("missingRequiredReportLabel names the required label that a null report lacks", () => {
+  const noWhy = [
+    "The parser change lands with the new test.",
+    "",
+    "Step 2 of the issue is only partly met, because the reviewer reads the old path.",
+    "",
+    "Blockers: none",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+
+  expect(parseReportBlock(noWhy)).toBeNull();
+  expect(missingRequiredReportLabel(noWhy)).toBe("Why");
+  expect(missingRequiredReportLabel("Conclusion: done\nWhy: ok")).toBe("Blockers");
+  expect(missingRequiredReportLabel(REPORT)).toBeNull();
+  expect(missingRequiredReportLabel(`${REPORT}\nNotes: tidy\n**Deferred**: later`)).toBeNull();
+  expect(missingRequiredReportLabel("looks fine, with no closing block here")).toBeNull();
 });
 
 // Usefulness: verifies the optional Checks label reaches the parsed report,

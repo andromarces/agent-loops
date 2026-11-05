@@ -583,6 +583,41 @@ test.each([
   expect(result.payload.raw).toContain(expected);
 });
 
+// Usefulness: verifies a worker response with prose paragraphs and no `Why:` label keeps a null
+// report, carries the whole response in raw, and names Why in `reportMissingLabel` in the envelope
+// and lastResult, so the parent learns the missing label without reading the raw text (issue #1520).
+test("worker dispatch names Why when the closing block has no Why label", async () => {
+  const repo = await newCleanRepo();
+  const response = [
+    "The parser change lands with the new test.",
+    "",
+    "Step 2 of the issue is only partly met, because the reviewer reads the old path.",
+    "",
+    "Blockers: none",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const missing = recordingAdapter([async () => response]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: missing, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toBe(response);
+  expect(result.payload.reportMissingLabel).toBe("Why");
+  expect((await readRepoState(repo)).lastResult.reportMissingLabel).toBe("Why");
+
+  const parsed = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(parsed.payload.report).not.toBeNull();
+  expect(parsed.payload).not.toHaveProperty("reportMissingLabel");
+});
+
 // Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so
 // the fail-closed rule needs a bold-only parse (issue #1483).
 test("worker dispatch keeps a plain report across unidentified parts", async () => {
