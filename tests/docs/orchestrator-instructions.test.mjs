@@ -360,7 +360,7 @@ test("the parent surfaces name --expect for a check that registers late", async 
 // hold is the default, and only the exclusions named here skip it, so a surface that drops an
 // exclusion, or adds one, fails here instead of telling a parent that --expect is unneeded where the
 // wait would not hold.
-const HOLD_RULE_PASSAGE = `The --all wait holds a pass while a pull_request workflow of the base branch may run for the PR. It holds while a github-actions check suite on the head is not completed. It also holds while the head has no github-actions suite, so a dependent job of that workflow needs no --expect. The hold skips a workflow only when its text proves that no run starts for the PR: no pull_request trigger, a paths list that matches no PR file, a paths-ignore list that matches every PR file, a branches list that omits the base branch, or a branches-ignore list that names it. A types filter never skips. A trigger or filter form that the command cannot settle, a workflow file that the PR changes, and a read that fails or cannot be parsed hold the pass, and the hold ends at the bound with timedOut true, never a pass. The suite read is pinned to the head SHA, like the check-run and status reads. Only a github-actions suite holds the pass, so a suite of another app never holds it. A PR head or base branch that moves during the reads holds the pass. A failing check still settles the wait. --expect stays needed for a check of a third-party app. The hold covers no workflow that runs only on push: it is not held for, whatever its branches or paths filters say, and --expect stays needed for its check.`;
+const HOLD_RULE_PASSAGE = `The --all wait holds a pass while a pull_request workflow of the base branch can run for the PR. It holds while a github-actions check suite on the head is not completed. It also holds while the head has no github-actions suite. A dependent job of that workflow then needs no --expect. The hold skips a workflow only when its text proves that no run starts for the PR. One proof is enough. The text names no pull_request trigger, or a paths list matches no PR file. A paths-ignore list can match every PR file, or a branches list can omit the base branch. A branches-ignore list can name the base branch. A types filter never skips. A trigger or filter form that the command cannot settle holds the pass. So does a workflow file that the PR changes. So does a read that fails or cannot be parsed. The hold ends at the bound with timedOut true, never a pass. A PR head or base branch that moves during the reads holds the pass. A failing check still settles the wait. The suite read is pinned to the head SHA, like the check-run and status reads. Only a github-actions suite holds the pass, so a suite of another app never holds it. --expect stays needed for a check of a third-party app. The hold covers no workflow that runs only on push. That workflow never holds the pass, whatever its branches or paths filters say. --expect stays needed for its check.`;
 
 // Usefulness: verifies every surface that states the --all hold carries the whole rule: the hold,
 // the exact skip conditions, the filters that never skip, the fail-closed cases, the bound, and the
@@ -1602,7 +1602,6 @@ function fiveWordRuns(sentence) {
  * reference file only, so the core never held them. Each entry is a file name and the start of the
  * sentence. A sentence that a change moves out of the core never belongs here: add an entry only for
  * a sentence that was in a reference file before that change, and say why in this comment.
- * The --all hold detail stays in the reference, beside its earlier sentences.
  */
 const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["reviewer-evidence.md", "Do not restate the spec as the pass condition"],
@@ -1616,10 +1615,6 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["waiting-for-checks.md", "A PR head or base branch that moves during the reads"],
   ["waiting-for-checks.md", "A failing check still settles the wait"],
   ["waiting-for-checks.md", "The hold covers no workflow that runs only on push"],
-  ["waiting-for-checks.md", "It holds while a github-actions check suite on the head"],
-  ["waiting-for-checks.md", "It also holds while the head has no github-actions suite"],
-  ["waiting-for-checks.md", "The suite read is pinned to the head SHA"],
-  ["waiting-for-checks.md", "Only a github-actions suite holds the pass"],
   ["reviewer-evidence.md", "Name the guards and contracts that the change puts at risk"],
   ["reviewer-evidence.md", "So the runtime reads the required-check status for that PR head"],
   ["reviewer-evidence.md", "The runtime reports the status it read beside the reviewer result"],

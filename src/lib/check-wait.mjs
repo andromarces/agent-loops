@@ -466,7 +466,7 @@ async function absenceOf(
  * check still settles the wait (#978).
  * An `--all` pass is held while a workflow of the base branch may run for the PR (see
  * `pullRequestWorkflowMayRun`) and a `github-actions` check suite of `sha` is not completed.
- * It is held too while no such suite exists and the workflow may run, so a dependent job needs no
+ * It is held too while no such suite exists and the workflow can run, so a dependent job needs no
  * `expect` name. The hold skips only a workflow that provably cannot run, so a read that fails or a
  * form that is not settled holds too. A suite of another app never holds the pass. It ends at the
  * bound with `timedOut: true`, and a failing check still settles the wait (#1228, #1518).
@@ -771,7 +771,7 @@ async function workflowMayRunFor(context, sha, base) {
 
 /**
  * Whether an --all pass must wait for GitHub Actions on `sha`. The hold applies only while a base
- * workflow may run for the PR, so a push-only workflow never holds it. Then a `github-actions` check
+ * workflow can run for the PR, so a push-only workflow never holds it. Then a `github-actions` check
  * suite of the commit that is not completed holds the pass, and so does no such suite at all. A suite
  * of another app never holds it. A failed read holds the pass, and a retryable failure is kept for the
  * bound, which reports it (#1518).

@@ -155,9 +155,9 @@ test("the --all wait holds a pass until a GitHub Actions check run appears on th
   expect(elapsed).toBeGreaterThan(0);
 });
 
-// Usefulness: verifies the hold lasts until every job of the GitHub Actions suite is done, so a
+// Usefulness: verifies the hold lasts until every job of the GitHub Actions suite is done. A
 // dependent job that registers after the first job passed is never missed (issue #1518 acceptance 1
-// and 2); no other test covers a suite that outlives its first check run.
+// and 2). No other test covers a suite that outlives its first check run.
 test("the --all wait holds a pass until a dependent job of the GitHub Actions suite registers", async () => {
   const select = { ...ACTIONS, id: 2, name: "select / select" };
   const dependent = { ...ACTIONS, id: 3, name: "Test" };
@@ -177,9 +177,9 @@ test("the --all wait holds a pass until a dependent job of the GitHub Actions su
   ]);
 });
 
-// Usefulness: verifies an --all wait never passes while a github-actions suite stays in progress,
-// even when every listed check run passed, and ends at the bound with timedOut true (issue #1518
-// acceptance 1).
+// Usefulness: verifies an --all wait never passes while a github-actions suite stays in progress.
+// Every listed check run passed in that case, and the wait ends at the bound with timedOut true
+// (issue #1518 acceptance 1).
 test("the --all wait ends at the bound without a pass while a GitHub Actions suite is in progress", async () => {
   const select = { ...ACTIONS, id: 2, name: "select / select" };
   const { result } = await holdWait({
@@ -194,8 +194,8 @@ test("the --all wait ends at the bound without a pass while a GitHub Actions sui
 });
 
 // Usefulness: verifies an incomplete suite of another app never holds the pass beside a completed
-// github-actions suite, so a stuck suite of a third-party app cannot turn an --all wait into a
-// timeout (issue #1518 live-check rule).
+// github-actions suite. A stuck suite of a third-party app cannot turn an --all wait into a timeout
+// (issue #1518 live-check rule).
 test("the --all wait passes at once with an incomplete suite of another app", async () => {
   const { result, elapsed } = await holdWait({
     workflow: PR_WORKFLOW,
@@ -211,8 +211,8 @@ test("the --all wait passes at once with an incomplete suite of another app", as
   expect(elapsed).toBe(0);
 });
 
-// Usefulness: verifies a suite reply about another commit is an error, never a pass, so a moved PR
-// head never lends another commit's suites (issue #1518 contract).
+// Usefulness: verifies a suite reply about another commit is an error, never a pass. A moved PR head
+// never lends another commit's suites (issue #1518 contract).
 test("the --all wait refuses a suite reply for another commit", async () => {
   await expect(
     holdWait({
