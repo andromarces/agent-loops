@@ -1,6 +1,22 @@
 import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the case that switches it on (see `cutLinkedReads` below). That
+// case then starts no process for the shared Git and lockfile reads.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) => {
+      const answer =
+        gitDouble.answer && command === "git" ? gitDouble.answer(command, args, options) : null;
+      return answer ?? real.execa(command, args, options);
+    },
+  };
+});
+
 import { execa } from "execa";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
@@ -29,32 +45,13 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
 
 let tree;
 beforeEach(async () => {
-  tree = await createLinkedWorkTree({
-    seed: async (main) => {
-      await writeFile(join(main, "init.txt"), "second\n");
-      await execa("git", ["commit", "-am", "second"], { cwd: main });
-      await execa("git", ["branch", "other"], { cwd: main });
-      await execa("git", ["reset", "--hard", "HEAD~1"], { cwd: main });
-      // A remote-tracking ref of the default branch, as a clone sets up. No remote runs.
-      const branch = (await execa("git", ["symbolic-ref", "--short", "HEAD"], { cwd: main }))
-        .stdout;
-      const head = (await execa("git", ["rev-parse", "HEAD"], { cwd: main })).stdout;
-      await execa("git", ["remote", "add", "origin", "."], { cwd: main });
-      await execa("git", ["update-ref", `refs/remotes/origin/${branch}`, head], { cwd: main });
-      await execa(
-        "git",
-        ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${branch}`],
-        {
-          cwd: main,
-        },
-      );
-    },
-  });
+  tree = await createLinkedWorkTree();
 });
 afterEach(async () => {
   resolution.fail = false;
   resolution.stall = false;
-  await removePath(tree.base);
+  if (tree) await removePath(tree.base);
+  tree = undefined;
 });
 
 const turn = (act, cwd = tree.linked) =>
@@ -65,6 +62,54 @@ const turn = (act, cwd = tree.linked) =>
     prompt: "go",
     cwd,
   });
+
+/** Adds the branch `other` at the template commit and a second commit on the checked-out branch. */
+async function seedOtherBranch() {
+  await execa("git", ["branch", "other"], { cwd: tree.main });
+  await writeFile(join(tree.main, "init.txt"), "second\n");
+  await execa("git", ["commit", "-am", "second"], { cwd: tree.main });
+}
+
+/** Adds the `origin` remote and the remote-tracking default ref that a clone sets up. */
+async function seedUpstream() {
+  const branch = (await execa("git", ["symbolic-ref", "--short", "HEAD"], { cwd: tree.main }))
+    .stdout;
+  const head = (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.main })).stdout;
+  await execa("git", ["remote", "add", "origin", "."], { cwd: tree.main });
+  await execa("git", ["update-ref", `refs/remotes/origin/${branch}`, head], { cwd: tree.main });
+  await execa(
+    "git",
+    ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${branch}`],
+    {
+      cwd: tree.main,
+    },
+  );
+}
+
+/**
+ * Answers the linked work tree root, the shared Git reads, and the lockfile list from memory. Every
+ * call not answered here runs real `git`, so the main work tree reads stay real. The empty config
+ * listing and file list read the same before and after, so neither reports a change.
+ */
+function cutLinkedReads(command, args, options) {
+  if (options?.cwd !== tree.linked) return undefined;
+  const answer = (stdout) => ({
+    exitCode: 0,
+    stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
+    stderr: "",
+  });
+  switch (JSON.stringify(args)) {
+    case '["rev-parse","--show-toplevel"]':
+      return answer(`${options.cwd}\n`);
+    case '["rev-parse","--git-common-dir"]':
+      return answer(".git\n");
+    case '["config","-z","--list","--show-scope"]':
+    case '["ls-files","-z","--cached","--others","--exclude-standard"]':
+      return answer("");
+    default:
+      return undefined;
+  }
+}
 
 /** The full ref name that `refs/remotes/origin/HEAD` names, such as `refs/remotes/origin/main`. */
 const remoteHeadRef = async () =>
@@ -81,11 +126,25 @@ const fastForwardMain = async (content) => {
 
 // Usefulness: verifies requirement "a worker turn that writes a tracked file of the main work tree
 // reports that path" (issue #1448). The linked work tree stays clean, so no other field shows it.
+// The shared Git and lockfile reads are answered from memory, so the case starts no process for them.
 test("a worker turn that writes a tracked main work tree file reports its path", async () => {
-  const result = await turn(async () => {
-    await writeFile(join(tree.main, "init.txt"), "changed\n");
-  });
-  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+  gitDouble.answer = cutLinkedReads;
+  try {
+    const result = await turn(async () => {
+      await writeFile(join(tree.main, "init.txt"), "changed\n");
+    });
+    expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+  } finally {
+    gitDouble.answer = null;
+  }
+});
+
+// Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError. A
+// timed-out hook then reports one failure and not a teardown error.
+test("a setup that did not finish leaves the cleanup without a TypeError", async () => {
+  const created = tree;
+  tree = undefined;
+  await removePath(created.base);
 });
 
 // Usefulness: verifies requirement "a turn that leaves the main work tree unchanged carries no
@@ -184,6 +243,7 @@ test("a worker turn that amends a main work tree commit reports its path", async
 // Usefulness: verifies requirement "a reset to another main work tree commit is reported" (issue
 // #1448). A reset leaves a clean work tree, so only the commit range shows the change.
 test("a worker turn that resets the main work tree to another commit reports its path", async () => {
+  await seedOtherBranch();
   const result = await turn(async () => {
     await execa("git", ["reset", "--hard", "other"], { cwd: tree.main });
   });
@@ -193,6 +253,7 @@ test("a worker turn that resets the main work tree to another commit reports its
 // Usefulness: verifies requirement "a branch switch in the main work tree is reported" (issue
 // #1448). The checked-out branch and the head commit change, and the commit range names the file.
 test("a worker turn that switches the main work tree branch reports its path", async () => {
+  await seedOtherBranch();
   const result = await turn(async () => {
     await execa("git", ["checkout", "other"], { cwd: tree.main });
   });
@@ -201,6 +262,7 @@ test("a worker turn that switches the main work tree branch reports its path", a
 
 // Usefulness: verifies a clean fast-forward reports both heads apart from a worker edit (issue #1485).
 test("a clean fast-forward of the main work tree reports the old and new head", async () => {
+  await seedUpstream();
   const before = (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.main })).stdout;
   const result = await turn(async () => {
     await fastForwardMain("forwarded\n");
@@ -212,6 +274,7 @@ test("a clean fast-forward of the main work tree reports the old and new head", 
 
 // Usefulness: verifies a fast-forward with an untracked file keeps the path report (issue #1485).
 test("a fast-forward with an untracked file keeps the full main work tree change report", async () => {
+  await seedUpstream();
   const result = await turn(async () => {
     await fastForwardMain("forwarded\n");
     await writeFile(join(tree.main, "notes.txt"), "new\n");
@@ -222,6 +285,7 @@ test("a fast-forward with an untracked file keeps the full main work tree change
 
 // Usefulness: verifies a local commit on top of a fast-forward keeps the path report (issue #1485).
 test("a local commit on top of a fast-forward keeps the main work tree change report", async () => {
+  await seedUpstream();
   const result = await turn(async () => {
     await fastForwardMain("forwarded\n");
     await writeFile(join(tree.main, "init.txt"), "local\n");
@@ -233,6 +297,8 @@ test("a local commit on top of a fast-forward keeps the main work tree change re
 
 // Usefulness: verifies a remote default ref away from the new head keeps the path report (issue #1485).
 test("a remote default ref that moves away keeps the main work tree change report", async () => {
+  await seedOtherBranch();
+  await seedUpstream();
   const result = await turn(async () => {
     await fastForwardMain("forwarded\n");
     const other = (await execa("git", ["rev-parse", "other"], { cwd: tree.main })).stdout;
@@ -244,6 +310,8 @@ test("a remote default ref that moves away keeps the main work tree change repor
 
 // Usefulness: verifies a main work tree on another branch keeps the path report (issue #1485).
 test("a main work tree on another branch keeps the main work tree change report", async () => {
+  await seedOtherBranch();
+  await seedUpstream();
   await execa("git", ["checkout", "other"], { cwd: tree.main });
   const result = await turn(async () => {
     await fastForwardMain("forwarded\n");
@@ -254,6 +322,7 @@ test("a main work tree on another branch keeps the main work tree change report"
 
 // Usefulness: verifies a failed worker turn carries the clean fast-forward (issue #1485).
 test("a failed worker turn carries the clean fast-forward", async () => {
+  await seedUpstream();
   const result = await turn(async () => {
     await fastForwardMain("forwarded\n");
     throw new Error("adapter failed");
@@ -265,6 +334,7 @@ test("a failed worker turn carries the clean fast-forward", async () => {
 
 // Usefulness: verifies a canceled worker turn carries the clean fast-forward (issue #1485).
 test("a canceled worker turn carries the clean fast-forward", async () => {
+  await seedUpstream();
   const error = await turn(async () => {
     await fastForwardMain("forwarded\n");
     throw new ExecError("canceled", { isCanceled: true });

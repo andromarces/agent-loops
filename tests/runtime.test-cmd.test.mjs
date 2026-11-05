@@ -4,18 +4,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the cases that switch it on (see `cleanRepoGit` in
+// git-helpers.mjs). A case that reads no Git state then starts no `git` process.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { testSlotRule } from "../src/prompts/rules.mjs";
 import { reviewerPrompt } from "../src/prompts/reviewer.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { processExists } from "./process-helpers.mjs";
 import { SUMMARY } from "./run-fixtures.mjs";
 
-// Headless behavior of `--test-cmd` (issue #420, ADR 0017). Each test runs a real
-// command through the platform shell inside a real Git work tree.
+// Headless behavior of `--test-cmd` (issue #420, ADR 0017). Most cases run a real
+// command through the platform shell inside a real Git work tree. A case that reads no Git
+// state uses a repository answered from memory.
 
 const REVIEW = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: none\nVerdict: accept";
 const node = (body) => `node -e "${body}"`;
@@ -721,9 +737,11 @@ test("a secret value in the command text is redacted on every headless output pa
 });
 
 // Usefulness: verifies the headless path gives the worker and the reviewer the full-suite rule with
-// the test slot wrapper, the same text as the role path (issue #848).
+// the test slot wrapper. The text matches the role path (issue #848). The repository is answered
+// from memory, so the case starts no `git` process.
 test("headless worker and reviewer turns carry the test slot rule", async () => {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   try {
     const work = scripted([REVIEW]);
     const rev = scripted([REVIEW]);
@@ -753,6 +771,7 @@ test("headless worker and reviewer turns carry the test slot rule", async () => 
       );
     }
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
