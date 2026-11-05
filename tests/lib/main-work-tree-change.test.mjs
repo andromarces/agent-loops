@@ -7,17 +7,37 @@ import { readMainWorkTree } from "../../src/lib/main-work-tree-change.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { createLinkedWorkTree } from "../git-helpers.mjs";
 
-// Arms one remote default ref move between the two reads of the fast-forward check.
-const race = vi.hoisted(() => ({ arm: false, calls: 0, ref: null, sha: null }));
+// Arms one remote default ref move or one classification fault.
+const race = vi.hoisted(() => ({
+  arm: false,
+  calls: 0,
+  ref: null,
+  sha: null,
+  fault: null,
+}));
 
 vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
   const real = await importOriginal();
+  const readsDefaultRef = (args) =>
+    args[0] === "symbolic-ref" && args[2] === "refs/remotes/origin/HEAD";
   return {
     ...real,
     gitRead: async (cwd, args, options) => {
-      const readsDefaultRef = args[0] === "symbolic-ref" && args[2] === "refs/remotes/origin/HEAD";
-      if (race.arm && readsDefaultRef && ++race.calls === 2) {
+      if (race.arm && readsDefaultRef(args) && ++race.calls === 2) {
         execFileSync("git", ["update-ref", race.ref, race.sha], { cwd });
+      }
+      if (race.fault === "throw" && readsDefaultRef(args)) {
+        throw new Error("read failed");
+      }
+      if (race.fault === "stall" && args[0] === "merge-base") {
+        return new Promise((_, reject) => {
+          options.signal?.addEventListener("abort", () => reject(options.signal.reason), {
+            once: true,
+          });
+        });
+      }
+      if (race.fault === "malformed" && readsDefaultRef(args)) {
+        return { exitCode: 0, stdout: "not-a-ref\n", stderr: "" };
       }
       return real.gitRead(cwd, args, options);
     },
@@ -50,24 +70,73 @@ beforeEach(async () => {
 afterEach(async () => {
   race.arm = false;
   race.calls = 0;
+  race.fault = null;
   await removePath(tree.base);
 });
 
 const git = async (...args) => (await execa("git", args, { cwd: tree.main })).stdout;
 
-// Usefulness: verifies a remote default ref that moves during the read keeps the path report (issue #1485).
-test("a remote default ref that moves during the read keeps the change report", async () => {
-  const before = await readMainWorkTree(tree.linked);
-  expect(before).not.toBeNull();
+/** Fast-forwards the main work tree and moves the remote default ref to its new head. */
+const forwardMain = async () => {
   await writeFile(join(tree.main, "init.txt"), "forwarded\n");
   await execa("git", ["commit", "-am", "forwarded"], { cwd: tree.main });
   const head = await git("rev-parse", "HEAD");
   const ref = await git("symbolic-ref", "refs/remotes/origin/HEAD");
   await execa("git", ["update-ref", ref, head], { cwd: tree.main });
-  race.ref = ref;
+  return head;
+};
+
+// Usefulness: verifies a remote default ref that moves during the read keeps the path report (issue #1485).
+test("a remote default ref that moves during the read keeps the change report", async () => {
+  const before = await readMainWorkTree(tree.linked);
+  expect(before).not.toBeNull();
+  await forwardMain();
+  race.ref = await git("symbolic-ref", "refs/remotes/origin/HEAD");
   race.sha = await git("rev-parse", "other");
   race.calls = 0;
   race.arm = true;
+
+  const after = await readMainWorkTree(tree.linked, { since: before });
+
+  expect(after).not.toBeNull();
+  expect(after.fastForward).toBeNull();
+  expect(after.commitPaths).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies a classification timeout keeps the completed path report (issue #1485).
+test("a fast-forward check that times out keeps the change report", async () => {
+  const before = await readMainWorkTree(tree.linked);
+  expect(before).not.toBeNull();
+  await forwardMain();
+  race.fault = "stall";
+
+  const after = await readMainWorkTree(tree.linked, { since: before, deadlineMs: 1_000 });
+
+  expect(after).not.toBeNull();
+  expect(after.fastForward).toBeNull();
+  expect(after.commitPaths).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies a thrown classification read keeps the completed path report (issue #1485).
+test("a fast-forward read that throws keeps the change report", async () => {
+  const before = await readMainWorkTree(tree.linked);
+  expect(before).not.toBeNull();
+  await forwardMain();
+  race.fault = "throw";
+
+  const after = await readMainWorkTree(tree.linked, { since: before });
+
+  expect(after).not.toBeNull();
+  expect(after.fastForward).toBeNull();
+  expect(after.commitPaths).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies a malformed remote ref keeps the completed path report (issue #1485).
+test("a malformed remote default ref keeps the change report", async () => {
+  const before = await readMainWorkTree(tree.linked);
+  expect(before).not.toBeNull();
+  await forwardMain();
+  race.fault = "malformed";
 
   const after = await readMainWorkTree(tree.linked, { since: before });
 

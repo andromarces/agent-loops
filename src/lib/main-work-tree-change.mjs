@@ -13,7 +13,7 @@ const READ_BOUND_MS = 10_000;
  * Reads the tracked and untracked, unignored state of the main work tree that a linked `cwd` belongs
  * to. The result holds the HEAD commit, the checked-out branch, and a map of path to status and
  * content hash. With `since`, a changed HEAD or branch adds the paths of `git diff --name-only`
- * between the two commits, and a clean fast-forward to the remote default branch adds `fastForward`.
+ * between the two commits. A clean fast-forward to the remote default branch adds `fastForward`.
  * The result is null when `cwd` is the main work tree, the layout has none, or the read fails or
  * passes its bound. A failed read warns, and an absent result then proves nothing.
  * @param {string} cwd
@@ -44,10 +44,8 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
             readCommitPaths(main, since.head, state.head, bound),
             stopped,
           ]);
-          state.fastForward = await Promise.race([
-            readFastForward(main, since, state, bound),
-            stopped,
-          ]);
+          // The classification is separate, so a failure keeps the commit paths above.
+          state.fastForward = await readFastForward(main, since, state, bound);
         }
         return state;
       },
@@ -75,14 +73,14 @@ async function readBranch(main, bound) {
 
 /**
  * Names the old and new head when the move is a clean fast-forward to the remote default branch.
- * Returns null for a dirty, untracked, or unignored state on either read, a detached head, a branch
- * switch, a reset, a non-fast-forward move, a local commit on top, or an unreadable or moving ref.
+ * Returns null for a dirty, untracked, or unignored state on either read, a detached head, or a
+ * branch switch. A reset, a non-fast-forward move, a local commit on top, or an unreadable or
+ * moving ref also returns null. A timeout or read error returns null too, so the commit paths stay.
  */
 async function readFastForward(main, before, after, bound) {
   try {
     return await classifyFastForward(main, before, after, bound);
-  } catch (err) {
-    if (bound.signal?.aborted) throw err;
+  } catch {
     return null;
   }
 }
