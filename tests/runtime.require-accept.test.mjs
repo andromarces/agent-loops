@@ -403,6 +403,91 @@ test("--require-accept treats an accept without a Checks line as not accepted", 
   }
 });
 
+// 38a. Usefulness: verifies the headless refusal names a worker turn after an accepted
+// review, so a remote-only edit does not read as a reviewer fault (#1516). A later
+// reviewer accept still passes, so only the wording changes.
+test("--require-accept names a worker turn after an accepted review", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "run_worker", prompt: "remote-only edit" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "re-review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const events = [];
+    const reviewerAdapter = scripted([REVIEW_ACCEPT, REVIEW_ACCEPT]);
+
+    const result = await runLoop({
+      task: "Task 1516",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed", "worker edited a checklist item"]),
+        rev: reviewerAdapter,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(2);
+    expect(events.filter((event) => event.type === "refusal")).toEqual([
+      {
+        type: "refusal",
+        reason:
+          "a worker turn ran after the last review, and a reviewer accept with a Checks line on the current state must come before finish",
+        stepsUsed: 3,
+      },
+    ]);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
+// 38b. Usefulness: verifies the headless refusal names a worker turn after a rejected
+// review too, so the wording does not depend on the verdict (#1516).
+test("--require-accept names a worker turn after a rejected review", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "run_worker", prompt: "remote-only edit" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+
+    const result = await runLoop({
+      task: "Task 1516",
+      cwd: repo,
+      maxSteps: 3,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed", "worker edited a checklist item"]),
+        rev: scripted([REVIEW_REJECT]),
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toContain(
+      "a worker turn ran after the last review, and a reviewer accept with a Checks line on the current state must come before finish",
+    );
+    expect(result.reason).not.toContain("latest changed state");
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 const BOLD_ONLY_SPLIT =
   "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n**Checks:** tests passed";
 const ALL_BOLD_SPLIT =
