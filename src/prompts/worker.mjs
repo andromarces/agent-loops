@@ -42,6 +42,11 @@ const ownNodeModulesRule =
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
 const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
 
+// A worker that waits on CI outlives its turn timeout after the push, and its work is already done
+// (issue #1459).
+const ciWaitRule =
+  "Never wait for CI with an unbounded command, such as `gh pr checks --watch`. The run waits for the required checks outside the worker turn with `role wait-checks`, where the run permits it. A worker that must read CI, for example for a flaky check, uses a bounded read.";
+
 // A Claude worker opened later turns with a prose sentence and put requested values on lines of
 // their own, so the response had no `Conclusion:` line and the report parsed to null (issue #1179).
 const conclusionFirstRule =
@@ -80,6 +85,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${ciWaitRule}
 - ${ownNodeModulesRule}
 - ${probeCopyRule("work tree")}
 - ${pnpmRunRule}
