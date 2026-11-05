@@ -2,8 +2,8 @@ import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
-// Answers `git` from memory for the case that switches it on (see `cutLinkedReads` below). That
-// case then starts no process for the shared Git and lockfile reads.
+// Answers `git` from memory for every case (see `cutLinkedReads` below). A case then starts no
+// process for the shared Git and lockfile reads of the linked work tree.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -46,8 +46,10 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
 let tree;
 beforeEach(async () => {
   tree = await createLinkedWorkTree();
+  gitDouble.answer = cutLinkedReads;
 });
 afterEach(async () => {
+  gitDouble.answer = null;
   resolution.fail = false;
   resolution.stall = false;
   if (tree) await removePath(tree.base);
@@ -89,7 +91,8 @@ async function seedUpstream() {
 /**
  * Answers the linked work tree root, the shared Git reads, and the lockfile list from memory. Every
  * call not answered here runs real `git`, so the main work tree reads stay real. The empty config
- * listing and file list read the same before and after, so neither reports a change.
+ * listing and file list read the same before and after, so neither reports a change. The caller
+ * sets it in `beforeEach`.
  */
 function cutLinkedReads(command, args, options) {
   if (options?.cwd !== tree.linked) return undefined;
@@ -126,17 +129,11 @@ const fastForwardMain = async (content) => {
 
 // Usefulness: verifies requirement "a worker turn that writes a tracked file of the main work tree
 // reports that path" (issue #1448). The linked work tree stays clean, so no other field shows it.
-// The shared Git and lockfile reads are answered from memory, so the case starts no process for them.
 test("a worker turn that writes a tracked main work tree file reports its path", async () => {
-  gitDouble.answer = cutLinkedReads;
-  try {
-    const result = await turn(async () => {
-      await writeFile(join(tree.main, "init.txt"), "changed\n");
-    });
-    expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
-  } finally {
-    gitDouble.answer = null;
-  }
+  const result = await turn(async () => {
+    await writeFile(join(tree.main, "init.txt"), "changed\n");
+  });
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
 });
 
 // Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError. A

@@ -276,6 +276,8 @@ async function dispatchLocked(
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
       reviewerSandbox: storedReviewerSandbox(state),
+      // The copied local paths that the turn window hashes. An absent list reads no source.
+      localFilesCopied: state.localFilesCopied ?? [],
       // A pre-assigned session id is written before the CLI starts. A crash during the turn
       // still leaves the id for the resume after `--resume-interrupted` (issue #395). The
       // result write below replaces it, with null when the turn kept no id.
