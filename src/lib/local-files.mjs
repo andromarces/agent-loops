@@ -848,10 +848,10 @@ export async function hashCopiedLocalFiles(cwd, names, { signal, ...hooks } = {}
 /**
  * Names the copied local files whose source or copy differs from the init hash, so a parent can
  * tell a stale copy from a turn edit. `changed` is `source`, `copy`, `both`, or `unknown`.
- * `unknown` is the fail-closed result of a legacy or malformed init hash, a failed read, or a
- * missing file, and an absent hash field is legacy. Nothing is written, and content is never
- * returned or logged. Returns sorted `{path, changed}` entries, or an empty list when there is
- * no main work tree. `afterAncestorCheck` and `beforeRead` are test seams.
+ * `unknown` is the fail-closed result of a legacy or malformed init hash, and an absent hash field
+ * is legacy. A missing or unreadable side counts as changed on that side. Nothing is written, and
+ * content is never returned or logged. Returns sorted `{path, changed}` entries, or an empty list
+ * when there is no main work tree. `afterAncestorCheck` and `beforeRead` are test seams.
  * @param {string} cwd
  * @param {string[]} names
  * @param {Record<string, string> | undefined} initHashes
@@ -887,27 +887,15 @@ export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...
 
 /** The side that the init hash proves changed, or `unknown` when it proves none. */
 function changedSide(rel, source, copy, hashes) {
-  if (hashes === null || source === NOT_COMPARABLE || copy === NOT_COMPARABLE) {
-    return "unknown";
-  }
-  if (!Object.hasOwn(hashes, rel)) {
+  if (hashes === null || !Object.hasOwn(hashes, rel)) {
     return "unknown";
   }
   const init = hashes[rel];
   if (typeof init !== "string" || !/^[0-9a-f]{64}$/.test(init)) {
     return "unknown";
   }
-  if (source === MISSING && copy === MISSING) {
-    return "both";
-  }
-  if (source === MISSING) {
-    return "source";
-  }
-  if (copy === MISSING) {
-    return "copy";
-  }
-  const sourceChanged = source !== init;
-  const copyChanged = copy !== init;
+  const sourceChanged = source === MISSING || source === NOT_COMPARABLE || source !== init;
+  const copyChanged = copy === MISSING || copy === NOT_COMPARABLE || copy !== init;
   if (sourceChanged && copyChanged) {
     return "both";
   }

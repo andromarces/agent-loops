@@ -16,7 +16,7 @@ ADR 0018 copies ignored local files into a linked run work tree. `localFilesDiff
 
 1. **Init hash.** The init stores a SHA-256 hash of each copied file in the run state as `localFilesCopiedSha256`. The hash never reaches an envelope, a log line, or an error text.
 2. **Side report.** A later dispatch compares each source and copy with its init hash. The envelope lists `localFilesDiffer` as `{path, changed}` entries, absent when neither side changed. `changed` is `source`, `copy`, or `both`.
-3. **Fail closed.** A missing file, a failed read, a legacy state with no hash field, and a malformed hash value report `unknown`. `unknown` never means no change. Only a path that both sides prove unchanged is left out.
+3. **Fail closed.** A legacy state with no hash field or a malformed hash value reports `unknown`. `unknown` never means no change. A side counts as changed when it is missing, unreadable, or its hash differs from the init hash. A path with both sides changed reports `both`, and only a path that both sides prove unchanged is left out.
 4. **Report shape.** Paths keep the redaction and 20-entry cap of the other path fields. The plain-list shape changes, and the docs state the new shape.
 5. **Actions.** The docs and the headless prompt tell the parent to refresh the copy for `source` and to report a breach under `open` for `copy`.
 

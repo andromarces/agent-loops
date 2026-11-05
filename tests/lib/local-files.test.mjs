@@ -1254,6 +1254,70 @@ test("the side-aware compare fails closed on a missing hash or a missing file", 
   ]);
 });
 
+// Usefulness: verifies that a deleted source and an edited copy report both sides.
+// Not redundant: the other deletion tests leave the second side unchanged.
+test("a deleted source and an edited copy report both", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  await rm(join(main, ".env"));
+  await writeFile(join(linked, ".env"), "copy edit\n");
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that an edited source and a deleted copy report both sides.
+// Not redundant: it reverses the two changed sides of the test above.
+test("an edited source and a deleted copy report both", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  await writeFile(join(main, ".env"), "source edit\n");
+  await rm(join(linked, ".env"));
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that deleting both sides reports both.
+// Not redundant: it covers two deletions together, not a deletion with an edit.
+test("a deleted source and a deleted copy report both", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  await rm(join(main, ".env"));
+  await rm(join(linked, ".env"));
+
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies that one deleted side with an unchanged other side reports that side.
+// Not redundant: the both-deleted test checks two deletions, not one.
+test("a deleted side with the other side unchanged reports that side", async () => {
+  const { main, linked } = await createLinked({ ignore: [".env"] });
+  await writeFile(join(main, ".env"), "same\n");
+  await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+  await rm(join(main, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "source" },
+  ]);
+  await writeFile(join(main, ".env"), "same\n");
+  await rm(join(linked, ".env"));
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "copy" },
+  ]);
+});
+
 // Usefulness: verifies an ancestor that is swapped for a junction after the checks and before the
 // read is never read through, so equal bytes behind it do not hide a difference.
 // Not redundant: the static linked-ancestor tests link the directory before the comparison starts.

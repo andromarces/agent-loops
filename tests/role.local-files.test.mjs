@@ -168,7 +168,7 @@ test("a later dispatch names a local file that changed in the main work tree", a
 
   expect(result.exitCode).toBe(0);
   expect(result.payload.localFilesDiffer).toEqual([{ path: ".env", changed: "source" }]);
-  expect(JSON.stringify(result.payload)).not.toContain("CHANGED-VALUE-MUST-NOT-APPEAR");
+  expect(JSON.stringify(result.payload).includes("CHANGED-VALUE-MUST-NOT-APPEAR")).toBe(false);
 });
 
 // Usefulness: verifies the report names the copy when only a turn changed the copy.
@@ -183,8 +183,8 @@ test("a later dispatch names a local file that a turn changed in the run work tr
 
   expect(result.exitCode).toBe(0);
   expect(result.payload.localFilesDiffer).toEqual([{ path: ".env", changed: "copy" }]);
-  expect(JSON.stringify(result.payload)).not.toContain("TURN-EDIT-MUST-NOT-APPEAR");
-  expect(await readFile(join(main, ".env"), "utf8")).toBe(`KEY=${SECRET}\n`);
+  expect(JSON.stringify(result.payload).includes("TURN-EDIT-MUST-NOT-APPEAR")).toBe(false);
+  expect((await readFile(join(main, ".env"), "utf8")) === `KEY=${SECRET}\n`).toBe(true);
 });
 
 // Usefulness: verifies the envelope stays unchanged while every copy still equals its source.
@@ -208,8 +208,10 @@ test("the init hash and the copied content never reach an envelope or a log line
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
   const state = await readRepoState(linked);
   const hashes = Object.values(state.localFilesCopiedSha256 ?? {});
-  expect(hashes).toHaveLength(1);
-  expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/);
+  expect(hashes.length === 1).toBe(true);
+  expect(hashes.every((hash) => typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash))).toBe(
+    true,
+  );
   await writeFile(join(main, ".env"), "KEY=CHANGED-VALUE-MUST-NOT-APPEAR\n");
   const lines = [];
   const capture = (...args) => lines.push(args.map(String).join(" "));
@@ -224,11 +226,11 @@ test("the init hash and the copied content never reach an envelope or a log line
   }
 
   const envelope = JSON.stringify(result.payload);
-  expect(envelope).not.toContain(hashes[0]);
-  expect(envelope).not.toContain("CHANGED-VALUE-MUST-NOT-APPEAR");
+  expect(envelope.includes(hashes[0])).toBe(false);
+  expect(envelope.includes("CHANGED-VALUE-MUST-NOT-APPEAR")).toBe(false);
   for (const line of lines) {
-    expect(line).not.toContain(hashes[0]);
-    expect(line).not.toContain("CHANGED-VALUE-MUST-NOT-APPEAR");
+    expect(line.includes(hashes[0])).toBe(false);
+    expect(line.includes("CHANGED-VALUE-MUST-NOT-APPEAR")).toBe(false);
   }
 });
 
@@ -245,7 +247,7 @@ test("a later dispatch never overwrites a copied file that a turn changed", asyn
   const result = await dispatchAgain(linked);
 
   expect(result.payload.localFilesDiffer).toEqual([{ path: ".env", changed: "both" }]);
-  expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=TURN-EDIT\n");
+  expect((await readFile(join(linked, ".env"), "utf8")) === "KEY=TURN-EDIT\n").toBe(true);
 });
 
 // Usefulness: verifies a run that opted out of the copy never compares or reports files.
