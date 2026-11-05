@@ -1,6 +1,6 @@
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   ACCEPT,
@@ -20,20 +20,48 @@ import {
   WORKER_REPLY,
 } from "./role-helpers.mjs";
 import { exists } from "./fs-helpers.mjs";
-import { createLinkedWithEnv, createLinkedWorkTree } from "./git-helpers.mjs";
+import { cleanRepoGit, createLinkedWithEnv, createLinkedWorkTree } from "./git-helpers.mjs";
 
-// Answers `git` from memory for the one case that asserts no Git result and no copy. Every other
-// case and every other command reaches the real `execa`.
+// Answers `git` from memory for the reads that no case here asserts (see `cutRoleReads`). The copy's
+// own reads reach the real `execa`, and so does every other command.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) =>
-      gitDouble.answer && command === "git"
-        ? gitDouble.answer(command, args, options)
-        : real.execa(command, args, options),
+    execa: (command, args, options) => {
+      const answer =
+        gitDouble.answer && command === "git" ? gitDouble.answer(command, args, options) : null;
+      return answer ?? real.execa(command, args, options);
+    },
   };
+});
+
+// The Git reads that no case here asserts: the shared Git, lockfile, snapshot, and branch reads.
+// Every other command, the copy's own reads included, passes through to the real `execa`.
+const ROLE_READS = new Set([
+  '["rev-parse","--is-inside-work-tree"]',
+  '["rev-parse","--verify","-q","HEAD"]',
+  '["symbolic-ref","--short","-q","HEAD"]',
+  '["status","--porcelain=v1","-z","--untracked-files=all"]',
+  '["ls-files","--stage","-z"]',
+  '["ls-files","-z","--cached","--others","--exclude-standard"]',
+  '["config","-z","--list","--show-scope"]',
+  '["config","--get","branch.main.remote"]',
+  '["remote","get-url","origin"]',
+]);
+
+/**
+ * Answers the role-level reads from memory and passes every other command to real `git`. Each case
+ * still copies from its own real linked work tree, so the copy's reads stay real.
+ */
+function cutRoleReads(command, args, options) {
+  if (!ROLE_READS.has(JSON.stringify(args))) return undefined;
+  return cleanRepoGit(command, args, options);
+}
+
+beforeEach(() => {
+  gitDouble.answer = cutRoleReads;
 });
 
 afterEach(async () => {

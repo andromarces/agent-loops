@@ -1,11 +1,27 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the cases that open a clean directory: they assert sandbox input,
+// never a Git result. The mutation cases use a real repo. Every other command reaches the real
+// `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { exec } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { SUMMARY } from "./run-fixtures.mjs";
 
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
@@ -39,19 +55,36 @@ const reply = (text, thread) => ({
 
 const repos = [];
 afterEach(async () => {
+  gitDouble.answer = null;
   vi.mocked(exec).mockReset();
   for (const repo of repos.splice(0)) {
     await removePath(repo);
   }
 });
 
-/**
- * Runs orchestrator -> reviewer -> orchestrator(finish) and returns the argv and prompt of each
- * Codex call. `onReviewer(repo)` runs inside the reviewer turn.
- */
-async function reviewerRun(options = {}, onReviewer = async () => {}) {
+// A directory with a `.git` directory, with `git` answered from memory. A case that asserts no Git
+// result starts no `git` process. `realRepo` keeps a real repository for a case that asserts one.
+async function cleanRepo() {
+  const repo = await createCleanRepoDir();
+  repos.push(repo);
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+}
+
+async function realRepo() {
+  gitDouble.answer = null;
   const repo = await createTempRepo();
   repos.push(repo);
+  return repo;
+}
+
+/**
+ * Runs orchestrator -> reviewer -> orchestrator(finish) and returns the argv and prompt of each
+ * Codex call. `onReviewer(repo)` runs inside the reviewer turn. `realGit` keeps a real repository
+ * for a case that asserts a real work tree change.
+ */
+async function reviewerRun(options = {}, onReviewer = async () => {}, realGit = false) {
+  const repo = realGit ? await realRepo() : await cleanRepo();
   const orchestratorTurns = [
     JSON.stringify({ action: "run_reviewer", prompt: "check it" }),
     JSON.stringify({ action: "finish", summary: SUMMARY }),
@@ -110,8 +143,7 @@ test.each([
 test.each(["none", "read-only", "workspace-write"])(
   "with the %s reviewer mode the orchestrator repair turn stays read-only",
   async (reviewerSandbox) => {
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await cleanRepo();
     const turns = ["not json", JSON.stringify({ action: "finish", summary: SUMMARY })];
     const argvs = [];
     vi.mocked(exec).mockImplementation(async (_cmd, args) => {
@@ -133,8 +165,10 @@ test.each(["none", "read-only", "workspace-write"])(
 test.each(["none", "read-only", "workspace-write"])(
   "with the %s reviewer mode a reviewer edit halts the run with a MutationError",
   async (reviewerSandbox) => {
-    const { repo, run } = await reviewerRun({ reviewerSandbox }, (dir) =>
-      writeFile(join(dir, "leak.txt"), "leak\n"),
+    const { repo, run } = await reviewerRun(
+      { reviewerSandbox },
+      (dir) => writeFile(join(dir, "leak.txt"), "leak\n"),
+      true,
     );
     await expect(run()).rejects.toThrow(MutationError);
     await expect(readFile(join(repo, "leak.txt"), "utf8")).resolves.toBe("leak\n");
@@ -171,8 +205,7 @@ test.each([
 test.each(["none", "read-only", "workspace-write"])(
   "with the %s reviewer mode an orchestrator edit still halts the run with a MutationError",
   async (reviewerSandbox) => {
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await realRepo();
     vi.mocked(exec).mockImplementation(async (_cmd, args) => {
       expect(args.join(" ")).toContain(READ_ONLY);
       await writeFile(join(repo, "orch-leak.txt"), "leak\n");
@@ -188,8 +221,7 @@ test.each(["none", "read-only", "workspace-write"])(
 // Usefulness: verifies a reviewer that is not Codex gets no mode input and no mode line, whatever
 // the run input says, so no prompt claims a sandbox that no adapter applies (ADR 0038).
 test("a reviewer that is not Codex gets no sandbox input and no mode line", async () => {
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await cleanRepo();
   const seen = [];
   const orch = [
     JSON.stringify({ action: "run_reviewer", prompt: "check it" }),
@@ -226,8 +258,7 @@ test("a reviewer that is not Codex gets no sandbox input and no mode line", asyn
 test.each(["none", "read-only", "workspace-write"])(
   "with the %s reviewer mode a worker turn gets no sandbox input",
   async (reviewerSandbox) => {
-    const repo = await createTempRepo();
-    repos.push(repo);
+    const repo = await cleanRepo();
     const turns = [
       JSON.stringify({ action: "run_worker", prompt: "work" }),
       JSON.stringify({ action: "finish", summary: SUMMARY }),

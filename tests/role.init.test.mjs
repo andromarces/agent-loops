@@ -1,6 +1,22 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the cases that open their repo with `newCleanRunRepo`: they assert
+// init state, never a Git result. The reviewer mutation case uses a real repo. Every other command
+// reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
 import { readState, statePaths } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
@@ -9,7 +25,8 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
-  newRunRepo,
+  newCleanRunRepo,
+  newRunRepo as newRealRunRepo,
   readRepoState,
   recordingAdapter,
   REPORT,
@@ -19,14 +36,19 @@ import {
   withRepo,
   WORKER_REPLY,
 } from "./role-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { createCleanRepoDir } from "./git-helpers.mjs";
 import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
 
-afterEach(cleanup);
+const newRunRepo = () => newCleanRunRepo(gitDouble);
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 // Usefulness: verifies an empty shell expansion cannot start an unguarded run.
 test("empty parent session is rejected before dispatch", async () => {
@@ -304,7 +326,7 @@ test("object prototype names are rejected as unknown arguments", async () => {
 // following dispatch is rejected; an init call archives the halted file and
 // starts a new run.
 test("reviewer mutation halts the run; init archives the halted file", async () => {
-  const repo = await newRunRepo();
+  const repo = await newRealRunRepo();
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -716,7 +738,7 @@ test("init proceeds when no live process holds an earlier session", async () => 
   const none = initWithTable(repo, [{ pid: 5, command: "node other.js" }]);
   expect((await none.run()).exitCode).toBe(0);
 
-  const fresh = await createTempRepo();
+  const fresh = await createCleanRepoDir();
   repos.push(fresh);
   const unread = initWithTable(fresh, [{ pid: 4242, command: `claude --resume ${HELD_ID}` }]);
   expect((await unread.run()).exitCode).toBe(0);
