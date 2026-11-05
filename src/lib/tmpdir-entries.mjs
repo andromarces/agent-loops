@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { mapInBatches } from "./batches.mjs";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
@@ -7,6 +8,7 @@ import { isTurnTmpdirName } from "./turn-tmpdir.mjs";
 import { isRegisteredTurnTmpdir } from "./turn-tmpdir-registry.mjs";
 
 const REGISTERED_PREFIX = "registered/";
+const READ_BATCH_SIZE = 32;
 
 // Reads `os.tmpdir()` of this process, which is the inherited temporary directory of a turn. The
 // `AGENT_LOOP_INHERITED_TMPDIR` list is read in `inherited-tmpdir.mjs`.
@@ -45,8 +47,8 @@ export async function appearedInInheritedTmpdir(before) {
   if (after === null) return [];
   const appeared = [...after].filter((name) => !before.has(name) && !isTurnTmpdirName(name));
   const parent = tmpdir();
-  const registered = await Promise.all(
-    appeared.map((name) => isRegisteredTurnTmpdir(parent, name)),
+  const registered = await mapInBatches(appeared, READ_BATCH_SIZE, (name) =>
+    isRegisteredTurnTmpdir(parent, name),
   );
   return reportedEntryNames(
     appeared.map((name, i) => (registered[i] ? `${REGISTERED_PREFIX}${name}` : name)),
