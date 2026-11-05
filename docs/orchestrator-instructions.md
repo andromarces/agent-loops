@@ -484,6 +484,24 @@ of this file.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
   `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
+## Selecting issues for a batch
+
+A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects:
+
+```bash
+gh pr list --state open --json number,closingIssuesReferences
+```
+
+Exclude every issue that the list names in `closingIssuesReferences`.
+
+A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply:
+
+```bash
+gh pr view <n> --json commits
+```
+
+Exclude every issue that a commit message closes.
+
 ## Several runs at once
 
 One parent session can drive several runs, one per work tree. Each run registers
