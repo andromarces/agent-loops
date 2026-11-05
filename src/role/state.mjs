@@ -1,12 +1,13 @@
-// Shared run state and work tree lock helpers of `agent-loop role`: the required state read, the
-// unreadable-gate refusal, the prompt stdin read, and the acquire and release of the run lock.
-import { readStdinText, unreadableGateRefusal } from "./lib/args.mjs";
-import { unreadableGateReason } from "./lib/ci-gate.mjs";
-import { cwdHash } from "./lib/runstate.mjs";
-import { lockWorkTree, unlockWorkTree } from "./lib/work-tree-lock.mjs";
-import { RoleError } from "./role-envelope.mjs";
+// Shared run state and work tree lock helpers of `agent-loop role`. They are the required state
+// read, the unreadable-gate refusal, the prompt stdin read, and the acquire and release of the run lock.
+import { readStdinText } from "../lib/args.mjs";
+import { unreadableGateReason } from "../lib/ci-gate.mjs";
+import { unreadableGateRefusal } from "../lib/gate-refusal.mjs";
+import { cwdHash } from "../lib/runstate.mjs";
+import { lockWorkTree, unlockWorkTree } from "../lib/work-tree-lock.mjs";
+import { RoleError } from "./envelope.mjs";
 
-// The recovery that the interactive path owns when it cannot declare the PR: the runtime compares
+// The recovery that the interactive path owns when it cannot declare the PR. The runtime compares
 // the head, where the headless path has only the parent's marker (#1098).
 const ROLE_UNREADABLE_FINISH =
   "compare the PR head with the reviewed commit through `role finish --compare-head <pr>`, or finish with the unresolvedCompare marker after you compare it yourself";
@@ -15,8 +16,8 @@ const ROLE_UNREADABLE_FINISH =
  * Rejects a non-init call when no state file exists for the work tree.
  *
  * `needsBudget` refuses an unsafe stored `maxSteps` before the operation runs.
- * A later dispatch, `finish`, and `extend` set it. `abort` leaves it unset:
- * refusing it blocks the only route to a terminal lifecycle, because a new init
+ * A later dispatch, `finish`, and `extend` set it. `abort` leaves it unset.
+ * Refusing it blocks the only route to a terminal lifecycle, because a new init
  * refuses over a non-terminal run (#312).
  */
 export function requireState(state, cwd, { needsBudget = false } = {}) {
@@ -32,12 +33,12 @@ export function requireState(state, cwd, { needsBudget = false } = {}) {
 }
 
 /**
- * A stored `maxSteps` is re-checked wherever the budget is read, because a state
+ * A stored `maxSteps` is re-checked wherever the budget is read. A state
  * file written by an earlier version, or hand-edited, reaches the step-budget
- * guard without passing through `--max-steps` validation. Outside the safe
- * integer range the step counter cannot advance by one, so the bound on `turns`
- * would hold for no accepted value. The refusal names the state file field,
- * which is what a maintainer must correct (#312).
+ * guard without `--max-steps` validation. Outside the safe integer range the
+ * step counter cannot advance by one, so no accepted value holds the bound on
+ * `turns`. The refusal names the state file field, which is what a maintainer
+ * must correct (#312).
  */
 function assertStateMaxSteps(state) {
   if (!Number.isSafeInteger(state.maxSteps) || state.maxSteps < 1) {

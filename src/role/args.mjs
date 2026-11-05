@@ -1,7 +1,7 @@
-// Arguments of `agent-loop role`: parsing, the refusal of a flag that belongs to another operation,
-// the checks that run at init, and the refusal of an init flag that a later call changes.
+// Arguments of `agent-loop role`: parsing, and the refusal of a flag that belongs to another operation.
+// It also holds the checks that run at init, and the refusal of an init flag that a later call changes.
 import { resolve } from "node:path";
-import { normalizeAgent, supportedAgents } from "./agents/index.mjs";
+import { normalizeAgent, supportedAgents } from "../agents/index.mjs";
 import {
   CHILD_ROLE_KINDS,
   ROLE_FLAG_BY_OPTION,
@@ -11,11 +11,11 @@ import {
   parseFlags,
   recordedReviewerSandbox,
   roleFlags,
-} from "./lib/args.mjs";
-import { isFullSha } from "./lib/git-sha.mjs";
-import { sha256 } from "./lib/hash.mjs";
-import { normalizeLocalPath } from "./lib/local-files.mjs";
-import { RoleError } from "./role-envelope.mjs";
+} from "../lib/args.mjs";
+import { isFullSha } from "../lib/git-sha.mjs";
+import { sha256 } from "../lib/hash.mjs";
+import { normalizeLocalPath } from "../lib/local-files.mjs";
+import { RoleError } from "./envelope.mjs";
 
 const INIT_FIELDS = [
   "task",
@@ -29,10 +29,10 @@ const INIT_FIELDS = [
 
 /**
  * The reviewer sandbox mode that a state file holds, or null for a reviewer that is not Codex. A
- * state file from before ADR 0038 has no `reviewerSandbox` field: it gets `workspace-write` when it
- * holds the legacy `reviewerWorkspaceWrite: true` and `read-only` otherwise, never `none`. A field
- * that is present with any other value, `null` included, is refused for every reviewer kind, because
- * the run cannot tell which sandbox it recorded.
+ * state file from before ADR 0038 has no `reviewerSandbox` field. It gets `workspace-write` when it
+ * holds the legacy `reviewerWorkspaceWrite: true`, and `read-only` otherwise, never `none`. A field
+ * that is present with any other value, `null` included, is refused for every reviewer kind. The
+ * run cannot tell which sandbox it recorded.
  * @throws {RoleError} when the field is present and is not one of the three modes
  */
 export function storedReviewerSandbox(state) {
@@ -200,7 +200,7 @@ const ROLE_FLAGS = roleFlags(CHILD_ROLE_KINDS);
  * validation runs later through `validateInitFlags`. Semantics that depend on the state file (init
  * detection, change rejection) are checked at execution time, not parse time.
  */
-export function parseRoleArgs(argv, operations) {
+export function parseRoleArgsWithOperations(argv, operations) {
   const names = operations.map((operation) => operation.name);
   const args = {
     operation: names[0],
@@ -322,12 +322,11 @@ export function parseRoleArgs(argv, operations) {
 }
 
 /**
- * Rejects each flag that belongs to another operation: `--role` is for dispatch,
- * `--reason` for abort, `--all`, `--expect`, and `--head` for wait-checks, and
- * `--compare-head`, `--require-accept`, and `--require-ci` for finish. It also
- * refuses `--expect` without `--all` on wait-checks.
- * The checks run in a fixed order, and abort's missing `--reason` is reported
- * before a finish gate, so each refusal keeps its error text.
+ * Rejects each flag that belongs to another operation. `--role` is for dispatch, and `--reason` is
+ * for abort. `--all`, `--expect`, and `--head` are for wait-checks, and `--compare-head`,
+ * `--require-accept`, and `--require-ci` are for finish. It also refuses `--expect` without `--all`
+ * on wait-checks. The checks run in a fixed order, and abort's missing `--reason` is reported before
+ * a finish gate, so each refusal keeps its error text.
  */
 export function rejectMisplacedFlags(args, operation) {
   if (operation !== "dispatch" && args.role !== null) {

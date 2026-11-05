@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Closing block every child turn must end with. The orchestrator sees only the child's final
- * response, so the block carries the reasoning and open items it would otherwise re-derive.
+ * response, so the block carries the reasoning and open items it otherwise re-derives.
  */
 export const reportBlock = `
 End your response with this block, kept short. Each label appears once, plain at column 0. An indented dash list directly under a label with no parent item above it makes the block unparseable. A list directly under a label starts at column 0. A list of dash-plus-one-space items (\`- item\`) directly under a label, empty or not, joins into that label's value.
@@ -30,7 +30,7 @@ Deferred: items found but left out of scope, or "none".
 
 /**
  * Process rule for every worker and reviewer turn (issue #762). The dispatcher and the CLI of the
- * run carry the work tree path in their command lines, so a kill by name or by match can end the
+ * run carry the work tree path in their command lines. A kill by name or by match can end the
  * run itself.
  */
 export const processRule =
@@ -38,7 +38,7 @@ export const processRule =
 
 /**
  * Secret file rule for every worker and reviewer turn (issue #1248). Init copies the untracked
- * `.env` of the main work tree into the run work tree, and a repository-wide `grep` printed a token
+ * `.env` of the main work tree into the run work tree. A repository-wide `grep` printed a token
  * from it into a turn. The rule is advisory, and the runtime does not detect a breach.
  */
 export const secretFileRule =
@@ -77,11 +77,13 @@ const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 // - a control character (Unicode category Cc), a line break included, ends or
 //   corrupts the line;
 // - U+2028 and U+2029, which every prompt escapes as text (escape.mjs), so the
-//   rendered command would name another path. U+0085 is a control character.
+//   rendered command names another path. U+0085 is a control character.
+//
 // On Windows a backslash is a path separator and is rewritten to a slash first,
 // so it is not listed. On POSIX it is a name character that bash reads as an
-// escape inside double quotes, and the path cannot be rewritten without pointing
+// escape inside double quotes. The path cannot be rewritten without pointing
 // at another path, so a POSIX path holding one is refused.
+//
 // known-limit: a non-ASCII path is rendered as is, and cmd reads it through its
 // active code page.
 const UNSAFE_IN_QUOTES = /["$`%!\u201C\u201D\u201E\u{2028}\u{2029}\p{Cc}]/u;
@@ -89,16 +91,13 @@ const UNSAFE_IN_QUOTES_POSIX = new RegExp(`${UNSAFE_IN_QUOTES.source}|\\\\`, "u"
 
 /**
  * The commands that run the CLI of this process in each shell form, or null when a path cannot be
- * quoted the same way in every shell. `render` receives `paths`, each normalized like the Node
+ * quoted alike in every shell. `render` receives `paths`, each normalized like the Node
  * and CLI paths, and returns the arguments after the CLI script. The commands name the Node binary
- * and the CLI script that this process runs, so they resolve for a global install, an `npm link`,
- * and a clone run through `node <repo>/src/cli.mjs` or `pnpm agent-loop`, none of which promise
- * `agent-loop` on PATH (#348).
+ * and the CLI script that this process runs. They resolve for a global install, an `npm link`,
+ * and a clone run through `node <repo>/src/cli.mjs` or `pnpm agent-loop`.
  *
- * A quoted executable path is a string expression in PowerShell and needs the call operator `&`,
- * while bash and cmd reject that operator, so Windows gets two forms. Probed on Windows: bash and
- * cmd run the plain form, PowerShell 5.1 and 7 run the `&` form, and each rejects the other's
- * form. Backslashes become slashes, which Node accepts on Windows.
+ * A quoted executable path is a string expression in PowerShell and needs the call operator `&`.
+ * Bash and cmd reject that operator, so Windows gets two forms.
  * @returns {Array<{ shell: string, command: string }> | null}
  */
 export function cliCommandForms(
@@ -107,7 +106,8 @@ export function cliCommandForms(
 ) {
   const windows = platform === "win32";
   // Only a Windows path separator becomes a slash. A POSIX backslash is a name
-  // character, and rewriting it would point the command at another path.
+  // character, and rewriting it points the command at another path. Backslashes
+  // become slashes, which Node accepts on Windows.
   const all = [execPath, cliPath, ...paths].map((path) =>
     windows ? path.replaceAll("\\", "/") : path,
   );
@@ -116,6 +116,8 @@ export function cliCommandForms(
   const [node, cli, ...rest] = all;
   const plain = `"${node}" "${cli}" ${render(...rest)}`;
   if (!windows) return [{ shell: "sh", command: plain }];
+  // Probed on Windows: bash and cmd run the plain form, PowerShell 5.1 and 7 run the `&` form, and each rejects the other's form.
+  // None of these commands promise `agent-loop` on PATH (#348).
   return [
     { shell: "PowerShell", command: `& ${plain}` },
     { shell: "bash or cmd", command: plain },
@@ -125,19 +127,20 @@ export function cliCommandForms(
 const NO_LOAD_GENERATORS =
   "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
 
+// Related: issue #921, ADR 0044, issue #1078, issue #1492.
+// The rule also bars a load generator and a process that outlives the turn (issue #934).
+
 const TARGETED_RUN_BOUND =
   "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, at most 10 test files in total, never a whole directory.";
 
 /**
- * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872, issue
- * #921, ADR 0044, issue #1078, issue #1492): a targeted test run of at most 10 files, the mirror
- * files first, then the test files that import a changed source file directly, then the test files
- * of direct importers of a changed source file, goes through the `test-slot` wrapper
- * of this process with `--if-held`, which runs it directly while all slots are free and waits for
- * a slot while any slot is held. Any broader run is a full suite and runs only through the plain
- * wrapper, or the required CI checks stand in for it. A path that cannot be quoted leaves a direct
- * targeted run, and a broader run relies on the CI checks. The rule also bars a load generator and
- * a process that outlives the turn (issue #934).
+ * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
+ * A targeted run covers at most 10 files. The order is the mirror files, then the test files that
+ * import a changed source file directly, then the test files of direct importers. It goes through
+ * the `test-slot` wrapper of this process with `--if-held`, which runs directly while all slots are
+ * free. While any slot is held, the wrapper waits for a slot. Any broader run is a full suite and
+ * runs only through the plain wrapper, or the required CI checks stand in for it. A path that cannot
+ * be quoted leaves a direct targeted run, and a broader run relies on the CI checks.
  */
 export function testSlotRule(options) {
   const forms = cliCommandForms(() => 'test-slot -- "<full suite command>"', options);

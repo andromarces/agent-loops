@@ -115,6 +115,14 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /mainWorkTreeChanged/, /deadline/i, /proves nothing/i),
   (text) => expectRule(text, /mainWorkTreeChanged/, /change observed between two reads/i),
   (text) => expectRule(text, /mainWorkTreeChanged/, /stop the run/i, /user/i),
+  // Issue #1485: a clean fast-forward to the remote default branch goes under open with no stop,
+  // and every other change keeps the stop rule.
+  (text) => expectRule(text, /mainWorkTreeFastForward/, /old and new head/i),
+  (text) => expectRule(text, /clean fast-forward/i, /open/i, /no stop/i),
+  (text) => expectRule(text, /new head/i, /remote-tracking ref/i, /default branch/i),
+  (text) => expectRule(text, /dirty/i, /untracked/i, /fast-forward/i, /mainWorkTreeChanged/),
+  (text) => expectRule(text, /git pull/i, /does not prove/i, /head/i),
+  (text) => expectRule(text, /detached head/i, /branch switch/i, /non-fast-forward/i, /field/i),
   // Issue #984: a change to shared Git state from a linked work tree is reported by item name, and
   // the parent reports it.
   (text) =>

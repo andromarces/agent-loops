@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
-import { reportBlock, testSlotRule } from "../../src/prompts/report.mjs";
+import { reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 

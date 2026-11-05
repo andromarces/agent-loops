@@ -4,40 +4,36 @@
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
-import { defaultAgents } from "./agents/index.mjs";
-import { CHILD_ROLE_KINDS, REVIEW_ONLY_PR_REFUSAL, openCodeOptionsError } from "./lib/args.mjs";
-import { DEFAULT_WAIT_SECONDS, waitChecks } from "./lib/check-wait.mjs";
-import { isSpawnedByRun } from "./lib/exec.mjs";
-import { logInfo, setVerbose, setLogsToStderr } from "./lib/log.mjs";
+import { defaultAgents } from "../agents/index.mjs";
+import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
+import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
+import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
+import { isSpawnedByRun } from "../lib/exec.mjs";
+import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
 import {
   TERMINAL_LIFECYCLES,
   cwdHash,
   readState,
   statePaths,
   writeState,
-} from "./lib/runstate.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
-import { withStateLock } from "./lib/state-lock.mjs";
-import { withTimeBound } from "./lib/time-bound.mjs";
-import { cancelOnSigInt } from "./lib/sigint.mjs";
-import { recheckKeptTurnTmpdir } from "./lib/turn-tmpdir.mjs";
+} from "../lib/runstate.mjs";
+import { assertGitWorkTree } from "../lib/snapshot.mjs";
+import { withStateLock } from "../lib/state-lock.mjs";
+import { withTimeBound } from "../lib/time-bound.mjs";
+import { cancelOnSigInt } from "../lib/sigint.mjs";
+import { recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
-  parseRoleArgs as parseRoleArgsWithOperations,
+  parseRoleArgsWithOperations,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
-} from "./role-args.mjs";
-import { dispatch } from "./role-dispatch.mjs";
-import { RoleError, printEnvelope, errorResult, writeAllSync } from "./role-envelope.mjs";
-import { finishRun } from "./role-finish.mjs";
-import {
-  readStdin,
-  refuseUnreadableGate,
-  releaseWorkTreeLock,
-  requireState,
-} from "./role-state.mjs";
+} from "./args.mjs";
+import { dispatch } from "./dispatch.mjs";
+import { RoleError, printEnvelope, errorResult, writeAllSync } from "./envelope.mjs";
+import { finishRun } from "./finish.mjs";
+import { readStdin, refuseUnreadableGate, releaseWorkTreeLock, requireState } from "./state.mjs";
 
 // Every operation of `agent-loop role`, in default-first usage order. `runEnding` marks an
-// operation that ends, extends, or changes the PR or a model of a run; a child process of that run
+// operation that ends, extends, or changes the PR or a model of a run. A child process of that run
 // never runs one.
 const ROLE_OPERATIONS = [
   { name: "dispatch", runEnding: false, run: dispatch },
@@ -75,9 +71,9 @@ export function parseRoleArgs(argv) {
  * Runs `fn(state, paths)` under the state lock for a run that is not terminal.
  * Rejects init-flag changes and a terminal lifecycle first. `requireOptions`
  * goes to `requireState`, except `releaseTerminalLock`, which releases a stale own lock on a
- * terminal run. `allowed` goes to `rejectInitFlagChanges`. A set
- * `parentOperation` names a parent-edit operation: a missing `--parent-session` is refused
- * before the lock, and one that differs from the stored id is refused on the state between
+ * terminal run. `allowed` goes to `rejectInitFlagChanges`, and a set
+ * `parentOperation` names a parent-edit operation. A missing `--parent-session` is refused
+ * before the lock. One that differs from the stored id is refused on the state between
  * `requireState` and the init-flag check, so that refusal wins over both.
  */
 function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = null) {
@@ -95,8 +91,8 @@ function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = n
       }
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }
-    // A later call on an interrupted run re-checks the turn directory that the call which marked it
-    // interrupted kept while a process of the dead child group ran (issue #1329).
+    // A later call on an interrupted run re-checks the turn directory. The call that marked it
+    // interrupted kept that directory while a process of the dead child group ran (issue #1329).
     if (state.lifecycle === "interrupted") {
       await recheckKeptTurnTmpdir(state.lastDispatch?.turnTmpdir);
     }
@@ -136,8 +132,8 @@ async function abort(args) {
 }
 
 /**
- * `extend`: raises `maxSteps` of a non-terminal run in place, so the stored role
- * session ids and first-turn tracking keep working where a new run would start
+ * `extend`: raises `maxSteps` of a non-terminal run in place. The stored role
+ * session ids and first-turn tracking keep working, where a new run starts
  * every role on a new session (#361). The new value must exceed both `stepsUsed`
  * and the current `maxSteps`; `--max-steps` already passed the init range check
  * at parse time. The change is appended to `budgetChanges` with the steps used at
@@ -195,7 +191,7 @@ async function extend(args) {
  * `declare-pr`: sets `pr` of an active or interrupted run that declared none at init, for a run
  * whose worker opens the pull request. The change is one way, unset to a number: a run that
  * already holds a PR refuses it, so the declared PR cannot move. After it the run behaves as
- * one that passed `--pr` at init: a reviewer turn supplies the required-check status, and a finish
+ * one that passed `--pr` at init. A reviewer turn supplies the required-check status, and a finish
  * must end through `--require-ci <pr>` (#916). `review-only` refuses it, as it refuses `--pr`.
  */
 async function declarePr(args, { gh, signal } = {}) {
@@ -231,13 +227,12 @@ async function declarePr(args, { gh, signal } = {}) {
 }
 
 /**
- * `set-model`: replaces the model of one role that has completed no turn, so a model that the CLI
- * refused on the first turn of that role is repaired on the same run, where `abort` and a new run
- * start every role on a new session (#1254). The role is the one whose `--<role>-model` flag the
- * call carries, and exactly one is required. Only an `active` run takes it: a `dispatched` or
- * `interrupted` run can still have a child on the old model. A role with an `ok` turn is refused,
- * because its conversation already ran on the old model. The change is appended to `modelChanges`.
- * The role keeps its stored session id, which is `null` or unconfirmed after a refused first turn.
+ * `set-model`: replaces the model of one role that has completed no turn.
+ * A model that the CLI refused on the first turn of that role is repaired on the same run.
+ * `abort` and a new run start every role on a new session (#1254). The role is the one whose
+ * `--<role>-model` flag the call carries, and exactly one is required. Only an `active` run takes
+ * it: a `dispatched` or `interrupted` run can still have a child on the old model. A role with an
+ * `ok` turn is refused, because its conversation already ran on the old model.
  */
 async function setModel(args) {
   rejectMisplacedFlags(args, "set-model");
@@ -290,12 +285,14 @@ async function setModel(args) {
       if (!Array.isArray(state.modelChanges)) {
         state.modelChanges = [];
       }
+      // The change is appended to `modelChanges`.
       state.modelChanges.push({
         role: roleName,
         from: previousModel,
         to: model,
         at: new Date().toISOString(),
       });
+      // The role keeps its stored session id, which is `null` or unconfirmed after a refused first turn.
       role.model = model;
       await writeState(paths.stateFile, state);
       logInfo(`${roleName} model replaced (${state.stepsUsed} steps used)`);
@@ -331,22 +328,13 @@ function requireStoredParentSession(args, state) {
 }
 
 /**
- * `wait-checks`: polls the required checks of `--pr`, or every check of its head
- * with `--all`, until none is pending or the bound elapses, then prints the last check states with a `timedOut` flag.
- * `--expect <name>` (repeatable, with `--all`) keeps the wait going until each named check has a run
- * on the head, so a check that registers late is not missed (#978).
- * `--head <sha>` keeps the wait going until the PR head is that commit. The check states are read
- * from the commit by SHA, and the result names that commit in `head` (#961).
- * It reads status only, so it touches no run state and needs no init, but it
- * applies the same `--cwd` rule as `dispatch`, because the read runs in that
- * work tree. The bound starts at command entry, so validation and every read
- * share it, and the command returns within the bound plus the child-exit ceiling
- * the wait adds on a bound it reached. The bound defaults to 300 seconds;
- * `--timeout 0` is refused, because an unbounded wait is the outcome this
- * operation exists to prevent (#329).
- * `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it,
- * so a test can spend clock time on work-tree validation and check that the time
- * comes out of the wait bound.
+ * `wait-checks`: polls the required checks of `--pr`, or every check of its head with `--all`.
+ * It stops when none is pending or the bound elapses, then prints the last states with a `timedOut` flag.
+ * `--expect <name>` (repeatable, with `--all`) waits until each named check has a run on the head,
+ * so a late check is not missed (#978).
+ * `--head <sha>` waits until the PR head is that commit, and the result names that commit in `head` (#961).
+ * It reads status only, so it touches no run state and needs no init, and it applies the same `--cwd` rule as `dispatch`.
+ * The bound starts at command entry, defaults to 300 seconds, and refuses `--timeout 0` (#329).
  */
 async function waitChecksOperation(
   args,
@@ -356,6 +344,8 @@ async function waitChecksOperation(
     now = Date.now,
     sleep,
     assertWorkTree = assertGitWorkTree,
+    // `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it.
+    // A test can spend clock time on validation and check that the time comes out of the bound.
     // Injectable so a test can use a short ceiling; production keeps the wait default (issue #1465).
     childExitCeilingMs,
   } = {},
@@ -365,17 +355,18 @@ async function waitChecksOperation(
     throw new RoleError("wait-checks requires --pr <pr>.");
   }
   if (args.timeoutProvided && args.timeout === null) {
+    // An unbounded wait is the outcome this operation exists to prevent.
     throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
   }
-  // Taken at command entry, so no step of the command pushes it past the stated
-  // bound: work-tree validation, every read, and the pauses between reads all
-  // come out of it (#329).
+  // Taken at command entry, so no step of the command pushes it past the stated bound.
+  // Work-tree validation, every read, and the pauses between reads all come out of it (#329).
+  // Validation and every read share the bound, and the read runs in the `--cwd` work tree.
   const deadline = now() + (args.timeout ?? DEFAULT_WAIT_SECONDS) * 1000;
   const remaining = deadline - now();
   if (remaining > 0) {
     // The validation runs inside the same bound, so a hung `git` cannot add its
-    // own time to the command. It refuses on the bound, because a work tree the
-    // probe never confirmed is not one this command may read.
+    // own time to the command. It refuses on the bound, because this command
+    // reads only a work tree that the probe confirmed.
     await withTimeBound(
       remaining,
       "--cwd validation did not complete within the wait bound, so the work tree was not confirmed.",
@@ -383,6 +374,8 @@ async function waitChecksOperation(
         Promise.race([assertWorkTree(args.cwd, { timeoutMs: remaining, signal }), stopped]),
     );
   }
+  // The command returns within the bound plus the child-exit ceiling the wait adds on a bound it reached.
+  // The check states are read from the commit by SHA.
   const result = await waitChecks({
     pr: args.pr,
     cwd: args.cwd,

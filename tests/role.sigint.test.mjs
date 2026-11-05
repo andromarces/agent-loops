@@ -42,7 +42,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand, main } from "../src/role.mjs";
+import { executeRoleCommand, main } from "../src/role/index.mjs";
 import { restoreRunsRoot } from "./env-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
@@ -69,7 +69,7 @@ import { createBarrierTest } from "./barrier-helpers.mjs";
 // outlasts its timeout cannot change `gitDouble.answer` while the next test runs.
 const barrierTest = createBarrierTest();
 
-const ROLE = fileURLToPath(new URL("../src/role.mjs", import.meta.url));
+const ROLE = fileURLToPath(new URL("../src/role/index.mjs", import.meta.url));
 const EXEC = fileURLToPath(new URL("../src/lib/exec.mjs", import.meta.url));
 
 // Usefulness: acceptance (#669) — a second real SIGINT during a role dispatch whose child ignores

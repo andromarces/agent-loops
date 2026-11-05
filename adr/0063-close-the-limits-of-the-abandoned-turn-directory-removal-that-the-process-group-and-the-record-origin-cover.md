@@ -60,7 +60,7 @@ Andro Marces
 - Supersedes (partially): [ADR 0058](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:
-  - Source: `removeAbandonedTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `onTurnTmpdir` in `src/role-dispatch.mjs`, `killDescendants` in `exec` of `src/lib/exec.mjs`
+  - Source: `removeAbandonedTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `onTurnTmpdir` in `src/role/dispatch.mjs`, `killDescendants` in `exec` of `src/lib/exec.mjs`
   - Tests: `tests/lib/turn-tmpdir.test.mjs`, `tests/role.dead-turn-tmpdir.test.mjs`
   - Docs: `docs/reference/architecture.md`
 - [ADR Index](README.md)

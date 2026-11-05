@@ -1,5 +1,9 @@
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
-import { compareHeadConflict, missingGateRefusal, unresolvedCompareReason } from "./lib/args.mjs";
+import {
+  compareHeadConflict,
+  missingGateRefusal,
+  unresolvedCompareReason,
+} from "./lib/gate-refusal.mjs";
 import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";

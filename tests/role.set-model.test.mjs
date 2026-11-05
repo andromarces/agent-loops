@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,

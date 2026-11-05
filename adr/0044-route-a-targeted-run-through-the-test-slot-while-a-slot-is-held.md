@@ -58,7 +58,7 @@ Andro Marces
 - [PR #1493](https://github.com/andromarces/agent-loops/pull/1493) (decision 7, direct importer test files, closes issue #1492)
 - Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492)
 - Implementation:
-  - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/report.mjs`
+  - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`
   - Docs: `docs/orchestrator-instructions.md`, `docs/reference/usage.md` (Test slot)
 - [ADR Index](README.md)

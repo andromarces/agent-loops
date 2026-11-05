@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 import { sha256 } from "../src/lib/hash.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
-import { testSlotRule } from "../src/prompts/report.mjs";
-import { executeRoleCommand, main as runRoleMain } from "../src/role.mjs";
+import { testSlotRule } from "../src/prompts/rules.mjs";
+import { executeRoleCommand, main as runRoleMain } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,

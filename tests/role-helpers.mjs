@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vite-plus/test";
 import { statePaths } from "../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import { restoreRunsRoot } from "./env-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";

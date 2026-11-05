@@ -8,7 +8,7 @@ import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/l
 import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../../src/role.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import { PACKAGE_ROOT } from "../install/install-helpers.mjs";
 import { restoreRunsRoot } from "../env-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";

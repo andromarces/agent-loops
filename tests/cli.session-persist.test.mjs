@@ -344,28 +344,16 @@ test("a transcript in a directory named '..records' inside the work tree is writ
 
 const git_ = (cwd, ...args) => execa("git", args, { cwd });
 
-// Adds a submodule `sub` to the test repository and commits it.
+// Adds a submodule `sub` to the test repository and commits it. The source is a copy of the
+// seeded template, so no `git init`, add, or commit runs for it.
 async function addSubmodule() {
-  const source = join(scratch, "subsrc");
-  await mkdir(source);
-  await git_(source, "init", "-q");
-  await git_(
-    source,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "commit",
-    "-q",
-    "--allow-empty",
-    "-m",
-    "i",
-  );
-  await writeFile(join(source, "f.txt"), "f\n");
-  await git_(source, "add", ".");
-  await git_(source, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "f");
-  await git_(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub");
-  await git_(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
+  const source = await createTempRepo();
+  try {
+    await git_(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub");
+    await git_(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
+  } finally {
+    await removePath(source);
+  }
 }
 
 // Usefulness: verifies a transcript named like a mutation marker never hides a reviewer commit.
