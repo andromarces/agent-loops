@@ -692,7 +692,7 @@ export async function runChild(options) {
     }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
-    // The four reads are independent, so they run together. All settle before a failure throws, so
+    // The five reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
     const [workTree, sharedGitChanged, lockfileChanged, mainChange, localSourceChangedInTurn] =
       await mapInBatches(
