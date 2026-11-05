@@ -4,14 +4,15 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
-// `cleanRepoGit` in git-helpers.mjs); every other test reaches the real `execa`.
+// `cleanRepoGit` in git-helpers.mjs); every other test, and every other command, reaches the real
+// `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) =>
-      gitDouble.answer
+      gitDouble.answer && command === "git"
         ? gitDouble.answer(command, args, options)
         : real.execa(command, args, options),
   };

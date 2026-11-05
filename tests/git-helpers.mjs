@@ -205,6 +205,35 @@ export function gitAbortingPostTurn(controller) {
   return window;
 }
 
+/**
+ * A `git` double that answers the named role-level reads from memory and passes every other command
+ * to real `git`. A group is true when the case asserts no result from it: `sharedGit`, `lockfile`,
+ * and `mainWorkTree`. The work tree snapshot and the local-file copy always stay real.
+ */
+export function roleReadsGit({ sharedGit = false, lockfile = false, mainWorkTree = false } = {}) {
+  const groups = [
+    [
+      sharedGit,
+      new Set([
+        '["config","-z","--list","--show-scope"]',
+        '["config","--get","branch.main.remote"]',
+        '["remote","get-url","origin"]',
+      ]),
+    ],
+    [lockfile, new Set(['["ls-files","-z","--cached","--others","--exclude-standard"]'])],
+    // One work tree, so the main work tree read finds none and reads nothing from it.
+    [mainWorkTree, new Set(['["worktree","list","--porcelain","-z"]'])],
+  ];
+  return (command, args, options) => {
+    if (command !== "git") return undefined;
+    const key = JSON.stringify(args);
+    for (const [enabled, answers] of groups) {
+      if (enabled && answers.has(key)) return cleanRepoGit(command, args, options);
+    }
+    return undefined;
+  };
+}
+
 // `cleanRepoGit` for a repo with no tracked files, whose `status` lists each regular
 // file in the top level of the directory as untracked, read from the real work tree
 // at call time. A write by the test command or an agent therefore shows up in the

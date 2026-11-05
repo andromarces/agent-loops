@@ -20,20 +20,22 @@ import {
   WORKER_REPLY,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
+import { roleReadsGit } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Answers `git` from memory for the tests that switch it on (see `gitWhileDotGitExists` in
-// git-helpers.mjs, and `newCleanRunRepo` for the cases that assert no Git result). Every other
-// test, and every other command, reaches the real `execa`.
+// git-helpers.mjs, `roleReadsGit` for an unasserted read group, and `newCleanRunRepo` for the cases
+// that assert no Git result). Every other test, and every other command, reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) =>
-      gitDouble.answer && command === "git"
-        ? gitDouble.answer(command, args, options)
-        : real.execa(command, args, options),
+    execa: (command, args, options) => {
+      const answer =
+        gitDouble.answer && command === "git" ? gitDouble.answer(command, args, options) : null;
+      return answer ?? real.execa(command, args, options);
+    },
   };
 });
 
@@ -53,6 +55,7 @@ afterEach(async () => {
 // before any reviewer runs, and a worker that leaves none shows clean: true at the real head.
 test("worker dispatch reports the work tree state from after the turn", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true, mainWorkTree: true });
   const dirtyingWorker = recordingAdapter([
     async (_state, _prompt, options) => {
       await writeFile(join(options.cwd, "init.txt"), "left uncommitted\n");
@@ -105,6 +108,7 @@ test.each([
 // work tree snapshot alone shows clean: true for a hook or remote change made from a linked work tree.
 test("worker dispatch reports shared Git state changed outside the work tree", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ lockfile: true, mainWorkTree: true });
   const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
   const linked = join(parent, "linked");
   await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
@@ -148,6 +152,7 @@ test("worker dispatch reports shared Git state changed outside the work tree", a
 // no field. The linked work tree stays clean, so no other envelope field shows the change.
 test("worker dispatch reports a main work tree change by path and omits the field otherwise", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
   const parent = await mkdtemp(join(tmpdir(), "role-dispatch-main-"));
   const linked = join(parent, "linked");
   await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
@@ -222,6 +227,7 @@ test("worker dispatch redacts userinfo in a changed local key", async () => {
 // dispatch, so a lockfile change is the only sign that the next reviewer sees stale dependencies.
 test("worker dispatch reports a lockfile change by path and omits the field otherwise", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, mainWorkTree: true });
   const lockfileWorker = recordingAdapter([
     async (_state, _prompt, options) => {
       await writeFile(join(options.cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
@@ -263,6 +269,7 @@ test("worker dispatch reports a lockfile change by path and omits the field othe
 // envelope field, so the parent never receives the value.
 test("worker dispatch redacts a secret value in a dependency path", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, mainWorkTree: true });
   const secretName = "AGENT_LOOP_TEST_TOKEN";
   const secretValue = "d1s7-very-secret-value";
   vi.stubEnv(secretName, secretValue);
@@ -288,6 +295,7 @@ test("worker dispatch redacts a secret value in a dependency path", async () => 
 // name, while the non-Node path is redacted.
 test("worker dispatch keeps a fixed root lockfile name byte-identical", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, mainWorkTree: true });
   const secretName = "AGENT_LOOP_TEST_TOKEN";
   const secretValue = "lock.yaml";
   vi.stubEnv(secretName, secretValue);
@@ -317,6 +325,7 @@ test("worker dispatch keeps a fixed root lockfile name byte-identical", async ()
 // reinstall signal, so the canceled turn that edited the lockfile must carry it.
 test("a canceled worker dispatch still reports the lockfile it changed", async () => {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, mainWorkTree: true });
   const cancelingWorker = recordingAdapter([
     async (_state, _prompt, options) => {
       await writeFile(join(options.cwd, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
@@ -340,6 +349,7 @@ test("a canceled worker dispatch still reports the lockfile it changed", async (
 // the shared Git tests act on the linked work tree.
 async function withLinkedWorkTree(body) {
   const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ lockfile: true, mainWorkTree: true });
   const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
   const linked = join(parent, "linked");
   await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });

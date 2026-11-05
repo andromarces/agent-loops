@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the cases that switch it on (see `cleanRepoGit` in
 // git-helpers.mjs). A case that reads no Git state then starts no `git` process.
@@ -37,6 +37,17 @@ const REVIEW = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: none\nVerdic
 const node = (body) => `node -e "${body}"`;
 // Synthetic value for the secret-named environment variable of the redaction tests.
 const SYNTHETIC_SECRET = "synthetic-probe-value-8f3a1c";
+
+// A directory with a `.git` directory, with `git` answered from memory. A case that asserts no Git
+// result starts no `git` process. The caller removes the directory with `removePath`.
+async function cleanRepo() {
+  gitDouble.answer = cleanRepoGit;
+  return createCleanRepoDir();
+}
+
+afterEach(() => {
+  gitDouble.answer = null;
+});
 const roles = () => ({
   orchestrator: { kind: "orch", sessionId: null },
   worker: { kind: "work", sessionId: null },
@@ -70,7 +81,7 @@ async function reviewOnce(repo, extra, reviewerReply = REVIEW) {
 // exit code and output tail, and the result carries it for the orchestrator, so
 // a read-only reviewer holds test evidence it could not produce (issue #420).
 test("a passing test command is supplied to the reviewer prompt and the result", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const { result, rev, reviewed } = await reviewOnce(repo, {
       testCmd: node("console.log('977 tests passed')"),
@@ -89,7 +100,7 @@ test("a passing test command is supplied to the reviewer prompt and the result",
 // Usefulness: verifies a failing command reaches the reviewer as a failure with
 // its own exit code, and does not fail the turn (issue #420).
 test("a failing test command is supplied as a failure and the turn still runs", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const { result, rev, reviewed } = await reviewOnce(repo, {
       testCmd: node("console.log('FAIL json.test'); process.exit(2)"),
@@ -109,7 +120,7 @@ test("a failing test command is supplied as a failure and the turn still runs", 
 // out, which is neither a failure nor a pass, and the turn still runs
 // (issue #420). The kill itself is proved in tests/lib/test-cmd.test.mjs.
 test("a timed-out test command is supplied as timed out", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const { rev, reviewed } = await reviewOnce(repo, {
       testCmd: node("setTimeout(() => {}, 60000)"),
@@ -126,7 +137,7 @@ test("a timed-out test command is supplied as timed out", async () => {
 // Usefulness: verifies an output over the cap reaches the reviewer prompt as its
 // tail only, and says so, so a noisy suite cannot swell the prompt (issue #420).
 test("an output over the cap is supplied as a tail", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const { rev, reviewed } = await reviewOnce(repo, {
       testCmd: node("for (let i = 0; i < 20000; i++) console.log('line ' + i)"),
@@ -146,7 +157,7 @@ test("an output over the cap is supplied as a tail", async () => {
 // prompt and no `testRun` in the result, so the flag changes nothing when absent
 // (issue #420).
 test("an absent test command leaves the reviewer prompt and the result unchanged", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const { rev, reviewed } = await reviewOnce(repo, {});
     // The runtime scratch folder (issue #920) is the only part of the prompt that varies per turn.
@@ -320,7 +331,7 @@ test("a reviewer mutation is still detected when a test command is set", async (
 // reviewer reply that names another command changes nothing, because the flag is
 // the only source of the command.
 test("the command runs once per reviewer turn and never for a worker turn", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const dir = await mkdtemp(join(tmpdir(), "test-cmd-count-"));
   try {
     const log = join(dir, "runs.txt");
@@ -452,7 +463,7 @@ test.each([
       }),
   ],
 ])("a %s fatal reviewer error keeps its class and emits the test result", async (_label, seal) => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   try {
     const events = [];
     const fatal = seal(Object.assign(new Error("fatal"), { name: "MutationError" }));
@@ -486,7 +497,7 @@ test.each([
 // inherited temporary directory" (issue #1024): a fatal error ends the run with no result event, so
 // the transcript would otherwise lose them.
 test("a fatal reviewer error emits the inherited temporary directory entries", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
   try {
     for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
@@ -526,7 +537,7 @@ test("a fatal reviewer error emits the inherited temporary directory entries", a
 // Usefulness: verifies the order and the exact fields of the fatal-path evidence events (#1269):
 // the per-event tests above match a subset, so a reordered or renamed field would pass them.
 test("a fatal reviewer error emits every evidence event in a fixed order with exact fields", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "runtime-fatal-order-"));
   const store = await mkdtemp(join(tmpdir(), "runtime-fatal-store-"));
   try {
@@ -695,7 +706,7 @@ test("a fatal worker error emits the shared Git items it changed", async () => {
 // variable reaches the reviewer prompt, the result event, and the orchestrator prompt as
 // `[redacted:NAME]`, on a completed turn and on an adapter error (issue #431, ADR 0017).
 test("a secret value in the command text is redacted on every headless output path", async () => {
-  const repo = await createTempRepo();
+  const repo = await cleanRepo();
   process.env.SYNTH_PROBE_TOKEN = SYNTHETIC_SECRET;
   try {
     for (const reviewer of [

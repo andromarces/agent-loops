@@ -13,6 +13,22 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory for the cases that open a clean directory: they assert turn-directory
+// state, never a Git result. The killed-dispatch cases keep a real repository for their child
+// process. Every other command reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { readProcessCommands, readProcessTable } from "../src/lib/process-ancestry.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
 import { withTurnTmpdir } from "../src/lib/turn-tmpdir.mjs";
@@ -23,7 +39,8 @@ import {
   dispatchArgv,
   INIT_OVERRIDES,
   initRun,
-  newRunRepo,
+  newCleanRunRepo,
+  newRunRepo as newRealRunRepo,
   readRepoState,
   REPORT,
   stdinPrompt,
@@ -31,6 +48,8 @@ import {
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { deadPid, processExists } from "./process-helpers.mjs";
+
+const newRunRepo = () => newCleanRunRepo(gitDouble);
 
 // Passes every state write through, except the ones that a test arms to fail after the record write
 // of a turn directory. `failures` is how many of the next writes throw, `Infinity` for every one.
@@ -106,6 +125,7 @@ async function endSpawned() {
 }
 
 afterEach(async () => {
+  gitDouble.answer = null;
   stateWrites.failures = 0;
   vi.unstubAllEnvs();
   await endSpawned();
@@ -142,7 +162,7 @@ async function killedDispatch({
   reportDelayMs = 0,
   startDelayMs = 0,
 } = {}) {
-  const repo = await newRunRepo();
+  const repo = await newRealRunRepo();
   const scratch = await mkdtemp(join(tmpdir(), "dead-turn-"));
   scratches.push(scratch);
   const bin = join(scratch, "bin");
