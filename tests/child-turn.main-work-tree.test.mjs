@@ -1,4 +1,4 @@
-import { stat, utimes, writeFile } from "node:fs/promises";
+import { realpath, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
@@ -38,6 +38,8 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
     mainWorkTreePath: async (...args) => {
       if (resolution.fail) throw new Error("resolution failed");
       if (resolution.stall) return new Promise(() => {});
+      // The linked tree's main work tree is known here; every other layout resolves through Git.
+      if (tree && args[0] === tree.linked) return tree.mainReal;
       return real.mainWorkTreePath(...args);
     },
   };
@@ -46,6 +48,7 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
 let tree;
 beforeEach(async () => {
   tree = await createLinkedWorkTree();
+  tree.mainReal = await realpath(tree.main);
   gitDouble.answer = cutLinkedReads;
 });
 afterEach(async () => {
@@ -89,13 +92,14 @@ async function seedUpstream() {
 }
 
 /**
- * Answers the linked work tree root, the shared Git reads, and the lockfile list from memory. Every
- * call not answered here runs real `git`, so the main work tree reads stay real. The empty config
- * listing and file list read the same before and after, so neither reports a change. The caller
- * sets it in `beforeEach`.
+ * Answers each work tree root, and the linked work tree's shared Git reads and lockfile list, from
+ * memory. Every call not answered here runs real `git`, so the main work tree state reads stay
+ * real. The empty config listing and file list read the same before and after, so neither reports
+ * a change. The caller sets it in `beforeEach`.
  */
 function cutLinkedReads(command, args, options) {
-  if (options?.cwd !== tree.linked) return undefined;
+  const cwd = options?.cwd;
+  if (cwd !== tree.linked && cwd !== tree.main && cwd !== tree.mainReal) return undefined;
   const answer = (stdout) => ({
     exitCode: 0,
     stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
@@ -103,12 +107,12 @@ function cutLinkedReads(command, args, options) {
   });
   switch (JSON.stringify(args)) {
     case '["rev-parse","--show-toplevel"]':
-      return answer(`${options.cwd}\n`);
+      return answer(`${cwd}\n`);
     case '["rev-parse","--git-common-dir"]':
-      return answer(".git\n");
+      return cwd === tree.linked ? answer(".git\n") : undefined;
     case '["config","-z","--list","--show-scope"]':
     case '["ls-files","-z","--cached","--others","--exclude-standard"]':
-      return answer("");
+      return cwd === tree.linked ? answer("") : undefined;
     default:
       return undefined;
   }
