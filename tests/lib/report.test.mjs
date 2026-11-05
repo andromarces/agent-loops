@@ -86,6 +86,14 @@ test("missingRequiredReportLabels names both missing labels in report order", ()
   expect(missingRequiredReportLabels(response)).toEqual(["Conclusion", "Blockers"]);
 });
 
+// Usefulness: verifies a missing label is still named when another rule also makes the block
+// unparseable, so the structural failure never hides the cause (issue #1520).
+test("missingRequiredReportLabels names a missing label beside a structural failure", () => {
+  const response = "Why: tests pass\nBlockers: none\n* dropped item";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
+});
+
 // Usefulness: verifies a parsed report, a structural failure, and a response with no closing block
 // carry no missing label (issue #1520).
 test("missingRequiredReportLabels returns an empty list without a missing required label", () => {

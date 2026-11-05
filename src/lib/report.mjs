@@ -258,13 +258,13 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
 }
 
 /**
- * The closing block of `response` as report values, or every missing required label.
+ * The closing block of `response` as report values, or null when the block does not parse.
  * @param {string} response
- * @param {{ boldLabels?: boolean, diagnose?: boolean }} [options]
- * @returns {{ report: object, missing?: undefined } | { report: null, missing: string[] } | null}
+ * @param {{ boldLabels?: boolean }} [options]
+ * @returns {{ report: object } | null}
  */
-function reportDetail(response, { boldLabels = true, diagnose = false } = {}) {
-  const block = closingBlock(response, { unlabeled: true, boldLabels, diagnose });
+function reportDetail(response, { boldLabels = true } = {}) {
+  const block = closingBlock(response, { unlabeled: true, boldLabels });
   if (!block) {
     return null;
   }
@@ -281,7 +281,6 @@ function reportDetail(response, { boldLabels = true, diagnose = false } = {}) {
     return null;
   }
   const report = {};
-  const missing = [];
   for (const [key, label, optional] of REPORT_LABELS) {
     const found = lastLabeled(lines, label);
     if (!found?.value) {
@@ -289,12 +288,11 @@ function reportDetail(response, { boldLabels = true, diagnose = false } = {}) {
         report[key] = null;
         continue;
       }
-      missing.push(label);
-      continue;
+      return null;
     }
     report[key] = found.value;
   }
-  return missing.length > 0 ? { report: null, missing } : { report };
+  return { report };
 }
 
 /**
@@ -346,14 +344,19 @@ export function parseReportBlock(response, { boldLabels = true } = {}) {
 
 /**
  * Every required label that a null report lacks, in report order: `Conclusion`, `Why`, then
- * `Blockers`. The list is empty when the report parses or when no closing block is found. It is
- * also empty when another rule makes the block unparseable, so a structural failure never reads
- * as a missing label (issue #1520).
+ * `Blockers`. The list is empty when every required label is present or no closing block attempt
+ * exists. A structural failure never hides a label that is absent (issue #1520).
  * @param {string} response
  * @returns {string[]}
  */
 export function missingRequiredReportLabels(response) {
-  return reportDetail(response, { diagnose: true })?.missing ?? [];
+  const block = closingBlock(response, { unlabeled: true, diagnose: true });
+  if (!block) {
+    return [];
+  }
+  return REPORT_LABELS.filter(
+    ([, label, optional]) => !optional && !lastLabeled(block, label)?.value,
+  ).map(([, label]) => label);
 }
 
 /**
