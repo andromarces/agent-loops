@@ -20,6 +20,8 @@ vi.mock("execa", async (importOriginal) => {
 
 import { execa } from "execa";
 import { main } from "../src/cli.mjs";
+import { printHelp } from "../src/help.mjs";
+import { setLogsToStderr } from "../src/lib/log.mjs";
 import { parseRoleArgs } from "../src/role/index.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo, createWithContinueRepo, untrackedFilesGit } from "./git-helpers.mjs";
@@ -604,31 +606,53 @@ test.each(["--version", "-V"])("%s prints the package version", async (flag) => 
   }
 });
 
-// Usefulness: verifies the top-level help lists both new flags.
+// Process-level smoke test: starts the CLI entry point, so `--help` must print to the real stdout
+// and exit 0. The help text itself is checked in process below.
 test("--help lists --version and role --help", async () => {
-  const { stdout } = await execa(process.execPath, [CLI, "--help"]);
-  expect(stdout).toContain("-V, --version");
-  expect(stdout).toContain("agent-loop role --help");
+  const result = await execa(process.execPath, [CLI, "--help"]);
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("-V, --version");
+  expect(result.stdout).toContain("agent-loop role --help");
 });
 
 // Usefulness: verifies the --pr help states when the earlier required-check read happened (#1097), so
 // a reader does not take a continuation as the run that made the read.
-test("--help states where the required-check read of a restored PR happened", async () => {
-  const { stdout } = await execa(process.execPath, [CLI, "--help"]);
-  const text = stdout.replace(/\s+/g, " ");
-  expect(text).toContain(
-    "before it declares a PR that a worker turn opened, and leaves the run undeclared",
-  );
-  expect(text).toContain(
-    "the earlier run read at its own --pr start, or before it declared the PR",
-  );
+test("--help states where the required-check read of a restored PR happened", () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    printHelp();
+    const text = log.mock.calls
+      .map((call) => call.join(" "))
+      .join(" ")
+      .replace(/\s+/g, " ");
+    expect(text).toContain(
+      "before it declares a PR that a worker turn opened, and leaves the run undeclared",
+    );
+    expect(text).toContain(
+      "the earlier run read at its own --pr start, or before it declared the PR",
+    );
+  } finally {
+    log.mockRestore();
+  }
 });
 
-// Usefulness: verifies `role --help` and `role -h` print usage on stdout and exit 0.
+// Usefulness: verifies `role --help` and `role -h` print usage, and the run leaves the exit code
+// clean. The help text comes from the in-process command, so no process starts per alias.
 test.each(["--help", "-h"])("role %s prints usage and exits 0", async (flag) => {
-  const result = await execa(process.execPath, [CLI, "role", flag]);
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout).toMatch(/^Usage: agent-loop role/);
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const origExitCode = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    await main(["role", flag]);
+    expect(process.exitCode).toBeUndefined();
+    expect(log.mock.calls.map((call) => call.join(" ")).join("\n")).toMatch(
+      /^Usage: agent-loop role/,
+    );
+  } finally {
+    process.exitCode = origExitCode;
+    setLogsToStderr(false);
+    log.mockRestore();
+  }
 });
 
 // Usefulness: verifies a help flag after an operation parses, and an inline value is rejected.
