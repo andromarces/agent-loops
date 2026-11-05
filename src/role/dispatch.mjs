@@ -571,7 +571,7 @@ function dispatchPayload(roleName, result) {
       ...turnResultFields(result, ["transient", ...TURN_EVIDENCE_FIELDS]),
     };
   }
-  const report = parseReportBlock(result.response);
+  const report = result.report === undefined ? parseReportBlock(result.response) : result.report;
   // The fields the dispatch envelope shares with the result prompt. `workTree` is the worker state
   // the runtime read after the turn (#910), not the reviewer `reviewed` field. A reviewer
   // `prChecks` is the status the runtime read for a declared PR (#320). The state file keeps it

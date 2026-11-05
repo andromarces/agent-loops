@@ -403,7 +403,59 @@ test("--require-accept treats an accept without a Checks line as not accepted", 
   }
 });
 
-// 39. Usefulness: verifies a finish that reports an unresolved PR-head compare
+const BOLD_ONLY_SPLIT =
+  "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n**Checks:** tests passed";
+const ALL_BOLD_SPLIT =
+  "**Conclusion:** done\n**Why:** ok\n**Blockers:** none\n**Checks:** tests passed\nVerdict: accept";
+
+// 39. Usefulness: verifies --require-accept refuses a bold-only report from a multi-part
+// unidentified turn, so acceptedSinceWorker stays false (issue #1483).
+test.each([
+  ["plain labels with a bold Checks line", BOLD_ONLY_SPLIT],
+  ["all bold labels", ALL_BOLD_SPLIT],
+])(
+  "--require-accept refuses a bold-only report across unidentified parts: %s",
+  async (_name, reply) => {
+    gitDouble.answer = cleanRepoGit;
+    const repo = await createCleanRepoDir();
+    try {
+      const orchReplies = [
+        JSON.stringify({ action: "run_worker", prompt: "work" }),
+        JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+        JSON.stringify({ action: "finish", summary: SUMMARY }),
+        JSON.stringify({ action: "finish", summary: SUMMARY }),
+      ];
+      const reviewer = scripted([
+        (state) => {
+          state.multiPartUnidentified = true;
+          return reply;
+        },
+      ]);
+
+      const result = await runLoop({
+        task: "Task 39",
+        cwd: repo,
+        maxSteps: 5,
+        requireAccept: true,
+        roles: gateRoles(),
+        agents: {
+          orch: scripted(orchReplies),
+          work: scripted(["worker changed"]),
+          rev: reviewer,
+        },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.reason).toContain("Checks");
+      expect(result.gate.acceptedSinceWorker).toBe(false);
+    } finally {
+      gitDouble.answer = null;
+      await removePath(repo);
+    }
+  },
+);
+
+// 40. Usefulness: verifies a finish that reports an unresolved PR-head compare
 // records a distinct `unresolved-compare` event and still exits 0 with the
 // summary, so the recorded finish no longer reads as a verified finish (#266).
 test("finish with unresolvedCompare records an unresolved-compare event", async () => {

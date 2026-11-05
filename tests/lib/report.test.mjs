@@ -5,6 +5,7 @@ import {
   isAcceptedReview,
   parseReportBlock,
   parseVerdict,
+  parsesOnlyWithBoldLabels,
 } from "../../src/lib/report.mjs";
 
 const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
@@ -198,11 +199,12 @@ test("parseReportBlock keeps an empty optional label that a label follows", () =
 
 // Usefulness: verifies a label wrapped in markdown emphasis is not silently
 // dropped; the whole block is unparseable, so `raw` carries its value (issue
-// #243).
+// #243). The `**Deferred:**` form is now a label and has its own test (issue
+// #1483).
 test("parseReportBlock returns null when a label is decorated with emphasis", () => {
   expect(
     parseReportBlock(
-      `${REPORT}\nNotes: tidy the helper later\n**Deferred:** migrate the legacy path`,
+      `${REPORT}\nNotes: tidy the helper later\n*Deferred:* migrate the legacy path`,
     ),
   ).toBeNull();
 });
@@ -236,11 +238,12 @@ test("parseReportBlock returns null when a label is indented", () => {
   ).toBeNull();
 });
 
-// Usefulness: verifies a decorated duplicate of a label is not dropped behind
-// the plain occurrence the parser reads; the whole block is unparseable (issue
-// #243).
-test("parseReportBlock returns null when a decorated label shadows a plain one", () => {
-  expect(parseReportBlock(`${REPORT}\n**Blockers:** the real blocker`)).toBeNull();
+// Usefulness: verifies a bold duplicate keeps last-occurrence-wins, so the bold value is read
+// instead of dropped behind the plain one (issue #1483).
+test("parseReportBlock reads a bold label that shadows a plain one", () => {
+  expect(parseReportBlock(`${REPORT}\n**Blockers:** the real blocker`)).toMatchObject({
+    blockers: "the real blocker",
+  });
 });
 
 // Usefulness: verifies every list shape other than a column-0 `- ` list under an empty label
@@ -270,15 +273,14 @@ test("parseReportBlock returns null for a non-`- ` list under an empty label", (
   }
 });
 
-// Usefulness: verifies a dash list under an indented or decorated label stays unparseable, while
-// a `- ` list under an empty required label folds (issue #846). The blank-line shape has its own
-// test in the same file.
+// Usefulness: verifies a dash list under an indented label stays unparseable. It also verifies a
+// bold label takes its list (issues #846 and #1483). The blank-line shape has its own test.
 test("parseReportBlock returns null for a list under a hidden label", () => {
   expect(parseReportBlock("Conclusion: done\nWhy: ok\nBlockers:\n- item")).toMatchObject({
     blockers: "item",
   });
   expect(parseReportBlock(`${REPORT}\n  Notes:\n- item`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\n**Notes:**\n- item`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\n**Notes:**\n- item`)).toMatchObject({ notes: "item" });
   expect(parseReportBlock(`${REPORT}\nNotes:\n- item\nNotes:\n- other`)).toBeNull();
 });
 
@@ -761,6 +763,68 @@ const MALFORMED_SHAPES = [
   `${REPORT}\nVerdict: accept`,
 ];
 
+// The origin/main result for each malformed shape: report, verdict, and acceptance.
+const MALFORMED_RESULTS = [
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [
+    { conclusion: "c", why: "w", blockers: "one; two", checks: null, notes: null, deferred: null },
+    "unknown",
+    false,
+  ],
+  [null, "unknown", false],
+  [
+    { conclusion: "c", why: "w", blockers: "none", checks: null, notes: null, deferred: null },
+    "unknown",
+    false,
+  ],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [null, "unknown", false],
+  [
+    {
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    },
+    "unknown",
+    false,
+  ],
+  [
+    {
+      conclusion: "done",
+      why: "tests pass",
+      blockers: "none",
+      checks: null,
+      notes: null,
+      deferred: null,
+    },
+    "accept",
+    false,
+  ],
+];
+
 // Usefulness: ties the closing-block attempt rule to the parser (issue #449): whenever the parser sees a closing block or treats a label line as part of one, the response counts as an attempt, so a malformed final report is never replaced by an earlier one.
 test("hasClosingBlockAttempt holds for every malformed or parseable closing block shape", () => {
   for (const shape of MALFORMED_SHAPES) {
@@ -780,6 +844,17 @@ test("hasClosingBlockAttempt is false for prose and lists with no label", () => 
   ]) {
     expect(hasClosingBlockAttempt(prose), prose).toBe(false);
   }
+});
+
+// Usefulness: verifies every malformed parser fixture keeps its origin/main report, verdict, and
+// acceptance result, so bold handling changes no fail-closed shape (issue #1483).
+test("parseReportBlock keeps the origin/main result for every malformed fixture", () => {
+  MALFORMED_SHAPES.forEach((shape, index) => {
+    const [report, verdict, accepted] = MALFORMED_RESULTS[index];
+    expect(parseReportBlock(shape), shape).toEqual(report);
+    expect(parseVerdict(shape), shape).toBe(verdict);
+    expect(isAcceptedReview(shape), shape).toBe(accepted);
+  });
 });
 
 // Usefulness: verifies a spaceless bullet under an empty Checks line never supplies the Checks
@@ -842,11 +917,14 @@ test("parseReportBlock folds a bold heading and its list into the preceding labe
 });
 
 // Usefulness: verifies a bold heading outside the fold rule stays unparseable (issue #1367).
-// A later repeat of the folded label still wins, so no text drops without a `raw` signal.
+// A later repeat of the folded label still wins, so no text drops without a `raw` signal. A bold
+// report label there is a label now, so its list folds (issue #1483).
 test("parseReportBlock returns null for a bold heading outside the fold rule", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n\n**Notes:** a\n- b`)).toMatchObject({
+    notes: "a; b",
+  });
   for (const tail of [
     "Notes: x\n\n**Heading**\n- a\n\nNotes: later",
-    "Notes: x\n\n**Notes:** a\n- b",
     "Notes: x\n\n**bold** note\n- a",
     "Verdict: accept\n\n**Heading**\n- a",
     "Notes: x\n\n**Heading**\n\n- a",
@@ -1024,8 +1102,15 @@ test("parseReportBlock folds a sub-item and a heading item that open with a labe
 // shape folds inside a run (issue #1006), so the #243 refusal is not weakened.
 test("parseReportBlock returns null for a decorated label item outside a list run", () => {
   expect(parseReportBlock(`${REPORT}\nNotes: x\n\n\n- **Checks:** ran`)).toBeNull();
-  expect(parseReportBlock(`${REPORT}\nNotes: x\n- **Checks:** ran\n**Deferred:** y`)).toBeNull();
   expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- **Checks:** ran`)).toBeNull();
+});
+
+// Usefulness: verifies a bold label after a folded list is read as a label. The list text and the
+// bold fields both survive (issue #1483).
+test("parseReportBlock reads a bold label after a folded list", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n- **Checks:** ran\n**Deferred:** y`)).toMatchObject(
+    { notes: "x; **Checks:** ran", deferred: "y" },
+  );
 });
 
 // Usefulness: verifies an indented non-list line directly after an item or its sub-items folds into
@@ -1113,6 +1198,367 @@ test("parseReportBlock refuses a table after a list item", () => {
   ]) {
     const response = `Conclusion: table rows dropped\nWhy: measured figures\n- item\n\n${table}\nBlockers: none`;
     expect(parseReportBlock(response), table).toBeNull();
+  }
+});
+
+// Usefulness: verifies the exact all-bold shape from issue #1483 parses with every field kept. A
+// worker that bolds every label yields a report instead of null. No other test covers a block that
+// holds no plain label.
+test("parseReportBlock parses the observed all-bold shape from issue #1483", () => {
+  const response = [
+    "PR #328 is open against `main` and closes #319. The checks are still pending.",
+    "",
+    "**Blockers:** none",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "**Checks:**",
+    "- `pnpm test` ran 3 files",
+    "",
+    "**Notes:**",
+    "- none",
+    "",
+    "**Deferred:** nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "PR #328 is open against `main` and closes #319. The checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "`pnpm test` ran 3 files",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies a bold label counts only when its colon sits inside the bold. `**Label:**`
+// parses; `**Label**:` keeps the decorated-label refusal (issue #1483).
+test("parseReportBlock reads a bold label only with the colon inside the bold", () => {
+  expect(parseReportBlock("**Conclusion:** done\n**Why:** ok\n**Blockers:** none")).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(parseReportBlock("**Conclusion**: done\nWhy: ok\nBlockers: none")).toBeNull();
+  expect(parseReportBlock("Conclusion: done\nWhy: ok\n**Blockers**: none")).toBeNull();
+  expect(parseReportBlock("Conclusion: done\nWhy: ok\n**Deferred**: later")).toBeNull();
+});
+
+// Usefulness: verifies a bold Conclusion starts its own block after earlier labels, so earlier
+// context drops as a plain Conclusion drops it (issue #1483).
+test("parseReportBlock starts a block at a bold Conclusion after earlier labels", () => {
+  expect(
+    parseReportBlock(
+      "Checks: earlier context\n\n**Conclusion:** done\n**Why:** ok\n**Blockers:** none",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies the last bold Conclusion selects the block, so an earlier dropped list stays
+// outside the report (issue #1483). No other test repeats a bold Conclusion.
+test("parseReportBlock selects the last bold Conclusion block", () => {
+  expect(
+    parseReportBlock(
+      "**Conclusion:** first\n**Why:** a\n**Blockers:** none\n\n\n- dropped list\n\n**Conclusion:** second\n**Why:** b\n**Blockers:** none",
+    ),
+  ).toEqual({
+    conclusion: "second",
+    why: "b",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies plain and bold labels mix in one block. Each occurrence reads as its
+// label, so a worker that bolds only some labels still yields every field (issue #1483).
+test("parseReportBlock reads mixed plain and bold labels", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\n**Why:** ok\nBlockers: none\n**Notes:** later\nDeferred: nothing",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: "later",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies a bold label with extra text before it on the line stays text. Only a
+// column-0 bold label supplies a field (issue #1483).
+test("parseReportBlock keeps a bold label with leading text as text", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- see **Checks:** ran\nBlockers: none"),
+  ).toMatchObject({ why: "see **Checks:** ran" });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: see **Checks:** ran\nBlockers: none"),
+  ).toMatchObject({ why: "see **Checks:** ran", checks: null });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n**Rule:** stays text\nBlockers: none"),
+  ).toMatchObject({ why: "a" });
+});
+
+// Usefulness: verifies the non-blank line directly before the first known label becomes
+// Conclusion when no Conclusion label exists, including across blank lines. No other test covers
+// this bounded start rule (issue #1483).
+test("parseReportBlock reads the line before the first label as Conclusion", () => {
+  expect(parseReportBlock("Done and verified.\n\n**Why:** ok\n**Blockers:** none")).toEqual({
+    conclusion: "Done and verified.",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(parseReportBlock("Done and verified.\nWhy: ok\n**Blockers:** none")).toMatchObject({
+    conclusion: "Done and verified.",
+  });
+});
+
+// Usefulness: verifies the unlabeled Conclusion rule takes only the line directly before the first
+// label, so earlier prose stays out of the report (issue #1483).
+test("parseReportBlock leaves prose above the Conclusion line out of the report", () => {
+  expect(
+    parseReportBlock("earlier prose\nDone and verified.\n**Why:** ok\n**Blockers:** none"),
+  ).toEqual({
+    conclusion: "Done and verified.",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(
+    parseReportBlock("earlier prose\n\nDone and verified.\n\n**Why:** ok\n**Blockers:** none"),
+  ).toMatchObject({ conclusion: "Done and verified." });
+});
+
+// Usefulness: verifies a block with no known report label keeps its null result. The new start
+// rule does not parse prose or a lone Verdict line (issue #1483).
+test("parseReportBlock keeps null for a block with no known label", () => {
+  expect(parseReportBlock("just prose\nmore prose")).toBeNull();
+  expect(parseReportBlock("**Rule:** x\n**Path safety:** y")).toBeNull();
+  expect(parseReportBlock("Prose line\nVerdict: accept")).toBeNull();
+  expect(parseReportBlock("**Why:** ok\n**Blockers:** none")).toBeNull();
+});
+
+// Usefulness: verifies a bold label inside a fenced code block stays text. Example text in a
+// fence neither supplies a field nor blanks the block (issue #1483).
+test("parseReportBlock keeps a bold label inside a fenced code block as text", () => {
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: ok\nBlockers: none\n```\n**Deferred:** not a label\n```",
+    ),
+  ).toMatchObject({ deferred: null });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n~~~\n**Checks:** sample\n~~~"),
+  ).toMatchObject({ checks: null });
+});
+
+// Usefulness: verifies a duplicate bold label keeps the existing last-occurrence-wins rule. A
+// plain and a bold occurrence resolve the same way as two plain ones (issue #1483).
+test("parseReportBlock keeps last-occurrence-wins for a duplicate bold label", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\n**Notes:** first\nNotes: second\nBlockers: none"),
+  ).toMatchObject({ notes: "second" });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nNotes: first\n**Notes:** second\nBlockers: none"),
+  ).toMatchObject({ notes: "second" });
+});
+
+// Usefulness: verifies a bold name outside the six stays text. A list after it is a dropped list,
+// so the block stays unparseable (issue #1483).
+test("parseReportBlock does not read a bold non-label name as a label", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n**Rule:** b\n- c\nBlockers: none"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies the fail-closed helper is true only when the report needs bold labels. A
+// plain report never fails closed for a multi-part turn (issue #1483).
+test("parsesOnlyWithBoldLabels is true only for a bold-only report", () => {
+  expect(parsesOnlyWithBoldLabels("**Conclusion:** done\n**Why:** ok\n**Blockers:** none")).toBe(
+    true,
+  );
+  expect(
+    parsesOnlyWithBoldLabels("Conclusion: done\n**Checks:** tests passed\nWhy: ok\nBlockers: none"),
+  ).toBe(true);
+  expect(parsesOnlyWithBoldLabels(REPORT)).toBe(false);
+});
+
+// Usefulness: verifies only the six report labels gain a bold form. A bold Verdict line stays
+// unknown and never turns the block into an accept (issue #1483).
+test("parseVerdict keeps a bold Verdict line unknown", () => {
+  expect(parseVerdict("Conclusion: done\nWhy: ok\nBlockers: none\n**Verdict:** accept")).toBe(
+    "unknown",
+  );
+  expect(parseVerdict("Conclusion: done\nWhy: ok\nBlockers: none\n**Verdict:** reject")).toBe(
+    "unknown",
+  );
+});
+
+const reportValues = (conclusion, why, blockers, checks = null, notes = null, deferred = null) => ({
+  conclusion,
+  why,
+  blockers,
+  checks,
+  notes,
+  deferred,
+});
+
+const PARSEABLE_SHAPES = [
+  [REPORT, reportValues("done", "tests pass", "none")],
+  [
+    `${REPORT}\nNotes: tidy the helper later\nDeferred: migrate the legacy path`,
+    reportValues(
+      "done",
+      "tests pass",
+      "none",
+      null,
+      "tidy the helper later",
+      "migrate the legacy path",
+    ),
+  ],
+  [`${REPORT}\nChecks:\nNotes:\nDeferred:`, reportValues("done", "tests pass", "none")],
+  [
+    `${REPORT}\nChecks: npm test, npm run lint`,
+    reportValues("done", "tests pass", "none", "npm test, npm run lint"),
+  ],
+  [
+    `${REPORT}\nNotes:\n- item one\n- item two`,
+    reportValues("done", "tests pass", "none", null, "item one; item two"),
+  ],
+  [
+    "Conclusion: done\nWhy:\n- **Tests:** pass\n- **Lint:** clean\nBlockers: none",
+    reportValues("done", "**Tests:** pass; **Lint:** clean", "none"),
+  ],
+  [
+    "Conclusion: done\nWhy:\n- **Config.** a\n- **Unverified.**\n  - **Overrides:** b\n  - **Version:** c\nBlockers: none",
+    reportValues(
+      "done",
+      "**Config.** a; **Unverified.**, **Overrides:** b, **Version:** c",
+      "none",
+    ),
+  ],
+  [
+    "Conclusion: done\nWhy:\n1. **No lint config.** a\n2. **Stale config.** b\nBlockers: none",
+    reportValues("done", "**No lint config.** a; **Stale config.** b", "none"),
+  ],
+  [
+    "Conclusion: done\nWhy: I found three stale claims and updated each one.\n- **Prompt:** a\n- **Reference doc:** b\nBlockers: none",
+    reportValues(
+      "done",
+      "I found three stale claims and updated each one.; **Prompt:** a; **Reference doc:** b",
+      "none",
+    ),
+  ],
+  [
+    "Conclusion: done\nWhy: ok\nBlockers: none\n- real blocker",
+    reportValues("done", "ok", "none; real blocker"),
+  ],
+  [
+    "Conclusion: done\nWhy: tests pass\n\nDesign settled in ADR 0031:\n- **Non-limit failure:** a\n- **Pagination:** b\n\nBlockers: none",
+    reportValues(
+      "done",
+      "tests pass; Design settled in ADR 0031: **Non-limit failure:** a; **Pagination:** b",
+      "none",
+    ),
+  ],
+  [
+    "Conclusion: done\nWhy: the checks pass\n- **Unit:** pass\n- **Lint:** clean\n\n**Reviewer notes.**\n- **Eight-page ceiling:** a\n- **Continuation:** b\n\nBlockers: none",
+    reportValues(
+      "done",
+      "the checks pass; **Unit:** pass; **Lint:** clean; **Reviewer notes.**: **Eight-page ceiling:** a; **Continuation:** b",
+      "none",
+    ),
+  ],
+  [
+    `${REPORT}\nNotes: keep this\n\n- item one\n- item two`,
+    reportValues("done", "tests pass", "none", null, "keep this; item one; item two"),
+  ],
+  [
+    `${REPORT}\nNotes: first pass\nNotes: second pass`,
+    reportValues("done", "tests pass", "none", null, "second pass"),
+  ],
+  [
+    `Conclusion: earlier\nWhy: old\nBlockers: old\nprose\n${REPORT}`,
+    reportValues("done", "tests pass", "none"),
+  ],
+  [
+    "conclusion: done\nWHY: tests pass\nblockers: none\nchecks: npm test\nnotes: later\ndeferred: out",
+    reportValues("done", "tests pass", "none", "npm test", "later", "out"),
+  ],
+  [
+    `${REPORT}\nChecks:\n\nsummary\n- item\nVerdict: accept`,
+    reportValues("done", "tests pass", "none", "summary: item"),
+  ],
+  [
+    "Conclusion: done\nWhy:\n- **Privacy:** none touched\n- **Checks:** `pnpm test` ran 80 files, 1382 passed\n- **PR description:** updated\n\nBlockers:\n- **Workers Builds:** pending\n\nChecks: `pnpm test` 80 files/1382 passed",
+    reportValues(
+      "done",
+      "**Privacy:** none touched; **Checks:** `pnpm test` ran 80 files, 1382 passed; **PR description:** updated",
+      "**Workers Builds:** pending",
+      "`pnpm test` 80 files/1382 passed",
+    ),
+  ],
+  [
+    "Conclusion: done\nWhy: x\n\nSteps:\n- **Deferred:** c\nBlockers: none",
+    reportValues("done", "x; Steps: **Deferred:** c", "none"),
+  ],
+  [
+    `${REPORT}\nNotes:\n- a: one\n- b: two:\n  - x\n  - y\n  More prose under b.\n- c: three`,
+    reportValues(
+      "done",
+      "tests pass",
+      "none",
+      null,
+      "a: one; b: two:, x, y More prose under b.; c: three",
+    ),
+  ],
+  [
+    `${REPORT}\nNotes: tidy later\n* * *`,
+    reportValues("done", "tests pass", "none", null, "tidy later"),
+  ],
+  [`${REPORT}\nVerdict: accept\n*emphasis* note`, reportValues("done", "tests pass", "none")],
+  [`${REPORT}\nNotes:\n*file*`, reportValues("done", "tests pass", "none")],
+  [
+    "Conclusion: done\nWhy: measured figures\nChecks: cmd\n| grep x\nBlockers: none",
+    reportValues("done", "measured figures", "none", "cmd"),
+  ],
+];
+
+// Usefulness: verifies every shape that parses on origin/main yields the same report after the
+// bold-label and unlabeled-Conclusion rules, so no existing parse regresses (issue #1483). The
+// expected values were recorded from the origin/main parser.
+test("parseReportBlock keeps the origin/main report for every existing parseable shape", () => {
+  for (const [shape, expected] of PARSEABLE_SHAPES) {
+    expect(parseReportBlock(shape), shape).toEqual(expected);
+  }
+});
+
+// Usefulness: verifies every bold-label twin yields the same report, verdict, and acceptance result
+// as its plain twin. The bold form changes no parse or gate outcome (issue #1483).
+test("parseReportBlock gives a bold twin the same result as its plain twin", () => {
+  for (const [shape] of PARSEABLE_SHAPES) {
+    const bold = shape.replace(/^(Conclusion|Why|Blockers|Checks|Notes|Deferred):/gim, "**$1:**");
+    expect(parseReportBlock(bold), bold).toEqual(parseReportBlock(shape));
+    expect(parseVerdict(bold), bold).toBe(parseVerdict(shape));
+    expect(isAcceptedReview(bold), bold).toBe(isAcceptedReview(shape));
   }
 });
 

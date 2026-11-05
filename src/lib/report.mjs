@@ -14,6 +14,77 @@ const REPORT_LABELS = [
 
 export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 
+const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
+
+// A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
+// Only the six report labels gain this form, so a bold lead with another name stays text (issue
+// #1483).
+const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
+const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
+
+// A line that opens a known report label or a plain `Verdict` line at column 0, plain or bold.
+const KNOWN_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL})`, "i");
+
+// A line that opens a plain report label at column 0.
+const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
+
+/**
+ * True when `line` opens a known report label or a plain `Verdict` line at column 0, plain or bold.
+ * A line inside a fenced code block is no known label (issue #1483).
+ * @param {string} line
+ * @param {boolean} [fenced]
+ * @returns {boolean}
+ */
+function isKnownLabelLine(line, fenced = false) {
+  return !fenced && KNOWN_LABEL_LINE.test(line);
+}
+
+// Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
+// label inside a fence stays text (issue #1483).
+function fencedLines(lines) {
+  const fenced = Array.from({ length: lines.length }, () => false);
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence !== null) {
+      fenced[i] = true;
+      if (match && match[1][0] === fence[0] && match[1].length >= fence.length) {
+        fence = null;
+      }
+    } else if (match) {
+      fenced[i] = true;
+      fence = match[1];
+    }
+  }
+  return fenced;
+}
+
+/**
+ * Returns `text` with each column-0 bold report label normalized to its plain form. A bold label
+ * inside a fenced code block stays text (issue #1483). With `boldLabels` false, the text is
+ * unchanged, which reads a bold label as origin/main did.
+ * @param {string} text
+ * @param {boolean} [boldLabels]
+ * @returns {string}
+ */
+function normalizeReportLabels(text, boldLabels = true) {
+  if (!boldLabels) {
+    return text;
+  }
+  const lines = text.split(/\r?\n/);
+  const fenced = fencedLines(lines);
+  return lines
+    .map((line, index) => {
+      if (!BOLD_LABEL_LINE.test(line)) {
+        return line;
+      }
+      return isKnownLabelLine(line, fenced[index])
+        ? line.replace(BOLD_LABEL_LINE, "$1:$2")
+        : `x${line}`;
+    })
+    .join("\n");
+}
+
 // A report label that indentation or markdown decoration hides from the strict
 // match, for example `**Deferred**: x`, `*Deferred:* x`, `### Deferred: x`,
 // `> Deferred: x`, or `  Deferred: x`. Such a value would otherwise be dropped,
@@ -143,20 +214,44 @@ export function hasClosingBlockAttempt(response) {
 }
 
 /**
- * The closing block: the lines from the last `Conclusion:` line to the end of
- * the response, or null when the response has no `Conclusion:` line at all.
+ * The closing block: the lines from the last `Conclusion:` line to the end of the response. It is
+ * null when the response has no `Conclusion:` line at all. The whole response is normalized first,
+ * so a bold label starts a block as its plain form does. With `unlabeled`, a response without a
+ * `Conclusion:` label starts at the non-blank line directly before the first known report label,
+ * and that line becomes `Conclusion`. A bold label inside a fenced code block stays text (issue
+ * #1483).
  * @param {string} response
+ * @param {{ unlabeled?: boolean, boldLabels?: boolean }} [options]
  * @returns {string[] | null}
  */
-function closingBlock(response) {
-  const lines = response.split(/\r?\n/);
+function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
+  const lines = normalizeReportLabels(response, boldLabels).split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (/^Conclusion:\s*/i.test(lines[i])) {
       start = i;
     }
   }
-  return start === -1 ? null : lines.slice(start);
+  if (start !== -1) {
+    return lines.slice(start);
+  }
+  if (!unlabeled) {
+    return null;
+  }
+  const first = lines.findIndex((line) => PLAIN_LABEL_LINE.test(line));
+  if (first === -1) {
+    return null;
+  }
+  let before = first - 1;
+  while (before >= 0 && lines[before].trim() === "") {
+    before--;
+  }
+  if (before < 0 || !isPlainProseLine(lines[before])) {
+    return null;
+  }
+  const block = lines.slice(before);
+  block[0] = `Conclusion: ${lines[before].trim()}`;
+  return block;
 }
 
 /**
@@ -199,10 +294,11 @@ function closingBlock(response) {
  * The same line outside a run still blanks the block, because the decorated-label
  * check runs again on the folded lines. Any other decorated form blanks the block, folded or not.
  * @param {string} response
+ * @param {{ boldLabels?: boolean }} [options]
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
  */
-export function parseReportBlock(response) {
-  const block = closingBlock(response);
+export function parseReportBlock(response, { boldLabels = true } = {}) {
+  const block = closingBlock(response, { unlabeled: true, boldLabels });
   if (!block) {
     return null;
   }
@@ -231,6 +327,35 @@ export function parseReportBlock(response) {
     report[key] = found.value;
   }
   return report;
+}
+
+/**
+ * True when `response` parses only because bold report labels were normalized. A response that
+ * also parses without bold labels is not bold-dependent.
+ * @param {string} response
+ * @returns {boolean}
+ */
+export function parsesOnlyWithBoldLabels(response) {
+  return (
+    parseReportBlock(response) !== null &&
+    parseReportBlock(response, { boldLabels: false }) === null
+  );
+}
+
+/**
+ * The report for one child result. A multi-part unidentified OpenCode report that parses only
+ * through bold normalization is null.
+ * @param {string} response
+ * @param {boolean} [multiPartUnidentified]
+ * @returns {ReturnType<typeof parseReportBlock>}
+ */
+export function reportForResult(response, multiPartUnidentified = false) {
+  if (typeof response !== "string") {
+    return null;
+  }
+  return multiPartUnidentified && parsesOnlyWithBoldLabels(response)
+    ? null
+    : parseReportBlock(response);
 }
 
 // A report label line, empty or with a value, for example `Notes:` or `Notes: none`. The reviewer
@@ -460,14 +585,26 @@ function lastLabeled(lines, label) {
 // An accept counts only with a Checks line in the closing block, matching the
 // parent rule the prompt states (#217) and the interactive --require-accept gate
 // (issue #218). An accept without a Checks line is treated as not accepted.
-/** The first failing acceptance check, "verdict" or "checks", or null when the review is accepted. */
-export function acceptanceFailure(response) {
+/**
+ * The first failing acceptance check, "verdict" or "checks", or null when the review is accepted.
+ * The optional stored report is the one the turn result carries, so a fail-closed null is kept.
+ * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} [report]
+ * @returns {"verdict" | "checks" | null}
+ */
+export function acceptanceFailure(response, report = parseReportBlock(response)) {
   if (parseVerdict(response) !== "accept") {
     return "verdict";
   }
-  return parseReportBlock(response)?.checks ? null : "checks";
+  return report?.checks ? null : "checks";
 }
 
-export function isAcceptedReview(response) {
-  return acceptanceFailure(response) === null;
+/**
+ * True when the response is an accept with a stored report that carries a Checks line.
+ * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} [report]
+ * @returns {boolean}
+ */
+export function isAcceptedReview(response, report = parseReportBlock(response)) {
+  return acceptanceFailure(response, report) === null;
 }
