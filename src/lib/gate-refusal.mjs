@@ -35,9 +35,9 @@ const UNRESOLVED_COMPARE_WITH_CI =
 
 /**
  * The marker refusal for the run's PR input, or null when the run declares
- * neither a gate nor a PR, where the marker stays the only record. A declared
- * PR run needs the gate the same way a gated run does, so it refuses the marker
- * too and names the gate it must reach instead of a flag it never carried
+ * neither a gate nor a PR. The marker stays the only record then. A declared
+ * PR run needs the gate the same way a gated run does. It refuses the marker
+ * too and names the gate it must reach, instead of a flag it never carried
  * (#302). The two paths share this function so the wording cannot drift.
  * @param {object} options
  * @returns {string | null}
@@ -61,10 +61,10 @@ export const COMPARE_HEAD_INPUT_REFUSAL =
 
 /**
  * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
- * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did, so
- * either one with this verified compare would record two outcomes for one head (#1098).
- * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared (#1111),
- * which no flag selected, so the refusal names the compare and not the flag.
+ * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did.
+ * Either one with this verified compare records two outcomes for one head (#1098).
+ * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared (#1111).
+ * No flag selected it, so the refusal names the compare and not the flag.
  * @param {{ requireCi: number | null, unresolvedCompare: boolean, flag?: boolean }} options
  * @returns {string | null}
  */
@@ -80,7 +80,7 @@ export function compareHeadConflict({ requireCi, unresolvedCompare, flag = true 
 
 /**
  * The refusal a `--pr <pr>` declaration gives when the run carries no gate for
- * that PR, whether the gate is absent or names another pull request. A gate flag
+ * that PR. The gate can be absent or name another pull request. A gate flag
  * is a run input, so no turn in the run can supply it, and the refusal ends the
  * run. The recovery names `abort` as the only outcome the orchestrator owns.
  * @param {number | null} pr the declared PR, or null when the run declares none

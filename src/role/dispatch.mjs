@@ -1,5 +1,5 @@
-// `agent-loop role dispatch`: initializes the run on the first call, then charges one step and runs
-// one child turn under the state lock, recording the result in the state file.
+// `agent-loop role dispatch`: initializes the run on the first call. It then charges one step and
+// runs one child turn under the state lock, recording the result in the state file.
 import { appendFile, readFile, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizeAgent } from "../agents/index.mjs";
@@ -46,9 +46,9 @@ import {
 } from "./state.mjs";
 
 /**
- * Init detection is keyed on `--task` alone: the first call carries the task;
- * later calls read the configuration from the state file, so a provided flag
- * that matches the state passes through and a changed one is rejected.
+ * Init detection is keyed on `--task` alone: the first call carries the task.
+ * Later calls read the configuration from the state file. A provided flag
+ * that matches the state passes through, and a changed one is rejected.
  */
 function isInitCall(args) {
   return args.task !== null;
@@ -73,8 +73,8 @@ function initialState(args) {
     ...(args.reviewer !== null && normalizeAgent(args.reviewer) === "codex"
       ? { reviewerSandbox: args.reviewerSandbox ?? "none" }
       : {}),
-    // The state file holds a digest of the command and never the command: the
-    // flag on each reviewer dispatch is the only source of what runs, and the
+    // The state file holds a digest of the command and never the command. The
+    // flag on each reviewer dispatch is the only source of what runs. The
     // digest only detects a changed flag (ADR 0017). A run with no command
     // carries neither field.
     ...(args.testCmd === null
@@ -195,8 +195,8 @@ async function dispatchLocked(
   let state;
 
   if (init) {
-    // New-run rule: init over a terminal or absent state file is allowed; init
-    // over a non-terminal lifecycle is rejected and the parent must abort it
+    // New-run rule: init over a terminal or absent state file is allowed. Init
+    // over a non-terminal lifecycle is rejected, and the parent must abort it
     // first. Nothing is archived or written until every init check and the
     // prompt read pass, so a rejected init leaves the previous state untouched.
     validateInitFlags(args, agents);
@@ -209,7 +209,7 @@ async function dispatchLocked(
       await refuseUnreadableGate(`--pr ${args.pr}`, { pr: args.pr, cwd: args.cwd, gh, signal });
     }
     // Init over a terminal run replaces its record, so re-check a turn directory that the ended run
-    // kept before the new state drops the record (issue #1329).
+    // kept. Do this before the new state drops the record (issue #1329).
     await recheckKeptTurnTmpdir(existing?.lastDispatch?.turnTmpdir);
     state = initialState(args);
   } else {
@@ -220,7 +220,7 @@ async function dispatchLocked(
   const roleName = args.role;
 
   // The flag is the only source of the command, on every dispatch, a resume
-  // included, so a reviewer dispatch of a run that set one must pass it again.
+  // included. A reviewer dispatch of a run that set one must pass it again.
   // The refusal comes before the step is charged (ADR 0017).
   if (!init && roleName === "reviewer" && state.testCmdSha256 && args.testCmd === null) {
     throw new RoleError(
@@ -275,14 +275,14 @@ async function dispatchLocked(
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
       reviewerSandbox: storedReviewerSandbox(state),
-      // A pre-assigned session id is written before the CLI starts, so a crash during the turn
+      // A pre-assigned session id is written before the CLI starts. A crash during the turn
       // still leaves the id for the resume after `--resume-interrupted` (issue #395). The
       // result write below replaces it, with null when the turn kept no id.
       onSessionAssigned: async (id) => {
         recordRoleSession(state.roles[roleName], { sessionId: id, ...pickUnconfirmed(role, id) });
         await writeState(paths.stateFile, state);
       },
-      // The record of the private turn directory is written before the CLI starts, so a dispatch
+      // The record of the private turn directory is written before the CLI starts. A dispatch
       // that dies mid-turn leaves it for the call that marks the run `interrupted` (issue #1207).
       // The write is a precondition of the spawn: a failure starts no child and removes the turn
       // directory. `runChild` then handles it as any failed turn, so the run returns to `active`
@@ -292,12 +292,12 @@ async function dispatchLocked(
         try {
           await writeState(paths.stateFile, state);
         } catch (err) {
-          // The turn directory is removed on this failure, so no later write may save its record.
+          // The turn directory is removed on this failure, so no later write can save its record.
           delete state.lastDispatch.turnTmpdir;
           throw err;
         }
       },
-      // The child pid and start time go in after the spawn, so the recovery can tell a dead turn
+      // The child pid and start time go in after the spawn. The recovery can then tell a dead turn
       // from a dispatcher killed while its child still runs. A failed write leaves the record
       // without a child, and the recovery then keeps the directory.
       onTurnChild: async (pid) => {
@@ -322,8 +322,8 @@ async function dispatchLocked(
       error: readableErrorMessage(err),
       ...failedTurnEvidence(err),
     });
-    // A cancel or a fatal guard error can end the turn after the CLI reported its session, so
-    // keep the id for the resume that follows. A null id records a session the fallback cleared.
+    // A cancel or a fatal guard error can end the turn after the CLI reported its session.
+    // Keep the id for the resume that follows. A null id records a session the fallback cleared.
     await recordResult(state, roleName, role, payload, {
       lifecycle: canceled ? "interrupted" : "halted",
       stateFile: paths.stateFile,
@@ -355,7 +355,7 @@ async function dispatchLocked(
 
 /**
  * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, and the
- * role session, then writes the state and emits the `result` event.
+ * role session. It then writes the state and emits the `result` event.
  */
 async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
   state.lifecycle = lifecycle;
@@ -368,9 +368,9 @@ async function recordResult(state, roleName, role, result, { lifecycle, stateFil
 }
 
 /**
- * Applies the lifecycle rules of a dispatch to the run state: refuses a terminal run and an
- * interrupted run without `--resume-interrupted`, records the resume decision, and marks a run
- * that ended uncertainly `interrupted` (writing the state) before it throws.
+ * Applies the lifecycle rules of a dispatch to the run state. It refuses a terminal run and an
+ * interrupted run without `--resume-interrupted`. It records the resume decision and marks a run
+ * that ended uncertainly `interrupted`, writing the state before it throws.
  */
 async function recoverLifecycle(state, args, { paths, signal, readProcessCommands }) {
   const roleName = args.role;
@@ -379,8 +379,9 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
   }
 
   if (state.lifecycle === "interrupted") {
-    // Every later call re-checks the turn directory that the interrupted mark kept while a process
-    // of the dead child group ran, and removes it once that group has ended (issue #1329).
+    // Every later call re-checks the turn directory that the interrupted mark kept. The mark kept
+    // it while a process of the dead child group ran. The call removes it once that group has
+    // ended (issue #1329).
     await recheckKeptTurnTmpdir(state.lastDispatch?.turnTmpdir);
     if (!args.resumeInterrupted) {
       throw new RoleError(
@@ -388,16 +389,16 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
       );
     }
     // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
-    // that session, so the check comes before the step is charged (#671, ADR 0031).
+    // that session. The check comes before the step is charged (#671, ADR 0031).
     await refuseHeldSessions(
       { [roleName]: state.roles[roleName] },
       { signal, flag: "--resume-interrupted", readProcessCommands },
     );
     state.resumeDecision = { at: new Date().toISOString() };
   } else if (state.lifecycle === "dispatched") {
-    // A live lock owner would have thrown in withStateLock, so the previous
+    // `withStateLock` throws when a live owner holds the lock, so the previous
     // turn ended uncertainly. The first call after the crash always marks
-    // `interrupted`, exits non-zero, and spawns no child; a maintainer can
+    // `interrupted`, exits non-zero, and spawns no child. A maintainer can
     // resume from `interrupted` on a later call.
     state.lifecycle = "interrupted";
     // The previous call charged a step and recorded no result for it, so the
@@ -421,9 +422,9 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
 }
 
 /**
- * Runs the side effects of an init dispatch after every check and the prompt read passed:
- * session holder check, local file copy, archive of the old state, and the first state write.
- * Returns the local file copy result, or null when none ran.
+ * Runs the side effects of an init dispatch after every check and the prompt read passed. The steps
+ * are the session holder check, the local file copy, the archive of the old state, and the first
+ * state write. Returns the local file copy result, or null when none ran.
  */
 async function applyInitSideEffects(
   state,
@@ -433,15 +434,15 @@ async function applyInitSideEffects(
 ) {
   let localFiles = null;
   // A hard kill of an earlier run can leave its `claude` child alive and writing to this work
-  // tree, so a live holder of a session that the earlier states recorded refuses the init (ADR 0032).
+  // tree. A live holder of a session that the earlier states recorded refuses the init (ADR 0032).
   await refuseHeldIds(await readClaudeSessions(paths.stateDir), {
     readProcessCommands,
     signal,
     label: "init",
   });
   // Every check and the prompt read passed. The copy comes first, before the
-  // state file exists, so a copy that throws leaves no run to abort, and
-  // before the first child turn and snapshot, so every turn sees the files.
+  // state file exists. A copy that throws leaves no run to abort. The copy also
+  // comes before the first child turn and snapshot, so every turn sees the files.
   if (state.copyLocalFiles) {
     localFiles = await copyLocalFiles(
       args.cwd,
@@ -474,9 +475,9 @@ function pickUnconfirmed(role, id) {
 /**
  * Copies the session id of a role copy to the role state. `sessionUnconfirmed` marks an id that
  * no CLI output has confirmed, so recovery verifies it before a resume (issue #395, ADR 0016).
- * `conversationReplaced` is set only by a canceled turn that ran in a replaced conversation, so the
- * next worker turn sends the preamble (ADR 0027, decision 5). `taskSentTo` is the session id of the
- * conversation that last carried the init task, so no path needs its own mark for it.
+ * `conversationReplaced` is set only by a canceled turn that ran in a replaced conversation.
+ * The next worker turn then sends the preamble (ADR 0027, decision 5). `taskSentTo` is the session
+ * id of the conversation that last carried the init task, so no path needs its own mark for it.
  */
 function recordRoleSession(target, source) {
   target.sessionId = source.sessionId;
@@ -516,8 +517,8 @@ async function differingLocalFiles(state, cwd, signal) {
 }
 
 /**
- * Adds the copied and skipped path names of the init copy to the envelope, and on a later
- * dispatch the names of copies that differ from the main work tree.
+ * Adds the copied and skipped path names of the init copy to the envelope. On a later dispatch it
+ * adds the names of copies that differ from the main work tree.
  */
 function withLocalFiles(payload, localFiles, localFilesDiffer) {
   return {
@@ -534,22 +535,21 @@ function withLocalFiles(payload, localFiles, localFilesDiffer) {
  * and response text stay out of it, so the state file cannot grow with the text
  * a child returns (#312).
  *
- * Exactly one entry exists per charged step: an entry is written when a
- * dispatch records its result, when a child fails, and when the recovery call
- * records the turn a crash left uncertain. A dispatch past `maxSteps` is refused
- * before it runs, so the array holds at most `maxSteps` entries. A state file
- * written before this field exists starts with an empty history.
- *
- * `status` is `ok`, `error`, or `interrupted`. `interrupted` marks a charged
- * turn whose outcome is unknown, so it carries no verdict and no reviewed head.
+ * Exactly one entry exists per charged step. An entry is written when a dispatch
+ * records its result, when a child fails, or when recovery records a crash's
+ * uncertain turn. A dispatch past `maxSteps` is refused before it runs, so the
+ * array holds at most `maxSteps` entries.
  */
 function recordTurn(state, roleName, result, at) {
+  // A state file written before this field exists starts with an empty history.
   if (!Array.isArray(state.turns)) {
     state.turns = [];
   }
   const ok = result.status === "ok";
   state.turns.push({
     role: roleName,
+    // `status` is `ok`, `error`, or `interrupted`.
+    // `interrupted` marks a charged turn whose outcome is unknown, so it carries no verdict and no reviewed head.
     status: result.status,
     // Only a reviewer turn carries a verdict; the word never comes from a
     // worker response.
@@ -560,8 +560,8 @@ function recordTurn(state, roleName, result, at) {
 }
 
 // Builds the envelope for one dispatched turn. When the closing block does not
-// parse, `raw` carries the whole response: a bounded tail can drop the head of a
-// long block and with it the text the report was meant to preserve (issue #268).
+// parse, `raw` carries the whole response. A bounded tail can drop the head of a
+// long block, and with it the text the report was meant to preserve (issue #268).
 function dispatchPayload(roleName, result) {
   if (result.status !== "ok") {
     return {

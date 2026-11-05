@@ -39,7 +39,7 @@ const JSON_POSITION_TAIL = /^(?: in JSON)? at position (\d+)(?: \(line (\d+) col
 /**
  * Names a `JSON.parse` failure without copying the summary text. The V8 message can quote
  * the input, so the result is built only from the fixed phrases above plus the numeric
- * position; any other message yields the generic `not valid JSON`.
+ * position. Any other message yields the generic `not valid JSON`.
  */
 function describeJsonParseError(error) {
   const message = String(error?.message);
@@ -66,21 +66,12 @@ function describeJsonParseError(error) {
  * `finish`: accepts the five-key summary as JSON on stdin, from active only, and
  * sets the lifecycle to `finished`. A key other than the five and
  * `unresolvedCompare` is refused and named (#1021).
- * `--compare-head <pr>` makes the PR-head half of the gate and nothing else: it refuses unless the
- * PR is open, its head equals `reviewed.head`, and the reviewed tree is clean, reads no required-check source, evaluates no
- * merge state, and records `headCompare: "verified"` in the envelope and the state file. It is refused beside
- * `--require-ci` and `unresolvedCompare`, and a declared-PR run still needs its gate (#1098).
- * `--require-accept` and `--require-ci` gate the finish. Every applicable refusal
- * is reported in one error. A run that declared `--pr <pr>` at init must end
- * through `--require-ci <pr>`: a finish with no gate or a gate for another PR is
- * refused. A finish that carries `unresolvedCompare` is refused under
- * `--require-ci` and for a declared PR, because the gate resolves the compare.
- * An optional `unresolvedCompare` boolean beside the five keys, and a gate that
- * passes with no required check (`noRequiredChecks`), are recorded in the
- * envelope and the state file. Both keep the finish distinct from a verified
- * one. Without `--require-ci` or `--compare-head` this subcommand never resolves
- * the PR head, so an omitted marker is an accepted gap (ADR 0009, ADR 0012,
- * issues #281, #286, #293, #302, #336).
+ * `--compare-head <pr>` makes the PR-head half of the gate and records
+ * `headCompare: "verified"`. `--require-accept` and `--require-ci` gate the finish,
+ * and every applicable refusal is reported in one error. A run that declared
+ * `--pr <pr>` at init must end through `--require-ci <pr>`. Without `--require-ci`
+ * or `--compare-head` this subcommand never resolves the PR head, so an omitted
+ * marker is an accepted gap.
  */
 export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (state.lifecycle !== "active") {
@@ -122,12 +113,16 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   // refused, so a refused finish never reads GitHub (#302).
   const refusals = [];
   // The init-time `--pr` declaration is the run's PR input, so a declared run
-  // can only end through the gate for that PR. A state file written before this
-  // field has no `pr`, so an absent declaration keeps the marker-only behavior.
+  // can only end through the gate for that PR. A finish with no gate, or a gate
+  // for another PR, is refused. A state file written before this field has no
+  // `pr`, so an absent declaration keeps the marker-only behavior.
   const declaredPr = state.pr ?? null;
   const reviewed = state.lastResult?.reviewed ?? null;
   // The headless gate refuses the same combination with the same words, so the
-  // message is one function rather than two copies (#293).
+  // message is one function rather than two copies (#293). A finish that carries
+  // `unresolvedCompare` is refused under `--require-ci` and for a declared PR,
+  // because the gate resolves the compare. The accepted gap names issues #281,
+  // #286, #293, #302, and #336 (ADR 0009, ADR 0012).
   const markerReason = unresolvedCompareReason({
     pr: declaredPr,
     requireCi: args.requireCi,
@@ -137,6 +132,8 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     refusals.push(markerReason);
   }
   if (args.compareHead !== null) {
+    // `--compare-head` refuses unless the PR is open, its head equals `reviewed.head`, and the tree is clean.
+    // It reads no required-check source, evaluates no merge state, and is refused beside `--require-ci` or `unresolvedCompare`.
     const conflict = compareHeadConflict({
       requireCi: args.requireCi,
       unresolvedCompare: validated.value.unresolvedCompare === true,
@@ -206,7 +203,8 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   }
   if (args.compareHead !== null) {
     // The runtime resolved the PR head, which `unresolvedCompare` records as not done. No check
-    // result is claimed, so a reader never reads this as a gated pass (#1098).
+    // result is claimed, so a reader never reads this as a gated pass (#1098). A declared-PR run
+    // still needs its gate.
     state.headCompare = "verified";
     payload.headCompare = "verified";
     logInfo(
@@ -216,7 +214,8 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (validated.value.unresolvedCompare) {
     // Recorded in the envelope and beside the summary in the state file, so a
     // recorded unresolved compare never reads as a verified finish (#281). A
-    // verified finish keeps the current envelope and state.
+    // verified finish keeps the current envelope and state. Both keep the finish
+    // distinct from a verified one.
     state.unresolvedCompare = true;
     payload.unresolvedCompare = true;
   }

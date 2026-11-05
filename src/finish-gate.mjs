@@ -9,20 +9,18 @@ import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";
 
 /**
- * Reads one PR gate for a finish. A `gh` failure is a refusal, not a thrown error: the read throws
- * on an unreadable PR, repository, or API reply, and in the interactive path that error leaves the
- * run `active` for the parent to retry. The headless run has no retry outside this refusal, so
- * throwing would discard a run that a later turn could pass. The refusal fails closed either way,
- * and any child turn clears the prior-refusal flag, so a retry costs a step rather than ending the
- * run (#293).
+ * Reads one PR gate for a finish. A `gh` failure is a refusal, not a thrown error.
+ * The headless run has no retry outside this refusal. The refusal fails closed
+ * either way, and any child turn clears the prior-refusal flag. The read throws
+ * on an unreadable PR, repository, or API reply. In the interactive path that
+ * error leaves the run `active` for the parent to retry.
  * @param {object} options
  * @param {() => Promise<{ ok: boolean, reason?: string }>} options.read The gate read.
  * @param {string} options.failedLog Log label for a read that threw.
  * @param {string} options.failedReason Reason prefix for a read that threw.
  * @param {string} options.failedRecovery Recovery text for a read that threw.
  * @param {string} options.refusedRecovery Recovery text for a gate that read and refused.
- * @returns {Promise<{ refusal: { reason: string, recovery: string } | null, result: object | null }>}
- *   `result` is the gate read, or null when the read threw.
+ * @returns {Promise<{ refusal: { reason: string, recovery: string } | null, result: object | null }>} `result` is the gate read, or null when the read threw.
  */
 async function readGate({ read, failedLog, failedReason, failedRecovery, refusedRecovery }) {
   let result;
@@ -30,6 +28,7 @@ async function readGate({ read, failedLog, failedReason, failedRecovery, refused
     result = await read();
   } catch (err) {
     // A caller cancel ends the run; it is not a gate refusal that a later turn could pass.
+    // A throw discards a run that a later turn can pass.
     if (readProp(err, "isCanceled")) throw err;
     const detail = firstErrorLine(readableErrorText(err));
     logError(`${failedLog}: ${detail}`);
@@ -39,6 +38,7 @@ async function readGate({ read, failedLog, failedReason, failedRecovery, refused
     };
   }
   if (result.ok) return { refusal: null, result };
+  // A retry then costs a step rather than ending the run (#293).
   return { refusal: { reason: result.reason, recovery: refusedRecovery }, result };
 }
 

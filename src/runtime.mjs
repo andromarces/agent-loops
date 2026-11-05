@@ -33,8 +33,8 @@ import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 
 /**
  * Process exit code for a recorded finish that carries `unresolvedCompare`. The
- * loop still records the finish and prints its summary; the code is what tells
- * an exit-code-only consumer that the PR-head compare was not verified (#279).
+ * loop still records the finish and prints its summary. The code tells an
+ * exit-code-only consumer that the PR-head compare was not verified (#279).
  * It is 4, not 3, because 3 is the harness-refusal code of `harness-check`.
  */
 export const UNRESOLVED_COMPARE_EXIT = 4;

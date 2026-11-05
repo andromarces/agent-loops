@@ -21,8 +21,8 @@ const ADAPTERS = ["claude", "codex", "agy", "opencode", "copilot"];
 
 const squash = (text) => text.replace(/\s+/g, " ");
 
-// Runs one worker turn and one reviewer turn, with the adapter kind named `workerKind` on the
-// worker and `reviewerKind` on the reviewer, and returns the prompt that each adapter received.
+// Runs one worker turn and one reviewer turn. The adapter kind is `workerKind` on the
+// worker and `reviewerKind` on the reviewer. It returns the prompt that each adapter received.
 async function dispatchedPrompts(workerKind, reviewerKind) {
   const repo = await newRunRepo();
   const worker = recordingAdapter([]);

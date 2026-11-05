@@ -1,5 +1,5 @@
-// Arguments of `agent-loop role`: parsing, the refusal of a flag that belongs to another operation,
-// the checks that run at init, and the refusal of an init flag that a later call changes.
+// Arguments of `agent-loop role`: parsing, and the refusal of a flag that belongs to another operation.
+// It also holds the checks that run at init, and the refusal of an init flag that a later call changes.
 import { resolve } from "node:path";
 import { normalizeAgent, supportedAgents } from "../agents/index.mjs";
 import {
@@ -29,10 +29,10 @@ const INIT_FIELDS = [
 
 /**
  * The reviewer sandbox mode that a state file holds, or null for a reviewer that is not Codex. A
- * state file from before ADR 0038 has no `reviewerSandbox` field: it gets `workspace-write` when it
- * holds the legacy `reviewerWorkspaceWrite: true` and `read-only` otherwise, never `none`. A field
- * that is present with any other value, `null` included, is refused for every reviewer kind, because
- * the run cannot tell which sandbox it recorded.
+ * state file from before ADR 0038 has no `reviewerSandbox` field. It gets `workspace-write` when it
+ * holds the legacy `reviewerWorkspaceWrite: true`, and `read-only` otherwise, never `none`. A field
+ * that is present with any other value, `null` included, is refused for every reviewer kind. The
+ * run cannot tell which sandbox it recorded.
  * @throws {RoleError} when the field is present and is not one of the three modes
  */
 export function storedReviewerSandbox(state) {
@@ -322,12 +322,11 @@ export function parseRoleArgsWithOperations(argv, operations) {
 }
 
 /**
- * Rejects each flag that belongs to another operation: `--role` is for dispatch,
- * `--reason` for abort, `--all`, `--expect`, and `--head` for wait-checks, and
- * `--compare-head`, `--require-accept`, and `--require-ci` for finish. It also
- * refuses `--expect` without `--all` on wait-checks.
- * The checks run in a fixed order, and abort's missing `--reason` is reported
- * before a finish gate, so each refusal keeps its error text.
+ * Rejects each flag that belongs to another operation. `--role` is for dispatch, and `--reason` is
+ * for abort. `--all`, `--expect`, and `--head` are for wait-checks, and `--compare-head`,
+ * `--require-accept`, and `--require-ci` are for finish. It also refuses `--expect` without `--all`
+ * on wait-checks. The checks run in a fixed order, and abort's missing `--reason` is reported before
+ * a finish gate, so each refusal keeps its error text.
  */
 export function rejectMisplacedFlags(args, operation) {
   if (operation !== "dispatch" && args.role !== null) {

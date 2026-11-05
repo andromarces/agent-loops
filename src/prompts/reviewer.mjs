@@ -14,10 +14,10 @@ import {
   testSlotRule,
 } from "./rules.mjs";
 
-// Same closing block as reportBlock, with the verdict line inside it so the
-// model treats it as part of the mandatory block, not an optional extra. The
+// Same closing block as reportBlock, with the verdict line inside it. The model
+// then treats it as part of the mandatory block, not an optional extra. The
 // block already carries the Checks line since issue #310, so the reviewer does
-// not repeat it, and the reviewer Checks line stays the only one a gate reads.
+// not repeat it. The reviewer Checks line stays the only one a gate reads.
 // The parent reads only this block, so each blocker must stand inside it (issue #434).
 // Deferred excludes the reviewer's own blockers and read-only rule (issue #1102).
 const reviewerReportBlock = `${reportBlock}

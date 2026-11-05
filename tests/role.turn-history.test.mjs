@@ -18,10 +18,10 @@ import {
 
 afterEach(cleanup);
 
-// Usefulness: verifies acceptance — the state file keeps one entry per
-// dispatched turn across the overwrite of `lastResult`, carrying role, status,
-// verdict, reviewed head, and time, so a finished run shows every turn without
-// the parent conversation log (issue #312).
+// Usefulness: verifies acceptance. The state file keeps one entry per
+// dispatched turn across the overwrite of `lastResult`. Each entry carries role,
+// status, verdict, reviewed head, and time. A finished run shows every turn
+// without the parent conversation log (issue #312).
 test("state keeps one turn per dispatch across later dispatches", async () => {
   const repo = await newRunRepo();
 
