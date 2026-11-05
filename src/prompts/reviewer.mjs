@@ -12,6 +12,7 @@ import {
   tempPathRule,
   tempRemovalRule,
   testSlotRule,
+  unnamedHostRule,
 } from "./rules.mjs";
 
 // Same closing block as reportBlock, with the verdict line inside it so the
@@ -43,6 +44,7 @@ const reviewerRules = (noReadableChecks) => `Review scope, in addition to the ta
 - A finding that is not a defect against the task, not a weakened existing guard or documented contract, and not a regression from the base branch goes in Notes, not in Blockers. A blocker needs a concrete failure scenario.
 - A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers.
 - A criterion that needs a check this turn cannot run, such as a live run against a production service, a device, or a manual step, goes in Checks as unverified and in Deferred. It is a blocker only when the task states that the check must pass in this run.
+- ${unnamedHostRule()}
 ${noReadableChecks ? `- ${NO_READABLE_CHECKS_RULE}\n` : ""}- When the task names a pull request, read the required checks for the reviewed head with gh pr checks <pr> --required. The command reads status only. It changes nothing. The rules below it apply only then.
   - Report a failing required check as a blocker. Exit code 8 means a check is pending: report it in Checks, not as a blocker.
   - Exit code 1 covers a failing check, a repository with no required check, and a read error. Report a blocker only when the output lists a failing required check. Report any other exit 1 as unresolved in Checks.
