@@ -583,39 +583,69 @@ test.each([
   expect(result.payload.raw).toContain(expected);
 });
 
-// Usefulness: verifies a worker response with prose paragraphs and no `Why:` label keeps a null
-// report, carries the whole response in raw, and names Why in `reportMissingLabel` in the envelope
-// and lastResult, so the parent learns the missing label without reading the raw text (issue #1520).
-test("worker dispatch names Why when the closing block has no Why label", async () => {
+// Usefulness: verifies a null report names every required label it lacks in the envelope, the
+// state file, and the warning (issue #1520). It names no response text. The first case is the
+// reviewer report that starts at Why, where no Conclusion line and no prose line before it exist.
+test.each([
+  {
+    name: "a block that starts at Why",
+    response: "Why: tests pass\nBlockers: none\nChecks: npm test",
+    labels: ["Conclusion"],
+  },
+  {
+    name: "a block without Why",
+    response: [
+      "The parser change lands with the new test.",
+      "",
+      "Step 2 of the issue is only partly met, because the reviewer reads the old path.",
+      "",
+      "Blockers: none",
+      "Checks: pnpm test",
+      "Notes: none",
+      "Deferred: none",
+    ].join("\n"),
+    labels: ["Why"],
+  },
+  {
+    name: "a block without Conclusion and Blockers",
+    response: "Why: tests pass\nChecks: npm test",
+    labels: ["Conclusion", "Blockers"],
+  },
+])(
+  "worker dispatch names every required label missing from $name",
+  async ({ response, labels }) => {
+    const repo = await newCleanRepo();
+    const worker = recordingAdapter([async () => response]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+        agents: { fake1: worker, fake2: recordingAdapter([]) },
+        stdin: stdinPrompt,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.payload.report).toBeNull();
+      expect(result.payload.raw).toBe(response);
+      expect(result.payload.reportMissingLabels).toEqual(labels);
+      expect((await readRepoState(repo)).lastResult.reportMissingLabels).toEqual(labels);
+      const logs = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(logs).toContain(labels.join(", "));
+      expect(logs).not.toContain("tests pass");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  },
+);
+
+// Usefulness: verifies a parsed report carries no missing-label field, so the field marks only a
+// null report that a required label caused (issue #1520).
+test("worker dispatch omits reportMissingLabels for a parsed report", async () => {
   const repo = await newCleanRepo();
-  const response = [
-    "The parser change lands with the new test.",
-    "",
-    "Step 2 of the issue is only partly met, because the reviewer reads the old path.",
-    "",
-    "Blockers: none",
-    "Checks: pnpm test",
-    "Notes: none",
-    "Deferred: none",
-  ].join("\n");
-  const missing = recordingAdapter([async () => response]);
-
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: { fake1: missing, fake2: recordingAdapter([]) },
-    stdin: stdinPrompt,
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.payload.report).toBeNull();
-  expect(result.payload.raw).toBe(response);
-  expect(result.payload.reportMissingLabel).toBe("Why");
-  expect((await readRepoState(repo)).lastResult.reportMissingLabel).toBe("Why");
-
-  const parsed = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
     agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
     stdin: stdinPrompt,
   });
-  expect(parsed.payload.report).not.toBeNull();
-  expect(parsed.payload).not.toHaveProperty("reportMissingLabel");
+  expect(result.payload.report).not.toBeNull();
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
 });
 
 // Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so

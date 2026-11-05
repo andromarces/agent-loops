@@ -3,7 +3,7 @@ import {
   hasClosingBlockAttempt,
   acceptanceFailure,
   isAcceptedReview,
-  missingRequiredReportLabel,
+  missingRequiredReportLabels,
   parseReportBlock,
   parseVerdict,
   parsesOnlyWithBoldLabels,
@@ -53,26 +53,45 @@ test("parseReportBlock maps an empty optional label to null", () => {
   });
 });
 
-// Usefulness: verifies the parser names the required label that a null report lacks, so a turn
-// result can say which label is missing without repeating the response text (issue #1520).
-test("missingRequiredReportLabel names the required label that a null report lacks", () => {
-  const noWhy = [
-    "The parser change lands with the new test.",
-    "",
-    "Step 2 of the issue is only partly met, because the reviewer reads the old path.",
-    "",
-    "Blockers: none",
-    "Checks: pnpm test",
-    "Notes: none",
-    "Deferred: none",
-  ].join("\n");
+// Usefulness: verifies the parser names Conclusion for the reviewer case, a block that starts at
+// Why (issue #1520). That response has no Conclusion line and no prose line before the first label.
+// No other test covers a missing leading label.
+test("missingRequiredReportLabels names Conclusion when the block starts at Why", () => {
+  const response = "Why: tests pass\nBlockers: none\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
+});
 
-  expect(parseReportBlock(noWhy)).toBeNull();
-  expect(missingRequiredReportLabel(noWhy)).toBe("Why");
-  expect(missingRequiredReportLabel("Conclusion: done\nWhy: ok")).toBe("Blockers");
-  expect(missingRequiredReportLabel(REPORT)).toBeNull();
-  expect(missingRequiredReportLabel(`${REPORT}\nNotes: tidy\n**Deferred**: later`)).toBeNull();
-  expect(missingRequiredReportLabel("looks fine, with no closing block here")).toBeNull();
+// Usefulness: verifies the parser names Why when a block has every other required label
+// (issue #1520).
+test("missingRequiredReportLabels names Why", () => {
+  const response = "Conclusion: done\nBlockers: none\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Why"]);
+});
+
+// Usefulness: verifies the parser names Blockers when a block has Conclusion and Why
+// (issue #1520).
+test("missingRequiredReportLabels names Blockers", () => {
+  const response = "Conclusion: done\nWhy: tests pass\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Blockers"]);
+});
+
+// Usefulness: verifies every missing required label is named, in report order, when two are absent
+// (issue #1520). A first-missing-only rule fails this test.
+test("missingRequiredReportLabels names both missing labels in report order", () => {
+  const response = "Why: tests pass\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion", "Blockers"]);
+});
+
+// Usefulness: verifies a parsed report, a structural failure, and a response with no closing block
+// carry no missing label (issue #1520).
+test("missingRequiredReportLabels returns an empty list without a missing required label", () => {
+  expect(missingRequiredReportLabels(REPORT)).toEqual([]);
+  expect(missingRequiredReportLabels(`${REPORT}\nNotes: tidy\n**Deferred**: later`)).toEqual([]);
+  expect(missingRequiredReportLabels("looks fine, with no closing block here")).toEqual([]);
 });
 
 // Usefulness: verifies the optional Checks label reaches the parsed report,

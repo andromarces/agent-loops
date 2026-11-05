@@ -13,7 +13,7 @@ import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockf
 import { hashCopiedLocalSources } from "./lib/local-files.mjs";
 import { diffMainWorkTree, readMainWorkTree } from "./lib/main-work-tree-change.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
-import { missingRequiredReportLabel, reportForResult } from "./lib/report.mjs";
+import { missingRequiredReportLabels, reportForResult } from "./lib/report.mjs";
 import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
 import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
@@ -388,7 +388,7 @@ async function readFailedTurnEvidence(state) {
  * record which process the directory belongs to. A rejection warns and never changes the turn.
  * @param {object} options
  * @returns {Promise<
- *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabel?: string,
+ *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
  *   { role: string, status: "error", error: string, transient?: string } & TurnEvidence
@@ -727,18 +727,20 @@ export async function runChild(options) {
       );
     }
     const report = reportForResult(response, multiPartUnidentified);
-    // A null report names the required label it lacks, so the parent and the log carry no response
+    // A null report names every required label it lacks, so the parent and the log carry no response
     // text beyond `raw` (issue #1520).
-    const reportMissingLabel = report === null ? missingRequiredReportLabel(response) : null;
-    if (reportMissingLabel) {
-      logWarn(`${roleName}: the closing block has no required ${reportMissingLabel} label`);
+    const reportMissingLabels = report === null ? missingRequiredReportLabels(response) : [];
+    if (reportMissingLabels.length > 0) {
+      logWarn(
+        `${roleName}: the closing block lacks ${reportMissingLabels.length === 1 ? "the required label" : "the required labels"} ${reportMissingLabels.join(", ")}`,
+      );
     }
     return {
       role: roleName,
       status: "ok",
       response,
       report,
-      ...(reportMissingLabel ? { reportMissingLabel } : {}),
+      ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
       ...(shellDenied ? { shellDenied } : {}),
       ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
       ...(reviewed ? { reviewed } : {}),

@@ -1,6 +1,6 @@
 # Closing block list rules
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child report holds a list, or when `report` is null and `raw` carries the response. A block that lacks a required label is null, and `reportMissingLabel` names that label.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child report holds a list, or when `report` is null and `raw` carries the response. A block that lacks a required label is null, and `reportMissingLabels` names each missing label.
 
 Each value of `report.notes` and `report.deferred` is one line, the label plain at column 0. A `- `
 list or an ordered `N. ` list (a `-` or a number and a period at column 0, exactly one space U+0020, then the item) that directly follows a report

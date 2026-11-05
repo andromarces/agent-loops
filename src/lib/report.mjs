@@ -218,13 +218,14 @@ export function hasClosingBlockAttempt(response) {
  * null when the response has no `Conclusion:` line at all. The whole response is normalized first,
  * so a bold label starts a block as its plain form does. With `unlabeled`, a response without a
  * `Conclusion:` label starts at the non-blank line directly before the first known report label,
- * and that line becomes `Conclusion`. A bold label inside a fenced code block stays text (issue
+ * and that line becomes `Conclusion`. With `diagnose`, a response with no prose line before the
+ * first known label starts at that label. A bold label inside a fenced code block stays text (issue
  * #1483).
  * @param {string} response
- * @param {{ unlabeled?: boolean, boldLabels?: boolean }} [options]
+ * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean }} [options]
  * @returns {string[] | null}
  */
-function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
+function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose = false } = {}) {
   const lines = normalizeReportLabels(response, boldLabels).split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -247,7 +248,9 @@ function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
     before--;
   }
   if (before < 0 || !isPlainProseLine(lines[before])) {
-    return null;
+    // Diagnosis reads the labels from the first known label, because a block that starts at Why
+    // still shows which required labels it lacks (issue #1520).
+    return diagnose ? lines.slice(first) : null;
   }
   const block = lines.slice(before);
   block[0] = `Conclusion: ${lines[before].trim()}`;
@@ -255,13 +258,13 @@ function closingBlock(response, { unlabeled = false, boldLabels = true } = {}) {
 }
 
 /**
- * The closing block of `response` as report values, or the first missing required label.
+ * The closing block of `response` as report values, or every missing required label.
  * @param {string} response
- * @param {{ boldLabels?: boolean }} [options]
- * @returns {{ report: object, missing?: undefined } | { report: null, missing: string } | null}
+ * @param {{ boldLabels?: boolean, diagnose?: boolean }} [options]
+ * @returns {{ report: object, missing?: undefined } | { report: null, missing: string[] } | null}
  */
-function reportDetail(response, { boldLabels = true } = {}) {
-  const block = closingBlock(response, { unlabeled: true, boldLabels });
+function reportDetail(response, { boldLabels = true, diagnose = false } = {}) {
+  const block = closingBlock(response, { unlabeled: true, boldLabels, diagnose });
   if (!block) {
     return null;
   }
@@ -278,6 +281,7 @@ function reportDetail(response, { boldLabels = true } = {}) {
     return null;
   }
   const report = {};
+  const missing = [];
   for (const [key, label, optional] of REPORT_LABELS) {
     const found = lastLabeled(lines, label);
     if (!found?.value) {
@@ -285,11 +289,12 @@ function reportDetail(response, { boldLabels = true } = {}) {
         report[key] = null;
         continue;
       }
-      return { report: null, missing: label };
+      missing.push(label);
+      continue;
     }
     report[key] = found.value;
   }
-  return { report };
+  return missing.length > 0 ? { report: null, missing } : { report };
 }
 
 /**
@@ -340,15 +345,15 @@ export function parseReportBlock(response, { boldLabels = true } = {}) {
 }
 
 /**
- * The first required label that a null report lacks, in report order: `Conclusion`, `Why`, or
- * `Blockers`. It is null when the report parses, when no closing block is found, and when another
- * rule makes the block unparseable, so a structural failure never reads as a missing label
- * (issue #1520).
+ * Every required label that a null report lacks, in report order: `Conclusion`, `Why`, then
+ * `Blockers`. The list is empty when the report parses or when no closing block is found. It is
+ * also empty when another rule makes the block unparseable, so a structural failure never reads
+ * as a missing label (issue #1520).
  * @param {string} response
- * @returns {string | null}
+ * @returns {string[]}
  */
-export function missingRequiredReportLabel(response) {
-  return reportDetail(response)?.missing ?? null;
+export function missingRequiredReportLabels(response) {
+  return reportDetail(response, { diagnose: true })?.missing ?? [];
 }
 
 /**

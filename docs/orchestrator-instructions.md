@@ -182,8 +182,8 @@ The example below is indented for display only. Example reviewer envelope:
   accepted. Process success never implies acceptance.
 - When the closing block cannot be parsed, `report` is null and `raw` carries
   the whole response, so no text the block held is lost. Treat a missing report
-  as not accepted. When a required label is missing, `reportMissingLabel` names
-  that label, for example `Why`, and holds no response text. A child turn whose
+  as not accepted. When a required label is missing, `reportMissingLabels` names
+  each missing label, for example `["Why"]`, and holds no response text. A child turn whose
   adapter returns a missing or non-string response ends `status: "error"`, not `ok`
   with `report: null`.
 - `report.checks` names the commands that ran in that child turn and their

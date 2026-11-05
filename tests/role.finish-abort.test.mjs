@@ -437,8 +437,8 @@ test("--require-accept refuses a finish that relies on a worker Checks line", as
 });
 
 // Usefulness: verifies the interactive gate refuses a reviewer accept whose report is null for the
-// missing Why label, names Why in the dispatch envelope, and accepts a later reviewer report that
-// carries Why and Checks (issue #1520).
+// missing Why label (issue #1520). It names Why in the dispatch envelope, and accepts a later report
+// that carries Why and Checks.
 test("--require-accept refuses an accept with no Why label and names Why", async () => {
   await setup();
   const repo = await useCleanRepo();
@@ -447,7 +447,7 @@ test("--require-accept refuses an accept with no Why label and names Why", async
 
   const refusedReview = await dispatchReviewer(repo, noWhy);
   expect(refusedReview.payload.report).toBeNull();
-  expect(refusedReview.payload.reportMissingLabel).toBe("Why");
+  expect(refusedReview.payload.reportMissingLabels).toEqual(["Why"]);
   const refused = await finishCall(repo, ["--require-accept"]);
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("Checks");
