@@ -326,6 +326,11 @@ for the whole run, and never tell a worker to remove it: a worker turn pushes it
 branch and stops there, because every later dispatch of that run targets the same
 `--cwd`.
 
+The worker preamble states the work tree edit rule. Edit, create, and delete
+files only under the run work tree. Before an edit with an absolute path, check
+that the path starts with the work tree root. A path that a tool returns for
+another checkout maps to the same relative path in the run work tree.
+
 Create the work tree with no upstream, so a plain `git push` of a worker cannot
 reach the default branch:
 

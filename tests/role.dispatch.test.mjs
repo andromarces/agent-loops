@@ -88,6 +88,28 @@ test("two consecutive worker dispatches resume the same worker session", async (
   expect(state.roles.worker.sessionId).toBe("sess-1");
 });
 
+// Usefulness: acceptance #1494 on the interactive path. The first worker turn carries the work tree
+// edit rule, so a dispatched worker edits its run work tree and maps a path from another checkout.
+test("the interactive worker preamble limits every edit to the run work tree", async () => {
+  const repo = await newRunRepo();
+  const worker = recordingAdapter([]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  const prompt = worker.recorded[0].prompt.replace(/\s+/g, " ");
+  expect(prompt).toContain("Edit, create, and delete files only under the run work tree.");
+  expect(prompt).toContain(
+    "Before an edit with an absolute path, check that the path starts with the work tree root.",
+  );
+  expect(prompt).toContain(
+    "A path that a tool returns for another checkout maps to the same relative path in the run work tree.",
+  );
+});
+
 // Usefulness: verifies acceptance — after an init call with --cwd set to a
 // directory other than the process cwd, the session entry for --parent-session
 // resolves to that run's state file through the shared helper.

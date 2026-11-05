@@ -100,6 +100,45 @@ test("a headless worker sees the run task on its first turn only", async () => {
   }
 });
 
+// Usefulness: acceptance #1494 on the headless path. The first worker turn carries the work tree
+// edit rule, so a headless worker edits its run work tree and maps a path from another checkout.
+test("a headless worker preamble limits every edit to the run work tree", async () => {
+  const repo = await createTempRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+
+    await runLoop({
+      task: "Task 1494",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    const prompt = workerAdapter.recorded[0].prompt.replace(/\s+/g, " ");
+    expect(prompt).toContain("Edit, create, and delete files only under the run work tree.");
+    expect(prompt).toContain(
+      "Before an edit with an absolute path, check that the path starts with the work tree root.",
+    );
+    expect(prompt).toContain(
+      "A path that a tool returns for another checkout maps to the same relative path in the run work tree.",
+    );
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies requirement "a refused action charges no step and ends no run" (#1034). With
 // a budget of one step, a run_worker that holds an unknown key is repaired and the repaired dispatch
 // still runs, so the refusal charged nothing.
