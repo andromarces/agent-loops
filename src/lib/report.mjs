@@ -340,6 +340,19 @@ export function parsesOnlyWithBoldLabels(response) {
   );
 }
 
+/**
+ * The report for one child result. A multi-part unidentified OpenCode report that parses only
+ * through bold normalization is null.
+ * @param {string} response
+ * @param {boolean} [multiPartUnidentified]
+ * @returns {ReturnType<typeof parseReportBlock>}
+ */
+export function reportForResult(response, multiPartUnidentified = false) {
+  return multiPartUnidentified && parsesOnlyWithBoldLabels(response)
+    ? null
+    : parseReportBlock(response);
+}
+
 // A report label line, empty or with a value, for example `Notes:` or `Notes: none`. The reviewer
 // `Verdict:` line is no report label, so a list after it never folds.
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
@@ -567,14 +580,26 @@ function lastLabeled(lines, label) {
 // An accept counts only with a Checks line in the closing block, matching the
 // parent rule the prompt states (#217) and the interactive --require-accept gate
 // (issue #218). An accept without a Checks line is treated as not accepted.
-/** The first failing acceptance check, "verdict" or "checks", or null when the review is accepted. */
-export function acceptanceFailure(response) {
+/**
+ * The first failing acceptance check, "verdict" or "checks", or null when the review is accepted.
+ * The optional stored report is the one the turn result carries, so a fail-closed null is kept.
+ * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} [report]
+ * @returns {"verdict" | "checks" | null}
+ */
+export function acceptanceFailure(response, report = parseReportBlock(response)) {
   if (parseVerdict(response) !== "accept") {
     return "verdict";
   }
-  return parseReportBlock(response)?.checks ? null : "checks";
+  return report?.checks ? null : "checks";
 }
 
-export function isAcceptedReview(response) {
-  return acceptanceFailure(response) === null;
+/**
+ * True when the response is an accept with a stored report that carries a Checks line.
+ * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} [report]
+ * @returns {boolean}
+ */
+export function isAcceptedReview(response, report = parseReportBlock(response)) {
+  return acceptanceFailure(response, report) === null;
 }

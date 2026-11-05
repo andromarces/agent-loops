@@ -238,7 +238,7 @@ async function acceptGateReason(state, cwd, signal) {
   if (!last || last.role !== "reviewer" || last.status !== "ok") {
     return "no reviewer turn after the latest worker turn";
   }
-  const failure = acceptanceFailure(last.response);
+  const failure = acceptanceFailure(last.response, last.report);
   if (failure === "verdict") {
     return "the latest reviewer turn did not return Verdict: accept";
   }

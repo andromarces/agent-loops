@@ -320,6 +320,23 @@ const ACCEPT_NO_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nVer
 const WORKER_WITH_CHECKS = "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
 const REJECT =
   "Conclusion: no\nWhy: broken\nBlockers: missing test\nChecks: npm test\nVerdict: reject";
+const BOLD_ONLY_SPLIT =
+  "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n**Checks:** tests passed";
+const ALL_BOLD_SPLIT =
+  "**Conclusion:** done\n**Why:** ok\n**Blockers:** none\n**Checks:** tests passed\nVerdict: accept";
+
+async function dispatchUnidentifiedReviewer(repo, reply) {
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-multi";
+    state.multiPartUnidentified = true;
+    return reply;
+  };
+  return executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+}
 
 async function dispatchWorker(repo, reply) {
   return executeRoleCommand(withRepo(dispatchArgv([]), repo), {
@@ -448,6 +465,26 @@ test("--require-accept refuses an accept with no Checks line", async () => {
   expect(result.exitCode).toBe(1);
   expect(result.payload.error).toContain("Checks");
 });
+
+// Usefulness: verifies interactive --require-accept refuses a bold-only report from a multi-part
+// unidentified turn, so the shared fail-closed report reaches the finish gate (issue #1483).
+test.each([
+  ["plain labels with a bold Checks line", BOLD_ONLY_SPLIT],
+  ["all bold labels", ALL_BOLD_SPLIT],
+])(
+  "--require-accept refuses a bold-only report across unidentified parts: %s",
+  async (_name, reply) => {
+    await setup();
+    const repo = await useCleanRepo();
+    await initWorkerRun(repo);
+    await dispatchUnidentifiedReviewer(repo, reply);
+
+    const result = await finishCall(repo, ["--require-accept"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.payload.error).toContain("Checks");
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+  },
+);
 
 // Usefulness: verifies --require-accept refuses when the reviewed snapshot is
 // not exact, because a null-hash entry has no content identity (issue #218).

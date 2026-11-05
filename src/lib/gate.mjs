@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { isFullSha } from "./git-sha.mjs";
 import { isJsonObject } from "./json.mjs";
-import { isAcceptedReview } from "./report.mjs";
+import { acceptanceFailure } from "./report.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "acceptedSinceWorker"];
@@ -27,7 +27,7 @@ export const resetGate = () => ({ ...freshGate(), workerRan: true });
  * replaces the reviewed state with the one it carries, or none.
  * @param {object} state a gate state; not mutated
  * @param {"worker" | "reviewer"} role
- * @param {{ status: string, response?: string, reviewed?: object }} result
+ * @param {{ status: string, response?: string, report?: object | null, reviewed?: object }} result
  * @returns {object} the next gate state
  */
 export function applyResult(state, role, result) {
@@ -40,7 +40,7 @@ export function applyResult(state, role, result) {
     ...state,
     reviewerTurnDispatched: true,
     reviewerRan: state.reviewerRan || ok,
-    acceptedSinceWorker: ok && isAcceptedReview(result.response),
+    acceptedSinceWorker: ok && acceptanceFailure(result.response, result.report) === null,
     lastReviewed,
   };
 }
