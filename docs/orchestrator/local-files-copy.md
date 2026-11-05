@@ -1,6 +1,6 @@
 # Local files copied into the work tree
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work tree, and when an envelope carries `localFilesDiffer`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work tree, and when an envelope carries `localFilesDiffer` or `localSourceChangedInTurn`.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files
 of the main work tree that `--cwd` ignores (agent instructions, harness
@@ -35,6 +35,16 @@ hash. `unknown` means the runtime could not prove a side, and it never means no 
 legacy state with no init hash reports every copied path as `unknown`.
 
 For `source`, the main work tree changed after init: refresh the copy by hand when it holds
-no turn edit. For `copy`, a turn changed the copy: report a breach under `open`. The first
-action checks whether the main work tree holds a newer rule file, such as `AGENTS.md`. Never
-read, print, or quote the file to decide.
+no turn edit and no `localSourceChangedInTurn` entry names it. For `copy`, a turn changed the
+copy: report a breach under `open`. The first action checks whether the main work tree holds a
+newer rule file, such as `AGENTS.md`. Never read, print, or quote the file to decide.
+
+Each worker and reviewer turn also hashes every copied source before and after its window. A
+source that changed inside the window is reported on that turn's envelope as
+`localSourceChangedInTurn: [path]`, by path only, at most 20 paths. The field is absent when no
+source changed or the read failed. The read proves no actor: the user or another process can
+change the source too.
+
+Report a `localSourceChangedInTurn` path under `open`, and ask the user before any refresh. A
+refresh would copy content that the turn wrote, and the child prompts forbid a turn to write one.
+Never read, print, or quote the file to decide.
