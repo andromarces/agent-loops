@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
-import { readableErrorText } from "./error-message.mjs";
+import { readableErrorText, readProp } from "./error-message.mjs";
 import { GIT_READ_TIMEOUT_MS, gitRead, SnapshotError } from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
@@ -18,6 +18,17 @@ export class MutationError extends Error {
     this.role = role;
     this.paths = paths;
   }
+}
+
+/**
+ * True for an error that ends a turn instead of being handled as a turn failure: a mutation, a
+ * snapshot failure, or a cancel. A hostile getter reads as not fatal, as `readProp` does.
+ */
+export function isFatalTurnError(err) {
+  const name = readProp(err, "name");
+  return (
+    name === "MutationError" || name === "SnapshotError" || Boolean(readProp(err, "isCanceled"))
+  );
 }
 
 /**

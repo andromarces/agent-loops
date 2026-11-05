@@ -57,6 +57,11 @@ export function normalizedLocalPaths(args) {
   }
 }
 
+/**
+ * Refuses an init flag combination that a later call cannot honor. Checks the `--copy-local-path`
+ * values and the parent-session requirement.
+ * @throws {RoleError} for an invalid copy path, a conflicting copy flag, or a missing required flag
+ */
 export function validateInitFlags(args, agents = {}) {
   if (args.copyLocalPaths.length > 0) {
     normalizedLocalPaths(args);

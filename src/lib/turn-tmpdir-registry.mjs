@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
-import { tmpRoot } from "./tmp-root.mjs";
+import { stateRoot } from "./runstate.mjs";
 
 // The turn directories of every agent-loop process on the host, as one small file per directory
 // under the runs root (issue #1240, ADR 0069). The file is named for the directory and holds its
@@ -16,7 +16,7 @@ export const TURN_DIR_NAME = /^al-[A-Za-z0-9]{6}$/;
 const MAX_BYTES = 64;
 const IDENTITY = /^\d{1,20}:\d{1,20}$/;
 
-const registryDir = () => join(tmpRoot("AGENT_LOOP_RUNS_ROOT", "runs"), "turn-tmpdirs");
+const registryDir = () => join(stateRoot(), "turn-tmpdirs");
 
 /**
  * Registers the turn directory `name`, which has the device and inode of `stat` (read with

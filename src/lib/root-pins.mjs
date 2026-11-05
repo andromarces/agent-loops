@@ -1,26 +1,35 @@
 import { tmpRoot } from "./tmp-root.mjs";
 
-// Each machine-wide root defaults to a path under `os.tmpdir()`, so the child needs the value that
-// the parent resolves. A value that the user set is kept. An empty value counts as unset, because
-// `tmpRoot` falls back to its `os.tmpdir()` default for it, so keeping it would let a `TMP` override
-// in the child move the root. Each entry is an `[env, leaf]` pair, as `stateRoot`, `slotsRoot`, and
-// `sessionRecordsRoot` pass to `tmpRoot`.
-const ROOT_PINS = [
-  ["AGENT_LOOP_RUNS_ROOT", "runs"],
-  ["AGENT_LOOP_TEST_SLOTS_ROOT", "test-slots"],
-  ["AGENT_LOOP_SESSION_RECORDS_ROOT", "session-records"],
-];
+// Every machine-wide root, keyed by purpose. Each entry names the environment variable that
+// overrides the root and its leaf under `<os tmpdir>/agent-loops`. The table is the only place a
+// root name is defined, so a root that a reader resolves is also a root that every child turn
+// inherits through `rootPins`.
+export const ROOTS = {
+  runs: { env: "AGENT_LOOP_RUNS_ROOT", leaf: "runs" },
+  testSlots: { env: "AGENT_LOOP_TEST_SLOTS_ROOT", leaf: "test-slots" },
+  sessionRecords: { env: "AGENT_LOOP_SESSION_RECORDS_ROOT", leaf: "session-records" },
+};
+
+/** The path of the machine-wide root `name`, resolved as `tmpRoot` resolves it. */
+export function rootPath(name) {
+  const { env, leaf } = ROOTS[name];
+  return tmpRoot(env, leaf);
+}
 
 /**
  * The environment entries that pin the runs root, the test-slot directory, and the session-record
  * directory of a child to the paths that this process resolves, so a `TMP`, `TEMP`, or `TMPDIR`
  * override inside the child cannot move them (issues #955, #970). A root that the user set to a
- * non-empty value is left out.
+ * non-empty value is left out, because an empty value counts as unset and a kept empty value would
+ * let the child's `TMP` move the root.
  */
 export function rootPins() {
   const pins = {};
-  for (const [name, leaf] of ROOT_PINS) {
-    if (!process.env[name]) pins[name] = tmpRoot(name, leaf);
+  for (const { env, leaf } of Object.values(ROOTS)) {
+    if (!process.env[env]) pins[env] = tmpRoot(env, leaf);
   }
   return pins;
 }
+
+/** The slot directory: `AGENT_LOOP_TEST_SLOTS_ROOT`, else `<os tmpdir>/agent-loops/test-slots`. */
+export const slotsRoot = () => rootPath("testSlots");

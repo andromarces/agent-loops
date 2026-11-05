@@ -1,4 +1,4 @@
-import { parseJson } from "../lib/json.mjs";
+import { parseJson, tryParseJson } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 import {
@@ -27,11 +27,8 @@ function flagCapacityFailure(err) {
     .split(/\r?\n/)
     .filter((line) => line.startsWith(AGY_ERROR_PREFIX))
     .flatMap((line) => {
-      try {
-        return [JSON.parse(line.slice(AGY_ERROR_PREFIX.length))];
-      } catch {
-        return [];
-      }
+      const payload = tryParseJson(line.slice(AGY_ERROR_PREFIX.length));
+      return payload === null ? [] : [payload];
     });
   const shortError = payloads.at(-1)?.short_error;
   if (typeof shortError === "string" && CAPACITY_SHORT_ERROR.test(shortError)) {
@@ -73,11 +70,7 @@ export async function runAgy(state, prompt, options = {}) {
   } catch (err) {
     // A failed turn can print a result object with an empty `conversation_id`. Keep a non-empty one on a
     // first turn; keepFailedSessionId never replaces an id already on the state.
-    try {
-      keepFailedSessionId(state, JSON.parse(err?.stdout ?? "")?.conversation_id);
-    } catch {
-      // Not JSON: the failure names no conversation.
-    }
+    keepFailedSessionId(state, tryParseJson(err?.stdout ?? "")?.conversation_id);
     flagCapacityFailure(err);
     throw err;
   }
