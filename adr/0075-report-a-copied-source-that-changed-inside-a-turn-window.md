@@ -4,6 +4,8 @@
 
 accepted
 
+Partially supersedes [ADR 0074: Report the side that changed in localFilesDiffer](0074-report-the-side-that-changed-in-local-files-differ.md). This ADR replaces decision 5's unconditional action for `changed: "source"`: a path that `localSourceChangedInTurn` names is reported under `open`, and the user is asked before a refresh. Every other decision of ADR 0074 holds.
+
 ## Date
 
 2026-11-05
@@ -47,5 +49,5 @@ Andro Marces
 - [Pull request #1507](https://github.com/andromarces/agent-loops/pull/1507)
 - Implementation: `hashCopiedLocalSources` in `src/lib/local-files.mjs`, the turn window in `src/child-turn.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`
 - Documented in [Local files copied into the work tree](../docs/orchestrator/local-files-copy.md), the [orchestrator instructions](../docs/orchestrator-instructions.md), and [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree)
-- Extends [ADR 0074](0074-report-the-side-that-changed-in-local-files-differ.md)
+- Supersedes (partially): [ADR 0074](0074-report-the-side-that-changed-in-local-files-differ.md), decision 5's unconditional action for `changed: "source"`
 - [ADR Index](README.md)

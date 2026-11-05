@@ -692,24 +692,23 @@ export async function runChild(options) {
     }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
-    // The five reads are independent, so they run together. All settle before a failure throws, so
+    // The four reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
-    const [workTree, sharedGitChanged, lockfileChanged, mainChange, localSourceChangedInTurn] =
-      await mapInBatches(
-        [
-          isWorker ? readWorkTree : null,
-          readSharedGitChanged,
-          readLockfileChanged,
-          readMainWorkTreeChanged,
-          readLocalSourceChangedInTurn,
-        ],
-        5,
-        (read) => (read === null ? null : read(evidence)),
-      );
+    const [workTree, sharedGitChanged, lockfileChanged, mainChange] = await mapInBatches(
+      [
+        isWorker ? readWorkTree : null,
+        readSharedGitChanged,
+        readLockfileChanged,
+        readMainWorkTreeChanged,
+      ],
+      4,
+      (read) => (read === null ? null : read(evidence)),
+    );
     if (isReviewer && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
     // Read after the last child call of the dispatch, the task-only turn included.
+    const localSourceChangedInTurn = await readLocalSourceChangedInTurn(evidence);
     const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory(evidence);
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
