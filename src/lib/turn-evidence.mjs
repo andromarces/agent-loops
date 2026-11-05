@@ -17,8 +17,8 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 //   (issue #984).
 // - mainWorkTreeChanged: paths of the main work tree that a worker turn in a linked work tree changed
 //   (issue #1448).
-// - mainWorkTreeFastForward: the old and new head of a clean fast-forward of the main work tree to
-//   the remote default branch, so the parent can tell it apart from a worker edit (issue #1485).
+// - mainWorkTreeFastForward: the old and new head of a clean fast-forward to the remote default
+//   branch (issue #1485).
 // - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
 //   before the next reviewer turn (issue #1180).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a

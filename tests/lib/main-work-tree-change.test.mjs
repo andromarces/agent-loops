@@ -16,6 +16,23 @@ const race = vi.hoisted(() => ({
   fault: null,
 }));
 
+// Releases the slow cancellation of a stalled read.
+const hold = vi.hoisted(() => {
+  let release;
+  let gate;
+  const open = () => {
+    gate = new Promise((resolve) => {
+      release = resolve;
+    });
+  };
+  open();
+  return {
+    wait: () => gate,
+    release: () => release(),
+    reset: open,
+  };
+});
+
 vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
   const real = await importOriginal();
   const readsDefaultRef = (args) =>
@@ -29,12 +46,14 @@ vi.mock("../../src/lib/git-read.mjs", async (importOriginal) => {
       if (race.fault === "throw" && readsDefaultRef(args)) {
         throw new Error("read failed");
       }
-      if (race.fault === "stall" && args[0] === "merge-base") {
+      if (race.fault === "slow-cancel" && args[0] === "merge-base") {
         return new Promise((_, reject) => {
-          if (options.signal?.aborted) return reject(options.signal.reason);
-          options.signal?.addEventListener("abort", () => reject(options.signal.reason), {
-            once: true,
-          });
+          const finish = () => reject(options.signal.reason ?? new Error("aborted"));
+          if (options.signal?.aborted) hold.wait().then(finish);
+          else
+            options.signal?.addEventListener("abort", () => hold.wait().then(finish), {
+              once: true,
+            });
         });
       }
       if (race.fault === "malformed" && readsDefaultRef(args)) {
@@ -72,6 +91,8 @@ afterEach(async () => {
   race.arm = false;
   race.calls = 0;
   race.fault = null;
+  hold.release();
+  hold.reset();
   await removePath(tree.base);
 });
 
@@ -104,15 +125,27 @@ test("a remote default ref that moves during the read keeps the change report", 
   expect(after.commitPaths).toEqual(["init.txt"]);
 });
 
-// Usefulness: verifies a classification timeout keeps the completed path report (issue #1485).
-test("a fast-forward check that times out keeps the change report", async () => {
+// Usefulness: verifies a timed-out check returns at its bound without awaiting slow cleanup (issue #1485).
+test("a timed-out fast-forward check returns before its slow cleanup settles", async () => {
   const before = await readMainWorkTree(tree.linked);
   expect(before).not.toBeNull();
   await forwardMain();
-  race.fault = "stall";
+  race.fault = "slow-cancel";
 
-  const after = await readMainWorkTree(tree.linked, { since: before, deadlineMs: 2_000 });
+  const started = performance.now();
+  let after;
+  try {
+    after = await Promise.race([
+      readMainWorkTree(tree.linked, { since: before, deadlineMs: 200 }),
+      new Promise((resolve) => setTimeout(() => resolve("late"), 1_200)),
+    ]);
+  } finally {
+    hold.release();
+  }
+  const elapsed = performance.now() - started;
 
+  expect(after).not.toBe("late");
+  expect(elapsed).toBeLessThan(1_000);
   expect(after).not.toBeNull();
   expect(after.fastForward).toBeNull();
   expect(after.commitPaths).toEqual(["init.txt"]);

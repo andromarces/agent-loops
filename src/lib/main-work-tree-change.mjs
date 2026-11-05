@@ -44,8 +44,14 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
             readCommitPaths(main, since.head, state.head, bound),
             stopped,
           ]);
-          // The classification is separate, so a failure keeps the commit paths above.
-          state.fastForward = await readFastForward(main, since, state, bound);
+          // The deadline race keeps the commit paths above.
+          state.fastForward = await readFastForwardWithinDeadline(
+            main,
+            since,
+            state,
+            bound,
+            stopped,
+          );
         }
         return state;
       },
@@ -83,6 +89,23 @@ async function readFastForward(main, before, after, bound) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Races the fast-forward check against the read deadline. A deadline that wins returns null at
+ * once, and the aborted check settles on its own with its rejection handled.
+ */
+function readFastForwardWithinDeadline(main, before, after, bound, stopped) {
+  const classification = readFastForward(main, before, after, bound);
+  // A late rejection after the deadline stays handled and never raises.
+  classification.catch(() => {});
+  return Promise.race([
+    classification,
+    stopped.then(
+      () => null,
+      () => null,
+    ),
+  ]);
 }
 
 async function classifyFastForward(main, before, after, bound) {
