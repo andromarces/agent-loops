@@ -267,6 +267,16 @@ Apply these parent rules:
   the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed
   between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
   the run, and leave the main work tree change to the user.
+  - For a clean fast-forward, report `mainWorkTreeFastForward` under open in the finish summary with
+    no stop. The `mainWorkTreeFastForward` field names the old and new head SHAs, and never content.
+  - The field holds only when the main work tree had no dirty, untracked, or unignored change before
+    and after the turn. It also requires the same checked-out branch and an ancestor old head. The
+    new head must equal the remote-tracking ref of the default branch read after the turn.
+  - The user, a `git pull`, or another process can cause the fast-forward, and the report does not
+    prove who moved the head.
+  - A dirty or untracked change with a fast-forward keeps the full `mainWorkTreeChanged` report. A
+    detached head, a branch switch, a reset to an older commit, and a non-fast-forward move keep the
+    field.
 - A worker envelope carries `lockfileChanged` when the turn changed a lockfile at the work tree root
   or a non-Node dependency file at any depth. Examples are `pnpm-lock.yaml` after a base branch
   merge and a `requirements.txt` in a subdirectory. The field names the lockfiles by path only, and
