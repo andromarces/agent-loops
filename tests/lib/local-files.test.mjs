@@ -21,10 +21,13 @@ vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) =>
-      gitDouble.answer && command === "git"
-        ? gitDouble.answer(command, args, options)
-        : real.execa(command, args, options),
+    execa: async (command, args, options) => {
+      const answer =
+        gitDouble.answer && command === "git"
+          ? await gitDouble.answer(command, args, options)
+          : undefined;
+      return answer ?? real.execa(command, args, options);
+    },
   };
 });
 
@@ -54,9 +57,45 @@ async function git(cwd, ...args) {
   return execa("git", args, { cwd });
 }
 
+/**
+ * Answers the work tree location reads of `tree` from memory, so a copy case starts no `git`
+ * process for them. The file classification (`ls-files`, `check-ignore`) and every other call
+ * reach real `git`. A tree with another work tree registered reads its list from real `git`,
+ * because those entries are part of the case's assertion.
+ */
+function linkedTreeGit(tree) {
+  const commonDir = join(tree.main, ".git");
+  return async (command, args, options) => {
+    if (command !== "git" || (options.cwd !== tree.main && options.cwd !== tree.linked)) {
+      return undefined;
+    }
+    const answer = (stdout) => ({
+      exitCode: 0,
+      stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
+      stderr: "",
+    });
+    switch (JSON.stringify(args)) {
+      case '["rev-parse","--show-toplevel"]':
+        return answer(`${options.cwd}\n`);
+      case '["rev-parse","--git-common-dir"]':
+        return answer(`${options.cwd === tree.main ? ".git" : commonDir}\n`);
+      case '["worktree","list","--porcelain","-z"]': {
+        const registered = await readdir(join(commonDir, "worktrees")).catch(() => []);
+        if (registered.length > 1) {
+          return undefined;
+        }
+        return answer(`worktree ${tree.main}\0\0worktree ${tree.linked}\0\0`);
+      }
+      default:
+        return undefined;
+    }
+  };
+}
+
 async function createLinked(options) {
   const tree = await createLinkedWorkTree(options);
   created.push(tree.base);
+  gitDouble.answer = linkedTreeGit(tree);
   return tree;
 }
 
