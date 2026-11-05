@@ -522,332 +522,448 @@ export async function waitChecks({
   if (head !== null && !isFullSha(head)) {
     throw new Error("head must be a full lowercase commit SHA.");
   }
-  const end = deadline ?? now() + timeoutSeconds * 1000;
-  const checksArgv = [
-    "pr",
-    "checks",
-    String(pr),
-    ...(all ? [] : ["--required"]),
-    "--json",
-    "name,state,bucket",
-  ];
-  const headArgv = ["pr", "view", String(pr), "--json", "headRefOid,baseRefName"];
-  let last = [];
-  let lastHead = null;
-  let slug = null;
-  // Set by every read of the wait whose child exit was not observed, including a sibling read
-  // that the first failure of a group left running to the ceiling.
-  let unconfirmed = false;
-  // The failures that `gh pr checks` listed in the current poll. They are PR-level evidence,
-  // not pinned to a commit, so they ride apart from `checks`, which holds states read for `head`.
-  let prFailures = [];
-  // The expected check names that the last poll found no run for on its head.
-  let awaiting = [];
-  const timeout = () => ({
-    timedOut: true,
-    head: lastHead,
-    checks: last,
-    ...(awaiting.length > 0 ? { awaiting } : {}),
-    ...(prFailures.length > 0 ? { prFailures } : {}),
+  const context = createWaitContext({
+    pr,
+    cwd,
+    timeoutSeconds,
+    deadline,
+    all,
+    head,
+    expect,
+    gh,
+    now,
+    sleep,
+    childExitCeilingMs,
+    signal,
   });
-  // The one place that adds `childExitUnconfirmed`: every envelope the wait returns, settled or
-  // timed out, passes through it, and an error carries the flag in the catch below.
-  const seal = (envelope) => (unconfirmed ? { ...envelope, childExitUnconfirmed: true } : envelope);
-  // One bounded read, so the commit reads share the deadline of the checks read. A group of
-  // reads passes its own signal, which stops the siblings of a failed read.
-  const boundedRead = async (argv, _cwd, options = {}) => {
-    const remaining = end - now();
-    if (remaining <= 0) {
-      throw new BoundReached({});
-    }
-    const result = await readWithin(
-      gh,
-      argv,
-      cwd,
-      remaining,
-      options.signal ?? null,
-      options.dropEnv,
-      childExitCeilingMs,
-    );
-    if (result.timedOut) {
-      unconfirmed ||= Boolean(result.childExitUnconfirmed);
-      throw new BoundReached(result);
-    }
-    return result;
-  };
-  const bounded = signal ? withSignal(boundedRead, signal) : boundedRead;
-  const ensureSlug = async () => {
-    slug ??= await repoSlug(bounded, cwd, "could not be read");
-  };
-  // The commit reads are the gate's own reads, which page by page number with one `gh api --include`
-  // request per page and never follow the `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is marked
-  // `transient`, and the wait retries it on the next poll. That needs a first-line status of 500,
-  // 502, 503, or 504 with a body that is empty or one JSON value. It also covers a transport failure
-  // with no status line and no body (#1312). Every other failure ends the wait: any
-  // other status, a 4xx whatever its body says, a failure with no status block, and a reply whose
-  // body is not exactly one JSON value.
-  const readCommit = async (sha) => {
-    await ensureSlug();
-    return commitEntries(bounded, slug, sha, cwd, true);
-  };
-  // False when the bound is spent, so the caller reports it instead of sleeping.
-  const pause = async () => {
-    const left = end - now();
-    if (left <= 0) {
-      return false;
-    }
-    try {
-      await sleep(Math.min(POLL_INTERVAL_MS, left), signal);
-    } catch (err) {
-      // The sleep rejects on an abort; report it as the cancel the rest of the
-      // role CLI reports, so Ctrl+C exits 130 instead of a read failure.
-      if (signal?.aborted) {
-        throw canceledError();
-      }
-      throw err;
-    }
-    return true;
-  };
-  // The ruleset and protection results of the base branch, read once per wait. A rules change during
-  // the wait is not seen by this wait. The `--require-ci` finish gate reads both sources again, so the
-  // finish judges the current rules (#1267).
-  const sourceCache = new Map();
-  const gateContext = () => ({ bounded, slug, pr, cwd, sourceCache });
-  const absent = async (base, names, reply) => {
-    await ensureSlug();
-    return absenceOf(gateContext(), base, names, reply);
-  };
-  const readPrHead = async () => readHead(pr, await bounded(headArgv));
-  const probeContext = () => ({ bounded, slug, cwd, pr, headOf: readPrHead });
-  // Whether the probe of `noCheckSource` settled. A retryable failure leaves it unset, so the next
-  // poll probes again.
-  let probed = false;
-  // The retryable failure of the current poll, or null. The next poll retries it, and a wait that
-  // reaches the bound with it set reports it as an error (#1025, #1312).
-  let failed = null;
-  // Whether a workflow of the base branch may run for the PR head `sha`, read once per head. A read
-  // that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
-  let workflowMayRun = { sha: null, value: true };
-  const workflowMayRunFor = async (sha, base) => {
-    if (workflowMayRun.sha !== sha) {
-      let value = null;
-      try {
-        await ensureSlug();
-        value = await pullRequestWorkflowMayRun(probeContext(), sha, base);
-      } catch (raw) {
-        // A failed read holds the pass. A transport failure is kept for the bound, which reports it.
-        const err = retryableOrThrow(raw, {
-          retryable: (error) => error?.transport,
-          settled: () => true,
-        });
-        if (err !== null) {
-          failed = err;
-        }
-      }
-      if (value === null) {
-        return true;
-      }
-      workflowMayRun = { sha, value };
-    }
-    return workflowMayRun.value;
-  };
-  const probe = async (sha, base) => {
-    await ensureSlug();
-    return noCheckSource(probeContext(), sha, base);
-  };
-  // The retryable failure of the latest completed poll, or null when that poll had none. It is a
-  // server error or a transport failure. A wait that ends on the bound with it set reports it as an
-  // error. Neither then reads as a timeout or a pass (#1025, #1312).
-  let transient = null;
-  // The `gh pr` reads of one poll: the head, and the check list when the head is the one waited
-  // for. `listed` is null for another head.
-  const readPr = async () => {
-    const { head: sha, base } = await readPrHead();
-    if (head !== null && sha !== head) {
-      return { sha, base, listed: null };
-    }
-    const read = await bounded(checksArgv);
-    const listed = readOutcome(pr, read, all);
-    // The required names come from this read, so the poll makes no second `gh pr checks` call (#1125).
-    const names = all ? null : requiredNamesOf(read);
-    if (listed.noRequiredChecks && !(await absent(base, names))) {
-      listed.noRequiredChecks = false;
-      listed.settled = false;
-    }
-    return { sha, base, listed, names };
-  };
-  // The retryable failure of `raw`, or a throw. The bound always ends the wait and so does a terminal
-  // failure, unless `settled` says the poll already holds a failure that ends it. `retryable` names
-  // the tag that the read sets for a failure that it can retry. A cancel carries neither tag, so it
-  // reaches the caller as the same object.
-  const retryableOrThrow = (
-    raw,
-    { retryable = (err) => err?.transient, settled = () => false } = {},
-  ) => {
-    const err = failureOf(raw);
-    // A cancel reaches the caller as the same object, with no retry and no hold.
-    if (readProp(err, "isCanceled")) {
-      throw err;
-    }
-    if (err instanceof BoundReached || !retryable(err)) {
-      if (err instanceof BoundReached || !settled()) {
-        throw err;
-      }
-      return null;
-    }
-    return err;
-  };
-  // The outcome of one poll that read the check list of `sha`: the commit states read by SHA, or the
-  // probe result. A retryable failure of a read is kept in `failed`, and a listed failure settles the wait
-  // whatever the commit read returns.
-  const commitOutcome = async (sha, base, listed, names) => {
-    let items = null;
-    let runNames = [];
-    let actionsRun = false;
-    let headEmpty = false;
-    try {
-      const entries = await readCommit(sha);
-      runNames = entries.runs.map((run) => run.name);
-      actionsRun = entries.runs.some((run) => run.app?.slug === ACTIONS_APP_SLUG);
-      headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
-      items = all
-        ? allItems(entries)
-        : requiredItems(entries, await contextsOf(gateContext(), base, listed, names), sha);
-    } catch (raw) {
-      // A failure that `gh pr checks` lists settles the wait, so a commit or source read
-      // that fails never delays it. The bound and every other failure still end it.
-      const err = retryableOrThrow(raw, {
-        settled: () => failed !== null || prFailures.length > 0,
-      });
-      if (err !== null) {
-        // A retryable failure is retried on the next poll, unless a listed failure settles the wait.
-        failed = err;
-      }
-    }
-    // The probe runs once per settled answer, only for an `--all` wait that names no expected check.
-    // It runs after `gh pr checks` listed nothing and the by-SHA read found no check run and no
-    // commit status. A state on the PR head never gives way to the probe (ADR 0048).
-    if (items !== null && all && expect.length === 0 && !probed && headEmpty) {
-      try {
-        const noSource = await probe(sha, base);
-        probed = true;
-        if (listed.checks.length === 0 && noSource) {
-          return { settled: true, checks: [], noCheckSource: true };
-        }
-      } catch (raw) {
-        // A transport failure keeps the probe open, so the next poll reads again.
-        const err = retryableOrThrow(raw, {
-          retryable: (error) => error?.transport,
-          settled: () => true,
-        });
-        if (err !== null) {
-          failed = err;
-        } else {
-          probed = true;
-        }
-      }
-    }
-    if (failed !== null && prFailures.length === 0) {
-      return { settled: false, checks: [], unread: true };
-    }
-    if (items === null) {
-      // No state was read for `sha`, so the result names no head and holds no check.
-      return { settled: true, checks: [], unread: true };
-    }
-    const read = readOutcome(
-      pr,
-      asRead(items),
-      all,
-      `the check runs and commit statuses of ${sha}`,
-    );
-    // The commit states only make the outcome stricter. A failing state, or a failure
-    // that `gh pr checks` lists, settles the wait, and a listed failure is reported in
-    // `prFailures`, never in `checks`. A pass needs both the PR outcome and the commit
-    // states to pass, so a pending or not yet reported PR answer keeps waiting.
-    // An expected name needs a check run: a commit status of that name is no run on `sha`.
-    awaiting = expect.filter((name) => !runNames.includes(name));
-    const failing = prFailures.length > 0 || items.some(isFailing);
-    const passing = read.settled && listed.settled && awaiting.length === 0;
-    // A pass waits for the run of a base workflow that has not registered on `sha` yet (#1228).
-    const held = !failing && passing && all && !actionsRun && (await workflowMayRunFor(sha, base));
-    return { settled: failing || (passing && !held), checks: read.checks };
-  };
-  const poll = async () => {
-    for (;;) {
-      prFailures = [];
-      failed = null;
-      let state = null;
-      try {
-        state = await readPr();
-      } catch (raw) {
-        // A retryable failure of a `gh pr` read is retried on the next poll.
-        failed = retryableOrThrow(raw);
-      }
-      if (state?.listed) {
-        const { sha, base, listed, names } = state;
-        if (listed.noChecksYet && !all) {
-          try {
-            await absent(base, names, "no checks");
-          } catch (raw) {
-            // A retryable failure of a source read is retried on the next poll.
-            failed = retryableOrThrow(raw);
-          }
-        }
-        prFailures = listed.checks.filter(isFailing);
-        // A branch with no required check names no state to read, so it carries no commit read.
-        // An empty required list names nothing to read, so the wait continues.
-        const outcome =
-          !listed.noRequiredChecks && (all || listed.checks.length > 0)
-            ? await commitOutcome(sha, base, listed, names)
-            : listed;
-        // A new head drops the kept checks, so the envelope never pairs them with it.
-        if (!outcome.unread && sha !== lastHead) {
-          last = [];
-          lastHead = sha;
-        }
-        // An empty list is not a settled read: `gh pr checks --required` omits a
-        // check that has not started, so the last reported states are kept for the
-        // envelope while the wait continues.
-        if (outcome.checks.length > 0) {
-          last = outcome.checks;
-        }
-        if (outcome.settled) {
-          return {
-            timedOut: false,
-            ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
-            ...(outcome.noCheckSource ? { noCheckSource: true } : {}),
-            head: outcome.unread ? null : sha,
-            checks: outcome.checks,
-            ...(prFailures.length > 0 ? { prFailures } : {}),
-          };
-        }
-      }
-      // A completed poll replaces the error of an earlier one: only the latest poll keeps it.
-      transient = failed;
-      if (!(await pause())) {
-        if (transient !== null) {
-          throw transient;
-        }
-        return timeout();
-      }
-    }
-  };
   try {
-    return seal(await poll());
+    return seal(context, await poll(context));
   } catch (raw) {
     let err = failureOf(raw);
     if (err instanceof BoundReached) {
-      unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
+      context.unconfirmed ||= Boolean(err.result.childExitUnconfirmed);
       // A listed failure is reported with the bound, so an earlier retryable failure never replaces it.
-      if (transient === null || prFailures.length > 0) {
-        return seal(timeout());
+      if (context.transient === null || context.prFailures.length > 0) {
+        return seal(context, timeoutOf(context));
       }
-      err = transient;
+      err = context.transient;
     }
-    // An error envelope carries the unconfirmed exit too: a child may still run.
-    if (unconfirmed && err instanceof Error) {
+    // An error envelope carries the unconfirmed exit too: a child can still run.
+    if (context.unconfirmed && err instanceof Error) {
       err.childExitUnconfirmed = true;
     }
     throw err;
+  }
+}
+
+/**
+ * Builds the inputs and mutable state of one wait.
+ * The wait helpers read and write this object, so every poll shares one cache.
+ * @param {object} options The resolved options of `waitChecks`.
+ */
+function createWaitContext(options) {
+  const context = {
+    pr: options.pr,
+    cwd: options.cwd,
+    all: options.all,
+    head: options.head,
+    expect: options.expect,
+    gh: options.gh,
+    now: options.now,
+    sleep: options.sleep,
+    childExitCeilingMs: options.childExitCeilingMs,
+    signal: options.signal,
+    end: options.deadline ?? options.now() + options.timeoutSeconds * 1000,
+    checksArgv: [
+      "pr",
+      "checks",
+      String(options.pr),
+      ...(options.all ? [] : ["--required"]),
+      "--json",
+      "name,state,bucket",
+    ],
+    headArgv: ["pr", "view", String(options.pr), "--json", "headRefOid,baseRefName"],
+    last: [],
+    lastHead: null,
+    slug: null,
+    // Set by every read of the wait whose child exit was not observed. A sibling read that the
+    // first failure of a group left running to the ceiling sets it too.
+    unconfirmed: false,
+    // The failures that `gh pr checks` listed in the current poll. They are PR-level evidence,
+    // not pinned to a commit, so they ride apart from `checks`, which holds states read for `head`.
+    prFailures: [],
+    // The expected check names that the last poll found no run for on its head.
+    awaiting: [],
+    // The ruleset and protection results of the base branch, read once per wait. A rules change during
+    // the wait is not seen by this wait. The `--require-ci` finish gate reads both sources again, so the
+    // finish judges the current rules (#1267).
+    sourceCache: new Map(),
+    // Whether the probe of `noCheckSource` settled. A retryable failure leaves it unset, so the next
+    // poll probes again.
+    probed: false,
+    // The retryable failure of the current poll, or null. The next poll retries it, and a wait that
+    // reaches the bound with it set reports it as an error (#1025, #1312).
+    failed: null,
+    // Whether a workflow of the base branch can run for the PR head `sha`, read once per head. A read
+    // that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
+    workflowMayRun: { sha: null, value: true },
+    // The retryable failure of the latest completed poll, or null when that poll had none. It is a
+    // server error or a transport failure. A wait that ends on the bound with it set reports it as an
+    // error. Neither then reads as a timeout or a pass (#1025, #1312).
+    transient: null,
+  };
+  const boundedRead = (argv, readCwd, readOptions) =>
+    readBounded(context, argv, readCwd, readOptions);
+  context.bounded = context.signal ? withSignal(boundedRead, context.signal) : boundedRead;
+  return context;
+}
+
+/** The envelope of a wait that ended on its bound, with the last states the poll read. */
+function timeoutOf(context) {
+  return {
+    timedOut: true,
+    head: context.lastHead,
+    checks: context.last,
+    ...(context.awaiting.length > 0 ? { awaiting: context.awaiting } : {}),
+    ...(context.prFailures.length > 0 ? { prFailures: context.prFailures } : {}),
+  };
+}
+
+/**
+ * The one place that adds `childExitUnconfirmed`.
+ * Every envelope the wait returns passes through it, settled or timed out, and the catch below carries the flag on an error.
+ */
+function seal(context, envelope) {
+  return context.unconfirmed ? { ...envelope, childExitUnconfirmed: true } : envelope;
+}
+
+/**
+ * Runs one read bounded by the time left, so the commit reads share the deadline of the checks read.
+ * A group of reads passes its own signal, which stops the siblings of a failed read.
+ * A read that reaches the bound throws `BoundReached` with its result.
+ */
+async function readBounded(context, argv, _cwd, options = {}) {
+  const remaining = context.end - context.now();
+  if (remaining <= 0) {
+    throw new BoundReached({});
+  }
+  const result = await readWithin(
+    context.gh,
+    argv,
+    context.cwd,
+    remaining,
+    options.signal ?? null,
+    options.dropEnv,
+    context.childExitCeilingMs,
+  );
+  if (result.timedOut) {
+    context.unconfirmed ||= Boolean(result.childExitUnconfirmed);
+    throw new BoundReached(result);
+  }
+  return result;
+}
+
+/** Reads the repository slug once, and reuses it for every later read. */
+async function ensureSlug(context) {
+  context.slug ??= await repoSlug(context.bounded, context.cwd, "could not be read");
+}
+
+// The commit reads are the gate's own reads. They page by page number with one `gh api --include`
+// request per page. They never follow the `Link` header, which they reject when it names another
+// host (see `pagedRead`).
+//
+// A failed read is marked `transient`, and the wait retries it on the next poll. That needs a
+// first-line status of 500, 502, 503, or 504 with a body that is empty or one JSON value. It also
+// covers a transport failure with no status line and no body (#1312). Every other failure ends the
+// wait. That covers any other status and a 4xx whatever its body says. It also covers a failure
+// with no status block and a reply whose body is not exactly one JSON value.
+/** Reads the gate's own check-run and commit-status entries of `sha`, after the repository slug read. */
+async function readCommit(context, sha) {
+  await ensureSlug(context);
+  return commitEntries(context.bounded, context.slug, sha, context.cwd, true);
+}
+
+/**
+ * Waits for the next poll, or reports that the bound is spent.
+ * @returns {Promise<boolean>} False when the bound is spent, so the caller reports it instead of sleeping.
+ */
+async function pause(context) {
+  const left = context.end - context.now();
+  if (left <= 0) {
+    return false;
+  }
+  try {
+    await context.sleep(Math.min(POLL_INTERVAL_MS, left), context.signal);
+  } catch (err) {
+    // The sleep rejects on an abort. Report it as the cancel the rest of the role CLI reports, so
+    // Ctrl+C exits 130 instead of a read failure.
+    if (context.signal?.aborted) {
+      throw canceledError();
+    }
+    throw err;
+  }
+  return true;
+}
+
+/** The wait context that the required-check source and absence reads take. */
+function gateContext(context) {
+  return {
+    bounded: context.bounded,
+    slug: context.slug,
+    pr: context.pr,
+    cwd: context.cwd,
+    sourceCache: context.sourceCache,
+  };
+}
+
+/** Reads the required-check absence of `base` after the repository slug read. */
+async function absent(context, base, names, reply) {
+  await ensureSlug(context);
+  return absenceOf(gateContext(context), base, names, reply);
+}
+
+/** Reads the PR head and base branch of the wait. */
+async function readPrHead(context) {
+  return readHead(context.pr, await context.bounded(context.headArgv));
+}
+
+/** The context that the no-check-source probe takes. */
+function probeContext(context) {
+  return {
+    bounded: context.bounded,
+    slug: context.slug,
+    cwd: context.cwd,
+    pr: context.pr,
+    headOf: () => readPrHead(context),
+  };
+}
+
+/**
+ * Whether a workflow of the base branch can run for the PR head `sha`, read once per head.
+ * A read that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
+ */
+async function workflowMayRunFor(context, sha, base) {
+  if (context.workflowMayRun.sha !== sha) {
+    let value = null;
+    try {
+      await ensureSlug(context);
+      value = await pullRequestWorkflowMayRun(probeContext(context), sha, base);
+    } catch (raw) {
+      // A failed read holds the pass. A transport failure is kept for the bound, which reports it.
+      const err = retryableOrThrow(raw, {
+        retryable: (error) => error?.transport,
+        settled: () => true,
+      });
+      if (err !== null) {
+        context.failed = err;
+      }
+    }
+    if (value === null) {
+      return true;
+    }
+    context.workflowMayRun = { sha, value };
+  }
+  return context.workflowMayRun.value;
+}
+
+/** Probes for a check source of the PR head `sha` after the repository slug read. */
+async function probe(context, sha, base) {
+  await ensureSlug(context);
+  return noCheckSource(probeContext(context), sha, base);
+}
+
+/**
+ * The `gh pr` reads of one poll: the head, and the check list when the head is the one waited for.
+ * `listed` is null for another head.
+ */
+async function readPr(context) {
+  const { head: sha, base } = await readPrHead(context);
+  if (context.head !== null && sha !== context.head) {
+    return { sha, base, listed: null };
+  }
+  const read = await context.bounded(context.checksArgv);
+  const listed = readOutcome(context.pr, read, context.all);
+  // The required names come from this read, so the poll makes no second `gh pr checks` call (#1125).
+  const names = context.all ? null : requiredNamesOf(read);
+  if (listed.noRequiredChecks && !(await absent(context, base, names))) {
+    listed.noRequiredChecks = false;
+    listed.settled = false;
+  }
+  return { sha, base, listed, names };
+}
+
+// The retryable failure of `raw`, or a throw. The bound always ends the wait and so does a terminal
+// failure, unless `settled` says the poll already holds a failure that ends it. `retryable` names
+// the tag that the read sets for a failure that it can retry. A cancel carries neither tag, so it
+// reaches the caller as the same object.
+function retryableOrThrow(
+  raw,
+  { retryable = (err) => err?.transient, settled = () => false } = {},
+) {
+  const err = failureOf(raw);
+  // A cancel reaches the caller as the same object, with no retry and no hold.
+  if (readProp(err, "isCanceled")) {
+    throw err;
+  }
+  if (err instanceof BoundReached || !retryable(err)) {
+    if (err instanceof BoundReached || !settled()) {
+      throw err;
+    }
+    return null;
+  }
+  return err;
+}
+
+/**
+ * The outcome of one poll that read the check list of `sha`: the commit states read by SHA, or the
+ * probe result. A retryable failure of a read is kept in `failed`, and a listed failure settles the
+ * wait whatever the commit read returns.
+ */
+async function commitOutcome(context, sha, base, listed, names) {
+  let items = null;
+  let runNames = [];
+  let actionsRun = false;
+  let headEmpty = false;
+  try {
+    const entries = await readCommit(context, sha);
+    runNames = entries.runs.map((run) => run.name);
+    actionsRun = entries.runs.some((run) => run.app?.slug === ACTIONS_APP_SLUG);
+    headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
+    items = context.all
+      ? allItems(entries)
+      : requiredItems(entries, await contextsOf(gateContext(context), base, listed, names), sha);
+  } catch (raw) {
+    // A failure that `gh pr checks` lists settles the wait, so a commit or source read that fails
+    // never delays it. The bound and every other failure still end it.
+    const err = retryableOrThrow(raw, {
+      settled: () => context.failed !== null || context.prFailures.length > 0,
+    });
+    if (err !== null) {
+      // A retryable failure is retried on the next poll, unless a listed failure settles the wait.
+      context.failed = err;
+    }
+  }
+  // The probe runs once per settled answer, only for an `--all` wait that names no expected check.
+  // It runs after `gh pr checks` listed nothing and the by-SHA read found no check run and no commit status.
+  // A state on the PR head never gives way to the probe (ADR 0048).
+  if (
+    items !== null &&
+    context.all &&
+    context.expect.length === 0 &&
+    !context.probed &&
+    headEmpty
+  ) {
+    try {
+      const noSource = await probe(context, sha, base);
+      context.probed = true;
+      if (listed.checks.length === 0 && noSource) {
+        return { settled: true, checks: [], noCheckSource: true };
+      }
+    } catch (raw) {
+      // A transport failure keeps the probe open, so the next poll reads again.
+      const err = retryableOrThrow(raw, {
+        retryable: (error) => error?.transport,
+        settled: () => true,
+      });
+      if (err !== null) {
+        context.failed = err;
+      } else {
+        context.probed = true;
+      }
+    }
+  }
+  if (context.failed !== null && context.prFailures.length === 0) {
+    return { settled: false, checks: [], unread: true };
+  }
+  if (items === null) {
+    // No state was read for `sha`, so the result names no head and holds no check.
+    return { settled: true, checks: [], unread: true };
+  }
+  const read = readOutcome(
+    context.pr,
+    asRead(items),
+    context.all,
+    `the check runs and commit statuses of ${sha}`,
+  );
+  // The commit states only make the outcome stricter. A failing state, or a failure
+  // that `gh pr checks` lists, settles the wait, and a listed failure is reported in
+  // `prFailures`, never in `checks`. A pass needs both the PR outcome and the commit
+  // states to pass, so a pending or not yet reported PR answer keeps waiting.
+  // An expected name needs a check run: a commit status of that name is no run on `sha`.
+  context.awaiting = context.expect.filter((name) => !runNames.includes(name));
+  const failing = context.prFailures.length > 0 || items.some(isFailing);
+  const passing = read.settled && listed.settled && context.awaiting.length === 0;
+  // A pass waits for the run of a base workflow that has not registered on `sha` yet (#1228).
+  const held =
+    !failing &&
+    passing &&
+    context.all &&
+    !actionsRun &&
+    (await workflowMayRunFor(context, sha, base));
+  return { settled: failing || (passing && !held), checks: read.checks };
+}
+
+/**
+ * Polls until the checks settle or the bound ends the wait.
+ * Returns the settled envelope, or the last check states when the bound is reached.
+ * A retryable failure of the latest poll is thrown when the bound ends the wait.
+ */
+async function poll(context) {
+  for (;;) {
+    context.prFailures = [];
+    context.failed = null;
+    let state = null;
+    try {
+      state = await readPr(context);
+    } catch (raw) {
+      // A retryable failure of a `gh pr` read is retried on the next poll.
+      context.failed = retryableOrThrow(raw);
+    }
+    if (state?.listed) {
+      const { sha, base, listed, names } = state;
+      if (listed.noChecksYet && !context.all) {
+        try {
+          await absent(context, base, names, "no checks");
+        } catch (raw) {
+          // A retryable failure of a source read is retried on the next poll.
+          context.failed = retryableOrThrow(raw);
+        }
+      }
+      context.prFailures = listed.checks.filter(isFailing);
+      // A branch with no required check names no state to read, so it carries no commit read.
+      // An empty required list names nothing to read, so the wait continues.
+      const outcome =
+        !listed.noRequiredChecks && (context.all || listed.checks.length > 0)
+          ? await commitOutcome(context, sha, base, listed, names)
+          : listed;
+      // A new head drops the kept checks, so the envelope never pairs them with it.
+      if (!outcome.unread && sha !== context.lastHead) {
+        context.last = [];
+        context.lastHead = sha;
+      }
+      // An empty list is not a settled read: `gh pr checks --required` omits a check that has not started.
+      // The last reported states are kept for the envelope while the wait continues.
+      if (outcome.checks.length > 0) {
+        context.last = outcome.checks;
+      }
+      if (outcome.settled) {
+        return {
+          timedOut: false,
+          ...(outcome.noRequiredChecks ? { noRequiredChecks: true } : {}),
+          ...(outcome.noCheckSource ? { noCheckSource: true } : {}),
+          head: outcome.unread ? null : sha,
+          checks: outcome.checks,
+          ...(context.prFailures.length > 0 ? { prFailures: context.prFailures } : {}),
+        };
+      }
+    }
+    // A completed poll replaces the error of an earlier one: only the latest poll keeps it.
+    context.transient = context.failed;
+    if (!(await pause(context))) {
+      if (context.transient !== null) {
+        throw context.transient;
+      }
+      return timeoutOf(context);
+    }
   }
 }
