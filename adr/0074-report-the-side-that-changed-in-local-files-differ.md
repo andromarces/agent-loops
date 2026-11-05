@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0075: Report a copied source that changed inside a turn window](0075-report-a-copied-source-that-changed-inside-a-turn-window.md). Decision 5's action for `changed: "source"` becomes conditional: when `localSourceChangedInTurn` names the path, the parent reports it under `open` and asks the user before a refresh. Decisions 1 to 4 and decision 5's action for `changed: "copy"` and for a source that no turn window names remain in force.
 
 ## Date
 

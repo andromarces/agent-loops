@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import {
+  ACCEPT,
   basicDeps,
   cleanup,
   dispatchArgv,
@@ -10,9 +11,13 @@ import {
   newCleanRunRepo,
   newRunRepo,
   readRepoState,
+  recordingAdapter,
+  REPORT,
   repos,
+  reviewerTurn,
   setup,
   withRepo,
+  WORKER_REPLY,
 } from "./role-helpers.mjs";
 import { exists } from "./fs-helpers.mjs";
 import { cleanRepoGit, createLinkedWithEnv, createLinkedWorkTree } from "./git-helpers.mjs";
@@ -214,6 +219,165 @@ test("a later dispatch names a local file that changed in the main work tree", a
   expect(result.exitCode).toBe(0);
   expect(result.payload.localFilesDiffer).toEqual([{ path: ".env", changed: "source" }]);
   expect(JSON.stringify(result.payload).includes("CHANGED-VALUE-MUST-NOT-APPEAR")).toBe(false);
+});
+
+// Usefulness: verifies acceptance 1 of issue #1504 — a copied source that a worker turn
+// changes is named on that turn's envelope, by path only, with no content in the envelope or a
+// log line.
+// Not redundant: no other test writes the main work tree inside a turn window.
+test("a worker turn that changes a copied source names the path on its envelope", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  const deps = basicDeps();
+  deps.agents.fake1.run = async () => {
+    await writeFile(join(main, ".env"), "KEY=TURN-WRITE-MUST-NOT-APPEAR\n");
+    return WORKER_REPLY;
+  };
+  const lines = [];
+  const capture = (...args) => lines.push(args.map(String).join(" "));
+  const logSpy = vi.spyOn(console, "log").mockImplementation(capture);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(capture);
+  let result;
+  try {
+    result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), deps);
+  } finally {
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+  }
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.localSourceChangedInTurn).toEqual([".env"]);
+  const envelope = JSON.stringify(result.payload);
+  expect(envelope.includes("TURN-WRITE-MUST-NOT-APPEAR")).toBe(false);
+  for (const line of lines) {
+    expect(line.includes("TURN-WRITE-MUST-NOT-APPEAR")).toBe(false);
+  }
+});
+
+// Usefulness: verifies acceptance 1 of issue #1504 for the reviewer turn too — a reviewer that
+// changes a copied source is named on its envelope, not only a worker.
+// Not redundant: the reviewer path has its own mutation check and envelope fields.
+test("a reviewer turn that changes a copied source names the path on its envelope", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  const deps = basicDeps();
+  deps.agents.fake2.run = async () => {
+    await writeFile(join(main, ".env"), "KEY=REVIEWER-WRITE-MUST-NOT-APPEAR\n");
+    return `${REPORT}\nChecks: none\nVerdict: accept`;
+  };
+
+  const result = await reviewerTurn(linked, deps.agents);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.localSourceChangedInTurn).toEqual([".env"]);
+  expect(JSON.stringify(result.payload).includes("REVIEWER-WRITE-MUST-NOT-APPEAR")).toBe(false);
+});
+
+// Usefulness: verifies requirement "the after-read runs after the last child call of the
+// dispatch" for a reviewer replacement — a source write in the replacement task-only turn is
+// named on the success envelope.
+// Not redundant: the other tests write in the first child call, before the replacement turn.
+test("a source write during the replacement task turn is named on the reviewer envelope", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  const reviewer = recordingAdapter([
+    ACCEPT,
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      return ACCEPT;
+    },
+    async () => {
+      await writeFile(join(main, ".env"), "KEY=REPLACEMENT-WRITE-MUST-NOT-APPEAR\n");
+      return "OK";
+    },
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  await reviewerTurn(linked, agents);
+
+  const result = await reviewerTurn(linked, agents);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.localSourceChangedInTurn).toEqual([".env"]);
+  expect(JSON.stringify(result.payload).includes("REPLACEMENT-WRITE-MUST-NOT-APPEAR")).toBe(false);
+});
+
+// Usefulness: verifies the same after-read on the error envelope when the replacement task turn
+// fails after it writes the source.
+// Not redundant: the success case above returns an ok envelope through a different path.
+test("a source write during a failed replacement task turn is named on the error envelope", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  const reviewer = recordingAdapter([
+    ACCEPT,
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      return ACCEPT;
+    },
+    async () => {
+      await writeFile(join(main, ".env"), "KEY=REPLACEMENT-FAIL-MUST-NOT-APPEAR\n");
+      throw new Error("task turn failed");
+    },
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  await reviewerTurn(linked, agents);
+
+  const result = await reviewerTurn(linked, agents);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.status).toBe("error");
+  expect(result.payload.localSourceChangedInTurn).toEqual([".env"]);
+  expect(JSON.stringify(result.payload).includes("REPLACEMENT-FAIL-MUST-NOT-APPEAR")).toBe(false);
+});
+
+// Usefulness: verifies the after-read on the cancel envelope when the replacement task turn is
+// canceled after it writes the source.
+// Not redundant: a cancel takes the fatal path instead of the error result path.
+test("a source write during a canceled replacement task turn is named on the cancel envelope", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  const reviewer = recordingAdapter([
+    ACCEPT,
+    (state) => {
+      state.sessionId = "replacement";
+      state.conversationReplaced = true;
+      return ACCEPT;
+    },
+    async () => {
+      await writeFile(join(main, ".env"), "KEY=REPLACEMENT-CANCEL-MUST-NOT-APPEAR\n");
+      throw Object.assign(new Error("canceled"), { isCanceled: true });
+    },
+  ]);
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  await reviewerTurn(linked, agents);
+
+  const result = await reviewerTurn(linked, agents);
+
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.localSourceChangedInTurn).toEqual([".env"]);
+  expect(JSON.stringify(result.payload).includes("REPLACEMENT-CANCEL-MUST-NOT-APPEAR")).toBe(false);
+});
+
+// Usefulness: verifies acceptance 2 of issue #1504 — a source that changed between two turns is
+// not attributed to the next turn, which still reports the side through `localFilesDiffer`.
+// Not redundant: the tests above change the source inside the turn window.
+test("a copied source that changed between turns is not named on a turn envelope", async () => {
+  await setup();
+  const { main, linked } = await linkedWithEnv();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
+  await writeFile(join(main, ".env"), "KEY=BETWEEN-TURNS-MUST-NOT-APPEAR\n");
+
+  const result = await dispatchAgain(linked);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).not.toHaveProperty("localSourceChangedInTurn");
+  expect(result.payload.localFilesDiffer).toEqual([{ path: ".env", changed: "source" }]);
+  expect(JSON.stringify(result.payload).includes("BETWEEN-TURNS-MUST-NOT-APPEAR")).toBe(false);
 });
 
 // Usefulness: verifies the report names the copy when only a turn changed the copy.

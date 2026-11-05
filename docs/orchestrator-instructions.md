@@ -279,6 +279,12 @@ Apply these parent rules:
   - A dirty or untracked change with a fast-forward keeps the full `mainWorkTreeChanged` report. A
     detached head, a branch switch, a reset to an older commit, and a non-fast-forward move keep the
     field.
+- A worker or reviewer envelope carries `localSourceChangedInTurn` when a copied source of a linked
+  run changed inside that turn window. The turn hashes each copied source in the main work tree
+  before and after its child call. The field names the paths, at most 20, and never content. The
+  user or another process can cause the change too. Report it under `open`, and ask the user before
+  refreshing the copy: a refresh would copy content that the turn wrote. Never read, print, or quote
+  the file to decide.
 - A worker envelope carries `lockfileChanged` when the turn changed a lockfile at the work tree root
   or a non-Node dependency file at any depth. Examples are `pnpm-lock.yaml` after a base branch
   merge and a `requirements.txt` in a subdirectory. The field names the lockfiles by path only, and
@@ -392,8 +398,10 @@ Do not read, print, or quote any copied file. The copy duplicates secrets such a
 into the run work tree, so remove that work tree when the run ends. The copy rules,
 `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
 [Local files copied into the work tree](orchestrator/local-files-copy.md). For a
-`localFilesDiffer` entry with `changed: "source"`, refresh the copy by hand. For `copy`, a
-turn changed the copy: report a breach under `open`.
+`localFilesDiffer` entry with `changed: "source"`, refresh the copy by hand when no
+`localSourceChangedInTurn` entry names it. For `copy`, a turn changed the copy: report a breach
+under `open`. When `localSourceChangedInTurn` names a path, report it under `open` and ask the
+user before a refresh.
 
 Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
 with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused
