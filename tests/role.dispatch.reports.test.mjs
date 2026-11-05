@@ -511,7 +511,7 @@ test.each([
   },
   {
     name: "a decorated label",
-    extra: "\nNotes: tidy\n**Deferred:** migrate the legacy path",
+    extra: "\nNotes: tidy\n**Deferred**: migrate the legacy path",
     expected: "migrate the legacy path",
   },
   {
