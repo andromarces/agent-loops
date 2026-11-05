@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { readableErrorText } from "./error-message.mjs";
 import { logDebug, logInfo, logWarn } from "./log.mjs";
 import { ownerAlive, startTimeCache } from "./process-identity.mjs";
-import { slotsRoot } from "./slots-root.mjs";
+import { slotsRoot } from "./root-pins.mjs";
 import { lockHeld, readLockOwner, tryStateLock } from "./state-lock.mjs";
 
 const DEFAULT_WAIT_SECONDS = 1800;
@@ -24,6 +24,10 @@ const SLOT_FILE = /^slot-(\d+)\.lock$/;
 
 export const usageError = (message) => Object.assign(new Error(message), { usage: true });
 
+/**
+ * The slot count from `value`, a decimal integer of at least 1.
+ * @throws {Error & { usage: true }} for any other value
+ */
 export function slotCount(value, name) {
   const count = Number(value);
   if (!/^\d+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
@@ -32,6 +36,10 @@ export function slotCount(value, name) {
   return count;
 }
 
+/**
+ * The wait bound in seconds from `value`, a finite number of 0 or more.
+ * @throws {Error & { usage: true }} for a blank or invalid value
+ */
 export function waitSeconds(value, name) {
   const seconds = Number(value);
   if (value.trim() === "" || !Number.isFinite(seconds) || seconds < 0) {

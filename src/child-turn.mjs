@@ -1,5 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
+import { mapInBatches } from "./lib/batches.mjs";
 import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { readRequiredChecks } from "./lib/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
@@ -10,7 +11,7 @@ import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scr
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockfile-change.mjs";
 import { diffMainWorkTree, readMainWorkTree } from "./lib/main-work-tree-change.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
-import { reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
+import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
 import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
@@ -302,8 +303,7 @@ export async function runChild(options) {
         { signal },
       );
     } catch (err) {
-      const name = readProp(err, "name");
-      if (name === "MutationError" || name === "SnapshotError" || readProp(err, "isCanceled")) {
+      if (isFatalTurnError(err)) {
         throw err;
       }
       throw new Error(
@@ -476,21 +476,12 @@ export async function runChild(options) {
    * main work tree, advisory. That is the order the reads ran in before they ran together.
    */
   const readFailedTurnEvidence = async () => {
-    const [sharedRead, lockfileRead, mainWorkTreeRead, advisoryRead] = await Promise.allSettled([
-      readSharedGitChanged(),
-      readLockfileChanged(),
-      readMainWorkTreeChanged(),
-      readAdvisory(),
-    ]);
-    for (const read of [sharedRead, lockfileRead, mainWorkTreeRead, advisoryRead]) {
-      if (read.status === "rejected") throw read.reason;
-    }
-    return {
-      sharedGitChanged: sharedRead.value,
-      lockfileChanged: lockfileRead.value,
-      mainWorkTreeChanged: mainWorkTreeRead.value,
-      ...advisoryRead.value,
-    };
+    const [sharedGitChanged, lockfileChanged, mainWorkTreeChanged, advisory] = await mapInBatches(
+      [readSharedGitChanged, readLockfileChanged, readMainWorkTreeChanged, readAdvisory],
+      4,
+      (read) => read(),
+    );
+    return { sharedGitChanged, lockfileChanged, mainWorkTreeChanged, ...advisory };
   };
   try {
     let reviewed = null;
@@ -556,19 +547,16 @@ export async function runChild(options) {
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     // The four reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
-    const [workTreeRead, sharedRead, lockfileRead, mainWorkTreeRead] = await Promise.allSettled([
-      roleName === "worker" ? readWorkTree() : null,
-      readSharedGitChanged(),
-      readLockfileChanged(),
-      readMainWorkTreeChanged(),
-    ]);
-    for (const read of [workTreeRead, sharedRead, lockfileRead, mainWorkTreeRead]) {
-      if (read.status === "rejected") throw read.reason;
-    }
-    const workTree = workTreeRead.value;
-    const sharedGitChanged = sharedRead.value;
-    const lockfileChanged = lockfileRead.value;
-    const mainWorkTreeChanged = mainWorkTreeRead.value;
+    const [workTree, sharedGitChanged, lockfileChanged, mainWorkTreeChanged] = await mapInBatches(
+      [
+        roleName === "worker" ? readWorkTree : null,
+        readSharedGitChanged,
+        readLockfileChanged,
+        readMainWorkTreeChanged,
+      ],
+      4,
+      (read) => (read === null ? null : read()),
+    );
     if (roleName === "reviewer" && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
@@ -597,9 +585,8 @@ export async function runChild(options) {
       }),
     };
   } catch (err) {
-    const name = readProp(err, "name");
     const isCanceled = readProp(err, "isCanceled");
-    if (name === "MutationError" || name === "SnapshotError" || isCanceled) {
+    if (isFatalTurnError(err)) {
       if (isCanceled) {
         logError(`${roleName} canceled by signal`);
         // The canceled turn keeps the id the CLI reported, so a replaced conversation, or one whose

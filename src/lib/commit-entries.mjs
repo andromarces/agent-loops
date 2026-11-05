@@ -200,6 +200,11 @@ export function matchingEntries({ name, appId }, runs, statuses) {
   };
 }
 
+const runFailed = (run) =>
+  run.status === "completed" && !PASS_CHECK_CONCLUSIONS.has(run.conclusion);
+
+const statusFailed = (status) => status.state === "error" || status.state === "failure";
+
 // Null when the required context passes, or `{ kind, reason }` where `kind` is
 // `missing`, `pending`, or `failing` and `reason` names the condition. An
 // app-qualified context is satisfied only by a check run from that app. An
@@ -222,9 +227,6 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
   // latest entry does not hide a failing entry beside it. That entry can be
   // another run, an earlier run, or a commit status (issue #349).
   let problem = null;
-  const runFailed = (run) =>
-    run.status === "completed" && !PASS_CHECK_CONCLUSIONS.has(run.conclusion);
-  const statusFailed = (status) => status.state === "error" || status.state === "failure";
   // A group whose order is unknown never passes. It fails when an entry failed
   // and is pending otherwise.
   const unordered = (failed) => ({

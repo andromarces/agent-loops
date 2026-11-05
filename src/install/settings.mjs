@@ -25,6 +25,10 @@ export function parseSettings(text, path) {
   return value;
 }
 
+/**
+ * Serializes `value` as the settings file text. The trailing newline follows `originalText`: absent
+ * text and text that ends with a newline get one, and text that ends without one stays without it.
+ */
 export function serializeSettings(value, originalText) {
   const newline =
     originalText === null || originalText === undefined || originalText.endsWith("\n") ? "\n" : "";
@@ -112,6 +116,10 @@ export function validateLocator(settings, locator) {
   return { ok: true };
 }
 
+/**
+ * The index of `entry` under `locator`, or -1. A matching key locator returns 0, because the key
+ * holds one entry at no array index.
+ */
 export function findEntryIndex(settings, locator, entry) {
   if (locator.kind === "key") {
     return Object.hasOwn(settings, locator.key) && isDeepStrictEqual(settings[locator.key], entry)

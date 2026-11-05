@@ -207,6 +207,8 @@ function resolvedParentSpellings(path, platform, failures) {
   return found;
 }
 
+const startsWith = (list, prefix) => prefix.every((segment, i) => list[i] === segment);
+
 /**
  * The spellings to match: the normalized path, which is what the installer renders into entry
  * points, and its canonical path. A package junction inside a runner layout matches by its own
@@ -375,7 +377,6 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
   );
   const related = (dir) => {
     const segments = splitPath(dir.toLowerCase());
-    const startsWith = (list, prefix) => prefix.every((segment, i) => list[i] === segment);
     return rootSegments.some((root) => startsWith(root, segments) || startsWith(segments, root));
   };
   const matches = (list) =>

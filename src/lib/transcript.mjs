@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileAtomic, writeFileAtomicSync } from "./atomic-write.mjs";
 import { readableErrorText, readProp, redactedText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
-import { logWarn } from "./log.mjs";
+import { logWarn, logWarnFull } from "./log.mjs";
 import {
   isInside,
   removeSessionRecord,
@@ -79,9 +79,9 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
       transcriptDigest = sha256(text);
       await removeSessionRecord(options.transcript);
     } catch (err) {
-      console.error(
+      logWarnFull(
         redactedText(
-          `Warning: Failed to write transcript to ${options.transcript}: ${redactedText(readProp(err, "message"))}`,
+          `Failed to write transcript to ${options.transcript}: ${redactedText(readProp(err, "message"))}`,
         ),
       );
     }

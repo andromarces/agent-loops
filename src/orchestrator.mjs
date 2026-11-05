@@ -10,6 +10,14 @@ export class OrchestratorError extends Error {
   }
 }
 
+function parseAndValidate(rawResponse) {
+  const extracted = extractJsonObject(rawResponse);
+  if (!extracted.ok) {
+    return { ok: false, error: extracted.error };
+  }
+  return validateAction(extracted.value);
+}
+
 /**
  * Runs one read-only orchestrator turn and returns the validated action. An invalid
  * reply gets one repair turn, and a second invalid reply throws `OrchestratorError`.
@@ -26,14 +34,6 @@ export async function decide({ agent, state, prompt, options = {} }) {
       timeout,
       signal,
     });
-  }
-
-  function parseAndValidate(rawResponse) {
-    const extracted = extractJsonObject(rawResponse);
-    if (!extracted.ok) {
-      return { ok: false, error: extracted.error };
-    }
-    return validateAction(extracted.value);
   }
 
   // Attempt 1

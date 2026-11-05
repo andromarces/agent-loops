@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { mapInBatches } from "./batches.mjs";
 import { entryCarrier } from "./entry-report.mjs";
 import { sha256 } from "./hash.mjs";
 import { gitRead, gitReadError, SnapshotError } from "./git-read.mjs";
@@ -103,13 +104,14 @@ async function readWithin(cwd, bound) {
   const read = (args, options = {}) =>
     gitRead(cwd, args, { ...bound, ...options, allowExit: [0], createError: readFailure });
   // Both processes end before the read rejects, so none outlives a stopped read.
-  const settled = await Promise.allSettled([
-    read(["rev-parse", "--git-common-dir"]),
-    read(["config", "-z", "--list", "--show-scope"]),
-  ]);
-  const failed = settled.find((outcome) => outcome.status === "rejected");
-  if (failed) throw failed.reason;
-  const [commonResult, listResult] = settled.map((outcome) => outcome.value);
+  const [commonResult, listResult] = await mapInBatches(
+    [
+      ["rev-parse", "--git-common-dir"],
+      ["config", "-z", "--list", "--show-scope"],
+    ],
+    2,
+    (args) => read(args),
+  );
   const commonDir = commonResult.stdout.trim();
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
   const state = readConfigState(listResult.stdout);

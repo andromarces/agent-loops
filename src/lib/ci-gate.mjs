@@ -32,6 +32,8 @@ function fail(reason) {
   return { ok: false, reason };
 }
 
+const label = ({ context }) => contextLabel(context.name, context.appId);
+
 /** The refusal for a reviewed state that cannot finish, or null when it is a clean reviewed commit. */
 function reviewedRefusal(reviewed) {
   if (!reviewed) {
@@ -598,7 +600,6 @@ async function readStatus({
     // The commit is the gate's own selection, so the read judges the state the
     // gate judges and cannot pass a state the gate refuses.
     const { commit, findings } = await evaluateRequired(call, slug, info, cwd, contexts, true);
-    const label = ({ context }) => contextLabel(context.name, context.appId);
     const ofKind = (...kinds) =>
       findings.filter(({ failure }) => failure && kinds.includes(failure.kind));
     const failing = ofKind("failing");
