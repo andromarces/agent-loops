@@ -1302,6 +1302,83 @@ test("parseReportBlock parses the observed all-bold shape from issue #1483", () 
   });
 });
 
+// Usefulness: verifies comment shape A from issue #1520 parses to a report, with every label bold
+// and Why a bullet list. The prose paragraph supplies the conclusion, so the observed null response
+// round-trips as a report.
+test("parseReportBlock parses issue #1520 comment shape A with a bullet Why", () => {
+  const response = [
+    "PR #1524 carries the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "**Blockers:** none",
+    "",
+    "**Checks:** pnpm test passed",
+    "**Notes:** none",
+    "**Deferred:** nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "PR #1524 carries the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies comment shape B from issue #1520 parses to a report, with only Why bold and
+// the other labels plain. The text Why keeps its value below the prose conclusion.
+test("parseReportBlock parses issue #1520 comment shape B with a text Why", () => {
+  const response = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:** the report keeps every field and the path safety holds.",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "the report keeps every field and the path safety holds.",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies comment shape B from issue #1520 parses to a report, with only Why bold and
+// Why a bullet list. The prose paragraph must still supply the conclusion.
+test("parseReportBlock parses issue #1520 comment shape B with a bullet Why", () => {
+  const response = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
 // Usefulness: verifies a bold label counts only when its colon sits inside the bold. `**Label:**`
 // parses; `**Label**:` keeps the decorated-label refusal (issue #1483).
 test("parseReportBlock reads a bold label only with the colon inside the bold", () => {

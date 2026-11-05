@@ -586,6 +586,7 @@ test.each([
 // Usefulness: verifies a null report names every required label it lacks in the envelope, the
 // state file, and the warning (issue #1520). It names no response text. The first case is the
 // reviewer report that starts at Why, where no Conclusion line and no prose line before it exist.
+// Another case is comment shape B from the issue, without its Blockers line.
 test.each([
   {
     name: "a block that starts at Why",
@@ -624,6 +625,21 @@ test.each([
     warning: "lacks the required labels Conclusion, Blockers",
     absent: null,
   },
+  {
+    name: "issue #1520 comment shape B without Blockers",
+    response: [
+      "The worker pushed the fix, and the checks are still pending.",
+      "",
+      "**Why:** the report keeps every field and the path safety holds.",
+      "",
+      "Checks: pnpm test passed",
+      "Notes: none",
+      "Deferred: nothing",
+    ].join("\n"),
+    labels: ["Blockers"],
+    warning: "lacks the required label Blockers",
+    absent: null,
+  },
 ])(
   "worker dispatch names every required label missing from $name",
   async ({ response, labels, warning, absent }) => {
@@ -651,11 +667,61 @@ test.each([
 );
 
 // Usefulness: verifies a parsed report carries no missing-label field, so the field marks only a
-// null report that a required label caused (issue #1520).
-test("worker dispatch omits reportMissingLabels for a parsed report", async () => {
+// null report that a required label caused (issue #1520). The cases include comment shapes A and B,
+// where every label is bold or only Why is bold.
+test.each([
+  { name: "the default report", reply: WORKER_REPLY },
+  {
+    name: "issue #1520 comment shape A",
+    reply: [
+      "The worker pushed the fix, and the checks are still pending.",
+      "",
+      "**Why:**",
+      "- **Rule:** the report keeps every field",
+      "- **Path safety:** nothing outside the work tree changed",
+      "",
+      "**Blockers:** none",
+      "",
+      "**Checks:** pnpm test passed",
+      "**Notes:** none",
+      "**Deferred:** nothing",
+    ].join("\n"),
+  },
+  {
+    name: "issue #1520 comment shape B with a text Why",
+    reply: [
+      "The worker pushed the fix, and the checks are still pending.",
+      "",
+      "**Why:** the report keeps every field and the path safety holds.",
+      "",
+      "Blockers: none",
+      "",
+      "Checks: pnpm test passed",
+      "Notes: none",
+      "Deferred: nothing",
+    ].join("\n"),
+  },
+  {
+    name: "issue #1520 comment shape B with a bullet Why",
+    reply: [
+      "The worker pushed the fix, and the checks are still pending.",
+      "",
+      "**Why:**",
+      "- **Rule:** the report keeps every field",
+      "- **Path safety:** nothing outside the work tree changed",
+      "",
+      "Blockers: none",
+      "",
+      "Checks: pnpm test passed",
+      "Notes: none",
+      "Deferred: nothing",
+    ].join("\n"),
+  },
+])("worker dispatch omits reportMissingLabels for $name", async ({ reply }) => {
   const repo = await newCleanRepo();
+  const worker = recordingAdapter([async () => reply]);
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
     stdin: stdinPrompt,
   });
   expect(result.payload.report).not.toBeNull();
