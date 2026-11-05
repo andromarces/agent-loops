@@ -158,8 +158,12 @@ test("an unset core.hooksPath is reported", async () => {
 // covers it.
 test("a core.bare change in the shared config is reported by name from a linked work tree", async () => {
   const { repo, linked } = await createRepoWithLinkedWorkTree();
+  // Rewrites the seeded `core.bare = false` in place: replacing the value is the behavior under
+  // test, and a second entry would not be a replacement.
   const changed = await changedBy(linked, () =>
-    appendConfig(localConfig(repo), "[core]\n\tbare = true\n"),
+    updateConfig(localConfig(repo), (text) =>
+      text.replace(/^([ \t]*)bare[ \t]*=.*$/m, "$1bare = true"),
+    ),
   );
   expect(changed).toEqual(["core.bare"]);
 });
