@@ -22,6 +22,7 @@ Reference sections list below names each file and when to read it.
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+- The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
   other remote state. A status read, such as `agent-loop role wait-checks`,
@@ -486,21 +487,21 @@ of this file.
 
 ## Selecting issues for a batch
 
-A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects:
+A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects. The list command defaults to 30 entries, so pass `--limit 1000`, which covers every open PR of a repository with 1000 or fewer:
 
 ```bash
-gh pr list --state open --json number,closingIssuesReferences
+gh pr list --state open --json number,closingIssuesReferences --limit 1000
 ```
 
 Exclude every issue that the list names in `closingIssuesReferences`.
 
-A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply:
+A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply. The paginated read covers every page that the API returns:
 
 ```bash
-gh pr view <n> --json commits
+gh api --paginate "repos/{owner}/{repo}/pulls/<n>/commits" --jq '.[].commit.message'
 ```
 
-Exclude every issue that a commit message closes.
+The commit list endpoint returns at most 250 commits of a PR, so a PR with more commits leaves the rest unseen. Exclude every issue that a commit message closes.
 
 ## Several runs at once
 
