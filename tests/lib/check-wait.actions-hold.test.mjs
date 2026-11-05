@@ -116,7 +116,7 @@ function holdGh({
           .map(() => ({ status: "completed", conclusion: "success" }));
       const suites = scripted.map((suite, index) => ({
         id: 1000 + index,
-        head_sha: suiteRead[1],
+        head_sha: suite.head_sha ?? suiteRead[1],
         status: suite.status,
         ...(suite.conclusion === undefined ? {} : { conclusion: suite.conclusion }),
         app: suite.app ?? { slug: "github-actions" },
@@ -209,6 +209,17 @@ test("the --all wait passes at once with an incomplete suite of another app", as
   });
   expect(result.timedOut).toBe(false);
   expect(elapsed).toBe(0);
+});
+
+// Usefulness: verifies a suite reply about another commit is an error, never a pass, so a moved PR
+// head never lends another commit's suites (issue #1518 contract).
+test("the --all wait refuses a suite reply for another commit", async () => {
+  await expect(
+    holdWait({
+      runsByPoll: [[WORKERS, ACTIONS]],
+      suitesByPoll: [[{ status: "completed", conclusion: "success", head_sha: HEAD_B }]],
+    }),
+  ).rejects.toThrow(/malformed check-suites reply/);
 });
 
 // Usefulness: verifies the hold ends at the bound with `timedOut: true` and never a pass when no
