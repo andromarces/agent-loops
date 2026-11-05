@@ -613,6 +613,11 @@ function dispatchPayload(roleName, result) {
     role: roleName,
     status: "ok",
     report,
+    // The required labels that a null report lacks. It names the labels only, never the response
+    // text, which stays in `raw` (issue #1520).
+    ...(result.reportMissingLabels?.length > 0
+      ? { reportMissingLabels: result.reportMissingLabels }
+      : {}),
     ...turnResultFields(result, ["shellDenied", "workTree", ...TURN_EVIDENCE_FIELDS]),
   };
   if (roleName === "reviewer") {

@@ -3,6 +3,7 @@ import {
   hasClosingBlockAttempt,
   acceptanceFailure,
   isAcceptedReview,
+  missingRequiredReportLabels,
   parseReportBlock,
   parseVerdict,
   parsesOnlyWithBoldLabels,
@@ -50,6 +51,75 @@ test("parseReportBlock maps an empty optional label to null", () => {
     notes: null,
     deferred: null,
   });
+});
+
+// Usefulness: verifies the parser names Conclusion for the reviewer case, a block that starts at
+// Why (issue #1520). That response has no Conclusion line and no prose line before the first label.
+// No other test covers a missing leading label.
+test("missingRequiredReportLabels names Conclusion when the block starts at Why", () => {
+  const response = "Why: tests pass\nBlockers: none\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
+});
+
+// Usefulness: verifies a folded list under a required label counts as present, so the reviewer
+// case names only Blockers (issue #1520). A raw label scan reports Why as missing and fails.
+test("missingRequiredReportLabels reads a folded list under a required label", () => {
+  const response = "Conclusion: done\nWhy:\n- tests pass\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Blockers"]);
+});
+
+// Usefulness: verifies a folded list under each required label counts as present and the block
+// parses (issue #1520). A label is present exactly when the parser reads a value for it.
+test.each([
+  ["Conclusion", "Conclusion:\n- done\nWhy: ok\nBlockers: none"],
+  ["Why", "Conclusion: done\nWhy:\n- ok\nBlockers: none"],
+  ["Blockers", "Conclusion: done\nWhy: ok\nBlockers:\n- none"],
+])("missingRequiredReportLabels reads a folded list under %s", (_label, response) => {
+  expect(parseReportBlock(response)).not.toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
+// Usefulness: verifies the parser names Why when a block has every other required label
+// (issue #1520).
+test("missingRequiredReportLabels names Why", () => {
+  const response = "Conclusion: done\nBlockers: none\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Why"]);
+  expect(missingRequiredReportLabels("Conclusion: done\nWhy:\nBlockers: none")).toEqual(["Why"]);
+});
+
+// Usefulness: verifies the parser names Blockers when a block has Conclusion and Why
+// (issue #1520).
+test("missingRequiredReportLabels names Blockers", () => {
+  const response = "Conclusion: done\nWhy: tests pass\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Blockers"]);
+});
+
+// Usefulness: verifies every missing required label is named, in report order, when two are absent
+// (issue #1520). A first-missing-only rule fails this test.
+test("missingRequiredReportLabels names both missing labels in report order", () => {
+  const response = "Why: tests pass\nChecks: npm test";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion", "Blockers"]);
+});
+
+// Usefulness: verifies a missing label is still named when another rule also makes the block
+// unparseable, so the structural failure never hides the cause (issue #1520).
+test("missingRequiredReportLabels names a missing label beside a structural failure", () => {
+  const response = "Why: tests pass\nBlockers: none\n* dropped item";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
+});
+
+// Usefulness: verifies a parsed report, a structural failure, and a response with no closing block
+// carry no missing label (issue #1520).
+test("missingRequiredReportLabels returns an empty list without a missing required label", () => {
+  expect(missingRequiredReportLabels(REPORT)).toEqual([]);
+  expect(missingRequiredReportLabels(`${REPORT}\nNotes: tidy\n**Deferred**: later`)).toEqual([]);
+  expect(missingRequiredReportLabels("looks fine, with no closing block here")).toEqual([]);
 });
 
 // Usefulness: verifies the optional Checks label reaches the parsed report,
@@ -1227,6 +1297,79 @@ test("parseReportBlock parses the observed all-bold shape from issue #1483", () 
     why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
     blockers: "none",
     checks: "`pnpm test` ran 3 files",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies issue #1520 comment shape A with a bullet Why parses to a full report.
+test("parseReportBlock parses issue #1520 comment shape A with a bullet Why", () => {
+  const response = [
+    "PR #1524 carries the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "**Blockers:** none",
+    "",
+    "**Checks:** pnpm test passed",
+    "**Notes:** none",
+    "**Deferred:** nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "PR #1524 carries the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies issue #1520 comment shape B with a text Why parses to a full report.
+test("parseReportBlock parses issue #1520 comment shape B with a text Why", () => {
+  const response = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:** the report keeps every field and the path safety holds.",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "the report keeps every field and the path safety holds.",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+});
+
+// Usefulness: verifies issue #1520 comment shape B with a bullet Why parses to a full report.
+test("parseReportBlock parses issue #1520 comment shape B with a bullet Why", () => {
+  const response = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
     notes: "none",
     deferred: "nothing",
   });

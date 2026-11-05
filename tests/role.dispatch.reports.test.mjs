@@ -583,6 +583,195 @@ test.each([
   expect(result.payload.raw).toContain(expected);
 });
 
+// Usefulness: verifies a null report names every required label it lacks in the envelope, the
+// state file, and the warning (issue #1520). It names no response text. The first case is the
+// reviewer report that starts at Why, where no Conclusion line and no prose line before it exist.
+// Another case is comment shape B from the issue, without its Blockers line.
+test.each([
+  {
+    name: "a block that starts at Why",
+    response: "Why: tests pass\nBlockers: none\nChecks: npm test",
+    labels: ["Conclusion"],
+    warning: "lacks the required label Conclusion",
+    absent: null,
+  },
+  {
+    name: "a block without Why",
+    response: [
+      "The parser change lands with the new test.",
+      "",
+      "Step 2 of the issue is only partly met, because the reviewer reads the old path.",
+      "",
+      "Blockers: none",
+      "Checks: pnpm test",
+      "Notes: none",
+      "Deferred: none",
+    ].join("\n"),
+    labels: ["Why"],
+    warning: "lacks the required label Why",
+    absent: null,
+  },
+  {
+    name: "a folded list under Why",
+    response: "Conclusion: done\nWhy:\n- tests pass\nChecks: npm test",
+    labels: ["Blockers"],
+    warning: "lacks the required label Blockers",
+    absent: "Why",
+  },
+  {
+    name: "a block without Conclusion and Blockers",
+    response: "Why: tests pass\nChecks: npm test",
+    labels: ["Conclusion", "Blockers"],
+    warning: "lacks the required labels Conclusion, Blockers",
+    absent: null,
+  },
+  {
+    name: "issue #1520 comment shape B without Blockers",
+    response: [
+      "The worker pushed the fix, and the checks are still pending.",
+      "",
+      "**Why:** the report keeps every field and the path safety holds.",
+      "",
+      "Checks: pnpm test passed",
+      "Notes: none",
+      "Deferred: nothing",
+    ].join("\n"),
+    labels: ["Blockers"],
+    warning: "lacks the required label Blockers",
+    absent: null,
+  },
+])(
+  "worker dispatch names every required label missing from $name",
+  async ({ response, labels, warning, absent }) => {
+    const repo = await newCleanRepo();
+    const worker = recordingAdapter([async () => response]);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+        agents: { fake1: worker, fake2: recordingAdapter([]) },
+        stdin: stdinPrompt,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.payload.report).toBeNull();
+      expect(result.payload.raw).toBe(response);
+      expect(result.payload.reportMissingLabels).toEqual(labels);
+      expect((await readRepoState(repo)).lastResult.reportMissingLabels).toEqual(labels);
+      const logs = errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+      expect(logs).toContain(warning);
+      if (absent !== null) expect(logs).not.toContain(absent);
+      expect(logs).not.toContain("tests pass");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  },
+);
+
+// Usefulness: verifies a parsed report carries no missing-label field, so the field marks only a
+// null report that a required label caused (issue #1520).
+test("worker dispatch omits reportMissingLabels for a parsed report", async () => {
+  const repo = await newCleanRepo();
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).not.toBeNull();
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
+// Usefulness: verifies issue #1520 comment shape A keeps every parsed field and carries no reportMissingLabels.
+test("worker dispatch keeps every field for issue #1520 comment shape A", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "**Blockers:** none",
+    "",
+    "**Checks:** pnpm test passed",
+    "**Notes:** none",
+    "**Deferred:** nothing",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
+// Usefulness: verifies issue #1520 comment shape B with a text Why keeps every parsed field and no reportMissingLabels.
+test("worker dispatch keeps every field for issue #1520 comment shape B with a text Why", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:** the report keeps every field and the path safety holds.",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "the report keeps every field and the path safety holds.",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
+// Usefulness: verifies issue #1520 comment shape B with a bullet Why keeps every parsed field and no reportMissingLabels.
+test("worker dispatch keeps every field for issue #1520 comment shape B with a bullet Why", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix, and the checks are still pending.",
+    "",
+    "**Why:**",
+    "- **Rule:** the report keeps every field",
+    "- **Path safety:** nothing outside the work tree changed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes: none",
+    "Deferred: nothing",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix, and the checks are still pending.",
+    why: "**Rule:** the report keeps every field; **Path safety:** nothing outside the work tree changed",
+    blockers: "none",
+    checks: "pnpm test passed",
+    notes: "none",
+    deferred: "nothing",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
 // Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so
 // the fail-closed rule needs a bold-only parse (issue #1483).
 test("worker dispatch keeps a plain report across unidentified parts", async () => {

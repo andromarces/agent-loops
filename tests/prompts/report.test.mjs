@@ -84,6 +84,14 @@ test("the rendered wrapper runs a suite command in the default shell", async () 
   expect(run.all).toMatch(/v\d+\.\d+\.\d+/);
 });
 
+// Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so
+// the worker preamble and the later-turn reminder state the label whose absence makes a report null
+// (issue #1520). The parser still requires the three labels.
+test("the closing-block rule names the required report labels", () => {
+  expect(reportBlock).toMatch(/`Conclusion`, `Why`, and `Blockers` labels are required/);
+  expect(reportBlock).toMatch(/a block that lacks one does not parse/);
+});
+
 // Usefulness: verifies the closing-block rule tells the child that one level of two-space sub-items
 // folds with a comma and any other nesting blanks the block, the parser contract of issue #870, so
 // the prompt never contradicts the parser.

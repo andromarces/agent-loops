@@ -92,6 +92,57 @@ test("--require-accept treats a reviewer reject as not accepted", async () => {
   }
 });
 
+// Usefulness: verifies the headless --require-accept gate refuses a reviewer accept whose report is
+// null for the missing Why label (issue #1520). The result event names Why, and a later report with
+// Why and Checks is accepted. No other test covers the missing-label field.
+test("--require-accept names Why and refuses a reviewer report without it", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const noWhy = [
+      "Conclusion: the state passes.",
+      "Blockers: none.",
+      "Checks: npm test",
+      "Verdict: accept",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "re-review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([noWhy, REVIEW_ACCEPT]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 30a",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const results = events.filter((event) => event.type === "result").map((event) => event.result);
+    expect(results[0]).not.toHaveProperty("reportMissingLabels");
+    expect(results[1].report).toBeNull();
+    expect(results[1].reportMissingLabels).toEqual(["Why"]);
+    expect(results[2].report).not.toBeNull();
+    expect(results[2]).not.toHaveProperty("reportMissingLabels");
+    expect(events.filter((event) => event.type === "refusal")).toHaveLength(1);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 // 31. Usefulness: verifies the gate maps a run with no worker turn to review-only:
 // the finish follows the report whatever the verdict (issue #234).
 test("--require-accept allows a review-only finish with no worker turn", async () => {
