@@ -444,64 +444,12 @@ async function absenceOf(
 }
 
 /**
- * Polls the required checks of `pr` until none is pending or the deadline
- * elapses. Every read is bounded by the time left, and a read that reaches the
- * bound is signaled to stop and given the child-exit ceiling. `timedOut` marks a
- * wait that ended on the bound; it is a completed read, and the envelope still
- * carries the last check states. `childExitUnconfirmed` rides on the envelope
- * only when that ceiling expired with the read still unaccounted for, because a
- * child exit the command did not observe is not a claim it may make.
- * `noRequiredChecks` rides on the envelope only when `gh` states the branch has no
- * required check: the wait ends at once with no check state, and it is no pass (#894).
- * `all` waits on every check of the PR head instead of the required ones, for a
- * branch with no required check; it keeps the exit-code rules above, including
- * the wait on the no-checks-yet reply, except `noRequiredChecks` (#896, #950).
- * `noCheckSource` rides on an `--all` envelope only when the first read lists no check and no source can
- * report one for the PR head (see `noCheckSource` in `check-source-probe.mjs`): the wait ends at once with an empty `checks`,
- * and it is no pass (#1054).
- * `expect` names check runs that the `--all` wait must see on `sha` before a pass, matched by exact
- * name against the check runs only, whichever app made them, never against commit statuses: a third-party app can
- * register a check run after the first ones passed, so a pass without it is not evidence. A
- * missing expected name keeps the wait running to the bound, where `awaiting` lists it. A failing
- * check still settles the wait (#978).
- * An `--all` pass is held while a workflow of the base branch may run for the PR (see
- * `pullRequestWorkflowMayRun`) and a `github-actions` check suite of `sha` is not completed.
- * It is held too while no such suite exists and the workflow can run, so a dependent job needs no
- * `expect` name. The hold skips only a workflow that provably cannot run, so a read that fails or a
- * form that is not settled holds too. A suite of another app never holds the pass. It ends at the
- * bound with `timedOut: true`, and a failing check still settles the wait (#1228, #1518).
- *
- * `gh pr checks` names no commit, because it queries by PR identity, so the check states
- * never come from it. Each poll reads the PR head `sha` (`gh pr view`), runs `gh pr checks`
- * for its exit-code outcome, and then takes every state from the check runs and commit
- * statuses of `sha` itself (`commits/{sha}`, every page). The envelope's `head` is that `sha`,
- * so `checks` describe it and no other commit, even when the PR head moves during the wait.
- * The required wait judges each required context as the `--require-ci` gate does: the
- * contexts come from `requiredContexts`, matching and verdict come from the gate, an
- * app-qualified context is satisfied only by a run of that app, and a context with no entry
- * on `sha` is pending. The `--all` wait judges the latest run of each name and app and the
- * latest status of each context. The states of `sha` only make the outcome stricter: a failing
- * state of `sha` settles the wait, and a pass needs both the `gh pr checks` outcome and every
- * state of `sha` to pass. A failure that `gh pr checks` lists settles the wait too, but it is
- * PR-level evidence that no commit pins, so it is reported in `prFailures`, apart from `checks`,
- * which holds only states read for `head`, and it survives the bound. A required context that
- * cannot be resolved (a source that cannot be read or parsed, or a failed read of the names) is
- * an error, because no pass can follow it. A check that is required but that no read of the PR
- * lists yet is absent. With `head`, a poll whose PR head is another commit reads no
- * checks and the wait continues. The
- * PR head is the one read at the start of the poll, so the PR can have moved on by the time
- * the wait returns. `head` is null when no read completed, such as a wait that reached the
- * bound before the PR head reached `head` (#961).
- *
- * A retryable server error or transport failure of a read is retried on the next poll. One that
- * lasts to the bound throws, so it is never `timedOut: true` and never a pass. A transport failure
- * carries no HTTP status and no reply body. A 4xx, a 5xx with an unreadable body, and a text with no
- * known transport wording stay terminal. The `--require-ci` finish gate still fails closed on every
- * read failure.
- *
- * `deadline` is an absolute time on the `now` clock. A caller passes it to bound
- * the whole command, including the work that runs before the first read; a
- * caller that passes only `timeoutSeconds` is bounded from this call (#329).
+ * Polls the required checks of `pr` until none is pending or the absolute `deadline` elapses.
+ * Every read is bounded by the time left, and a read at the bound is signaled to stop.
+ * `timedOut` marks a completed read that ended on the bound, with the last check states.
+ * `childExitUnconfirmed` marks an abandoned read whose child exit the command did not observe.
+ * `noRequiredChecks`, `noCheckSource`, `awaiting`, and `prFailures` carry the read outcomes.
+ * A retryable failure is retried on the next poll, and one that lasts to the bound throws.
  * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null, all?: boolean,
  *           head?: string | null, expect?: string[], gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
  * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }>, prFailures?: Array<{ name: string, state: string|null, bucket: string|null }>, awaiting?: string[], noRequiredChecks?: true, noCheckSource?: true, childExitUnconfirmed?: true }>}
@@ -524,6 +472,8 @@ export async function waitChecks({
   if (head !== null && !isFullSha(head)) {
     throw new Error("head must be a full lowercase commit SHA.");
   }
+  // `deadline` is an absolute time on the `now` clock (#329).
+  // A caller that passes only `timeoutSeconds` is bounded from this call (#329).
   const context = createWaitContext({
     pr,
     cwd,
@@ -576,6 +526,7 @@ function createWaitContext(options) {
     childExitCeilingMs: options.childExitCeilingMs,
     signal: options.signal,
     end: options.deadline ?? options.now() + options.timeoutSeconds * 1000,
+    // `all` waits on every check of the PR head, not only the required ones (#896, #950).
     checksArgv: [
       "pr",
       "checks",
@@ -586,6 +537,7 @@ function createWaitContext(options) {
     ],
     headArgv: ["pr", "view", String(options.pr), "--json", "headRefOid,baseRefName"],
     last: [],
+    // `head` is null when no read completed (#961).
     lastHead: null,
     slug: null,
     // Set by every read of the wait whose child exit was not observed. A sibling read that the
@@ -593,6 +545,7 @@ function createWaitContext(options) {
     unconfirmed: false,
     // The failures that `gh pr checks` listed in the current poll. They are PR-level evidence,
     // not pinned to a commit, so they ride apart from `checks`, which holds states read for `head`.
+    // `prFailures` is not a state of `head`, and it survives the bound.
     prFailures: [],
     // The expected check names that the last poll found no run for on its head.
     awaiting: [],
@@ -920,6 +873,7 @@ async function commitOutcome(context, sha, base, listed, names) {
   // `prFailures`, never in `checks`. A pass needs both the PR outcome and the commit
   // states to pass, so a pending or not yet reported PR answer keeps waiting.
   // An expected name needs a check run: a commit status of that name is no run on `sha`.
+  // A name matches a check run exactly, and any app qualifies.
   context.awaiting = context.expect.filter((name) => !runNames.includes(name));
   const failing = context.prFailures.length > 0 || items.some(isFailing);
   const passing = read.settled && listed.settled && context.awaiting.length === 0;

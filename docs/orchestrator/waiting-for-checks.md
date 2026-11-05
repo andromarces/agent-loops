@@ -383,7 +383,9 @@ A PR head or base branch that moves during the reads holds the pass. A failing c
 
 The hold covers no workflow that runs only on `push`. That workflow never holds the pass, whatever its `branches` or `paths` filters say. `--expect` stays needed for its check.
 
-The check suites of `<sha>` come from a paged read by SHA. The hold ends only when every `github-actions` suite of `<sha>` is completed (issue #1518). The files of the PR and the workflow files of the base branch are read once per head. The read uses `contents/.github/workflows?ref=<base SHA>` with the reads of `noCheckSource`. `prWorkflowMayRun` judges each file. A missing workflow directory (the exact 404 reply) holds no workflow, so no hold follows. A `pull_request` trigger with no filter holds, whether it is a bare key, an empty map, a string, or a list entry.
+The check suites of `<sha>` come from a paged read by SHA. The hold ends only when every `github-actions` suite of `<sha>` is completed (issue #1518). The files of the PR and the workflow files of the base branch are read once per head. The read uses `contents/.github/workflows?ref=<base SHA>` with the reads of `noCheckSource`. `prWorkflowMayRun` judges each file.
+
+A missing workflow directory (the exact 404 reply) holds no workflow, so no hold follows. A `pull_request` trigger with no filter holds, whether it is a bare key, an empty map, a string, or a list entry.
 
 The filters combine, so one proof of exclusion is enough. `paths` and `branches` patterns match without case and may also match a path under the pattern, which only keeps the hold. `paths-ignore` and `branches-ignore` match exactly and with case. A pattern is settled only when it holds letters, digits, `_`, `.`, `-`, `@`, `/`, and `*`. A text with a syntax error, a second document, a tag, an anchor, or an alias holds, and so does a PR with no file. A failed read holds the pass, is not kept, and the next poll reads again.
 
