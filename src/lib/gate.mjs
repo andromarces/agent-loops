@@ -132,7 +132,13 @@ export function gateFromTranscript(earlier) {
         childOpen = false;
       }
     }
-    const recorded = Object.keys(state).every((key) => isDeepStrictEqual(record[key], state[key]));
+    // A record written before `workerAfterReview` existed lacks that field.
+    // Only an absent field counts as legacy; a present value must equal the replay.
+    const recorded = Object.keys(state).every((key) =>
+      key === "workerAfterReview" && !Object.hasOwn(record, key)
+        ? true
+        : isDeepStrictEqual(record[key], state[key]),
+    );
     return childOpen || !recorded ? null : state;
   } catch {
     return null;
