@@ -204,9 +204,10 @@ the flag is unchanged.
   `--if-held`, the run stays direct while all slots are free and waits for a slot
   while any slot is held. A targeted run that starts while all slots are free holds
   no slot, so a slot holder can start beside it. A targeted run covers the test
-  files that mirror the changed source files first, then the test files of the
-  direct importers of a changed source file, at most 10 test files in total,
-  never a whole directory (issue #1078).
+  files that mirror the changed source files first, then the test files that import
+  a changed source file directly, then the test files of the direct importers of a
+  changed source file, at most 10 test files in total, never a whole directory
+  (issue #1078, issue #1492).
   - Any broader
     run is a full suite and goes through the plain wrapper. A run whose paths cannot
     be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
