@@ -234,17 +234,21 @@ test("initialPrompt states the parent's dependency setup by toolchain", () => {
   );
   expect(prompt).toContain("No worker or reviewer installs them.");
   expect(prompt).toContain(
-    "When the field appears, run the dependency setup the repository documents for its tests, such as the Node lockfile install, before the next reviewer dispatch.",
+    "When the field appears, run only the dependency setup that the repository documents for its tests in the work tree, such as the Node lockfile install, before the next reviewer dispatch.",
   );
   expect(prompt).toContain(
     "lockfileChanged also covers a non-Node dependency file at any depth, such as a requirements file in a subdirectory.",
   );
   expect(prompt).toContain(
-    "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+    "For a non-Node file, run only the setup that its toolchain documents for those tests in the work tree before the next reviewer dispatch.",
   );
   expect(prompt).toContain(
     "It redacts each path like the other path fields, names at most 20 paths, and keeps a fixed root lockfile name byte-identical.",
   );
+  expect(prompt).toContain(
+    "A changed dependency file that no test setup reads needs no action: record that judgment under open.",
+  );
+  expect(prompt).toContain("Never install outside the work tree.");
 });
 
 // Usefulness: verifies the headless prompt names the machine-readable marker the

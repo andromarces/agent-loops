@@ -9,7 +9,9 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
   Only the turn directories that this process created, matched by exact name, are left out, and
   only until the removal ends: a directory that the removal refused or failed on, such as a
-  replacement of the turn directory, is listed. Every other entry is listed, an `al-` name too.
+  replacement of the turn directory, is listed. Every other entry that the settle re-read still
+  holds is listed, an `al-` name too; an entry that the re-read no longer holds is left out, and
+  the reads establish no owner (issue #1542).
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
     #1240, ADR 0069). A process registers each turn directory in the runs root with its device and
@@ -17,8 +19,10 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
     own, so the prefix is a hint and never proof: the entry stays listed, and the parent reports it
     under `open` as such.
-  - The runtime reads the directory once, after the last
-    child call of the dispatch, a task-only turn in a replacement conversation included.
+  - The runtime reads the directory after the last
+    child call of the dispatch, a task-only turn in a replacement conversation included. It reads
+    the directory again after a short settle and keeps only the names that the second read still
+    holds, so a name that is gone by then needs no `open` item (issue #1542, ADR 0076).
     Every reviewer turn that read the directory before it started carries the field: an ok turn, a
     handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
     `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted

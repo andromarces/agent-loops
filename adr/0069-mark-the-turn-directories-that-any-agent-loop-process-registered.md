@@ -2,9 +2,15 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0068: Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md). This ADR replaces decision 4, which listed every `al-` name of a concurrent process with no mark. Decisions 1 to 3 of ADR 0068 hold.
+
+Superseded by [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md):
+
+- Decision 2, the report lists every entry that appeared: ADR 0076 leaves out an entry that a second read after a short settle no longer holds. The `registered/` mark rule, the exact-name leave-out of this process's own turn directories, and the guard that a record cannot hide a still-existing entry stay in force.
+
+Decisions 1, 3, and 4 remain in force: the registry, the hint, and the failure rule.
 
 ## Date
 
@@ -19,13 +25,13 @@ ADR 0068 decision 4 kept every `al-` name of a concurrent process listed, becaus
 ## Decision
 
 1. **Registry.** `withTurnTmpdir` writes one file per turn directory to `<runs root>/turn-tmpdirs/<name>` after the creation. The file holds the device and inode of the directory. The runtime removes the file when the removal of the directory ends, whatever its outcome, as it removes the name from the set of its own process.
-2. **Mark, never leave out.** The report lists every entry that appeared. An entry gets the prefix `registered/` when its name has the shape `al-` plus six letters or digits, a registration of it exists, and the entry now has the recorded device and inode. No entry name can hold `/`, so a turn cannot make its own name look marked. The prefix is the only change to `inheritedTmpdirEntries`: no field is added. The runtime still leaves out the exact names that its own process created and has not finished removing, which ADR 0068 decision 4 kept.
+2. **Mark, never leave out.** The report lists every entry that appeared. An entry gets the prefix `registered/` when its name has the shape `al-` plus six letters or digits, a registration of it exists, and the entry now has the recorded device and inode. No entry name can hold `/`, so a turn cannot make its own name look marked. The prefix is the only change to `inheritedTmpdirEntries`: no field is added. The runtime still leaves out the exact names that its own process created and has not finished removing, which ADR 0068 decision 4 kept. (Qualified by [ADR 0076](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md): an entry that a second read after a short settle no longer holds is left out.)
 3. **The parent reads the mark as a hint.** A `registered/` entry is very likely the turn directory of a concurrent run. The parent may report it under `open` as such, and never treats it as proof.
 4. **Failure.** A registry write that fails warns and never fails the turn. The process still leaves out its own names by the exact-name set.
 
 ## Consequences
 
-- A reviewer report still lists every entry, as before. The parent can tell the turn directory of a concurrent agent-loop process apart from the rest by its prefix.
+- A reviewer report lists every entry that the settle re-read still holds, as before, and leaves out one that the re-read no longer holds (ADR 0076). The parent can tell the turn directory of a concurrent agent-loop process apart from the rest by its prefix.
 - Residual limit: a turn can write to the runs root, so it can forge a registration for a directory that it created. The forgery adds the `registered/` prefix to that entry and never removes the entry, so no turn can hide a leftover. The prefix can mislead the parent about whose directory it is, and that is why the mark is a hint.
 - A process that dies before the removal leaves its registration. The file marks only the directory with the recorded identity, so a later directory with the same name is listed without the prefix. The file stays until the host cleans the runs root.
 - The directory exists for a short span before its registration, so a report in that span lists it without the prefix.
@@ -47,6 +53,7 @@ Andro Marces
 - [Issue #1240](https://github.com/andromarces/agent-loops/issues/1240)
 - [PR #1245](https://github.com/andromarces/agent-loops/pull/1245)
 - [ADR 0068: Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md)
+- Superseded by: [ADR 0076](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0049](0049-pin-the-machine-wide-roots-for-every-child-turn.md), [Issue #1024](https://github.com/andromarces/agent-loops/issues/1024), [Issue #1178](https://github.com/andromarces/agent-loops/issues/1178)
 - Implementation:
   - Source: `src/lib/turn-tmpdir-registry.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `appearedInInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`

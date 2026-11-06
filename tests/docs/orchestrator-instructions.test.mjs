@@ -186,12 +186,17 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /lockfileChanged/, /changed a lockfile/i),
   (text) => expectRule(text, /lockfiles by path only/i),
   // Issue #1457: the setup is by toolchain, so a repository with no Node lockfile still gets one.
-  (text) => expectRule(text, /dependency setup/i, /repository documents/i, /tests/i),
+  (text) => expectRule(text, /dependency setup/i, /repository documents/i, /tests/i, /work tree/i),
   (text) => expectRule(text, /Node lockfile install/i),
   // Issue #1457: the field covers non-Node dependency files at any depth, and the parent reruns
   // the matching toolchain setup.
   (text) => expectRule(text, /non-Node/i, /dependency file/i, /any depth/i),
   (text) => expectRule(text, /non-Node file/i, /toolchain/i, /before the next reviewer dispatch/i),
+  // Issue #1537: the reinstall is scoped to the test setup that the repository documents in the
+  // work tree. A changed dependency file that no test setup reads needs no action and is recorded
+  // under open, and the rule never sends the parent to install outside the work tree.
+  (text) => expectRule(text, /no test setup reads/i, /no action/i, /open/i),
+  (text) => expectRule(text, /Never install outside the work tree/i),
   // Issue #1457: the field redacts each path like the other path fields, and a fixed root lockfile
   // name stays byte-identical.
   (text) => expectRule(text, /redacts each path/i, /other path fields/i),
@@ -1018,13 +1023,24 @@ test("instructions state the non-Node lockfileChanged coverage and action", asyn
     "The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.",
   );
   expect(instructions).toContain(
-    "For a non-Node file, run the setup that its toolchain documents before the next reviewer dispatch.",
+    "For a non-Node file, run only the setup that its toolchain documents for those tests in the work tree before the next reviewer dispatch.",
   );
   expect(instructions).toContain(
     "The field redacts each path like the other path fields, names at most 20 paths, and keeps a fixed root lockfile name byte-identical.",
   );
   expect(instructions).not.toContain("asks for no reinstall");
   expect(instructions).not.toContain("gap is accepted");
+});
+
+// Usefulness: verifies the reinstall is scoped to the test setup in the work tree, and a changed
+// dependency file that no test setup reads needs no action, recorded under open (#1537). Without
+// this, a parent installs a runtime outside the work tree or runs a deploy step.
+test("instructions scope the lockfileChanged reinstall to the work tree test setup", async () => {
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
+  expect(instructions).toContain(
+    "A changed dependency file that no test setup reads needs no action: record that judgment under `open`.",
+  );
+  expect(instructions).toContain("Never install outside the work tree.");
 });
 
 // Usefulness: verifies the instructions name the work tree removal step and a delete that never
@@ -1688,7 +1704,13 @@ test("the instructions state the one-turn flaky-check procedure", async () => {
     text.search(/worker turn must read the failure/i),
   );
   expectRule(text, /worker turn/i, /(?:decide|decides) whether the diff reaches/i);
-  expectRule(text, /worker turn/i, /record/i, /#1067/);
+  expectRule(text, /worker turn/i, /record/i, /flaky-test record/i, /target repository/i);
+  // The record belongs to the target repository, so no agent-loops issue is a rule for every repository.
+  expect(text, "the flaky-check section names no agent-loops issue").not.toMatch(/#1067/);
+  expectRule(text, /repository has no/i, /record/i);
+  // A rerun needs evidence that the failure matches a known flaky section, so a missing record reruns nothing.
+  expectRule(text, /no section/i, /flaky-test record/i, /reruns nothing/i);
+  expectRule(text, /no matching section/i, /reruns nothing/i);
   expectRule(text, /worker turn/i, /wait/i, /run completes/i, /bound/i);
   expectRule(text, /worker turn/i, /rerun/i, /only the failed jobs/i);
   expectRule(text, /run `?wait-checks`? again/i, /same head/i, /before the reviewer/i);
@@ -1715,8 +1737,14 @@ test("the headless prompt sends a flaky required-check failure to one worker tur
     expectRule(
       prompt,
       /records a known flaky recurrence/i,
-      /#1067/,
+      /flaky-test record/i,
       /reruns only the failed jobs/i,
     );
+    // The record belongs to the target repository, so no agent-loops issue is a rule for every repository.
+    expect(prompt, "the headless prompt names no agent-loops issue").not.toMatch(/#1067/);
+    expectRule(prompt, /repository has no/i, /record/i);
+    // A rerun needs evidence that the failure matches a known flaky section, so a missing record reruns nothing.
+    expectRule(prompt, /no section/i, /flaky-test record/i, /reruns nothing/i);
+    expectRule(prompt, /no flaky-test record/i, /reruns nothing/i);
   }
 });
