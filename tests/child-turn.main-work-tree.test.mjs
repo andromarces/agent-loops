@@ -458,9 +458,9 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null } 
   return { run, seen, release };
 }
 
-// Usefulness: verifies requirement "a worker turn that writes a tracked main work tree file and
-// restores its first content reports the path in its own envelope" (issue #1556). The end-of-turn
-// read cannot see the restored file, so only the in-window watch names it.
+// Usefulness: verifies that a worker turn reports a tracked main work tree file that it writes and
+// restores (issue #1556). The end-of-turn read cannot see the restored file, so only the in-window
+// watch names it.
 test("a worker turn that restores a tracked main work tree file reports it in the turn", async () => {
   const hold = heldWrite({ restore: "hello\n" });
   await hold.seen;
@@ -470,8 +470,8 @@ test("a worker turn that restores a tracked main work tree file reports it in th
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
 
-// Usefulness: verifies requirement "a turn that changes no main work tree file carries no field"
-// (issue #1556), so a clean main work tree never reports an in-window change.
+// Usefulness: verifies that a turn changing no main work tree file carries no field (issue #1556).
+// A clean main work tree then never reports an in-window change.
 test("a worker turn that writes nothing carries no in-turn field", async () => {
   const result = await turn(async () => {});
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");

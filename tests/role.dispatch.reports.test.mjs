@@ -187,9 +187,9 @@ test("worker dispatch reports a main work tree change by path and omits the fiel
   }
 });
 
-// Usefulness: verifies requirement "a worker turn that restores a tracked main work tree file
-// reports the path in its own envelope and its state record" (issue #1556). The end-of-turn read
-// cannot see the restored file, so a lost watch leaves the edit with no trace.
+// Usefulness: verifies that a worker dispatch reports a restored main work tree file in its
+// envelope and its state record (issue #1556). The end-of-turn read cannot see the restored file,
+// so a lost watch leaves the edit with no trace.
 test("worker dispatch reports a main work tree change restored inside the turn", async () => {
   const repo = await newRunRepo();
   gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });

@@ -322,9 +322,9 @@ test("resultPrompt carries the package store entries of a reviewer result", () =
   expect(prompt).toContain("v11/projects/hash1");
 });
 
-// Usefulness: verifies the headless result payload carries the main work tree change that a worker
-// turn restored inside its window, so a headless parent holds what a `role dispatch` envelope
-// carries (issue #1556).
+// Usefulness: verifies the headless result payload carries a main work tree change restored inside
+// a worker window (issue #1556). A headless parent then holds what a `role dispatch` envelope
+// carries.
 test("resultPrompt carries the in-turn main work tree change of a worker result", () => {
   const prompt = resultPrompt({
     result: {

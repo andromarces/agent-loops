@@ -209,9 +209,9 @@ async function readWorkTree(state) {
 }
 
 /**
- * Paths of the main work tree that differ from the pre-turn read, the old and new head of a clean
- * fast-forward, and the paths that the watch saw change and restore inside the window. Each list is
- * empty or absent when its read found no change.
+ * Paths of the main work tree that differ from the pre-turn read. Also the old and new head of a
+ * clean fast-forward, and the paths that the watch saw change and restore inside the window. Each
+ * list is empty or absent when its read found no change.
  * @param {ChildEvidenceState} state
  */
 async function readMainWorkTreeChanged(state) {
