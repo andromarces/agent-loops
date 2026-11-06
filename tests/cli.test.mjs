@@ -73,32 +73,28 @@ test("non-Git cwd exits 1 before spawn and records transcript", async () => {
 
 // Usefulness: verifies successful finish run writes transcript with exitCode 0.
 test("successful finish run writes transcript with exitCode 0", async () => {
-  const repo = await createTempRepo();
-  const transcriptPath = join(repo, "transcript.json");
-  const origExitCode = process.exitCode;
+  await withContinueRepo(async (repo, transcriptPath) => {
+    const fakeAgents = {
+      codex: {
+        async run() {
+          return JSON.stringify({
+            action: "finish",
+            summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+          });
+        },
+      },
+      claude: {
+        async run() {
+          return "worker ok";
+        },
+      },
+      agy: {
+        async run() {
+          return "reviewer ok";
+        },
+      },
+    };
 
-  const fakeAgents = {
-    codex: {
-      async run() {
-        return JSON.stringify({
-          action: "finish",
-          summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
-        });
-      },
-    },
-    claude: {
-      async run() {
-        return "worker ok";
-      },
-    },
-    agy: {
-      async run() {
-        return "reviewer ok";
-      },
-    },
-  };
-
-  try {
     await main(
       [
         "--orchestrator",
@@ -123,10 +119,7 @@ test("successful finish run writes transcript with exitCode 0", async () => {
     expect(transcript.error).toBeNull();
     // One orchestrator CLI call, its validated finish action, then the gate record (#393).
     expect(transcript.events.map((event) => event.type)).toEqual(["invocation", "action", "gate"]);
-  } finally {
-    process.exitCode = origExitCode;
-    await removePath(repo);
-  }
+  });
 });
 
 // Usefulness: verifies the `--cwd` guard does not refuse a Git work tree whose
