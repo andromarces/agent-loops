@@ -38,6 +38,22 @@ test("an event overflow reports no candidates and warns", async () => {
   await expect(handle.take()).resolves.toEqual({ candidates: [], failed: true });
 });
 
+// Usefulness: verifies requirement "a seen-file overflow reports no field and warns" (issue #1556).
+// A silent drop loses a path that an in-window read saw.
+test("a seen-file overflow reports no candidates and warns", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  dir = await createTempRepo();
+  const handle = startMainWorkTreeWatch(dir, { maxSeenFiles: 0 });
+  await vi.waitFor(
+    async () => {
+      await writeFile(join(dir, "one.txt"), "one\n");
+      expect(warn.mock.calls.some((call) => /seen files/i.test(String(call[0])))).toBe(true);
+    },
+    { timeout: 5_000 },
+  );
+  await expect(handle.take()).resolves.toEqual({ candidates: [], failed: true });
+});
+
 /** Writes `path` until the watch queues the event, so a late watch start cannot miss the write. */
 async function writeUntilQueued(handle, path) {
   await vi.waitFor(
@@ -76,22 +92,64 @@ test("a direct stop before take reports a failure and warns", async () => {
   );
 });
 
-// Usefulness: verifies requirement "stop settles a real Git read in flight and logs a warning"
-// (issue #1556). A read that outlives the turn can hold a handle after the turn ends.
-test("stop settles a real Git read in flight and warns", async () => {
-  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+// Usefulness: verifies requirement "repeated events for one path queue one read" (issue #1556). A
+// burst for one path must not grow the queue or repeat the real Git read.
+test("repeated events for one path queue one read", async () => {
   dir = await createTempRepo();
-  // A large ignore file keeps one real `git check-ignore` read in flight long enough to stop it.
-  const patterns = Array.from({ length: 50_000 }, (_, index) => `ignored-${index}.txt`).join("\n");
-  await writeFile(join(dir, ".gitignore"), `${patterns}\n`);
-  const handle = startMainWorkTreeWatch(dir);
+  let release;
+  const hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const handle = startMainWorkTreeWatch(dir, {
+    afterIgnoreRead: async () => {
+      reads++;
+      await hold;
+    },
+  });
   await writeUntilQueued(handle, join(dir, "one.txt"));
   const taking = handle.take();
-  for (let turn = 0; turn < 5_000 && !handle.ignoring(); turn++) {
-    await new Promise((resolve) => setImmediate(resolve));
+  try {
+    await vi.waitFor(() => expect(reads).toBeGreaterThan(0), { timeout: 2_000 });
+    for (let index = 0; index < 50; index++) {
+      await writeFile(join(dir, "one.txt"), `change-${index}\n`);
+    }
+    // Let the queued events reach the watcher while the read is held.
+    for (let turn = 0; turn < 50; turn++) await new Promise((resolve) => setImmediate(resolve));
+    expect(handle.pendingCount()).toBe(1);
+  } finally {
+    release();
   }
-  expect(handle.ignoring()).toBe(true);
-  await handle.stop();
+  const result = await taking;
+  expect(reads).toBe(1);
+  expect(result).toEqual({ candidates: ["one.txt"], failed: false });
+});
+
+// Usefulness: verifies requirement "stop settles a real Git read held before its result" (issue
+// #1556). A read that outlives the turn can hold a handle after the turn ends.
+test("stop settles a real Git read held before its result", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  dir = await createTempRepo();
+  let release;
+  const hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  let held = false;
+  const handle = startMainWorkTreeWatch(dir, {
+    afterIgnoreRead: async () => {
+      held = true;
+      await hold;
+    },
+  });
+  await writeUntilQueued(handle, join(dir, "one.txt"));
+  const taking = handle.take();
+  try {
+    await vi.waitFor(() => expect(held).toBe(true), { timeout: 2_000 });
+  } finally {
+    const stopping = handle.stop();
+    release();
+    await stopping;
+  }
   const result = await taking;
   expect(result).toEqual({ candidates: [], failed: true });
   expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(

@@ -22,24 +22,25 @@ const FILE_BATCH_SIZE = 32;
  * candidate path, and an in-window lstat records a file. `git check-ignore` drops an ignored path,
  * and the `.git` directory stays out. `take()` returns the candidates and then stops the watch on
  * every outcome. A failed watch, read, or bound returns `failed: true` and logs a warning, so the
- * caller reports no path. The maxPending option lowers the event queue bound, for a test.
+ * caller reports no path. The options lower the bounds and hold an ignore read, for a test.
  * @param {string} root absolute main work tree root
- * @param {{ maxPending?: number }} [options]
- * @returns {{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number, ignoring: () => boolean } | null}
+ * @param {{ maxPending?: number, maxSeenFiles?: number, afterIgnoreRead?: () => Promise<void> }} [options]
+ * @returns {{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null}
  */
-export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) {
+export function startMainWorkTreeWatch(
+  root,
+  { maxPending = MAX_PENDING, maxSeenFiles = MAX_CANDIDATES, afterIgnoreRead = null } = {},
+) {
   let failed = false;
   let watcherClosed = false;
   let stopped = false;
   let done = false;
   let flushing = null;
   let checking = null;
-  let ignoreReads = 0;
-  const pending = [];
-  const pendingSet = new Set();
+  const pending = new Set();
   const candidates = new Set();
   const seenFiles = new Set();
-  const fileQueue = [];
+  const kindQueue = new Set();
   const ignoredPrefixes = new Set();
   const reads = new Set();
   const controller = new AbortController();
@@ -47,8 +48,8 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
   const fail = (err) => {
     if (failed) return;
     failed = true;
-    pending.length = 0;
-    pendingSet.clear();
+    pending.clear();
+    kindQueue.clear();
     logWarn(`worker: the main work tree watch failed: ${firstErrorLine(readableErrorText(err))}`);
     closeWatcher();
   };
@@ -122,13 +123,17 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
   /** Records the paths that an in-window read sees as a regular file or a symlink. */
   const checkKinds = async () => {
     try {
-      while (fileQueue.length > 0 && !stopped && !failed) {
-        const path = fileQueue.shift();
+      while (kindQueue.size > 0 && !stopped && !failed) {
+        const path = kindQueue.values().next().value;
+        kindQueue.delete(path);
         try {
           const entry = await track(lstat(join(root, path)));
-          if ((entry.isFile() || entry.isSymbolicLink()) && seenFiles.size < MAX_CANDIDATES) {
-            seenFiles.add(path);
+          if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+          if (seenFiles.size >= maxSeenFiles) {
+            fail(new Error(`more than ${maxSeenFiles} seen files`));
+            return;
           }
+          seenFiles.add(path);
         } catch (err) {
           if (err?.code !== "ENOENT") fail(err);
         }
@@ -139,8 +144,8 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
   };
 
   const recordKind = (path) => {
-    if (failed || stopped) return;
-    fileQueue.push(path);
+    if (failed || stopped || seenFiles.has(path) || kindQueue.has(path)) return;
+    kindQueue.add(path);
     if (checking === null) checking = checkKinds();
   };
 
@@ -158,20 +163,16 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
   };
 
   const flush = async () => {
-    while (pending.length > 0 && !stopped && !failed) {
-      const batch = pending.splice(0, IGNORE_BATCH_SIZE);
-      for (const path of batch) pendingSet.delete(path);
-      ignoreReads++;
-      try {
-        const ignored = await track(readIgnored(batch, { signal: controller.signal }));
-        if (failed) return;
-        for (const path of batch) {
-          if (!ignored.has(path)) addCandidate(path);
-          const rootName = path.split("/")[0];
-          if (ignored.has(rootName)) ignoredPrefixes.add(rootName);
-        }
-      } finally {
-        ignoreReads--;
+    while (pending.size > 0 && !stopped && !failed) {
+      const batch = [...pending].slice(0, IGNORE_BATCH_SIZE);
+      const ignored = await track(readIgnored(batch, { signal: controller.signal }));
+      if (afterIgnoreRead !== null) await afterIgnoreRead();
+      if (failed) return;
+      for (const path of batch) {
+        pending.delete(path);
+        if (!ignored.has(path)) addCandidate(path);
+        const rootName = path.split("/")[0];
+        if (ignored.has(rootName)) ignoredPrefixes.add(rootName);
       }
     }
   };
@@ -188,7 +189,7 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
 
   /** Drains the queued paths, and ends at once when a read already failed. */
   const drain = async () => {
-    while (!stopped && !failed && (pending.length > 0 || flushing !== null)) {
+    while (!stopped && !failed && (pending.size > 0 || flushing !== null)) {
       await (flushing ?? schedule());
     }
     if (flushing !== null) await flushing.catch(() => {});
@@ -214,14 +215,13 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
     if (path === null || path.split("/").includes(".git")) return;
     if (ignoredByPrefix(path)) return;
     recordKind(path);
-    if (pendingSet.has(path)) return;
-    pending.push(path);
-    pendingSet.add(path);
-    if (pending.length > maxPending) {
+    if (pending.has(path)) return;
+    pending.add(path);
+    if (pending.size > maxPending) {
       fail(new Error(`more than ${maxPending} queued events`));
       return;
     }
-    if (pending.length >= IGNORE_BATCH_SIZE) schedule();
+    if (pending.size >= IGNORE_BATCH_SIZE) schedule();
   };
 
   let watcher;
@@ -257,10 +257,8 @@ export function startMainWorkTreeWatch(root, { maxPending = MAX_PENDING } = {}) 
     },
     stop,
     /** Number of event paths queued and not read yet. */
-    pendingCount: () => pending.length,
+    pendingCount: () => pending.size,
     /** Number of queued paths that an in-window read saw as a file. */
     seenFileCount: () => seenFiles.size,
-    /** True while a `git check-ignore` read is in flight. */
-    ignoring: () => ignoreReads > 0,
   };
 }

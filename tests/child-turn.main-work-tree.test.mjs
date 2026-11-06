@@ -1,4 +1,3 @@
-import { watch } from "node:fs";
 import { mkdir, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -61,13 +60,14 @@ afterEach(async () => {
   tree = undefined;
 });
 
-const turn = (act, cwd = tree.linked) =>
+const turn = (act, cwd = tree.linked, onMainWatch = null) =>
   runChild({
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
     roleName: "worker",
     prompt: "go",
     cwd,
+    ...(onMainWatch ? { onMainWatch } : {}),
   });
 
 /** Adds the branch `other` at the template commit and a second commit on the checked-out branch. */
@@ -418,42 +418,10 @@ test("the main work tree read leaves the index file unchanged", async () => {
 });
 
 /**
- * Resolves after a filesystem event for `path` and one for `dir`. The test uses it to order a
- * write before a restore, so both land inside the turn window with no fixed sleep.
+ * Starts a turn that writes `path` in the main work tree, then holds until the test releases it.
+ * A `restore` value writes the first content back before the turn ends.
  */
-function nextFileAndDirChange(path, dir) {
-  return new Promise((resolve, reject) => {
-    let fileSeen = false;
-    let dirSeen = false;
-    const done = () => {
-      if (!fileSeen || !dirSeen) return;
-      fileWatcher.close();
-      dirWatcher.close();
-      resolve();
-    };
-    const fail = (err) => {
-      fileWatcher.close();
-      dirWatcher.close();
-      reject(err);
-    };
-    const fileWatcher = watch(path, () => {
-      fileSeen = true;
-      done();
-    });
-    const dirWatcher = watch(dir, () => {
-      dirSeen = true;
-      done();
-    });
-    fileWatcher.on("error", fail);
-    dirWatcher.on("error", fail);
-  });
-}
-
-/**
- * Starts a turn that writes `path` in the main work tree, waits for a filesystem event, then holds
- * until the test releases it. A `restore` value writes the first content back before the turn ends.
- */
-function heldWrite({ path = "init.txt", written = "changed\n", restore = null } = {}) {
+function heldWrite({ path = "init.txt", written = "changed\n", restore = null, onMainWatch } = {}) {
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
@@ -462,15 +430,16 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null } 
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
-  // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextFileAndDirChange(join(tree.main, path), tree.main);
-  const run = turn(async () => {
-    await writeFile(join(tree.main, path), written);
-    await event;
-    observed();
-    await held;
-    if (restore !== null) await writeFile(join(tree.main, path), restore);
-  });
+  const run = turn(
+    async () => {
+      await writeFile(join(tree.main, path), written);
+      observed();
+      await held;
+      if (restore !== null) await writeFile(join(tree.main, path), restore);
+    },
+    tree.linked,
+    onMainWatch,
+  );
   return { run, seen, release };
 }
 
@@ -478,8 +447,15 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null } 
 // restores (issue #1556). The end-of-turn read cannot see the restored file, so only the in-window
 // watch names it.
 test("a worker turn that restores a tracked main work tree file reports it in the turn", async () => {
-  const hold = heldWrite({ restore: "hello\n" });
+  let watchHandle;
+  const hold = heldWrite({
+    restore: "hello\n",
+    onMainWatch: (handle) => {
+      watchHandle = handle;
+    },
+  });
   await hold.seen;
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
   hold.release();
   const result = await hold.run;
   expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
@@ -489,15 +465,33 @@ test("a worker turn that restores a tracked main work tree file reports it in th
 // Usefulness: verifies that a directory-only change carries no in-turn field (issue #1556). Only
 // tracked files and untracked files that Git does not ignore are in scope.
 test("a directory-only change in the main work tree reports no path", async () => {
-  // The watcher exists before the turn starts, so the file event cannot precede it.
-  const event = nextFileAndDirChange(join(tree.main, "init.txt"), tree.main);
-  const result = await turn(async () => {
-    await mkdir(join(tree.main, "made-dir"));
-    await writeFile(join(tree.main, "init.txt"), "changed\n");
-    await event;
-    await rm(join(tree.main, "made-dir"), { recursive: true, force: true });
-    await writeFile(join(tree.main, "init.txt"), "hello\n");
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
   });
+  let observed;
+  const seen = new Promise((resolve) => {
+    observed = resolve;
+  });
+  let watchHandle;
+  const run = turn(
+    async () => {
+      await mkdir(join(tree.main, "made-dir"));
+      await writeFile(join(tree.main, "init.txt"), "changed\n");
+      observed();
+      await held;
+      await rm(join(tree.main, "made-dir"), { recursive: true, force: true });
+      await writeFile(join(tree.main, "init.txt"), "hello\n");
+    },
+    tree.linked,
+    (handle) => {
+      watchHandle = handle;
+    },
+  );
+  await seen;
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
+  release();
+  const result = await run;
   expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
@@ -512,8 +506,14 @@ test("a worker turn that writes nothing carries no in-turn field", async () => {
 // Usefulness: verifies requirement "a file that still differs at the end stays in
 // mainWorkTreeChanged only" (issue #1556). The in-window field names a restored change only.
 test("a worker turn that leaves the main work tree file changed reports it only at the end", async () => {
-  const hold = heldWrite();
+  let watchHandle;
+  const hold = heldWrite({
+    onMainWatch: (handle) => {
+      watchHandle = handle;
+    },
+  });
   await hold.seen;
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
   hold.release();
   const result = await hold.run;
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
@@ -525,8 +525,16 @@ test("a worker turn that leaves the main work tree file changed reports it only 
 test("a worker turn that restores an ignored main work tree file reports nothing", async () => {
   await writeFile(join(tree.main, ".git", "info", "exclude"), "ignored.txt\n");
   await writeFile(join(tree.main, "ignored.txt"), "hello\n");
-  const hold = heldWrite({ path: "ignored.txt", restore: "hello\n" });
+  let watchHandle;
+  const hold = heldWrite({
+    path: "ignored.txt",
+    restore: "hello\n",
+    onMainWatch: (handle) => {
+      watchHandle = handle;
+    },
+  });
   await hold.seen;
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
   hold.release();
   const result = await hold.run;
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
@@ -544,17 +552,22 @@ test("a failed worker turn carries the in-turn main work tree change", async () 
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
-  // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextFileAndDirChange(join(tree.main, "init.txt"), tree.main);
-  const run = turn(async () => {
-    await writeFile(join(tree.main, "init.txt"), "changed\n");
-    await event;
-    observed();
-    await held;
-    await writeFile(join(tree.main, "init.txt"), "hello\n");
-    throw new Error("adapter failed");
-  });
+  let watchHandle;
+  const run = turn(
+    async () => {
+      await writeFile(join(tree.main, "init.txt"), "changed\n");
+      observed();
+      await held;
+      await writeFile(join(tree.main, "init.txt"), "hello\n");
+      throw new Error("adapter failed");
+    },
+    tree.linked,
+    (handle) => {
+      watchHandle = handle;
+    },
+  );
   await seen;
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
   release();
   const result = await run;
   expect(result).toMatchObject({ status: "error" });
@@ -574,17 +587,22 @@ test("a canceled worker turn carries the in-turn main work tree change", async (
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
-  // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextFileAndDirChange(join(tree.main, "init.txt"), tree.main);
-  const run = turn(async () => {
-    await writeFile(join(tree.main, "init.txt"), "changed\n");
-    await event;
-    observed();
-    await held;
-    await writeFile(join(tree.main, "init.txt"), "hello\n");
-    throw new ExecError("canceled", { isCanceled: true });
-  }).catch((err) => err);
+  let watchHandle;
+  const run = turn(
+    async () => {
+      await writeFile(join(tree.main, "init.txt"), "changed\n");
+      observed();
+      await held;
+      await writeFile(join(tree.main, "init.txt"), "hello\n");
+      throw new ExecError("canceled", { isCanceled: true });
+    },
+    tree.linked,
+    (handle) => {
+      watchHandle = handle;
+    },
+  ).catch((err) => err);
   await seen;
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
   release();
   const error = await run;
   expect(error).toMatchObject({ isCanceled: true });

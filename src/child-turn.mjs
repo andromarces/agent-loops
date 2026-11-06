@@ -435,6 +435,8 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
+    // A test uses onMainWatch to observe the main work tree watch.
+    onMainWatch,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
@@ -684,6 +686,7 @@ export async function runChild(options) {
     // removal can neither read as a mutation nor hide one (issue #920).
     const scratchDir = isReviewer ? await createReviewerScratch(cwd, { signal }) : null;
     await readBeforeTurn(evidence);
+    if (evidence.mainWatch && onMainWatch) onMainWatch(evidence.mainWatch);
     let response;
     try {
       response = readOnly
