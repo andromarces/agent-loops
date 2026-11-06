@@ -182,14 +182,17 @@ async function settledNames(
     const startedAt = now();
     const available = deadline - startedAt;
     // A late read cannot end by the deadline, so the last completed read supplies the report.
-    if (available <= 0) return reported();
+    if (available < 1) return reported();
     if (!first && startedAt >= finalStart) {
-      const entries = await readNames(read, available, { signal, warn: !warnedFailure });
+      const entries = await readNames(read, Math.floor(available), {
+        signal,
+        warn: !warnedFailure,
+      });
       throwIfCanceled(signal);
       if (entries !== null) last = entries;
       return reported();
     }
-    const entries = await readNames(read, Math.max(1, Math.min(readBound, available)), {
+    const entries = await readNames(read, Math.max(1, Math.min(readBound, Math.floor(available))), {
       signal,
       warn: !warnedFailure,
     });
