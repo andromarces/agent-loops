@@ -123,6 +123,19 @@ test("first worker turn limits every edit to the run work tree", () => {
   );
 });
 
+// Usefulness: acceptance #1551: a worker whose edit landed in another checkout restored the files
+// there, which can discard an uncommitted change of the user, and its own envelope named no path.
+// The rule reports the paths and stops, and never restores or discards a file in another checkout.
+test("first worker turn reports an edit that landed in another checkout and never restores it", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "If an edit lands in another checkout, report the paths in the closing block and stop.",
+  );
+  expect(prompt).toContain(
+    "Never restore or discard a file there, because a restore can discard an uncommitted change of the user.",
+  );
+});
+
 // Usefulness: verifies the first worker turn forbids a background watcher and
 // requires the closing block for the whole turn as the last message after a late
 // event, so the one message the runtime parses never describes only the event

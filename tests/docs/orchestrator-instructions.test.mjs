@@ -842,6 +842,7 @@ const REFUSED_CWD_BLOCKS = {
       "## Work tree ownership",
       "The parent creates the run's work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it: a worker turn pushes its branch and stops there, because every later dispatch of that run targets the same `--cwd`.",
       "The worker preamble states the work tree edit rule. Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.",
+      "The worker preamble also states the report-and-stop rule. If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there, because a restore can discard an uncommitted change of the user.",
       "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
       "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
       "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",
