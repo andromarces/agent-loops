@@ -123,6 +123,19 @@ test("first worker turn limits every edit to the run work tree", () => {
   );
 });
 
+// Usefulness: acceptance #1551: a worker whose edit landed in another checkout restored the files
+// there, which can discard an uncommitted change of the user, and its own envelope named no path.
+// The rule reports the paths and stops, and never restores or discards a file in another checkout.
+test("first worker turn reports an edit that landed in another checkout and never restores it", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "If an edit lands in another checkout, report the paths in the closing block and stop.",
+  );
+  expect(prompt).toContain(
+    "Never restore or discard a file there, because a restore can discard an uncommitted change of the user.",
+  );
+});
+
 // Usefulness: verifies the first worker turn forbids a background watcher and
 // requires the closing block for the whole turn as the last message after a late
 // event, so the one message the runtime parses never describes only the event
@@ -354,8 +367,16 @@ test("first worker turn tells the worker to remove temporary files it created ou
 test("first worker turn bars a literal path to the system temporary directory", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
+});
+
+// Usefulness: verifies acceptance #1558 — the worker preamble names `/tmp` as a literal system path
+// and never `%TEMP%`. Windows `cmd` expands `%TEMP%` to the private turn directory.
+test("first worker turn names /tmp as the literal system temporary path", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("such as `/tmp`");
+  expect(prompt).not.toContain("%TEMP%");
 });
 
 // Usefulness: verifies requirement "a worker updates the PR body after a push to a branch with an open
@@ -485,5 +506,18 @@ test("worker turns link issues only in the PR body and never with a closing keyw
     expect(prompt).toContain(
       "Link an issue only in the pull request body or the Development panel. Never put a closing keyword, such as `Closes`, `Fixes`, or `Resolves`, in a commit message.",
     );
+  }
+});
+
+// Usefulness: verifies acceptance #1560: a worker wrote a PR body whose closing keyword sat inside a
+// code span. GitHub recorded no link, and the issue stayed unlinked. Every turn that can set or
+// edit the body reads the recorded links and fixes the body until the issue is listed.
+test("worker turns check that a PR body closing keyword reached closingIssuesReferences", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "After you set or edit a pull request body that links an issue with a closing keyword, read `gh pr view <pr> --json closingIssuesReferences`.",
+    );
+    expect(prompt).toContain("Fix the body until the issue is listed.");
   }
 });

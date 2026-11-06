@@ -265,6 +265,10 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /only in part/i, /commit messages/i, /before finish/i),
   (text) => expectRule(text, /closing keyword/i, /closes the issue at merge/i),
   (text) => expectRule(text, /dispatch a worker/i, /remove it/i),
+  // Issue #1560: for PR work that must close an issue, the parent reads the recorded links before
+  // finish. A missing issue gets a worker turn before the final reviewer turn.
+  (text) => expectRule(text, /closingIssuesReferences/, /before finish/i),
+  (text) => expectRule(text, /missing issue/i, /worker turn/i, /final reviewer turn/i),
   // Issue #1162: a task whose change is outside the work tree has an accept that is a reviewer
   // report, a reviewer prompt that names the read-only limits, and a `verified` that says
   // `reviewed` identifies no change.
@@ -274,6 +278,51 @@ const SHARED_PARENT_RULES = [
   (text) =>
     expectRule(text, /verified/, /reviewed`? identifies no change/i, /what the reviewer checked/i),
 ];
+
+// Usefulness: verifies the child guard and the parent-session rule name the parent read (issue
+// #1559). A child never runs it, and a caller must pass the stored id.
+test("the child guard and parent-session docs name recheck-tmpdir", async () => {
+  const child = (await readFile(join(referenceSectionsDir, "child-run-guard.md"), "utf8")).replace(
+    /\s+/g,
+    " ",
+  );
+  const parent = (
+    await readFile(join(referenceSectionsDir, "parent-session-guard.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  const fields = (
+    await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  expectRule(child, /child role never runs/i, /recheck-tmpdir/i);
+  expectRule(parent, /recheck-tmpdir/i, /required/i);
+  expectRule(fields, /recheck-tmpdir/i, /parent-session/i);
+  expectRule(fields, /non-terminal/i);
+  expect(fields).not.toContain("role finish");
+  expect(fields).not.toContain("headless finish is refused");
+  const role = await readFile(join(repoRoot, "docs/reference/role.md"), "utf8");
+  const recheckBullet = role.split("\n").find((line) => line.startsWith("- `recheck-tmpdir"));
+  expectRule(recheckBullet, /recheck-tmpdir/i, /state file that init wrote/i);
+  expect(recheckBullet).not.toContain("needs no init");
+});
+
+// Usefulness: verifies ADR 0076 records its partial supersession and ADR 0081 links PR #1564
+// (issue #1559).
+test("ADR 0076 and ADR 0081 state the supersession and the PR link", async () => {
+  const adr76 = await readFile(
+    join(
+      repoRoot,
+      "adr/0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md",
+    ),
+    "utf8",
+  );
+  const adr81 = await readFile(
+    join(repoRoot, "adr/0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md"),
+    "utf8",
+  );
+  expect(adr76).toMatch(/## Status\s+partially-superseded/);
+  expect(adr76).toMatch(/Superseded by \[ADR 0081\]/);
+  expect(adr81).toMatch(/## Status\s+accepted/);
+  expect(adr81).toContain("[PR #1564](https://github.com/andromarces/agent-loops/pull/1564)");
+});
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
 // reviewed-state parent rules (issue #217, issue #252, issue #328). The two parent paths never
@@ -845,6 +894,7 @@ const REFUSED_CWD_BLOCKS = {
       "## Work tree ownership",
       "The parent creates the run's work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it: a worker turn pushes its branch and stops there, because every later dispatch of that run targets the same `--cwd`.",
       "The worker preamble states the work tree edit rule. Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.",
+      "The worker preamble also states the report-and-stop rule. If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there, because a restore can discard an uncommitted change of the user.",
       "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
       "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
       "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",

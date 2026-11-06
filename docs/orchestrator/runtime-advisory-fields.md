@@ -12,6 +12,22 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   replacement of the turn directory, is listed. Every other entry that the settle re-read still
   holds is listed, an `al-` name too; an entry that the re-read no longer holds is left out, and
   the reads establish no owner (issue #1542).
+  - The runtime keeps the names that the reviewer turns of the run reported, one entry per name.
+    Before the finish summary, run
+    `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
+    reads a non-terminal run from the state file that init wrote and requires the stored id, as
+    `extend` does. It takes no lock and writes nothing. Its envelope is
+    `{status, lifecycle, inheritedTmpdirEntries}`. A state file written before the field existed
+    contributes the names in `lastResult`, and a dispatch carries them forward.
+  - The re-read reports a name that still exists, one that another process created again included.
+    A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
+    redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
+  - The read compares names, so such a name never resolves a path. The read lists names only,
+    deletes nothing, and follows no link. Its report is redacted and capped at 20 like the envelope
+    field. A child role is refused.
+  - A headless run carries the same re-read result in `inheritedTmpdirPresent` in the result prompt.
+    The parent carries into `open` only those names, and a finish is never refused for a name (issue
+    #1559).
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
     #1240, ADR 0069). A process registers each turn directory in the runs root with its device and

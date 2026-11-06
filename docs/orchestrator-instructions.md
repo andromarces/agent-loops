@@ -22,6 +22,8 @@ Reference sections list below names each file and when to read it.
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+- `agent-loop role recheck-tmpdir` reads this run's state and the inherited temporary
+  directory. It changes nothing, so it is a status read that the role rule allows.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
@@ -171,12 +173,8 @@ The example below is indented for display only. Example reviewer envelope:
   - Dispatch the same turn again, after a short wait, without reading the `error` text. Raise the budget with `extend`
     when no step is left. An error with no `transient` field is not known to be
     transient.
-  - The Codex adapter marks the reply `Selected model is at capacity. Please
-    try a different model.`. The Claude Code adapter marks a `result` event with
-    `is_error: true` and `api_error_status: 529`. The OpenCode adapter marks a
-    `provider.internal` error with `status` 529. The Copilot adapter marks a
-    `session.error` event with `statusCode` 529. The agy adapter marks an
-    `AGY_ERROR` line whose `short_error` carries code 529.
+  - The capacity reply that each adapter marks is in
+    [Supported agents](reference/architecture.md#supported-agents).
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
@@ -189,14 +187,12 @@ The example below is indented for display only. Example reviewer envelope:
 - `report.checks` names the commands that ran in that child turn and their
   results, for a worker turn and for a reviewer turn alike. It is reported
   evidence from the child, not proof that a command ran, so it never replaces
-  the runtime `reviewed` fields. The label is optional, so a child that omits it
-  yields `null` and the block still parses.
+  the runtime `reviewed` fields.
 - `report.notes` holds non-blocking findings the next turn does not need to act
-  on. `report.deferred` holds items found but left out of scope. Both are
-  optional: a child that omits the label yields `null` for that field, and the
-  block still parses. Each value is one line, the label plain at column 0.
-  The rules that fold a list under a label into that value, and the shapes that make the
-  block unparseable, are in [Closing block list rules](orchestrator/closing-block.md).
+  on. `report.deferred` holds items found but left out of scope.
+- The `Checks`, `Notes`, and `Deferred` labels are optional: an omitted label yields `null`, and
+  the block still parses. List folding and unparseable shapes are in
+  [Closing block list rules](orchestrator/closing-block.md).
 
 A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
 the reviewer saw. The runtime writes these fields from the snapshot taken at the
@@ -226,6 +222,8 @@ Apply these parent rules:
 - When a PR resolves its issue only in part, read the commit messages of the PR branch before
   finish. A closing keyword in one, such as `Closes #N`, closes the issue at merge, even after the
   PR body says `Refs`. Dispatch a worker to remove it.
+- For PR work that must close an issue, read `closingIssuesReferences` on the PR before finish.
+  A missing issue gets a worker turn before the final reviewer turn.
 - A worker envelope carries `workTree`, the runtime-owned `head` and `clean` state read after
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.
@@ -334,6 +332,13 @@ Apply these parent rules:
     removal to the user. A reviewer `Notes` line never makes an entry safe to delete, because
     another process can hold a matching name (issue #1529). The runtime cannot attribute an entry
     to a turn, so the parent cannot prove ownership.
+  - The parent re-checks the names that the reviewer turns reported before the finish summary. It
+    reports under `open` only a name that the re-read still holds. Run
+    `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
+    returns only the names that still exist.
+  - A failed or over-bound read keeps every name. So does a name that the read cannot check. The
+    re-read deletes nothing. A headless run carries the same names in `inheritedTmpdirPresent` in
+    the result prompt.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish
@@ -372,6 +377,11 @@ The worker preamble states the work tree edit rule. Edit, create, and delete
 files only under the run work tree. Before an edit with an absolute path, check
 that the path starts with the work tree root. A path that a tool returns for
 another checkout maps to the same relative path in the run work tree.
+
+The worker preamble also states the report-and-stop rule. If an edit lands in
+another checkout, report the paths in the closing block and stop. Never restore
+or discard a file there, because a restore can discard an uncommitted change of
+the user.
 
 Create the work tree with no upstream, so a plain `git push` of a worker cannot
 reach the default branch:
@@ -713,7 +723,7 @@ PR does not exist at init, and when a headless run declares its PR itself.
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `declare-pr`, `refresh-local`, `finish`, or `abort`. The spawn marker and its
+  role never runs `extend`, `declare-pr`, `refresh-local`, `set-model`, `recheck-tmpdir`, `finish`, or `abort`. The spawn marker and its
   limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not

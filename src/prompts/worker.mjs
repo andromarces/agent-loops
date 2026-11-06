@@ -19,6 +19,11 @@ const commitLinkRule =
 
 const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
+// A worker wrote a PR body whose closing keyword sat inside a code span, so GitHub recorded no link.
+// The issue stayed unlinked (issue #1560).
+const closingIssuesRule =
+  "After you set or edit a pull request body that links an issue with a closing keyword, read `gh pr view <pr> --json closingIssuesReferences`. Fix the body until the issue is listed.";
+
 // A worker ran the test suite and committed an unignored Vitest report with `git add -A`
 // (issue #1510).
 const stageOnlyNeededPathsRule =
@@ -52,11 +57,16 @@ const ownNodeModulesRule =
 const workTreeEditRule =
   "Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.";
 
+// A worker whose edit landed in another checkout restored the files there, which can discard an
+// uncommitted change of the user, and its own envelope then named no path (issue #1551).
+const foreignCheckoutEditRule =
+  "If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there, because a restore can discard an uncommitted change of the user.";
+
 // Every turn runs with a private temporary directory that the runtime removes (ADR 0047, ADR 0068).
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
-const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
+const tmpdirRule = tempPathRule("work tree", ", such as `/tmp`");
 
 // A Claude worker moved its suite to a background shell task when it could outlive the foreground
 // bound, then ended the turn with no closing block (issue #1530).
@@ -93,6 +103,8 @@ ${hookOutputRule}
 
 ${prBodyRule}
 
+${closingIssuesRule}
+
 ${commitLinkRule}
 
 ${stageOnlyNeededPathsRule}
@@ -124,6 +136,7 @@ Your role:
 - ${matchingPushNote}
 - ${hookOutputRule}
 - ${prBodyRule}
+- ${closingIssuesRule}
 - ${commitLinkRule}
 - ${stageOnlyNeededPathsRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
@@ -131,6 +144,7 @@ Your role:
   switch it, and leave it in place after the push, because every later turn of
   this run targets the same \`--cwd\`.
 - ${workTreeEditRule}
+- ${foreignCheckoutEditRule}
 - Report what changed, what was verified, and state any disagreements with evidence.
 - State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states. Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
