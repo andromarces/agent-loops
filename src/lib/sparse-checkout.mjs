@@ -1,7 +1,7 @@
 // Reads the sparse checkout that a linked `cwd` can inherit from the main work tree. The init
 // envelope then reports the tracked files that the run work tree lacks (issue #1538).
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
-import { gitRead } from "./git-read.mjs";
+import { gitRead, stripLf } from "./git-read.mjs";
 import { mainWorkTreePath } from "./local-files.mjs";
 import { logWarn } from "./log.mjs";
 import { withTimeBound } from "./time-bound.mjs";
@@ -27,11 +27,14 @@ export async function readSparseCheckout(cwd, { deadlineMs = READ_BOUND_MS } = {
         // A linked work tree alone can inherit the main work tree's exclusion.
         const main = await Promise.race([mainWorkTreePath(cwd, { signal }), stopped]);
         if (main === null) return null;
-        // The reads take no optional Git lock, so they never write the work tree index.
+        // `--cwd` can be a subdirectory, so every read runs at the work tree root and reports
+        // root-relative paths.
         const bound = { signal, timeoutMs: deadlineMs };
+        const root = await Promise.race([readTopLevel(cwd, bound), stopped]);
+        // The reads take no optional Git lock, so they never write the work tree index.
         const [enabled, skipWorktree] = await Promise.all([
-          Promise.race([readEnabled(cwd, bound), stopped]),
-          Promise.race([readSkipWorktree(cwd, bound), stopped]),
+          Promise.race([readEnabled(root, bound), stopped]),
+          Promise.race([readSkipWorktree(root, bound), stopped]),
         ]);
         if (!enabled && skipWorktree.length === 0) return null;
         return { enabled, skipWorktree };
@@ -41,6 +44,17 @@ export async function readSparseCheckout(cwd, { deadlineMs = READ_BOUND_MS } = {
     logWarn(`init: the sparse-checkout read failed: ${firstErrorLine(readableErrorText(err))}`);
     return null;
   }
+}
+
+/** Reads the work tree root of `cwd`, so a subdirectory `--cwd` still lists every tracked path. */
+async function readTopLevel(cwd, bound) {
+  const result = await gitRead(cwd, ["rev-parse", "--show-toplevel"], {
+    ...bound,
+    allowExit: [0],
+    env: { GIT_OPTIONAL_LOCKS: "0" },
+    stripFinalNewline: false,
+  });
+  return stripLf(result.stdout);
 }
 
 /** Reads `core.sparseCheckout` as the work tree's effective boolean setting. */

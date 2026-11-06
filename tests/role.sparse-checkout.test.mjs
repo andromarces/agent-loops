@@ -45,6 +45,18 @@ async function trackedState(repo) {
   return { sparseCheckout: config.stdout, files: files.stdout };
 }
 
+/** Keeps `extensions.worktreeConfig` off and moves the sparse setting to the shared config. */
+async function useSharedSparse(main) {
+  // `git sparse-checkout set` turns the extension on in this Git. The extension is removed after
+  // it, and the setting is rebuilt in the shared config and the shared pattern file.
+  await git(main, ["sparse-checkout", "set", "--no-cone", "/init.txt"]);
+  await git(main, ["config", "--unset", "extensions.worktreeConfig"]);
+  await git(main, ["config", "core.sparseCheckout", "true"]);
+  await git(main, ["config", "core.sparseCheckoutCone", "false"]);
+  await writeFile(join(main, ".git", "info", "sparse-checkout"), "/init.txt\n");
+  await git(main, ["read-tree", "-mu", "HEAD"]);
+}
+
 /** A linked work tree whose main work tree excludes `excluded/two.txt` through sparse checkout. */
 async function linkedWithInheritedSparse({ worktreeConfig = true } = {}) {
   const tree = await createLinkedWorkTree({
@@ -52,8 +64,10 @@ async function linkedWithInheritedSparse({ worktreeConfig = true } = {}) {
       await addTrackedFile(main, "excluded/two.txt");
       if (worktreeConfig) {
         await git(main, ["config", "extensions.worktreeConfig", "true"]);
+        await git(main, ["sparse-checkout", "set", "--no-cone", "/init.txt"]);
+      } else {
+        await useSharedSparse(main);
       }
-      await git(main, ["sparse-checkout", "set", "--no-cone", "/init.txt"]);
     },
   });
   repos.push(tree.base);
@@ -80,17 +94,37 @@ test("init reports an inherited sparse checkout with extensions.worktreeConfig o
 });
 
 // Usefulness: verifies acceptance 1 — a shared setting is reported with worktreeConfig off.
-// Not redundant: the setting lives in the shared config, so the linked work tree reads it directly.
+// Not redundant: it keeps the extension off and checks that state in the linked work tree.
 test("init reports a sparse checkout with extensions.worktreeConfig off", async () => {
   const { linked } = await linkedWithInheritedSparse({ worktreeConfig: false });
+  const extension = await execa("git", ["config", "--get", "extensions.worktreeConfig"], {
+    cwd: linked,
+    reject: false,
+  });
 
   const result = await initIn(linked);
 
+  expect(extension.exitCode).toBe(1);
+  expect(extension.stdout).toBe("");
   expect(result.exitCode).toBe(0);
   expect(result.payload.sparseCheckout).toEqual({
     enabled: true,
     skipWorktree: ["excluded/two.txt"],
   });
+});
+
+// Usefulness: verifies acceptance 1 — a subdirectory `--cwd` reports a root skip-worktree path.
+// Not redundant: the read must run at the work tree root, so a cwd-scoped read omits the path.
+test("init in a subdirectory reports a skip-worktree path outside it", async () => {
+  const { base, linked } = await createLinkedWorkTree();
+  repos.push(base);
+  await mkdir(join(linked, "src"), { recursive: true });
+  await git(linked, ["update-index", "--skip-worktree", "init.txt"]);
+
+  const result = await initIn(join(linked, "src"));
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.sparseCheckout).toEqual({ enabled: false, skipWorktree: ["init.txt"] });
 });
 
 // Usefulness: verifies acceptance 1 — a skip-worktree entry is reported even with sparse checkout off.
