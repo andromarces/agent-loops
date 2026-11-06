@@ -277,6 +277,8 @@ Apply these parent rules:
     change too. A path that still differs at the end appears in `mainWorkTreeChanged` only.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field then proves nothing.
+  - At the turn end the watch closes first, then drains the remaining queue under a 1000 ms
+    deadline. A missed deadline reports no field and logs a warning.
   - For a clean fast-forward, report `mainWorkTreeFastForward` under open in the finish summary with
     no stop. The `mainWorkTreeFastForward` field names the old and new head SHAs, and never content.
   - The field holds only when the main work tree had no dirty, untracked, or unignored change before

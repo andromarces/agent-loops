@@ -1,18 +1,23 @@
 import { watch } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
+import { performance } from "node:perf_hooks";
 import { mapInBatches } from "./batches.mjs";
 import { execBounded } from "./exec.mjs";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 
-// Milliseconds that one ignore read waits before the watch reports no path.
+// Milliseconds that one ignore read waits before the watch reports no path (10_000).
 const IGNORE_READ_BOUND_MS = 10_000;
-// Keys that one event-grown structure keeps before the watch gives up the field.
+// Milliseconds that the end-of-turn drain runs before the watch reports no path (1000).
+export const DRAIN_DEADLINE_MS = 1_000;
+// Keys that one event-grown structure keeps before the watch gives up the field (500).
 const MAX_KEYS = 500;
-// Event paths that one `git check-ignore` call reads.
+// Reads in flight that one turn keeps before the watch gives up the field (500).
+const MAX_READS = 500;
+// Event paths that one `git check-ignore` call reads (200).
 const IGNORE_BATCH_SIZE = 200;
-// Candidate paths that one file check reads at a time.
+// Candidate paths that one file check reads at a time (32).
 const FILE_BATCH_SIZE = 32;
 
 /**
@@ -23,7 +28,7 @@ const FILE_BATCH_SIZE = 32;
  * a warning, so the caller reports no path. The options lower the bounds and hold the ignore input,
  * for a test.
  * @param {string} root absolute main work tree root
- * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, beforeIgnoreInputEnds?: (bound: { pid: number }) => Promise<void> }} [options]
+ * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void> }} [options]
  * @returns {{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null}
  */
 export function startMainWorkTreeWatch(
@@ -32,6 +37,7 @@ export function startMainWorkTreeWatch(
     maxPending = MAX_KEYS,
     maxSeenFiles = MAX_KEYS,
     maxCandidates = MAX_KEYS,
+    maxReads = MAX_READS,
     beforeIgnoreInputEnds = null,
   } = {},
 ) {
@@ -76,6 +82,15 @@ export function startMainWorkTreeWatch(
     }
     while (reads.size > 0) await Promise.allSettled(reads);
     if (flushing !== null) await flushing.catch(() => {});
+  };
+
+  /** Ends the drain at its deadline and stops every read in flight. */
+  const expire = () => {
+    fail(new Error(`the main work tree watch drain passed its ${DRAIN_DEADLINE_MS} ms deadline`));
+    if (!stopped) {
+      stopped = true;
+      controller.abort();
+    }
   };
 
   /** Keeps a read in `reads` until it settles, so `stop` can wait for it. */
@@ -150,7 +165,9 @@ export function startMainWorkTreeWatch(
     signal.addEventListener("abort", stopInput, { once: true });
     try {
       subprocess.stdin.write(input);
-      if (beforeIgnoreInputEnds !== null) await beforeIgnoreInputEnds({ pid: subprocess.pid });
+      if (beforeIgnoreInputEnds !== null) {
+        await beforeIgnoreInputEnds({ pid: subprocess.pid, signal });
+      }
       subprocess.stdin.end();
       const result = await subprocess;
       if (result.isCanceled) {
@@ -168,6 +185,10 @@ export function startMainWorkTreeWatch(
 
   const flush = async () => {
     while (pending.size > 0 && !stopped && !failed) {
+      if (reads.size >= maxReads) {
+        fail(new Error(`more than ${maxReads} reads`));
+        return;
+      }
       const batch = [...pending.keys()].slice(0, IGNORE_BATCH_SIZE);
       const ignored = await track(readIgnored(batch, { signal: controller.signal }));
       if (failed) return;
@@ -196,9 +217,13 @@ export function startMainWorkTreeWatch(
     return flushing;
   };
 
-  /** Drains the queued paths, and ends at once when a read already failed. */
-  const drain = async () => {
+  /** Drains the queued paths under `deadline`, and ends at once when a read failed. */
+  const drain = async (deadline) => {
     while (!stopped && !failed && (pending.size > 0 || flushing !== null)) {
+      if (performance.now() >= deadline) {
+        expire();
+        break;
+      }
       await (flushing ?? schedule());
     }
     if (flushing !== null) await flushing.catch(() => {});
@@ -209,6 +234,10 @@ export function startMainWorkTreeWatch(
     mapInBatches([...candidates], FILE_BATCH_SIZE, async (path) => {
       if (seenFiles.has(path)) return path;
       if (stopped) return null;
+      if (reads.size >= maxReads) {
+        fail(new Error(`more than ${maxReads} reads`));
+        return null;
+      }
       try {
         const entry = await track(lstat(join(root, path)));
         return entry.isFile() || entry.isSymbolicLink() ? path : null;
@@ -232,8 +261,8 @@ export function startMainWorkTreeWatch(
       fail(new Error(`more than ${maxPending} queued paths`));
       return;
     }
-    if (reads.size >= maxPending) {
-      fail(new Error(`more than ${maxPending} reads`));
+    if (reads.size >= maxReads) {
+      fail(new Error(`more than ${maxReads} reads`));
       return;
     }
     pending.set(path, { kinds: new Set([type]) });
@@ -256,9 +285,15 @@ export function startMainWorkTreeWatch(
       // Two event-loop turns let a queued watch event reach the callback before the read.
       await new Promise((resolve) => setImmediate(resolve));
       await new Promise((resolve) => setImmediate(resolve));
-      await drain();
       closeWatcher();
-      await drain();
+      const deadline = performance.now() + DRAIN_DEADLINE_MS;
+      const timer = setTimeout(expire, DRAIN_DEADLINE_MS);
+      timer.unref?.();
+      try {
+        await drain(deadline);
+      } finally {
+        clearTimeout(timer);
+      }
       let paths = [];
       if (!stopped && !failed) {
         try {
