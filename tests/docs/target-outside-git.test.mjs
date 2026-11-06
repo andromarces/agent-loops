@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
-import { removePath } from "../fs-helpers.mjs";
+import { exists, removePath } from "../fs-helpers.mjs";
 
 const docPath = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -30,11 +30,12 @@ const hasBash = await execa("bash", ["-c", "exit 0"], { reject: false }).then(
 );
 
 // Usefulness: verifies the copy-back keeps a modified target's mode, gives an added target the
-// reviewed executable mode or the umask default, and that the delivery check rejects a wrong
-// executable bit (issue #1571). No other test runs the documented block, so a regression in its
-// mode handling or in the check would reach an operator's target.
+// reviewed executable mode or the umask default, removes a deleted target, and that the delivery
+// check rejects a wrong executable bit, a remaining deleted target, an unreadable reviewed
+// revision, or a mistyped path (issue #1576). No other test runs the documented blocks, so a
+// regression in their handling or in the check would reach an operator's target.
 test.skipIf(!hasBash)(
-  "the copy-back keeps target modes and the delivery check compares the executable bit",
+  "the copy-back delivers modified, added, and deleted targets and the delivery check rejects a wrong state",
   async () => {
     const doc = await readFile(docPath, "utf8");
     const copyBack = bashBlockAfter(doc, 'REPO="<throwaway repository>"');
@@ -50,7 +51,8 @@ test.skipIf(!hasBash)(
       await writeFile(join(base, "repo", ".git", "info", "attributes"), "* -text\n");
       await writeFile(join(base, "repo", "modified.txt"), "modified before\n");
       await writeFile(join(base, "repo", "modified-exec.txt"), "exec before\n");
-      await git(["-C", "repo", "add", "--", "modified.txt", "modified-exec.txt"]);
+      await writeFile(join(base, "repo", "deleted.txt"), "deleted before\n");
+      await git(["-C", "repo", "add", "--", "modified.txt", "modified-exec.txt", "deleted.txt"]);
       await git(["-C", "repo", "update-index", "--chmod=+x", "--", "modified-exec.txt"]);
       await git(["-C", "repo", "commit", "-q", "-m", "import"]);
       const imported = (await git(["-C", "repo", "rev-parse", "HEAD"])).stdout.trim();
@@ -60,6 +62,7 @@ test.skipIf(!hasBash)(
       await mkdir(join(base, "repo", "sub"));
       await writeFile(join(base, "repo", "sub", "added-exec.txt"), "added exec\n");
       await writeFile(join(base, "repo", "sub", "added-plain.txt"), "added plain\n");
+      await git(["-C", "repo", "rm", "-q", "--", "deleted.txt"]);
       await git([
         "-C",
         "repo",
@@ -95,15 +98,18 @@ test.skipIf(!hasBash)(
       await chmod(join(base, "modified.txt"), 0o640);
       await writeFile(join(base, "modified-exec.txt"), "exec before\n");
       if (!isWindows) await chmod(join(base, "modified-exec.txt"), 0o755);
+      await writeFile(join(base, "deleted.txt"), "deleted before\n");
       const original = (await git(["hash-object", "--no-filters", "--", "modified.txt"])).stdout;
       const originalExec = (await git(["hash-object", "--no-filters", "--", "modified-exec.txt"]))
+        .stdout;
+      const originalDeleted = (await git(["hash-object", "--no-filters", "--", "deleted.txt"]))
         .stdout;
 
       const render = (block, values) =>
         block
           .replaceAll("<throwaway repository>", "repo")
           .replaceAll("<import commit>", imported)
-          .replaceAll("<reviewed.head>", reviewed)
+          .replaceAll("<reviewed.head>", values.reviewed ?? reviewed)
           .replaceAll("<path>", values.file)
           .replaceAll("<target>", values.target)
           .replaceAll("<original hash>", values.original);
@@ -161,6 +167,62 @@ ${render(delivery, item)}
 }
 `;
       }
+      const deleted = {
+        file: "deleted.txt",
+        target: "deleted.txt",
+        original: originalDeleted,
+      };
+      script += `(
+${render(copyBack, deleted)}
+)
+copy_back_status=$?
+[ "$copy_back_status" -eq 0 ] || {
+  echo "copy-back failed for the deleted target" >&2
+  exit "$copy_back_status"
+}
+(
+${render(delivery, deleted)}
+) || {
+  echo "delivery check failed for the deleted target" >&2
+  exit 1
+}
+printf 'remaining\n' > deleted.txt
+(
+${render(delivery, deleted)}
+)
+delivery_status=$?
+rm -f deleted.txt
+[ "$delivery_status" -eq 1 ] || {
+  echo "delivery check exited $delivery_status with a remaining deleted target" >&2
+  exit 1
+}
+`;
+      const rejected = [
+        {
+          label: "unreadable revision",
+          file: "deleted.txt",
+          target: "deleted.txt",
+          original: originalDeleted,
+          reviewed: "0".repeat(40),
+        },
+        {
+          label: "mistyped path",
+          file: "missing.txt",
+          target: "deleted.txt",
+          original: "",
+        },
+      ];
+      for (const item of rejected) {
+        script += `(
+${render(delivery, item)}
+)
+delivery_status=$?
+[ "$delivery_status" -eq 1 ] || {
+  echo "delivery check exited $delivery_status for the ${item.label}" >&2
+  exit 1
+}
+`;
+      }
       const negative = {
         file: "modified-exec.txt",
         target: "modified.txt",
@@ -192,6 +254,7 @@ delivery_status=$?
           expect((await stat(join(base, item.target))).mode & 0o777, item.label).toBe(item.mode);
         }
       }
+      expect(await exists(join(base, deleted.target)), "deleted target").toBe(false);
     } finally {
       await removePath(base);
     }

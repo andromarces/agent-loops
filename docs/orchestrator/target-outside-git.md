@@ -123,24 +123,46 @@ fi
 
 The redirect writes the bytes unchanged, so use bash, not a PowerShell version whose `>` re-encodes the output. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was. A failed delivery removes only the empty parent directories that it created for an added path, deepest first. `stat -c %a` reads the mode of a modified target on GNU, and `stat -f %Lp` reads it on BSD, where `chmod --reference` is not available.
 
-After the copy, check the delivered state. When `reviewed.head` holds `<path>`, compare the content hash of the delivered file with the blob, and compare the executable bit of the target with the reviewed mode:
+After the copy, check the delivered state. The block first validates the reviewed revision and proves a deletion from the diff against `<import commit>`. When `reviewed.head` holds `<path>`, compare the content hash of the delivered file with the blob, and compare the executable bit of the target with the reviewed mode:
 
 ```bash
-git -C "<throwaway repository>" rev-parse "<reviewed.head>:<path>"
-git hash-object --no-filters -- "<target>"
-MODE=$(git -C "<throwaway repository>" ls-tree "<reviewed.head>" -- "<path>" | awk '{print $1}')
-[ -n "$MODE" ] || { echo "delivery check failed: the reviewed mode is not readable" >&2; exit 1; }
-REVIEWED_EXEC=0
-[ "$MODE" = "100755" ] && REVIEWED_EXEC=1
-TARGET_EXEC=0
-[ -x "<target>" ] && TARGET_EXEC=1
-[ "$REVIEWED_EXEC" = "$TARGET_EXEC" ] || {
-  echo "delivery check failed: the executable bit differs" >&2
+git -C "<throwaway repository>" cat-file -e "<reviewed.head>^{commit}" 2>/dev/null || {
+  echo "delivery check failed: the reviewed revision is not readable" >&2
   exit 1
 }
+DELETED=$(git -C "<throwaway repository>" -c core.quotePath=false diff --name-only --diff-filter=D "<import commit>" "<reviewed.head>" -- "<path>") || {
+  echo "delivery check failed: the reviewed diff is not readable" >&2
+  exit 1
+}
+[ -z "$DELETED" ] || [ "$DELETED" = "<path>" ] || {
+  echo "delivery check failed: <path> matches more than one file" >&2
+  exit 1
+}
+if [ -n "$DELETED" ]; then
+  [ ! -e "<target>" ] || {
+    echo "delivery check failed: the deleted target remains" >&2
+    exit 1
+  }
+elif git -C "<throwaway repository>" cat-file -e "<reviewed.head>:<path>" 2>/dev/null; then
+  git -C "<throwaway repository>" rev-parse "<reviewed.head>:<path>"
+  git hash-object --no-filters -- "<target>"
+  MODE=$(git -C "<throwaway repository>" ls-tree "<reviewed.head>" -- "<path>" | awk '{print $1}')
+  [ -n "$MODE" ] || { echo "delivery check failed: the reviewed mode is not readable" >&2; exit 1; }
+  REVIEWED_EXEC=0
+  [ "$MODE" = "100755" ] && REVIEWED_EXEC=1
+  TARGET_EXEC=0
+  [ -x "<target>" ] && TARGET_EXEC=1
+  [ "$REVIEWED_EXEC" = "$TARGET_EXEC" ] || {
+    echo "delivery check failed: the executable bit differs" >&2
+    exit 1
+  }
+else
+  echo "delivery check failed: the reviewed commit did not delete <path>" >&2
+  exit 1
+fi
 ```
 
-The two hashes must be equal, and `<target>` is executable exactly when the reviewed mode is `100755`. When the reviewed commit deleted `<path>`, the delivery is complete only when `<target>` is absent. A remaining file, a different hash, or a different executable bit means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
+The two hashes must be equal, and `<target>` is executable exactly when the reviewed mode is `100755`. A deletion is proven only when the diff against `<import commit>` lists `<path>` as deleted; then the block exits 1 when `<target>` remains, because the delivery is complete only when the target is absent. An unreadable revision, a mistyped path, a remaining file, a different hash, or a different executable bit means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
 
 A headless run cannot run the copy-back. `finish` ends that loop, and every orchestrator turn is read-only. The operator delivers the accepted file there.
 
