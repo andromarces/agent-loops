@@ -297,10 +297,13 @@ Apply these parent rules:
     never installs, so the installed dependencies no longer match
     the lockfile. When the runtime cannot read the dependency file list, the field names every
     lockfile and every non-Node path known from the other read. See issues #1225 and #1457.
-  - When the field appears, run the dependency setup the repository documents for its tests, such
-    as the Node lockfile install, before the next reviewer dispatch. For a non-Node file, run the
-    setup that its toolchain documents before the next reviewer dispatch. A failed worker turn
-    carries the field too. A turn that changed none carries no field. See issues #1180 and #1457.
+  - When the field appears, run only the dependency setup that the repository documents for its
+    tests in the work tree, such as the Node lockfile install, before the next reviewer dispatch.
+    For a non-Node file, run only the setup that its toolchain documents for those tests in the
+    work tree before the next reviewer dispatch. A changed dependency file that no test setup reads
+    needs no action: record that judgment under `open`. Never install outside the work tree. A
+    failed worker turn carries the field too. A turn that changed none carries no field. See issues
+    #1180, #1457, and #1537.
   - The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`,
     `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.
     Ignored paths are never read.
