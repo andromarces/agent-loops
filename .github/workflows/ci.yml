@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -13,6 +14,9 @@ concurrency:
 
 jobs:
   ci:
+    # A draft PR runs no CI; ready_for_review starts it (AGENTS.md merge
+    # efficiency).
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,6 +69,7 @@ jobs:
   # shards. The fan-in job below publishes the required ci (windows-latest)
   # context, so main protection needs no edit (issue #1552).
   windows-tests:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -93,6 +98,7 @@ jobs:
         run: pnpm exec vp test run --shard=${{ matrix.shard }}/3
 
   windows-smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -128,7 +134,7 @@ jobs:
   windows-gate:
     name: ci (windows-latest)
     needs: [windows-tests, windows-smoke]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     steps:
       - name: Require every Windows job to succeed
