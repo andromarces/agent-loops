@@ -341,8 +341,8 @@ async function waitChecksOperation(
   {
     gh,
     signal,
-    // The same monotonic clock that the wait uses, in whole milliseconds, so the bound cannot move
-    // with wall time and every child timeout stays an integer.
+    // The same monotonic clock that the wait uses, in whole milliseconds.
+    // The bound cannot move with wall time, and every child timeout stays an integer.
     now = () => Math.floor(performance.now()),
     sleep,
     assertWorkTree = assertGitWorkTree,
