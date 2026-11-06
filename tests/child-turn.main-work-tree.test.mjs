@@ -506,14 +506,8 @@ test("a worker turn that writes nothing carries no in-turn field", async () => {
 // Usefulness: verifies requirement "a file that still differs at the end stays in
 // mainWorkTreeChanged only" (issue #1556). The in-window field names a restored change only.
 test("a worker turn that leaves the main work tree file changed reports it only at the end", async () => {
-  let watchHandle;
-  const hold = heldWrite({
-    onMainWatch: (handle) => {
-      watchHandle = handle;
-    },
-  });
+  const hold = heldWrite();
   await hold.seen;
-  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
   hold.release();
   const result = await hold.run;
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
@@ -534,7 +528,9 @@ test("a worker turn that restores an ignored main work tree file reports nothing
     },
   });
   await hold.seen;
-  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
+  await vi.waitFor(() => expect(watchHandle.pendingCount()).toBeGreaterThan(0), {
+    timeout: 5_000,
+  });
   hold.release();
   const result = await hold.run;
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
