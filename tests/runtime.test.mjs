@@ -156,7 +156,7 @@ test("a headless worker preamble limits every edit to the run work tree", async 
 });
 
 // Usefulness: acceptance #1533 on the headless path. The rendered first worker turn keeps the
-// commit and push hook output and reports its result in Checks, because the plumbing that lost it
+// commit and push hook output. It reports the result in Checks, because the plumbing that lost it
 // was a filter on the push command.
 test("a headless worker preamble keeps and reports the hook output", async () => {
   const repo = await cleanRepo();

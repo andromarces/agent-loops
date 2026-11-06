@@ -111,7 +111,7 @@ test("the interactive worker preamble limits every edit to the run work tree", a
 });
 
 // Usefulness: acceptance #1533 on the interactive path. The dispatched first worker turn keeps the
-// commit and push hook output and reports its result in Checks, so a cut pre-push result cannot
+// commit and push hook output. It reports the result in Checks, so a cut pre-push result cannot
 // reach the parent as a missing check.
 test("the interactive worker preamble keeps and reports the hook output", async () => {
   const repo = await newRunRepo();
