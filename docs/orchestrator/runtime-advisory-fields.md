@@ -24,6 +24,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - A headless run re-checks the recorded names when its runtime evaluates a finish. A headless
     finish is refused while its `open` lists a name that the re-read no longer holds. That refusal
     needs no child turn (issue #1559).
+  - `role finish` refuses a summary whose `open` still lists a name that the re-read no longer
+    holds, so the parent rewrites the summary before the run ends (issue #1559).
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
     #1240, ADR 0069). A process registers each turn directory in the runs root with its device and

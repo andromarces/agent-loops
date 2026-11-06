@@ -7,9 +7,11 @@ import { cwdHash, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import {
+  GATE_SUMMARY,
   REPORT,
   cleanup,
   dispatchArgv,
+  finishCall,
   initWorkerRun,
   newRunRepo,
   readRepoState,
@@ -90,6 +92,32 @@ test("recheck-tmpdir dedupes overlapping turns and keeps a name created again", 
       "once.tmp",
       "shared.tmp",
     ]);
+  });
+});
+
+// Usefulness: verifies acceptance end to end — a finish summary that lists a reported name which
+// is gone at the later read is refused, and the run ends only after the parent removes it (issue
+// #1559).
+test("finish refuses a summary that lists a name the later read no longer holds", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const name = "9f2d2c11-1f2a-4bb3-9c5d-6a7b8c9d0e1f.tmp";
+    await dispatchReviewerTurn(repo, leaving(dir, [name]));
+    await rm(join(dir, name));
+
+    const refused = await finishCall(repo, [], {
+      stdin: async () => JSON.stringify({ ...GATE_SUMMARY, open: `left ${name}` }),
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.payload.error).toContain(name);
+    expect((await readRepoState(repo)).lifecycle).toBe("active");
+
+    const accepted = await finishCall(repo, [], {
+      stdin: async () => JSON.stringify({ ...GATE_SUMMARY, open: "none" }),
+    });
+    expect(accepted.exitCode).toBe(0);
+    expect(accepted.payload.lifecycle).toBe("finished");
   });
 });
 

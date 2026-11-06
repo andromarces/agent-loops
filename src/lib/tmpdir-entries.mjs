@@ -129,6 +129,28 @@ async function readInheritedTmpdirNames() {
   return readdir(tmpdir());
 }
 
+/**
+ * The recorded names that `open` still lists as a token and that the later read no longer holds. A
+ * name that the read cannot check stays present, so a failed or over-bound read returns none.
+ * @param {string[]} names
+ * @param {string} open
+ * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] as for
+ *   `presentInheritedTmpdir`
+ * @returns {Promise<string[]>}
+ */
+export async function goneInheritedTmpdirNames(names, open, options) {
+  if (!Array.isArray(names) || names.length === 0) return [];
+  const present = new Set(await presentInheritedTmpdir(names, options));
+  const gone = names.filter((name) => !present.has(name));
+  if (gone.length === 0) return [];
+  const tokens = String(open ?? "")
+    .split(/[\s,;:"'`()[\]{}]+/)
+    .filter(Boolean);
+  return gone.filter((name) =>
+    tokens.some((token) => token === name || token.endsWith(`/${name}`)),
+  );
+}
+
 // Whether a further read still holds `name`. A name that cannot be checked stays present, because
 // a lost name can hide a leftover.
 function stillHeld(name, present) {

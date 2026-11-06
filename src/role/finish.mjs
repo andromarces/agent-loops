@@ -15,6 +15,7 @@ import { logInfo } from "../lib/log.mjs";
 import { acceptanceFailure } from "../lib/report.mjs";
 import { writeState } from "../lib/runstate.mjs";
 import { reviewedState, snapshot } from "../lib/snapshot.mjs";
+import { goneInheritedTmpdirNames } from "../lib/tmpdir-entries.mjs";
 import { validateAction } from "../contracts/orchestrator-action.mjs";
 import { RoleError } from "./envelope.mjs";
 import { releaseWorkTreeLock } from "./state.mjs";
@@ -161,6 +162,17 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   const missingGate = missingGateRefusal(declaredPr, args.requireCi);
   if (missingGate) {
     refusals.push(missingGate.reason);
+  }
+  // A summary that still lists an inherited temporary directory name which the later read no
+  // longer holds is refused, so the parent rewrites it before the run ends (issue #1559).
+  const goneNames = await goneInheritedTmpdirNames(
+    state.inheritedTmpdirNames ?? [],
+    validated.value.summary.open,
+  );
+  if (goneNames.length > 0) {
+    refusals.push(
+      `the inherited temporary directory no longer holds ${goneNames.join(", ")}, which open still lists. Remove each name from open and finish again`,
+    );
   }
   if (refusals.length > 0) {
     // A run that declares no PR and has only the marker refusal throws that

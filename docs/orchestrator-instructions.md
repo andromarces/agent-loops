@@ -333,7 +333,8 @@ Apply these parent rules:
     `agent-loop role recheck-tmpdir --cwd "<work tree>"`. It returns only the names that still
     exist.
   - A failed or over-bound read keeps every name. So does a name that the read cannot check. The
-    re-read deletes nothing.
+    re-read deletes nothing. `role finish` refuses a summary that still lists a name the re-read
+    does not hold.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish

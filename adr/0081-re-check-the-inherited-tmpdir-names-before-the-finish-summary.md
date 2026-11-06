@@ -26,7 +26,7 @@ The runtime can keep the names that the reviewer turns reported. A later read ca
 2. **Re-read at a later point.** `agent-loop role recheck-tmpdir` is a read-only parent subcommand. It re-reads the inherited temporary directory and returns the recorded names that still exist. It writes no state, deletes nothing, follows no link, and reports names only.
 3. **Fail closed.** A failed or over-bound read keeps every recorded name. So does a name that the read cannot check: a redacted name, one with a path separator, and `..`. A name that another process created again counts as present, because the read holds it.
 4. **Bound the report.** The re-read lists at most 20 names, redacted at the reporting boundary like the envelope field (ADR 0017). It compares names, so a recorded name never resolves a path.
-5. **Parent rule.** Before the finish summary, the parent runs the command and carries into `open` only the names it returns. The parent still never deletes an entry, and a `registered/` name stays a hint and not proof.
+5. **Parent rule.** Before the finish summary, the parent runs the command and carries into `open` only the names it returns. `role finish` refuses a summary that still lists a gone name, so the parent rewrites it before the run ends. The parent still never deletes an entry, and a `registered/` name stays a hint and not proof.
 6. **Refuse a child.** A child role of the run is refused, as `extend` refuses one, because the read answers the parent only.
 7. **Headless path.** The runtime keeps the names in memory and re-reads them when it evaluates a finish. It refuses a finish whose `open` lists a name that the re-read no longer holds. That refusal needs no child turn, like the unresolved-compare marker.
 
@@ -62,6 +62,7 @@ Andro Marces
 - Implementation:
   - Runtime: `presentInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`
   - Parent read: `recheck-tmpdir` in `src/role/index.mjs`
+  - Interactive finish: `goneInheritedTmpdirNames` in `src/role/finish.mjs`
   - State: `recordInheritedTmpdirNames` in `src/role/dispatch.mjs`
   - Headless finish: `goneInheritedTmpdirNames` in `src/finish-gate.mjs`
   - Docs: `docs/orchestrator/runtime-advisory-fields.md` and `docs/orchestrator-instructions.md`

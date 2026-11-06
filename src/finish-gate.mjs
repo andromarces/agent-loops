@@ -8,7 +8,7 @@ import {
 import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";
-import { presentInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
+import { goneInheritedTmpdirNames } from "./lib/tmpdir-entries.mjs";
 
 /**
  * Reads one PR gate for a finish. A `gh` failure is a refusal, not a thrown error: the read throws
@@ -281,24 +281,6 @@ export async function evaluateFinish({
       `Finish refused: ${reason}. ${refusals.map((entry) => entry.recovery).join(" ")}${ending}`,
     ),
   };
-}
-
-/**
- * The recorded names that `open` still lists as a token and that the later read no longer holds. A
- * name that the read cannot check stays present, so a failed or over-bound read returns none.
- * @param {string[]} names
- * @param {string} open
- * @returns {Promise<string[]>}
- */
-async function goneInheritedTmpdirNames(names, open) {
-  if (!Array.isArray(names) || names.length === 0) return [];
-  const present = new Set(await presentInheritedTmpdir(names));
-  const gone = names.filter((name) => !present.has(name));
-  if (gone.length === 0) return [];
-  const tokens = open.split(/[\s,;:"'`()[\]{}]+/).filter(Boolean);
-  return gone.filter((name) =>
-    tokens.some((token) => token === name || token.endsWith(`/${name}`)),
-  );
 }
 
 /**
