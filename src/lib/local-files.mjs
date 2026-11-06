@@ -864,19 +864,15 @@ async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf) {
 }
 
 /**
- * Names the copied local files whose source or copy differs from the stored hash, so a parent can
- * tell a stale copy from a turn edit. `changed` is `source`, `copy`, `both`, or `unknown`.
- * `unknown` is the fail-closed result of a legacy or malformed init hash, and an absent hash field
- * is legacy. A missing or unreadable side counts as changed on that side. Nothing is written, and
- * content is never returned or logged. Returns sorted `{path, changed}` entries, or an empty list
- * when there is no main work tree. `afterAncestorCheck` and `beforeRead` are test seams.
- * @param {string} cwd
- * @param {string[]} names
- * @param {Record<string, string> | undefined} initHashes
- * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
- * @returns {Promise<{ path: string, changed: string }[]>}
+ * Names the copied local files whose source or copy differs from the stored hash.
+ * A parent uses the result to tell a stale copy from a turn edit.
+ * `changed` is `source`, `copy`, `both`, or `unknown`.
+ * `unknown` covers a legacy or malformed init hash.
+ * A missing or unreadable side counts as changed on that side.
+ * Nothing is written, and content is never returned or logged.
  */
 export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...hooks } = {}) {
+  // The result is sorted by path, or empty when there is no main work tree.
   const located = await locateWorkTrees(cwd, (dir, args, options) =>
     git(dir, args, { signal, ...options }),
   );
@@ -884,6 +880,7 @@ export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...
     return [];
   }
   const hashes = isPlainRecord(initHashes) ? initHashes : null;
+  // `afterAncestorCheck` and `beforeRead` are test seams on the guarded read.
   const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
     if (!isPlainRelativeName(rel)) {
       return { rel, source: NOT_COMPARABLE, copy: NOT_COMPARABLE };
