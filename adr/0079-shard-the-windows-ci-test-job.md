@@ -47,5 +47,6 @@ Andro Marces
 ## Links
 
 - [Issue #1552](https://github.com/andromarces/agent-loops/issues/1552)
+- [PR #1555](https://github.com/andromarces/agent-loops/pull/1555)
 - [CI workflow](../../.github/workflows/ci.yml)
 - [ADR Index](README.md)
