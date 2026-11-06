@@ -86,12 +86,14 @@ Role operations:
                                 check compares that id only.
   recheck-tmpdir                Re-read the inherited temporary directory and report
                                 the names that the reviewer turns reported and that
-                                it still holds, on a non-terminal run. Needs the stored
-                                --parent-session id, as extend does. Writes no run
-                                state and deletes nothing. The parent runs it before
-                                the finish summary and reports only the names it
-                                returns. A failed or over-bound read, and a name it
-                                cannot check, stay listed. Refuses a child role.
+                                are still present, on a non-terminal run. Needs the
+                                run state file and the stored --parent-session id,
+                                as extend does. Takes no state lock; writes no state
+                                or file, and deletes or moves nothing. The parent
+                                runs it before the finish summary and reports only
+                                the names it returns. A failed or over-bound read,
+                                and a name it cannot check, stay listed. Refuses a
+                                child role.
   declare-pr                    Set the run PR once, after init, on a non-terminal run
                                 that declared none, for a task whose worker opens the
                                 PR. Needs --pr and the stored --parent-session id.

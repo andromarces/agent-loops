@@ -21,6 +21,7 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { presentInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
+import { reportedEntryNames } from "./lib/entry-report.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
 import {
@@ -381,7 +382,9 @@ export async function runLoop(options) {
       for (const name of result.inheritedTmpdirEntries) reportedTmpdirNames.add(name);
     }
     if (reportedTmpdirNames.size > 0) {
-      inheritedTmpdirPresent = await presentInheritedTmpdir([...reportedTmpdirNames]);
+      inheritedTmpdirPresent = reportedEntryNames(
+        await presentInheritedTmpdir([...reportedTmpdirNames]),
+      );
     }
 
     // Set whatever the turn returned: a reviewer turn that ended in a handled error

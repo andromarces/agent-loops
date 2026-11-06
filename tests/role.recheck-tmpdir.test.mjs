@@ -1,11 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { SPAWNED_RUN_ENV } from "../src/lib/exec.mjs";
 import { cwdHash, statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import { removePath } from "./fs-helpers.mjs";
+import { deadPid } from "./process-helpers.mjs";
 import {
   GATE_SUMMARY,
   REPORT,
@@ -156,6 +158,72 @@ test("recheck-tmpdir includes the names that a legacy state holds in lastResult"
     state.turns = [{ role: "reviewer", status: "ok", verdict: "accept", head: null, at: "t" }];
     await writeState(statePaths({ cwd: repo }).stateFile, state);
     await writeFile(join(dir, "legacy.tmp"), "");
+
+    const result = await recheck(repo);
+    expect(result.payload.inheritedTmpdirEntries).toEqual(["legacy.tmp"]);
+  });
+});
+
+// Usefulness: verifies the read deletes and writes nothing. A file, a directory, and a kept turn
+// directory stay in place, and no state lock appears (issue #1559).
+test("recheck-tmpdir deletes nothing and creates no lock", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const file = join(dir, "keep.txt");
+    const sub = join(dir, "keep-dir");
+    const kept = join(dir, "al-Kept12");
+    await writeFile(file, "");
+    await mkdir(sub);
+    await mkdir(kept);
+    await writeFile(join(kept, "leftover.txt"), "x");
+    const info = lstatSync(kept, { bigint: true });
+    const state = await readRepoState(repo);
+    state.lifecycle = "interrupted";
+    state.lastDispatch = {
+      role: "worker",
+      at: new Date().toISOString(),
+      turnTmpdir: {
+        dir: kept,
+        parentReal: dirname(realpathSync.native(kept)),
+        device: String(info.dev),
+        inode: String(info.ino),
+        child: { pid: await deadPid() },
+      },
+    };
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    expect(existsSync(statePaths({ cwd: repo }).lockFile)).toBe(false);
+
+    const result = await recheck(repo);
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(file)).toBe(true);
+    expect(existsSync(sub)).toBe(true);
+    expect(existsSync(join(kept, "leftover.txt"))).toBe(true);
+    expect(existsSync(statePaths({ cwd: repo }).lockFile)).toBe(false);
+  });
+});
+
+// Usefulness: verifies a dispatch keeps the legacy lastResult names. The next re-read reports a
+// name that only lastResult held before the dispatch replaced it (issue #1559).
+test("a dispatch keeps the legacy lastResult names for the next re-read", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const state = await readRepoState(repo);
+    delete state.inheritedTmpdirNames;
+    state.lastResult = {
+      role: "reviewer",
+      status: "ok",
+      inheritedTmpdirEntries: ["legacy.tmp"],
+    };
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, "legacy.tmp"), "");
+
+    const dispatched = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), repo), {
+      agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    });
+    expect(dispatched.exitCode).toBe(0);
 
     const result = await recheck(repo);
     expect(result.payload.inheritedTmpdirEntries).toEqual(["legacy.tmp"]);

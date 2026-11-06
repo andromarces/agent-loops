@@ -25,20 +25,20 @@ The runtime can keep the names that the reviewer turns reported. A later read ca
 ## Decision
 
 1. **Keep the reported names.** The dispatch appends the `inheritedTmpdirEntries` of each reviewer turn to `state.inheritedTmpdirNames`. The union is deduped, so several turns that report one name keep one entry. A worker turn records nothing.
-2. **Read at a later point.** `agent-loop role recheck-tmpdir` is a read-only parent subcommand. It re-reads the inherited temporary directory and returns the recorded names that still exist. It writes no run state, deletes nothing, follows no link, and reports names only.
-3. **Accept the parent only.** The command reads a non-terminal run and requires the stored `--parent-session` id, as `extend` does. A missing id and a different id are refused. A child role is refused for the same reason.
-4. **Include a legacy state.** A state file written before `inheritedTmpdirNames` existed contributes the names in `lastResult`. A run that predates the field still reports them.
+2. **Read at a later point.** `agent-loop role recheck-tmpdir` is a read-only parent subcommand. It re-reads the inherited temporary directory and returns the recorded names that are present at that moment. It writes no run state, takes no state lock, deletes nothing, moves nothing, follows no link, and reports names only.
+3. **Accept the parent only.** The command reads a non-terminal run from the state file that init wrote. It requires the stored `--parent-session` id, as `extend` does. A missing id and a different id are refused, and a child role is refused for the same reason.
+4. **Include a legacy state.** A state file written before `inheritedTmpdirNames` existed contributes the names in `lastResult`. A dispatch carries them into the new field before it replaces `lastResult`. A run that predates the field still reports them.
 5. **Fail closed.** A failed or over-bound read keeps every recorded name. So does a name that the read cannot check: a redacted name, a Windows drive, backslash, or UNC form, a path separator, and `..`. A name that another process created again counts as present, because the read holds it.
 6. **Bound the report.** The re-read lists at most 20 names, redacted at the reporting boundary like the envelope field (ADR 0017). It compares names, so a recorded name never resolves a path.
 7. **Parent rule only.** Before the finish summary, the parent runs the command and carries into `open` only the names it returns. Neither `role finish` nor the headless finish inspects the summary for a name. The parent still never deletes an entry, and a `registered/` name stays a hint and not proof.
-8. **Headless path.** The runtime keeps the names and re-reads them after each reviewer turn. It adds `inheritedTmpdirPresent` to the result prompt, with only the names that still exist, and the prompt states the same `open` rule.
+8. **Headless path.** The runtime keeps the names and re-reads them after each reviewer turn. It adds `inheritedTmpdirPresent` to the result prompt, with the names present at the read, redacted and capped at 20. The prompt states the same `open` rule.
 
 A subcommand is the smallest shape here. The parent can run it right before the summary, and no existing envelope changes its meaning.
 
 ## Consequences
 
 - A GUID `.tmp` file that is gone by the re-check stays out of `open` when the parent follows the rule.
-- The re-check runs a parent turn after the reviewer turn, so a file that lives for seconds fails it.
+- The re-check reports the names still present at the moment of its read. It makes no claim about a later state.
 - The parent runs one extra command per run that received the field.
 - A name removed after the re-check still reaches the summary, because no read can catch a later removal.
 - A redacted or unsafe name always reaches `open`, because the read cannot prove it gone.

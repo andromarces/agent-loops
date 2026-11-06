@@ -145,24 +145,22 @@ async function abort(args) {
  */
 async function recheckTmpdir(args) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
-  return withOpenRun(
-    args,
-    {},
-    async (state) => {
-      const recorded = inheritedTmpdirNames(state);
-      const present = await presentInheritedTmpdir(recorded);
-      return {
-        exitCode: 0,
-        payload: {
-          status: "ok",
-          lifecycle: state.lifecycle,
-          inheritedTmpdirEntries: reportedEntryNames(present),
-        },
-      };
+  requireParentSessionFlag(args, "recheck-tmpdir");
+  const paths = statePaths({ cwd: args.cwd });
+  const state = requireState(await readState(paths.stateFile), args.cwd);
+  requireStoredParentSession(args, state);
+  if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
+    throw new RoleError(`Run is already ${state.lifecycle}.`);
+  }
+  const present = await presentInheritedTmpdir(inheritedTmpdirNames(state));
+  return {
+    exitCode: 0,
+    payload: {
+      status: "ok",
+      lifecycle: state.lifecycle,
+      inheritedTmpdirEntries: reportedEntryNames(present),
     },
-    [],
-    "recheck-tmpdir",
-  );
+  };
 }
 
 // A state file can hold names in three places. They are the field this change writes, the last

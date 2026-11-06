@@ -375,12 +375,24 @@ async function dispatchLocked(
 async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
   state.lifecycle = lifecycle;
   const at = new Date().toISOString();
+  carryLegacyInheritedTmpdirNames(state);
   state.lastResult = { ...result, at };
   recordTurn(state, roleName, result, at);
   recordInheritedTmpdirNames(state, roleName, result);
   recordRoleSession(state.roles[roleName], role);
   await writeState(stateFile, state);
   onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
+}
+
+/**
+ * Moves the names that a legacy `lastResult` holds into `inheritedTmpdirNames` before a new result
+ * replaces that field. A state file written before the field existed otherwise loses them.
+ */
+function carryLegacyInheritedTmpdirNames(state) {
+  const legacy = state.lastResult?.inheritedTmpdirEntries;
+  if (!Array.isArray(legacy) || legacy.length === 0) return;
+  const held = Array.isArray(state.inheritedTmpdirNames) ? state.inheritedTmpdirNames : [];
+  state.inheritedTmpdirNames = [...new Set([...held, ...legacy])];
 }
 
 /**

@@ -193,9 +193,8 @@ test("keeps every recorded name when the later read fails or passes its bound", 
   ).toEqual(recorded);
 });
 
-// Usefulness: verifies requirement "a recorded name with a separator or .. never resolves outside
-// the inherited directory" (issue #1559): the read compares names, so an unsafe name stays listed
-// and no path is joined.
+// Usefulness: verifies that the read never resolves a recorded name outside the inherited
+// directory. A name with a separator or `..` stays listed, and no path is joined (issue #1559).
 test("keeps a name that holds a separator or .. without resolving it", async () => {
   expect(
     await presentInheritedTmpdir(["../outside.txt"], { read: async () => ["outside.txt"] }),
