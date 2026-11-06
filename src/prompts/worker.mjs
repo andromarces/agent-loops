@@ -53,6 +53,11 @@ const workTreeEditRule =
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
 const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
 
+// A Claude worker moved its suite to a background shell task when it could outlive the foreground
+// bound, then ended the turn with no closing block (issue #1530).
+const longSuiteRule =
+  "Never end the turn while a command that you started is still running. When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.";
+
 // A worker that waits on CI outlives its turn timeout after the push, and its work is already done
 // (issue #1459).
 const ciWaitRule =
@@ -98,6 +103,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${longSuiteRule}
 - ${ciWaitRule}
 - ${unnamedHostRule({ namesHost: true })}
 - ${ownNodeModulesRule}
@@ -118,7 +124,7 @@ Your role:
   this run targets the same \`--cwd\`.
 - ${workTreeEditRule}
 - Report what changed, what was verified, and state any disagreements with evidence.
-- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
+- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states. Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - ${tmpdirRule}
 - ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.")}
