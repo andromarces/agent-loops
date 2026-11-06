@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -47,6 +47,7 @@ jobs:
       - run: pnpm test
       # Exercise install and uninstall against the PR checkout on every runner,
       # so macOS gets installer evidence before merge, not only after a release.
+      # Windows installer evidence runs in windows-smoke (issue #1552).
       - name: Install then uninstall harness integrations into a temp home
         shell: bash
         run: |
@@ -57,5 +58,82 @@ jobs:
           if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
             echo "::error::install/uninstall left files behind"
             ls -A "$AGENT_LOOP_HOME"
+            exit 1
+          fi
+
+  # Windows test work is the long pole on every PR, so it is split across
+  # shards. The fan-in job below publishes the required ci (windows-latest)
+  # context, so main protection needs no edit (issue #1552).
+  windows-tests:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      # No setup-node cache: pnpm. See the note in the ci job (#38).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            pnpm install --frozen-lockfile && exit 0
+            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
+            sleep 15
+          done
+          exit 1
+      - name: Run tests (shard ${{ matrix.shard }}/3)
+        run: pnpm test -- --shard=${{ matrix.shard }}/3
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      # No setup-node cache: pnpm. See the note in the ci job (#38).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            pnpm install --frozen-lockfile && exit 0
+            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
+            sleep 15
+          done
+          exit 1
+      - name: Install then uninstall harness integrations into a temp home
+        shell: bash
+        run: |
+          export AGENT_LOOP_HOME="$(mktemp -d)"
+          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
+          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
+          node ./src/cli.mjs uninstall --yes
+          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
+            echo "::error::install/uninstall left files behind"
+            ls -A "$AGENT_LOOP_HOME"
+            exit 1
+          fi
+
+  # Required context ci (windows-latest). A skipped, cancelled, or failed shard
+  # or smoke job fails this job, so the context never turns green by absence.
+  windows-gate:
+    name: ci (windows-latest)
+    needs: [windows-tests, windows-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every Windows job to succeed
+        env:
+          TESTS: ${{ needs.windows-tests.result }}
+          SMOKE: ${{ needs.windows-smoke.result }}
+        run: |
+          if [ "$TESTS" != "success" ] || [ "$SMOKE" != "success" ]; then
+            echo "::error::Windows CI failed: windows-tests=$TESTS windows-smoke=$SMOKE"
             exit 1
           fi
