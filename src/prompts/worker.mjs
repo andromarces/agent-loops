@@ -56,7 +56,7 @@ const workTreeEditRule =
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
-const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
+const tmpdirRule = tempPathRule("work tree", ", such as `/tmp`");
 
 // A Claude worker moved its suite to a background shell task when it could outlive the foreground
 // bound, then ended the turn with no closing block (issue #1530).
