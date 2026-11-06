@@ -1692,6 +1692,9 @@ test("the instructions state the one-turn flaky-check procedure", async () => {
   // The record belongs to the target repository, so no agent-loops issue is a rule for every repository.
   expect(text, "the flaky-check section names no agent-loops issue").not.toMatch(/#1067/);
   expectRule(text, /repository has no/i, /record/i);
+  // A rerun needs evidence that the failure matches a known flaky section, so a missing record reruns nothing.
+  expectRule(text, /no section/i, /flaky-test record/i, /reruns nothing/i);
+  expectRule(text, /no matching section/i, /reruns nothing/i);
   expectRule(text, /worker turn/i, /wait/i, /run completes/i, /bound/i);
   expectRule(text, /worker turn/i, /rerun/i, /only the failed jobs/i);
   expectRule(text, /run `?wait-checks`? again/i, /same head/i, /before the reviewer/i);
@@ -1724,5 +1727,8 @@ test("the headless prompt sends a flaky required-check failure to one worker tur
     // The record belongs to the target repository, so no agent-loops issue is a rule for every repository.
     expect(prompt, "the headless prompt names no agent-loops issue").not.toMatch(/#1067/);
     expectRule(prompt, /repository has no/i, /record/i);
+    // A rerun needs evidence that the failure matches a known flaky section, so a missing record reruns nothing.
+    expectRule(prompt, /no section/i, /flaky-test record/i, /reruns nothing/i);
+    expectRule(prompt, /no flaky-test record/i, /reruns nothing/i);
   }
 });

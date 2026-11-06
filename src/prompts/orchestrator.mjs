@@ -140,8 +140,8 @@ const GATE_CONDITIONS =
 // Flaky required check: the parent cannot rerun a job, so one run_worker turn does every step (#1303).
 const FLAKY_CHECK_RULE = [
   "- A required check can fail on a known flaky test that the diff does not reach. You cannot rerun a job, because you write nothing to GitHub, so dispatch one run_worker turn for it.",
-  "  - That turn waits, with a bound, until the run completes, then reads the failure and decides whether the diff reaches it. It records a known flaky recurrence in the flaky-test record of the target repository, for example its open issue for that test, and reruns only the failed jobs.",
-  "  - When the target repository has no such record, it records nothing and names the recurrence in its report. If the diff reaches the failure, that turn reruns nothing and reports the failure. If the target repository keeps a flaky-test record and no section of it matches the failure, it reruns nothing and reports that too. A repository with no such record blocks no rerun. If the run is still in progress at the bound, it reruns nothing and reports that. If this run bars the worker, rerun nothing and record the failure in open.",
+  "  - That turn waits, with a bound, until the run completes, then reads the failure and decides whether the diff reaches it. It records a known flaky recurrence in the flaky-test record of the target repository, for example its open issue for that test, and reruns only the failed jobs when a section of that record matches the failure.",
+  "  - When the target repository has no such record, it records nothing and names the recurrence in its report. If the diff reaches the failure, that turn reruns nothing and reports the failure. If the target repository has no flaky-test record or no section of it matches the failure, it reruns nothing and reports the failure. If the run is still in progress at the bound, it reruns nothing and reports that. If this run bars the worker, rerun nothing and record the failure in open.",
 ].join("\n");
 
 // What a gated run does with a required check that is still pending at finish.
