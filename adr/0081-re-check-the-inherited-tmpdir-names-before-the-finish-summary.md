@@ -8,7 +8,9 @@ Partially supersedes [ADR 0076: Leave out an inherited temporary directory entry
 
 [ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md) replaces decision 2's single read. It also replaces decision 8's single re-read after a reviewer turn and the consequence that the re-check makes no claim about a later state.
 
-The settle read, decisions 1 and 3 to 7, and every other consequence of ADR 0076 and ADR 0081 remain in force.
+Partially superseded by [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md). It replaces decision 3's requirement that the run is non-terminal.
+
+The settle read, decision 1, decisions 4 to 7, decision 3's remaining parent-only and parent-session rules, and every other consequence of ADR 0076 and ADR 0081 remain in force.
 
 ## Date
 

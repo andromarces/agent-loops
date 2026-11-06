@@ -15,7 +15,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - The runtime keeps the names that the reviewer turns of the run reported, one entry per name.
     Before the finish summary, run
     `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
-    reads a non-terminal run from the state file that init wrote and requires the stored id, as
+    reads the run from the state file that init wrote, at any lifecycle, so the parent can run it
+    after `finish`, and requires the stored id, as
     `extend` does. It takes no lock and writes nothing. Its envelope is
     `{status, lifecycle, inheritedTmpdirEntries}`. A state file written before the field existed
     contributes the names in `lastResult`, and a dispatch carries them forward.
