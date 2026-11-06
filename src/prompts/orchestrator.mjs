@@ -556,6 +556,8 @@ A task whose change is outside the work tree, such as a service configuration th
 
 The work tree arrives with its dependencies installed. Before the first dispatch, the operator that created it ran the dependency setup that the repository documents for its tests. For a Node project, that is the lockfile install, for example \`pnpm install --frozen-lockfile\`. For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file. No worker or reviewer installs them. Never tell a worker to link or junction the \`node_modules\` of another checkout into the work tree, or to run an install in another checkout.
 
+A linked work tree with \`extensions.worktreeConfig\` on can inherit the sparse checkout of the main work tree. The work tree then lacks every tracked file that the main work tree excludes. The operator disables it with \`git sparse-checkout disable\` in the work tree before the run. When the exclusion stays, state the affected paths in the worker prompt, so the worker does not restore them.
+
 Map the report fields into the finish summary:
 - Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.
 - A reviewer accept can leave a criterion unverified, because the reviewer turn cannot run its check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.
