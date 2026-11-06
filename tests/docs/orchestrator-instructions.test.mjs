@@ -356,9 +356,9 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
-// Usefulness: verifies the headless prompt and the wait instructions state the conflict field, its
-// parent action, and the merge states that keep the wait, so a parent never reads a conflict as a
-// pass or mistakes a fresh push for one (issue #1536).
+// Usefulness: verifies the headless prompt and the wait instructions state the conflict field.
+// Both name the parent action and the merge states that keep the wait (issue #1536).
+// A parent then never reads a conflict as a pass or mistakes a fresh push for one.
 test("the parent surfaces state the conflict field and its action", async () => {
   const prompt = initialPrompt({
     task: "Implement feature X",

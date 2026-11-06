@@ -24,42 +24,24 @@ export const HEAD_A = "a".repeat(40);
 /** A second head, for a test whose PR head moves. */
 export const HEAD_B = "b".repeat(40);
 
-// True when `args` is exactly the wait's head read, `gh pr view <pr> --json headRefOid,baseRefName`.
+// True when `args` is exactly the wait's head-and-merge-state read.
+// It asks for `headRefOid`, `baseRefName`, `mergeable`, and `mergeStateStatus`.
 export function isHeadRead(args) {
   return (
     args.length === 5 &&
     startsWithArgs(args, ["pr", "view"]) &&
     Number.isInteger(Number(args[2])) &&
-    equalsArgs(args.slice(3), ["--json", "headRefOid,baseRefName"])
+    equalsArgs(args.slice(3), ["--json", "headRefOid,baseRefName,mergeable,mergeStateStatus"])
   );
 }
 
-// True when `args` is exactly the wait's merge-state read,
-// `gh pr view <pr> --json mergeable,mergeStateStatus`.
-export function isMergeStateRead(args) {
-  return (
-    args.length === 5 &&
-    startsWithArgs(args, ["pr", "view"]) &&
-    Number.isInteger(Number(args[2])) &&
-    equalsArgs(args.slice(3), ["--json", "mergeable,mergeStateStatus"])
-  );
-}
-
-function headReply(head) {
+function headReply(head, mergeState) {
   return {
     status: 0,
-    stdout: JSON.stringify({ headRefOid: head, baseRefName: "main" }),
+    stdout: JSON.stringify({ headRefOid: head, baseRefName: "main", ...mergeState }),
     stderr: "",
     timedOut: false,
   };
-}
-
-/** A merge-state reply: a full `gh` result, or a `{ mergeable, mergeStateStatus }` state. */
-function mergeReply(entry) {
-  if (entry.status !== undefined || entry.stdout !== undefined || entry.stderr !== undefined) {
-    return entry;
-  }
-  return { status: 0, stdout: JSON.stringify(entry), stderr: "", timedOut: false };
 }
 
 const RUN_STATUS_OF_STATE = {
@@ -103,19 +85,12 @@ function readItems(read) {
 }
 
 /**
- * A scripted `gh` for the check wait. Each entry of `reads` is `{ status, checks,
- * stdout, stderr }` and answers `gh pr checks`; the last entry repeats, so a wait that
- * polls more times than the script holds still answers. A `stdout` value is used verbatim,
- * which covers a read whose output is not a check list. The head read, `gh pr view <pr>
- * --json headRefOid,baseRefName`, answers the next entry of `heads`, and the last one repeats.
- * The merge-state read, `gh pr view <pr> --json mergeable,mergeStateStatus`, answers the next
- * entry of `mergeStates`, and the last one repeats.
- * The check runs of a commit read by SHA come from `commits[sha]`, a list of
- * `{ name, state, bucket }` items; a commit the map does not hold answers with the items of
- * the latest `pr checks` read, so a test that scripts only `reads` sees one consistent source.
- * `statuses` lists the REST commit statuses of the commit, `[]` by default.
- * `required` lists the `{ name, appId }` contexts the base-branch ruleset requires; `rules`, `protection`, and `names` replace the reply of the ruleset read, the classic-protection read, and the required-names read. A call that is none of these is an error, so a test never passes on a missing fixture or a
- * wrong argument.
+ * A scripted `gh` for the check wait. Each entry of `reads` answers `gh pr checks`, and the last
+ * entry repeats. A `stdout` value is verbatim, which covers output that is not a check list.
+ * The head read answers `heads` and `mergeStates`, and the last entry repeats.
+ * `commits[sha]` holds the check runs of a commit, or the latest `pr checks` read does.
+ * `statuses`, `required`, `rules`, and `protection` replace their replies, and any other call is
+ * an error.
  */
 export function scriptedGh(
   reads,
@@ -132,15 +107,12 @@ export function scriptedGh(
 ) {
   let n = 0;
   let h = 0;
-  let m = 0;
   let current = [];
   let lastRead = null;
   return async (args, cwd) => {
     if (isHeadRead(args)) {
-      return headReply(heads[Math.min(h++, heads.length - 1)]);
-    }
-    if (isMergeStateRead(args)) {
-      return mergeReply(mergeStates[Math.min(m++, mergeStates.length - 1)]);
+      const index = Math.min(h++, heads.length - 1);
+      return headReply(heads[index], mergeStates[Math.min(index, mergeStates.length - 1)]);
     }
     if (args[0] === "repo" && args[1] === "view") {
       return ok("owner/repo");

@@ -175,27 +175,11 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
 }
 
 /**
- * Whether a `gh pr view --json mergeable,mergeStateStatus` read reports a merge conflict. A
- * `CONFLICTING` mergeable value or a `DIRTY` merge state is the conflict. Every other value, a
- * missing one, and an unreadable reply are no conflict, so the wait never ends as one on a state
- * it cannot read (issue #1536).
- */
-function isConflict(pr, { status, stdout, stderr }) {
-  const label = `gh pr view ${pr}`;
-  if (status !== 0) {
-    throw ghReadError(label, { status, stdout, stderr });
-  }
-  const parsed = tryParseJson(stdout);
-  if (!isJsonObject(parsed)) {
-    throw new Error(`${label} returned no merge state; the read is unresolved.`);
-  }
-  return parsed.mergeable === "CONFLICTING" || parsed.mergeStateStatus === "DIRTY";
-}
-
-/**
- * The PR head `{ head, base }` that a `gh pr view --json headRefOid,baseRefName` read reports, the
- * head lowercase. Throws when the read failed or names no full SHA or base branch, so an
- * unreadable head is unresolved, never a pass.
+ * The PR head and merge state that one `gh pr view` read reports: `{ head, base, conflicting }`.
+ * A `CONFLICTING` mergeable value or a `DIRTY` merge state is a conflict. A missing or unreadable
+ * one is no conflict, so a value the wait cannot read never ends it as one.
+ * Throws when the read failed or names no full SHA or base branch, so an unreadable head is
+ * unresolved, never a pass.
  */
 function readHead(pr, { status, stdout, stderr }) {
   const label = `gh pr view ${pr}`;
@@ -212,7 +196,8 @@ function readHead(pr, { status, stdout, stderr }) {
   if (typeof base !== "string" || base === "") {
     throw new Error(`${label} returned no base branch; the read is unresolved.`);
   }
-  return { head: head.toLowerCase(), base };
+  const conflicting = parsed.mergeable === "CONFLICTING" || parsed.mergeStateStatus === "DIRTY";
+  return { head: head.toLowerCase(), base, conflicting };
 }
 
 // The check items of one commit, read by SHA. `gh pr checks` queries by PR identity and
@@ -467,7 +452,6 @@ async function absenceOf(
  * `timedOut` marks a completed read that ended on the bound, with the last check states.
  * `childExitUnconfirmed` marks an abandoned read whose child exit the command did not observe.
  * `noRequiredChecks`, `noCheckSource`, `awaiting`, and `prFailures` carry the read outcomes.
- * `conflicting` marks a merge conflict read on the poll, which ends the wait before the bound.
  * A retryable failure is retried on the next poll, and one that lasts to the bound throws.
  * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null, all?: boolean,
  *           head?: string | null, expect?: string[], gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
@@ -556,10 +540,15 @@ function createWaitContext(options) {
       "--json",
       "name,state,bucket",
     ],
-    headArgv: ["pr", "view", String(options.pr), "--json", "headRefOid,baseRefName"],
-    // The merge state is a best-effort read: a failure keeps the wait, and a conflict ends it
-    // before the bound (issue #1536).
-    mergeArgv: ["pr", "view", String(options.pr), "--json", "mergeable,mergeStateStatus"],
+    // One reply carries the head and the merge state, so a conflict never pairs with another head
+    // (issue #1536).
+    headArgv: [
+      "pr",
+      "view",
+      String(options.pr),
+      "--json",
+      "headRefOid,baseRefName,mergeable,mergeStateStatus",
+    ],
     last: [],
     // `head` is null when no read completed (#961).
     lastHead: null,
@@ -780,33 +769,19 @@ async function probe(context, sha, base) {
 }
 
 /**
- * Whether the merge-state read of this poll reports a conflict. A failed, timed-out, unparseable,
- * or missing value keeps the wait: an unresolved merge state never ends it as a conflict or a
- * pass. A bound and a cancel still reach the caller (issue #1536).
- */
-async function mergeStateConflicts(context) {
-  try {
-    return isConflict(context.pr, await context.bounded(context.mergeArgv));
-  } catch (raw) {
-    const err = failureOf(raw);
-    if (err instanceof BoundReached || readProp(err, "isCanceled")) {
-      throw err;
-    }
-    return false;
-  }
-}
-
-/**
- * The `gh pr` reads of one poll: the head, the merge state, and the check list when the head is the
- * one waited for. `listed` is null for another head.
+ * The `gh pr` reads of one poll: the head and merge state from one reply.
+ * Then the check list, when the head is the one waited for. `listed` is null for another head.
+ * A conflict settles the wait only on the head it names.
+ * With `--head`, a conflict on another commit keeps the wait, as the `--head` rule keeps it for
+ * checks (issue #1536).
  */
 async function readPr(context) {
-  const { head: sha, base } = await readPrHead(context);
-  if (await mergeStateConflicts(context)) {
-    return { sha, base, conflicting: true };
-  }
+  const { head: sha, base, conflicting } = await readPrHead(context);
   if (context.head !== null && sha !== context.head) {
     return { sha, base, listed: null };
+  }
+  if (conflicting) {
+    return { sha, base, conflicting: true };
   }
   const read = await context.bounded(context.checksArgv);
   const listed = readOutcome(context.pr, read, context.all);
@@ -942,8 +917,9 @@ async function poll(context) {
       // A retryable failure of a `gh pr` read is retried on the next poll.
       context.failed = retryableOrThrow(raw);
     }
-    // A conflict is no pass and holds no check state: the wait names the head it read and ends
-    // before the bound, so the parent merges the base branch and waits on the new head (issue #1536).
+    // A conflict is no pass and holds no check state.
+    // The wait names the head it read and ends before the bound.
+    // The parent then merges the base branch and waits on the new head (issue #1536).
     if (state?.conflicting) {
       return { timedOut: false, conflicting: true, head: state.sha, checks: [] };
     }

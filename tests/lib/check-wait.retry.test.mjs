@@ -73,7 +73,9 @@ test.each(["rules", "protection"])(
 
 const PR_READS = {
   head: (args) =>
-    args[0] === "pr" && args[1] === "view" && args.at(-1) === "headRefOid,baseRefName",
+    args[0] === "pr" &&
+    args[1] === "view" &&
+    args.at(-1) === "headRefOid,baseRefName,mergeable,mergeStateStatus",
   checks: (args) => args[0] === "pr" && args[1] === "checks" && args.at(-1) === "name,state,bucket",
 };
 

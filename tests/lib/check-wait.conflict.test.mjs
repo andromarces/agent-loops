@@ -4,17 +4,19 @@ import {
   fakeClock,
   HEAD_A,
   HEAD_B,
-  isMergeStateRead,
+  isHeadRead,
   PASSED_ITEM,
   PENDING_ITEM,
   scriptedGh,
 } from "./check-wait-helpers.mjs";
 
-/** Runs one wait in `all` mode over the scripted reads and merge states, on a fake clock. */
+/** Runs one wait over the scripted reads and merge states, on a fake clock. */
 function conflictWait({
   reads = [{ status: 0, checks: [PASSED_ITEM] }],
+  heads = [HEAD_A],
   mergeStates,
   all = false,
+  head = null,
 }) {
   const clock = fakeClock();
   const result = waitChecks({
@@ -22,16 +24,16 @@ function conflictWait({
     cwd: ".",
     timeoutSeconds: 300,
     all,
-    gh: scriptedGh(reads, { all, mergeStates }),
+    head,
+    gh: scriptedGh(reads, { all, heads, mergeStates }),
     now: clock.now,
     sleep: clock.sleep,
   });
   return { clock, result };
 }
 
-// Usefulness: verifies a conflicted PR ends the wait before its bound in both wait modes, with the
-// conflict field, `timedOut: false`, and an empty `checks`, so the parent learns the conflict instead
-// of waiting out the bound on checks that GitHub never starts (issue #1536).
+// Usefulness: verifies a conflict ends the wait before its bound, in both wait modes.
+// The envelope carries the conflict field, `timedOut: false`, and an empty `checks` (issue #1536).
 test.each([
   ["required", false],
   ["all", true],
@@ -50,29 +52,108 @@ test.each([
   expect(clock.elapsed()).toBe(0);
 });
 
-// Usefulness: verifies a merge state GitHub still computes, or a null one, keeps the wait and never
-// reads as a conflict, so a fresh push is not mistaken for a merge conflict (issue #1536).
+// Usefulness: verifies a conflict on the `--head` commit settles the wait, in both modes.
+// The parent then acts on a conflict of the head it waits for (issue #1536).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode returns a conflict on the --head commit", async (_mode, all) => {
+  const { result } = conflictWait({
+    all,
+    head: HEAD_A,
+    mergeStates: [{ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }],
+  });
+  expect(await result).toEqual({
+    timedOut: false,
+    conflicting: true,
+    head: HEAD_A,
+    checks: [],
+  });
+});
+
+// Usefulness: verifies a conflict on another commit than `--head` keeps the wait, in both modes.
+// The bound returns `timedOut: true`, no head, and no checks, never a conflict for that other head.
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode keeps waiting over a conflict on another head", async (_mode, all) => {
+  const { result } = conflictWait({
+    all,
+    head: HEAD_B,
+    heads: [HEAD_A],
+    mergeStates: [{ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }],
+  });
+  expect(await result).toEqual({ timedOut: true, head: null, checks: [] });
+});
+
+// Usefulness: verifies a push between polls never pairs a conflict with the earlier head.
+// One reply carries the head and the merge state, in both wait modes (issue #1536).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode names the head that the conflict reply carries", async (_mode, all) => {
+  const { result } = conflictWait({
+    all,
+    reads: [{ status: 8, checks: [PENDING_ITEM] }],
+    heads: [HEAD_A, HEAD_B],
+    mergeStates: [
+      { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" },
+      { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" },
+    ],
+  });
+  expect(await result).toEqual({
+    timedOut: false,
+    conflicting: true,
+    head: HEAD_B,
+    checks: [],
+  });
+});
+
+// Usefulness: verifies one `gh pr view` reply carries the head and the merge state, in both modes.
+// No read can pair a conflict with a head from another reply (issue #1536).
+test.each([
+  ["required", false],
+  ["all", true],
+])("waitChecks %s mode reads the head and merge state once", async (_mode, all) => {
+  const inner = scriptedGh([{ status: 8, checks: [PENDING_ITEM] }], {
+    all,
+    mergeStates: [{ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }],
+  });
+  const reads = [];
+  const clock = fakeClock();
+  const result = await waitChecks({
+    pr: 42,
+    cwd: ".",
+    timeoutSeconds: 300,
+    all,
+    gh: (args, cwd, options) => {
+      if (isHeadRead(args)) {
+        reads.push(args);
+      }
+      return inner(args, cwd, options);
+    },
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toEqual({ timedOut: false, conflicting: true, head: HEAD_A, checks: [] });
+  expect(reads).toHaveLength(1);
+});
+
+// Usefulness: verifies `UNKNOWN`, null, and unreadable merge fields keep the wait.
+// A fresh push or a value the wait cannot read is never mistaken for a conflict (issue #1536).
 test.each([
   ["UNKNOWN", { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" }],
   ["a null merge state", { mergeable: null, mergeStateStatus: null }],
+  ["missing merge fields", {}],
+  ["unreadable merge fields", { mergeable: 123, mergeStateStatus: false }],
 ])("waitChecks keeps waiting over %s", async (_name, mergeState) => {
   const { result } = conflictWait({ mergeStates: [mergeState] });
   expect(await result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
 });
 
-// Usefulness: verifies a failed or unparseable merge-state read keeps the wait and never ends it as a
-// conflict or a pass, so an unresolved read cannot decide the outcome (issue #1536).
-test.each([
-  ["a failed merge-state read", { status: 1, stdout: "", stderr: "gh: Server Error (HTTP 500)" }],
-  ["an unparseable merge-state read", { status: 0, stdout: "not json", stderr: "" }],
-])("waitChecks keeps waiting over %s", async (_name, mergeState) => {
-  const { result } = conflictWait({ mergeStates: [mergeState] });
-  expect(await result).toEqual({ timedOut: false, head: HEAD_A, checks: [PASSED_ITEM] });
-});
-
-// Usefulness: verifies a merge-state read that reaches the bound ends the wait at the bound and never
-// as a conflict or a pass, so a hung read cannot claim a conflict it did not observe (issue #1536).
-test("waitChecks reports the bound when the merge-state read never answers", async () => {
+// Usefulness: verifies a head-and-merge reply that never answers ends the wait at the bound.
+// It is never a conflict or a pass, so a hung read cannot claim a conflict (issue #1536).
+test("waitChecks reports the bound when the head-and-merge read never answers", async () => {
   const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }]);
   const result = await waitChecks({
     pr: 42,
@@ -80,31 +161,9 @@ test("waitChecks reports the bound when the merge-state read never answers", asy
     timeoutSeconds: 0.3,
     childExitCeilingMs: 100,
     gh: (args, cwd, options) =>
-      isMergeStateRead(args) ? new Promise(() => {}) : inner(args, cwd, options),
+      isHeadRead(args) ? new Promise(() => {}) : inner(args, cwd, options),
   });
   expect(result.timedOut).toBe(true);
   expect(result.conflicting).toBeUndefined();
   expect(result.checks).toEqual([]);
 }, 20000);
-
-// Usefulness: verifies a conflict that a later poll reads names the head of that poll and reports no
-// check of the earlier head, so a moved PR head never yields a conflict or pass for another commit
-// (issue #1536).
-test("waitChecks names the head of the poll that reads the conflict", async () => {
-  const clock = fakeClock();
-  const result = await waitChecks({
-    pr: 42,
-    cwd: ".",
-    timeoutSeconds: 300,
-    gh: scriptedGh([{ status: 8, checks: [PENDING_ITEM] }], {
-      heads: [HEAD_A, HEAD_B],
-      mergeStates: [
-        { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" },
-        { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" },
-      ],
-    }),
-    now: clock.now,
-    sleep: clock.sleep,
-  });
-  expect(result).toEqual({ timedOut: false, conflicting: true, head: HEAD_B, checks: [] });
-});
