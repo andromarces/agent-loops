@@ -536,7 +536,7 @@ test("reviewer prompt carries the sandbox note of its mode only", () => {
 test("reviewer prompt keeps scratch output on a short path", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain("Keep the path of that output short");
-  expect(prompt).toContain("do not set TMP, TEMP, or TMPDIR to a deep path");
+  expect(prompt).toContain("Do not set TMP, TEMP, or TMPDIR to a deep path");
 });
 
 // Usefulness: verifies the late-write line appears only for a non-empty `lateChangedPaths`, with
@@ -661,7 +661,7 @@ test("reviewer prompt orders an ignored path inside the repository before a temp
 test("reviewer prompt tells the reviewer to remove temporary files it created outside the repository", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain(
-    "Before the closing block, remove every temporary file or directory that this turn created outside the repository, and name in Notes any that you could not remove.",
+    "Before the closing block, remove every temporary file or directory that this turn created outside the repository. Name in Notes any entry that you cannot remove.",
   );
 });
 
@@ -671,7 +671,10 @@ test("reviewer prompt tells the reviewer to remove temporary files it created ou
 test("reviewer prompt tells the reviewer to remove the output it created under an ignored path", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain(
-    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove. Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes.",
+    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. Name in Notes any entry that you cannot remove.",
+  );
+  expect(prompt).toContain(
+    "Keep output that a later step needs, for example a coverage report that the task asks for. Name that output in Notes.",
   );
 });
 
@@ -697,7 +700,7 @@ test("reviewer prompt tells the reviewer to leave the runtime scratch folder to 
     scratchDir: "/work/.agent-loop/rev/ab12cd34",
   });
   expect(prompt).toContain(
-    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder, and name in Notes any that you could not remove. Do not delete the scratch folder, because the runtime removes it.",
+    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder. Name in Notes any entry that you cannot remove. Do not delete the scratch folder, because the runtime removes it.",
   );
   expect(prompt).toContain(
     "Before the closing block, remove every temporary file or directory that this turn created outside the repository",
@@ -716,16 +719,16 @@ test("reviewer prompt without a scratch folder names none", () => {
 test("reviewer prompt bars a literal path to the system temporary directory", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain(
-    "When a temporary path outside the repository is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+    "Build a temporary path outside the repository from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
 });
 
-// Usefulness: verifies acceptance #1529 — the reviewer prompt names a literal `/tmp` path, because
-// a Codex reviewer read only the variable rule and wrote probe files through the Git Bash `/tmp`
-// path, which resolves to the inherited directory that the runtime does not remove.
+// Usefulness: verifies acceptance #1529, where `/tmp` names the inherited path that the runtime
+// does not remove.
 test("reviewer prompt names the literal /tmp path as a system temporary path", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" }).replace(/\s+/g, " ");
-  expect(prompt).toContain("such as `/tmp` or `%TEMP%`");
+  expect(prompt).toContain("such as `/tmp`");
+  expect(prompt).not.toContain("%TEMP%");
 });
 
 // Usefulness: verifies acceptance #1171 — the reviewer is told that a cache that a tool writes to its
@@ -741,8 +744,12 @@ test.each([
   "reviewer prompt separates a tool cache in its default location from turn output with %s",
   (_name, build) => {
     expect(build()).toContain(
-      "A cache that a tool writes to its own default location is not output of this turn, even when it sits under an ignored path inside the repository or in a temporary directory: leave it in place and do not report it in Notes.",
+      "A cache that a tool writes to its own default location is not output of this turn.",
     );
+    expect(build()).toContain(
+      "Leave it in place, even when it sits under an ignored path inside the repository or in a temporary directory.",
+    );
+    expect(build()).toContain("Do not report it in Notes.");
   },
 );
 
@@ -753,12 +760,12 @@ test.each([
   [
     "no scratch folder",
     () => reviewerPrompt({ prompt: "check the fix" }),
-    "Output under a path that you chose for this turn, such as a directory that you set the temporary directory variables to, stays turn output even when a tool writes it there: the removal rules above cover it.",
+    "Output under a path that you chose for this turn stays turn output, even when a tool writes it there. That path includes a directory that you set the temporary directory variables to. The removal rules above cover it.",
   ],
   [
     "a scratch folder",
     () => reviewerPrompt({ prompt: "check the fix", scratchDir: "/work/.agent-loop/rev/ab12cd34" }),
-    "Output under a path that you chose for this turn, such as a directory that you set the temporary directory variables to, or the scratch folder, stays turn output even when a tool writes it there: the removal rules above cover it, and the runtime still removes the scratch folder.",
+    "Output under a path that you chose for this turn stays turn output, even when a tool writes it there. That path includes a directory that you set the temporary directory variables to, or the scratch folder. The removal rules above cover it. The runtime still removes the scratch folder.",
   ],
 ])(
   "reviewer prompt keeps output under a path that the reviewer chose as turn output with %s",

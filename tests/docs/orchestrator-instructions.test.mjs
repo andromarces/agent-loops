@@ -215,8 +215,7 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
   (text) => expectRule(text, /Report it/i, /open/i),
-  // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names, because it
-  // cannot attribute the entry and another run or the user can own it.
+  // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names.
   (text) =>
     expectRule(
       text,

@@ -140,8 +140,8 @@ const scratchPlacement = (scratchDir) =>
 // refuse, and the runtime removes it anyway (issue #997).
 const ignoredPathRemoval = (scratchDir) =>
   scratchDir === null
-    ? "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, and name in Notes any that you could not remove."
-    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder, and name in Notes any that you could not remove. Do not delete the scratch folder, because the runtime removes it.";
+    ? "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. Name in Notes any entry that you cannot remove."
+    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder. Name in Notes any entry that you cannot remove. Do not delete the scratch folder, because the runtime removes it.";
 
 // A tool writes its own cache to a default location whatever the scratch folder is, and the removal
 // rules above read that cache as turn output. A Codex reviewer then runs a delete that automatic
@@ -151,14 +151,33 @@ const ignoredPathRemoval = (scratchDir) =>
 // from the removal and Notes rules; the scratch folder joins the examples only when the turn has one.
 const chosenPathOutput = (scratchDir) =>
   scratchDir === null
-    ? "Output under a path that you chose for this turn, such as a directory that you set the temporary directory variables to, stays turn output even when a tool writes it there: the removal rules above cover it."
-    : "Output under a path that you chose for this turn, such as a directory that you set the temporary directory variables to, or the scratch folder, stays turn output even when a tool writes it there: the removal rules above cover it, and the runtime still removes the scratch folder.";
+    ? "Output under a path that you chose for this turn stays turn output, even when a tool writes it there. That path includes a directory that you set the temporary directory variables to. The removal rules above cover it."
+    : "Output under a path that you chose for this turn stays turn output, even when a tool writes it there. That path includes a directory that you set the temporary directory variables to, or the scratch folder. The removal rules above cover it. The runtime still removes the scratch folder.";
 
-const toolCacheRule = (scratchDir) =>
-  `A cache that a tool writes to its own default location is not output of this turn, even when it sits under an ignored path inside the repository or in a temporary directory: leave it in place and do not report it in Notes. ${chosenPathOutput(scratchDir)} Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.`;
+const toolCacheItems = (scratchDir) => [
+  "A cache that a tool writes to its own default location is not output of this turn.",
+  "Leave it in place, even when it sits under an ignored path inside the repository or in a temporary directory.",
+  "Do not report it in Notes.",
+  chosenPathOutput(scratchDir),
+  "Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.",
+];
 
+// Each item holds at most six sentences, so the rendered prompt stays within the style limits.
 const scratchWriteRule = (scratchDir) =>
-  `A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository: run it, and do not wait for permission. ${scratchPlacement(scratchDir)} Keep the path of that output short, a few segments below the repository root with a short directory name, and do not set TMP, TEMP, or TMPDIR to a deep path for a test runner, because a long temporary path can fail a runtime on Windows with an internal error that the code does not cause. ${tempPathRule("repository", ", such as `/tmp` or `%TEMP%`")} ${tempRemovalRule("repository")} ${ignoredPathRemoval(scratchDir)} Keep output that a later step needs, for example a coverage report that the task asks for, and name it in Notes. ${toolCacheRule(scratchDir)}`;
+  [
+    "A test, build, or probe follows these rules:",
+    "- A test, build, or probe is allowed when every write goes to an ignored path or to a temporary file outside the repository.",
+    "- Run it, and do not wait for permission.",
+    `- ${scratchPlacement(scratchDir)}`,
+    "- Keep the path of that output short, a few segments below the repository root with a short directory name.",
+    "- Do not set TMP, TEMP, or TMPDIR to a deep path for a test runner.",
+    "- A long temporary path can fail a runtime on Windows with an internal error that the code does not cause.",
+    `- ${tempPathRule("repository", ", such as `/tmp`")}`,
+    `- ${tempRemovalRule("repository")}`,
+    `- ${ignoredPathRemoval(scratchDir)}`,
+    "- Keep output that a later step needs, for example a coverage report that the task asks for. Name that output in Notes.",
+    ...toolCacheItems(scratchDir).map((item) => `- ${item}`),
+  ].join("\n");
 
 // The sandbox note states the actual mode of a Codex reviewer turn (ADR 0019, ADR 0038). A reviewer
 // that is not Codex gets none, because no adapter applies a mode for it. Each note fits any
@@ -209,7 +228,10 @@ export function reviewerPrompt({
       : `\n\n${[sandboxHeader, ...sandboxNotes[sandboxMode], noEditLine].join("\n")}`;
   return escapeLineSeparators(
     `
-Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. ${scratchWriteRule(scratchDir)} Live probes and read-only queries are authorized.
+Do not change a tracked file or an untracked file that Git does not ignore, including a cache file, and do not change Git state. Review, assess, and verify only. Live probes and read-only queries are authorized.
+
+${scratchWriteRule(scratchDir)}
+
 ${remoteWriteRule}
 ${probeCopyRule("repository")}
 ${processRule}
