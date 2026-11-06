@@ -359,7 +359,7 @@ test("first worker turn bars a literal path to the system temporary directory", 
 });
 
 // Usefulness: verifies acceptance #1558 — the worker preamble names `/tmp` as a literal system path
-// and never `%TEMP%`, because `cmd` expands `%TEMP%` to the private turn directory.
+// and never `%TEMP%`. Windows `cmd` expands `%TEMP%` to the private turn directory.
 test("first worker turn names /tmp as the literal system temporary path", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain("such as `/tmp`");
