@@ -21,6 +21,7 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { presentInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
+import { parseVerdict } from "./lib/report.mjs";
 import { reportedEntryNames } from "./lib/entry-report.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
@@ -386,10 +387,13 @@ export async function runLoop(options) {
       for (const name of result.inheritedTmpdirEntries) reportedTmpdirNames.add(name);
     }
     if (reportedTmpdirNames.size > 0) {
-      // The headless finish follows the same rule as the interactive parent, so a reviewer turn
-      // waits for a transient name to vanish before the result prompt (issue #1569). A worker
-      // turn refreshes the list with one read.
-      const settle = roleName === "reviewer" ? { ...tmpdirSettle, signal } : null;
+      // Only an accept can lead to a finish, so only that reviewer turn waits for a transient name
+      // before the result prompt (issue #1569). Every other turn keeps the single read.
+      const accepted =
+        roleName === "reviewer" &&
+        typeof result.response === "string" &&
+        parseVerdict(result.response) === "accept";
+      const settle = accepted ? { ...tmpdirSettle, signal } : null;
       inheritedTmpdirPresent = reportedEntryNames(
         await presentInheritedTmpdir([...reportedTmpdirNames], settle === null ? {} : { settle }),
       );

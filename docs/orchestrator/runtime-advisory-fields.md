@@ -25,13 +25,14 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - The re-check polls every 2 seconds for up to 3 minutes. It returns at once when every checkable
     name is gone, and reports the names that remain at the bound. A failed first read keeps every
     name and ends the wait. A later failed poll keeps every name that the last successful read still
-    held.
+    held. Every read checks every recorded name, and the report is the last read. A name that
+    another process created again counts as present.
   - The read compares names, so such a name never resolves a path. The read lists names only,
     deletes nothing, and follows no link. Its report is redacted and capped at 20 like the envelope
     field. A child role is refused.
   - A headless run carries the same re-read result in `inheritedTmpdirPresent` in the result prompt.
-    The runtime applies the same wait after a reviewer turn. The parent carries into `open` only
-    those names, and a finish is never refused for a name (issue #1559).
+    The runtime waits only after a reviewer accept. The parent carries into `open` only those names,
+    and a finish is never refused for a name (issue #1559).
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
     #1240, ADR 0069). A process registers each turn directory in the runs root with its device and

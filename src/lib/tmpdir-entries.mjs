@@ -96,13 +96,10 @@ const carrier = entryCarrier("inheritedTmpdirEntries");
 
 /**
  * Re-reads the inherited temporary directory and returns the recorded names that it still holds,
- * in the recorded order. Without `settle` it reads once. With `settle` it polls until every
- * checkable name is gone, or until the bound. A name that the read cannot check stays listed. That
- * covers a redacted name, one with a separator or `..`, and every name after a failed or over-bound
- * read. A first failed read keeps every name and ends the wait, because no later read can prove a
- * name gone. A later failed poll keeps every name that the last successful read still held. The
- * read lists names only, deletes nothing, and follows no link. It returns [] when no name was
- * recorded, with no wait.
+ * in the recorded order. Without `settle` it reads once. With `settle` it polls to the bound and
+ * reports the names held by the last read. A failed first read keeps every name, and a later failed
+ * poll keeps the names of the last successful read. An uncheckable name stays listed. The read
+ * lists names only and deletes nothing, with no wait for an empty name list.
  * @param {Iterable<string>} names the names that the reviewer turns reported
  * @param {{ read?: () => Promise<string[]>, boundMs?: number, settle?: object | null }} [options]
  *   an injected read and read bound, and `settle` with `boundMs`, `intervalMs`, `now`, `sleep`,
@@ -154,42 +151,43 @@ async function settledNames(
     boundMs = TMPDIR_SETTLE_BOUND_MS,
     intervalMs = TMPDIR_SETTLE_INTERVAL_MS,
     now = () => performance.now(),
-    sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
+    sleep = (ms, signal) => delay(ms, undefined, signal ? { signal } : undefined),
     signal,
   },
 ) {
   const deadline = now() + boundMs;
-  let remaining = recorded;
+  let last = null;
   let first = true;
   let warnedFailure = false;
   while (true) {
     throwIfCanceled(signal);
-    const left = deadline - now();
-    if (!first && left <= 0) return remaining;
-    const entries = await readNames(
-      read,
-      first ? Math.min(readBoundMs, boundMs) : Math.min(readBoundMs, left),
-      { warn: !warnedFailure },
-    );
+    const startedAt = now();
+    const readBound = first ? Math.max(1, Math.min(readBoundMs, boundMs)) : readBoundMs;
+    const entries = await readNames(read, readBound, { warn: !warnedFailure });
     throwIfCanceled(signal);
-    const firstFailed = first && entries === null;
-    first = false;
-    if (entries !== null) {
-      remaining = heldNames(remaining, entries);
-    } else {
-      // A failed read warns once, so a run of failures never floods the log.
+    if (entries === null) {
       warnedFailure = true;
+      // A first failed read cannot check any name, and no later read can prove one gone.
+      if (first) return recorded;
+    } else {
+      last = entries;
     }
-    // A first failed read cannot check any name, and no later read can prove one gone.
-    if (firstFailed) return remaining;
+    first = false;
+    // Every read checks every recorded name. A name that one read missed stays eligible, so a
+    // name that another process created again reaches the report (issue #1569).
+    const current = last === null ? recorded : heldNames(recorded, last);
     // An uncheckable name stays listed, but it never changes, so it adds no wait.
-    if (!remaining.some(isCheckableName)) return remaining;
+    if (!current.some(isCheckableName)) return current;
     const pause = deadline - now();
-    if (pause <= 0) return remaining;
+    if (pause <= 0) {
+      // A read that began before the deadline is stale. Take one read at the bound.
+      if (startedAt >= deadline) return current;
+      continue;
+    }
     try {
+      // The sleep is abortable, so a cancel ends the wait at once.
       await sleep(Math.min(intervalMs, pause), signal);
     } catch (err) {
-      // The sleep rejects on an abort. Report it as the cancel that the role CLI uses (issue #1569).
       if (signal?.aborted) throw canceledError();
       throw err;
     }

@@ -21,23 +21,25 @@ A single read cannot separate a transient name from a leftover. A bounded later 
 ## Decision
 
 1. **Poll with a fixed bound and interval.** `role recheck-tmpdir` re-reads the recorded names every 2 seconds, for at most 3 minutes. It returns as soon as every checkable name is gone, and otherwise at the bound.
-2. **Report only the names that remain.** The envelope keeps its shape. A name that stays reaches `inheritedTmpdirEntries`, and a name that is gone leaves it.
-3. **Fail closed.** A failed or over-bound read on the first poll keeps every name and ends the wait. A later failed poll keeps every name that the last successful read still held, and the wait continues.
+2. **Report the last read.** The envelope keeps its shape. Every read checks every originally recorded name, and the report is the result of the last read. A name that another process created again counts as present.
+3. **Fail closed.** A failed or over-bound read on the first poll keeps every name and ends the wait. A later failed poll keeps every name that the last successful read still held.
 4. **Keep an uncheckable name.** A name that the read cannot check stays listed. The first failed read ends the wait, because no later read can prove that name gone.
 5. **No wait when none can help.** An empty name list returns at once. A list with no checkable name returns at once, because a later read changes no name. A missing inherited directory counts as a first failed read and keeps every name.
 6. **Bound the clock.** The deadline uses a monotonic clock, so a wall-clock jump never ends or extends the wait. Each poll keeps its own 5 second read bound.
-7. **End on cancel.** A SIGINT ends the wait at once with the cancel envelope, and deletes nothing.
-8. **Headless path.** The runtime applies the same wait after a reviewer turn before it builds the result prompt. The prompt then carries only the names that remain, and `inheritedTmpdirPresent` keeps its shape.
+7. **End on cancel.** A SIGINT ends the sleep and the wait at once with the cancel envelope, and deletes nothing.
+8. **Headless path.** The runtime waits only after a reviewer turn whose verdict is accept, because only an accept can lead to a finish. Every other verdict keeps the single read with no wait.
 9. **Keep it testable.** `presentInheritedTmpdir` accepts the bound, the interval, the read, the clock, and the sleep. A test injects each with no real minute wait.
 
 ## Consequences
 
 - A GUID `.tmp` file that another process removes within the bound stays out of `open` when the parent follows the rule.
 - A finish that follows the last reviewer turn within a minute now waits until the transient names vanish.
-- A name that stays for the whole bound adds up to 3 minutes to the command, once per reviewer turn on the headless path.
+- A name that stays for the whole bound adds up to 3 minutes. On the headless path, that cost applies once per accepted reviewer turn.
+- A name that one read misses stays eligible, so a recreated name reaches the report.
+- The report comes from a read at or after the deadline.
 - A name removed after the bound still reaches the summary, because no wait proves a later state.
 - A redacted or unsafe name always reaches `open`, because the read cannot prove it gone, but it adds no wait.
-- A cancel before the bound ends the command with no envelope names, because the command ends.
+- A cancel before the bound ends the command with no envelope names, and no name is deleted.
 - The command still deletes nothing and writes no run state.
 
 ## Alternatives

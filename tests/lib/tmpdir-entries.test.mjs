@@ -238,7 +238,54 @@ test("reports a name that stays until the bound", async () => {
   });
   expect(result).toEqual(["stays.tmp"]);
   expect(clock).toBe(30_000);
-  expect(reads).toBe(3);
+  expect(reads).toBe(4);
+});
+
+// Usefulness: verifies acceptance. A name that one read misses and a later read holds stays
+// reported, so a recreated name never drops for good (issue #1569).
+test("reports a name created again after a read missed it", async () => {
+  let clock = 0;
+  let reads = 0;
+  const result = await presentInheritedTmpdir(["again.tmp", "stays.tmp"], {
+    read: async () => {
+      reads += 1;
+      return reads === 1 ? ["stays.tmp"] : ["again.tmp", "stays.tmp"];
+    },
+    settle: {
+      boundMs: 20,
+      intervalMs: 10,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  });
+  expect(result).toEqual(["again.tmp", "stays.tmp"]);
+  expect(reads).toBeGreaterThan(1);
+});
+
+// Usefulness: verifies acceptance. The result comes from a read made at the deadline, not from the
+// previous interval, so a name removed in between stays out (issue #1569).
+test("reports the read made at the deadline", async () => {
+  let clock = 0;
+  let reads = 0;
+  const result = await presentInheritedTmpdir(["gone-at-deadline.tmp"], {
+    read: async () => {
+      reads += 1;
+      return reads === 1 ? ["gone-at-deadline.tmp"] : [];
+    },
+    settle: {
+      boundMs: 10,
+      intervalMs: 10,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  });
+  expect(result).toEqual([]);
+  expect(reads).toBe(2);
+  expect(clock).toBe(10);
 });
 
 // Usefulness: verifies requirement "a later poll whose read fails keeps every name still listed"
@@ -307,28 +354,22 @@ test("keeps every name when the inherited directory is missing", async () => {
   expect(slept).toBe(false);
 });
 
-// Usefulness: verifies a cancel during the wait ends at once with the cancel error, so Ctrl+C
-// exits 130 and deletes nothing (issue #1569).
-test("a cancel during the wait ends the command", async () => {
-  let clock = 0;
+// Usefulness: verifies a cancel during the default sleep ends at once with the cancel identity.
+// Ctrl+C exits 130 without waiting for the interval or the bound (issue #1569).
+test("a cancel ends the default sleep at once", async () => {
   const controller = new AbortController();
-  await expect(
-    presentInheritedTmpdir(["a.tmp"], {
-      read: async () => ["a.tmp"],
-      settle: {
-        boundMs: 60_000,
-        intervalMs: 10_000,
-        now: () => clock,
-        signal: controller.signal,
-        sleep: async (ms) => {
-          clock += ms;
-          controller.abort();
-          throw Object.assign(new Error("aborted"), { name: "AbortError" });
-        },
-      },
-    }),
-  ).rejects.toMatchObject({ isCanceled: true });
-  expect(clock).toBeLessThan(60_000);
+  const started = performance.now();
+  const pending = presentInheritedTmpdir(["a.tmp"], {
+    read: async () => ["a.tmp"],
+    settle: {
+      boundMs: 60_000,
+      intervalMs: 60_000,
+      signal: controller.signal,
+    },
+  });
+  setTimeout(() => controller.abort(), 10);
+  await expect(pending).rejects.toMatchObject({ isCanceled: true });
+  expect(performance.now() - started).toBeLessThan(1_000);
 });
 
 // Usefulness: verifies a name that the read cannot check stays listed and adds no wait, so a
