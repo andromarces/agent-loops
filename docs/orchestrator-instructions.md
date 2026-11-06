@@ -297,9 +297,10 @@ Apply these parent rules:
     never installs, so the installed dependencies no longer match
     the lockfile. When the runtime cannot read the dependency file list, the field names every
     lockfile and every non-Node path known from the other read. See issues #1225 and #1457.
-  - When the field appears, run only the dependency setup that the repository documents for its
-    tests in the work tree, such as the Node lockfile install, before the next reviewer dispatch.
-    For a non-Node file, run only the setup that its toolchain documents for those tests in the
+  - When the field appears, run only the dependency setup, such as the Node lockfile install, before
+    the next reviewer dispatch. The dependency setup is the one that the repository documents for
+    the tests in the work tree.
+  - For a non-Node file, run only the setup that its toolchain documents for those tests in the
     work tree before the next reviewer dispatch. A changed dependency file that no test setup reads
     needs no action: record that judgment under `open`. Never install outside the work tree. A
     failed worker turn carries the field too. A turn that changed none carries no field. See issues
@@ -310,12 +311,21 @@ Apply these parent rules:
   - The field redacts each path like the other path fields, names at most 20 paths, and keeps a
     fixed root lockfile name byte-identical.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
-  entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
-  directory of another agent-loop process, most likely a concurrent run: the prefix is a hint,
-  not proof. Report it in the finish summary under `open`, and
-  do not treat it as a reason to reject (issue #1024). Field rules:
+  inherited temporary directory during the turn. One example is a probe directory that the
+  reviewer created there. The field names the entries, redacted like the test command output, and
+  never their content, at most 20. It is advisory: the directory is shared with other processes.
+- The runtime cannot attribute an entry to the turn, and it does not delete one. Turn directories
+  that this process created are left out, and every other name that the settle re-read still holds
+  is listed, an `al-` name too. Every reviewer turn that read the directory before it started
+  carries the field, a failed, halted, or canceled turn too. Report it in the finish summary under
+  `open`, and do not treat it as a reason to reject (issue #1024). Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
+  - A name with the prefix `registered/` is the turn directory of another agent-loop process,
+    most likely a concurrent run. The prefix is a hint, not proof. The parent never deletes an
+    entry that `inheritedTmpdirEntries` names: it reports each such entry under `open` and leaves
+    removal to the user. A reviewer `Notes` line never makes an entry safe to delete, because
+    another process can hold a matching name (issue #1529). The runtime cannot attribute an entry
+    to a turn, so the parent cannot prove ownership.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish

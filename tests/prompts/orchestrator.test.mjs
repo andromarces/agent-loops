@@ -234,7 +234,10 @@ test("initialPrompt states the parent's dependency setup by toolchain", () => {
   );
   expect(prompt).toContain("No worker or reviewer installs them.");
   expect(prompt).toContain(
-    "When the field appears, run only the dependency setup that the repository documents for its tests in the work tree, such as the Node lockfile install, before the next reviewer dispatch.",
+    "When the field appears, run only the dependency setup, such as the Node lockfile install, before the next reviewer dispatch.",
+  );
+  expect(prompt).toContain(
+    "The dependency setup is the one that the repository documents for the tests in the work tree.",
   );
   expect(prompt).toContain(
     "lockfileChanged also covers a non-Node dependency file at any depth, such as a requirements file in a subdirectory.",

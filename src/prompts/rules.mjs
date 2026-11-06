@@ -180,14 +180,14 @@ export function initTaskBlock(task) {
  * temporary path lies outside of, and `literalExample` optionally extends the bar on a literal path.
  */
 export const tempPathRule = (place, literalExample = "") =>
-  `When a temporary path outside the ${place} is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory${literalExample}, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.`;
+  `Build a temporary path outside the ${place} from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory${literalExample}. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.`;
 
 /**
  * The temporary-file removal rule of the worker and reviewer prompts. `place` names the tree that
  * the temporary path lies outside of, and `example` optionally adds one example sentence.
  */
 export const tempRemovalRule = (place, example = "") =>
-  `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}, and name in Notes any that you could not remove.${example}`;
+  `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}. Name in Notes any entry that you cannot remove.${example}`;
 
 // Shared clauses of the probe-copy rule. Each clause appears once, and both variants interpolate it.
 const PROBE_JUNCTION = "with a junction on Windows or a symlink elsewhere";

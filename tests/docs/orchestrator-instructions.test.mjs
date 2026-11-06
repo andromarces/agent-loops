@@ -220,6 +220,14 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
   (text) => expectRule(text, /Report it/i, /open/i),
+  // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names.
+  (text) =>
+    expectRule(
+      text,
+      /never deletes an entry/i,
+      /inheritedTmpdirEntries/i,
+      /leaves removal to the user/i,
+    ),
   // Issue #1045: a reviewer envelope names the pnpm package store entries that changed, as advisory
   // evidence, and the parent reports it under open instead of rejecting.
   (text) => expectRule(text, /packageStoreEntries/, /reviewer/i, /package store/i),
@@ -1712,6 +1720,17 @@ test("a sentence that the headless prompt shares with the instructions is in the
     SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES.filter((_, index) => !matched.has(index)),
     "allowlist entries that match no reference sentence",
   ).toEqual([]);
+});
+
+// Usefulness: verifies the reviewer-sandbox reference keeps the write prohibition of the rendered
+// reviewer prompt, so a reader never learns a literal `/tmp` path is allowed.
+test("the reviewer-sandbox reference bars a literal system temporary path", async () => {
+  const text = await readFile(join(referenceSectionsDir, "reviewer-sandbox.md"), "utf8");
+  expectRule(
+    text,
+    /never to write a literal path to the system temporary directory/i,
+    /such as `\/tmp`/i,
+  );
 });
 
 // Usefulness: verifies the instructions send a flaky required-check failure to one worker turn (#1303).
