@@ -20,7 +20,7 @@ Call it `<import commit>`. Create the run work tree from the local default branc
 
 Run the loop on that work tree. The run is not PR work, because no pull request can exist. Finish it with a plain `role finish` and no PR gate. Do this after a reviewer `verdict: accept` with a `Checks` line on the latest changed state, as that file states.
 
-The copy-back is the delivery step of this run, like the merge or hand-off of a no-remote run. It runs after `finish`, when the run is terminal. The parent is allowed to run this step, and the [role rule](../orchestrator-instructions.md#role) names it as the exception. Write the accepted file from the blob at `reviewed.head` over the original target. Do not copy the work tree file, because the work tree can hold line endings that the blob does not. Never write the `git show` output straight to the target: the redirect truncates the target before the command runs. The block below sets `ORIGINAL` to the hash recorded before the import, or to an empty string when the target was absent. It compares `<import commit>` with `<reviewed.head>` and removes the target only on a deletion that the diff proves, so a mistyped path or a failed lookup stops with an error and leaves the target in place. It prefixes a relative `TARGET` with `./`, so a target that begins with `-` is not read as an option. It delivers an added path only when the target is still absent, creates the parent directories of an added target before the temporary file, and removes only the empty directories that delivery created when it fails. Run this in bash, where `<path>` is the relative path of the target:
+The copy-back is the delivery step of this run, like the merge or hand-off of a no-remote run. It runs after `finish`, when the run is terminal. The parent is allowed to run this step, and the [role rule](../orchestrator-instructions.md#role) names it as the exception. Write the accepted file from the blob at `reviewed.head` over the original target. Do not copy the work tree file, because the work tree can hold line endings that the blob does not. Never write the `git show` output straight to the target: the redirect truncates the target before the command runs. The block below sets `ORIGINAL` to the hash recorded before the import, or to an empty string when the target was absent. It compares `<import commit>` with `<reviewed.head>` and removes the target only on a deletion that the diff proves, so a mistyped path or a failed lookup stops with an error and leaves the target in place. It prefixes a relative `TARGET` with `./`, so a target that begins with `-` is not read as an option. It delivers an added path only when the target is still absent, creates the parent directories of an added target before the temporary file, and removes only the empty directories that delivery created when it fails. Before the move, it sets the mode of the temporary file: a modified target keeps its current mode, and an added target gets `0755` when the reviewed mode is `100755`, else the default file mode from `umask`. Run this in bash, where `<path>` is the relative path of the target:
 
 ```bash
 REPO="<throwaway repository>"
@@ -91,7 +91,24 @@ elif git -C "$REPO" cat-file -e "$REVIEWED:$FILE" 2>/dev/null; then
     }
   fi
   TMP=$(mktemp "$TARGET.XXXXXX") || { cleanup_dirs; exit 1; }
+  if [ "$ADDED" = "$FILE" ]; then
+    if [ "$(git -C "$REPO" ls-tree "$REVIEWED" -- "$FILE" | awk '{print $1}')" = "100755" ]; then
+      MODE=0755
+    else
+      UMASK=$(umask)
+      MODE=$(printf '%04o' $(( 0666 & ~0$UMASK )))
+    fi
+  else
+    MODE=$(stat -L -c %a -- "$TARGET" 2>/dev/null ||
+      stat -L -f %Lp -- "$TARGET" 2>/dev/null) || {
+      echo "copy-back failed: the target mode is not readable" >&2
+      rm -f -- "$TMP"
+      cleanup_dirs
+      exit 1
+    }
+  fi
   git -C "$REPO" show "$REVIEWED:$FILE" > "$TMP" &&
+    chmod "$MODE" -- "$TMP" &&
     mv -f -- "$TMP" "$TARGET" || {
       rm -f -- "$TMP"
       cleanup_dirs
@@ -104,16 +121,26 @@ else
 fi
 ```
 
-The redirect writes the bytes unchanged, so use bash, not a PowerShell version whose `>` re-encodes the output. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was. A failed delivery removes only the empty parent directories that it created for an added path, deepest first.
+The redirect writes the bytes unchanged, so use bash, not a PowerShell version whose `>` re-encodes the output. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was. A failed delivery removes only the empty parent directories that it created for an added path, deepest first. `stat -c %a` reads the mode of a modified target on GNU, and `stat -f %Lp` reads it on BSD, where `chmod --reference` is not available.
 
-After the copy, check the delivered state. When `reviewed.head` holds `<path>`, compare the content hash of the delivered file with the blob:
+After the copy, check the delivered state. When `reviewed.head` holds `<path>`, compare the content hash of the delivered file with the blob, and compare the executable bit of the target with the reviewed mode:
 
 ```bash
 git -C "<throwaway repository>" rev-parse "<reviewed.head>:<path>"
 git hash-object --no-filters -- "<target>"
+MODE=$(git -C "<throwaway repository>" ls-tree "<reviewed.head>" -- "<path>" | awk '{print $1}')
+[ -n "$MODE" ] || { echo "delivery check failed: the reviewed mode is not readable" >&2; exit 1; }
+REVIEWED_EXEC=0
+[ "$MODE" = "100755" ] && REVIEWED_EXEC=1
+TARGET_EXEC=0
+[ -x "<target>" ] && TARGET_EXEC=1
+[ "$REVIEWED_EXEC" = "$TARGET_EXEC" ] || {
+  echo "delivery check failed: the executable bit differs" >&2
+  exit 1
+}
 ```
 
-The two hashes must be equal. When the reviewed commit deleted `<path>`, the delivery is complete only when `<target>` is absent. A remaining file, or a different hash, means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
+The two hashes must be equal, and `<target>` is executable exactly when the reviewed mode is `100755`. When the reviewed commit deleted `<path>`, the delivery is complete only when `<target>` is absent. A remaining file, a different hash, or a different executable bit means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
 
 A headless run cannot run the copy-back. `finish` ends that loop, and every orchestrator turn is read-only. The operator delivers the accepted file there.
 
