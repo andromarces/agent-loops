@@ -21,6 +21,7 @@ import {
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
 import { presentInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
+import { parseVerdict } from "./lib/report.mjs";
 import { reportedEntryNames } from "./lib/entry-report.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
@@ -119,6 +120,8 @@ export async function runLoop(options) {
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
+    // The bound and interval of the inherited tmpdir re-check. A test injects a short wait.
+    tmpdirSettle = null,
     onEvent = () => {},
   } = options;
 
@@ -382,8 +385,15 @@ export async function runLoop(options) {
       for (const name of result.inheritedTmpdirEntries) reportedTmpdirNames.add(name);
     }
     if (reportedTmpdirNames.size > 0) {
+      // Only an accept can lead to a finish, so only that reviewer turn waits for a transient name
+      // before the result prompt (issue #1569). Every other turn keeps the single read.
+      const accepted =
+        roleName === "reviewer" &&
+        typeof result.response === "string" &&
+        parseVerdict(result.response) === "accept";
+      const settle = accepted ? { ...tmpdirSettle, signal } : null;
       inheritedTmpdirPresent = reportedEntryNames(
-        await presentInheritedTmpdir([...reportedTmpdirNames]),
+        await presentInheritedTmpdir([...reportedTmpdirNames], settle === null ? {} : { settle }),
       );
     }
 

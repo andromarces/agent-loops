@@ -141,9 +141,10 @@ async function abort(args) {
  * reviewer turns of the run reported and that a later read still holds. It is a read-only status
  * read of a non-terminal run: it writes no run state, deletes nothing, and reports names only,
  * redacted and capped. It requires the stored parent session id, as `extend` does, and a child
- * role is refused. A failed or over-bound read, and a name it cannot re-check, stays listed.
+ * role is refused. A failed or over-bound read, and a name it cannot re-check, stays listed. It
+ * polls until every checkable name is gone, or for the settle bound.
  */
-async function recheckTmpdir(args) {
+async function recheckTmpdir(args, { signal, read, tmpdirSettle } = {}) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
   requireParentSessionFlag(args, "recheck-tmpdir");
   const paths = statePaths({ cwd: args.cwd });
@@ -153,7 +154,10 @@ async function recheckTmpdir(args) {
   if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
     throw new RoleError(`Run is already ${state.lifecycle}.`);
   }
-  const present = await presentInheritedTmpdir(inheritedTmpdirNames(state));
+  const present = await presentInheritedTmpdir(inheritedTmpdirNames(state), {
+    ...(read ? { read } : {}),
+    settle: { ...tmpdirSettle, signal },
+  });
   return {
     exitCode: 0,
     payload: {

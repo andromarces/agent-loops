@@ -22,6 +22,11 @@ const REDACTED_NAME = /\[redacted:|\[\*\]/;
 // moment later. The second read after this window keeps only the entries that still exist (issue
 // #1542).
 const SETTLE_MS = 250;
+// A reported name can vanish minutes after the last reviewer turn. The re-check polls for this
+// long and returns as soon as every checkable name is gone (issue #1569).
+export const TMPDIR_SETTLE_BOUND_MS = 180_000;
+// The fixed pause between two polls of the re-check. Tests inject another value (issue #1569).
+export const TMPDIR_SETTLE_INTERVAL_MS = 2_000;
 
 // Reads `os.tmpdir()` of this process, which is the inherited temporary directory of a turn. The
 // `AGENT_LOOP_INHERITED_TMPDIR` list is read in `inherited-tmpdir.mjs`.
@@ -91,52 +96,165 @@ const carrier = entryCarrier("inheritedTmpdirEntries");
 
 /**
  * Re-reads the inherited temporary directory and returns the recorded names that it still holds,
- * in the recorded order. A name that the read cannot check stays listed. That covers a redacted
- * name, one with a separator or `..`, and every name after a failed or over-bound read. The read
- * lists names only, deletes nothing, and follows no link. It returns [] when no name was recorded.
+ * in the recorded order, and reads once without `settle`. With `settle` it polls to the bound and
+ * reports the names held by the last read. A failed first read keeps every name, and a later failed
+ * poll keeps the names of the last successful read. An uncheckable name stays listed. The read
+ * lists names only and deletes nothing, with no wait for an empty name list.
  * @param {Iterable<string>} names the names that the reviewer turns reported
- * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] an injected read and
- *   bound, for a test
+ * @param {object} [options] an injected read, read bound, and settle settings, for a test.
  * @returns {Promise<string[]>}
  */
+// The settle object holds `boundMs`, `intervalMs`, `now`, `sleep`, and `signal`.
 export async function presentInheritedTmpdir(
   names,
-  { read = readInheritedTmpdirNames, boundMs = RE_READ_BOUND_MS } = {},
+  { read = readInheritedTmpdirNames, boundMs = RE_READ_BOUND_MS, settle = null } = {},
 ) {
   const recorded = [...new Set(names)].filter((name) => typeof name === "string" && name !== "");
   if (recorded.length === 0) return [];
-  let entries;
+  if (settle === null) {
+    const entries = await readNames(read, boundMs);
+    return entries === null ? recorded : heldNames(recorded, entries);
+  }
+  return settledNames(recorded, { read, readBoundMs: boundMs, ...settle });
+}
+
+// The names that the read still holds. A failed read is null.
+async function readNames(read, boundMs, { signal, warn = true } = {}) {
   try {
-    entries = await withTimeBound(
-      boundMs,
+    const entries = await withTimeBound(
+      Math.max(1, boundMs),
       `inherited temporary directory re-read took over ${boundMs} ms`,
       ({ stopped }) => {
         // The read cannot be canceled, so the wait ends at the bound too.
         const pending = read();
         pending.catch(() => {});
-        return Promise.race([pending, stopped]);
+        return Promise.race([withCancelRace(pending, signal), stopped]);
       },
     );
+    return Array.isArray(entries) ? entries : null;
   } catch (err) {
-    logWarn(`inherited temporary directory not re-read: ${firstErrorLine(readableErrorText(err))}`);
-    return recorded;
+    if (err?.isCanceled === true) throw err;
+    if (warn) {
+      logWarn(
+        `inherited temporary directory not re-read: ${firstErrorLine(readableErrorText(err))}`,
+      );
+    }
+    return null;
   }
-  if (!Array.isArray(entries)) return recorded;
-  const present = new Set(entries);
-  return recorded.filter((name) => stillHeld(name, present));
 }
+
+// Races `promise` against the abort signal, so a cancel ends an in-flight read at once.
+function withCancelRace(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(canceledError());
+  let onAbort;
+  const canceled = new Promise((_, reject) => {
+    onAbort = () => reject(canceledError());
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([promise, canceled]).finally(() => {
+    signal.removeEventListener("abort", onAbort);
+  });
+}
+
+async function settledNames(
+  recorded,
+  {
+    read,
+    readBoundMs,
+    boundMs = TMPDIR_SETTLE_BOUND_MS,
+    intervalMs = TMPDIR_SETTLE_INTERVAL_MS,
+    now = () => performance.now(),
+    sleep = (ms, signal) => delay(ms, undefined, signal ? { signal } : undefined),
+    signal,
+  },
+) {
+  const deadline = now() + boundMs;
+  // The final read starts one read bound before the deadline, so every read ends by the bound.
+  const readBound = Math.max(1, Math.min(readBoundMs, Math.floor(boundMs / 2) || 1));
+  const finalStart = deadline - readBound;
+  let last = null;
+  let first = true;
+  let warnedFailure = false;
+  const reported = () => (last === null ? recorded : heldNames(recorded, last));
+  while (true) {
+    throwIfCanceled(signal);
+    const startedAt = now();
+    const available = deadline - startedAt;
+    // A late read cannot end by the deadline, so the last completed read supplies the report.
+    if (available < 1) return reported();
+    if (!first && startedAt >= finalStart) {
+      const entries = await readNames(read, Math.floor(available), {
+        signal,
+        warn: !warnedFailure,
+      });
+      throwIfCanceled(signal);
+      if (entries !== null) last = entries;
+      return reported();
+    }
+    const entries = await readNames(read, Math.max(1, Math.min(readBound, Math.floor(available))), {
+      signal,
+      warn: !warnedFailure,
+    });
+    throwIfCanceled(signal);
+    if (entries === null) {
+      warnedFailure = true;
+      // A first failed read cannot check any name, and no later read can prove one gone.
+      if (first) return recorded;
+    } else {
+      last = entries;
+    }
+    first = false;
+    // Every read checks every recorded name. A name that one read missed stays eligible, so a
+    // name that another process created again reaches the report (issue #1569).
+    const current = reported();
+    // An uncheckable name stays listed, but it never changes, so it adds no wait.
+    if (!current.some(isCheckableName)) return current;
+    const nowAt = now();
+    if (nowAt >= deadline) return current;
+    const pause = Math.min(intervalMs, finalStart - nowAt);
+    if (pause <= 0) continue;
+    try {
+      // The sleep is abortable, so a cancel ends the wait at once.
+      await sleep(pause, signal);
+    } catch (err) {
+      if (signal?.aborted) throw canceledError();
+      throw err;
+    }
+  }
+}
+
+const heldNames = (names, entries) => {
+  const present = new Set(entries);
+  return names.filter((name) => stillHeld(name, present));
+};
+
+function throwIfCanceled(signal) {
+  if (signal?.aborted) throw canceledError();
+}
+
+const canceledError = () => Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
 
 async function readInheritedTmpdirNames() {
   return readdir(tmpdir());
 }
 
-// Whether a further read still holds `name`. A name that cannot be checked stays present, because
-// a lost name can hide a leftover.
+// Whether an entry still holds `name`. A name that cannot be checked stays present, because a lost
+// name can hide a leftover.
 function stillHeld(name, present) {
-  const bare = name.startsWith(REGISTERED_PREFIX) ? name.slice(REGISTERED_PREFIX.length) : name;
-  if (bare === "" || bare === "." || bare === "..") return true;
-  if (UNSAFE_NAME.test(bare) || REDACTED_NAME.test(bare)) return true;
-  return present.has(bare);
+  if (!isCheckableName(name)) return true;
+  return present.has(bareName(name));
+}
+
+// Whether the read can establish that `name` is gone. A registered mark is not part of the entry.
+function isCheckableName(name) {
+  const bare = bareName(name);
+  if (bare === "" || bare === "." || bare === "..") return false;
+  return !UNSAFE_NAME.test(bare) && !REDACTED_NAME.test(bare);
+}
+
+function bareName(name) {
+  return name.startsWith(REGISTERED_PREFIX) ? name.slice(REGISTERED_PREFIX.length) : name;
 }
 
 /**

@@ -70,6 +70,7 @@ test("a headless run carries the re-read names and never refuses a finish for th
       cwd: repo,
       maxSteps: 5,
       roles,
+      tmpdirSettle: { boundMs: 40, intervalMs: 10 },
       agents: {
         orch: orchAdapter,
         work: scripted(["worker did task"]),
@@ -87,6 +88,104 @@ test("a headless run carries the re-read names and never refuses a finish for th
     vi.unstubAllEnvs();
     await removePath(temp);
     await removePath(repo);
+  }
+});
+
+// Usefulness: verifies acceptance on the headless path. A name that another process removes during
+// the settle wait is absent from the result prompt. The finish summary can then leave it out (issue
+// #1569).
+test("a headless run drops a name removed during the settle wait", async () => {
+  const repo = await cleanRepo();
+  const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
+  const stays = "stays-probe";
+  const gone = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+  try {
+    for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, temp);
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review the change" }),
+      JSON.stringify({ action: "finish", summary: summary("none") }),
+    ];
+    const orchAdapter = scripted(orchReplies);
+    const reviewerAdapter = scripted([
+      async () => {
+        await writeFile(join(temp, stays), "");
+        await writeFile(join(temp, gone), "");
+        setTimeout(() => {
+          void rm(join(temp, gone));
+        }, 400);
+        return "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept";
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 1",
+      cwd: repo,
+      maxSteps: 5,
+      roles,
+      tmpdirSettle: { boundMs: 2_000, intervalMs: 20 },
+      agents: {
+        orch: orchAdapter,
+        work: scripted(["worker did task"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    const reviewerPrompt = orchAdapter.recorded.at(-1).prompt;
+    const match = reviewerPrompt.match(/"inheritedTmpdirPresent": \[([\s\S]*?)\n  \]/);
+    const present = JSON.parse(`[${match[1]}]`);
+    expect(result.exitCode).toBe(0);
+    expect(present).toContain(stays);
+    expect(present).not.toContain(gone);
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies acceptance. The headless path waits only after an accept, so a reject or
+// unknown verdict keeps the single read and adds no wait (issue #1569).
+test("a headless run does not wait after a reject or unknown verdict", async () => {
+  for (const verdict of ["reject", "unknown"]) {
+    const repo = await cleanRepo();
+    const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
+    const name = "stays-after-review.tmp";
+    try {
+      for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, temp);
+      const orchReplies = [
+        JSON.stringify({ action: "run_worker", prompt: "start work" }),
+        JSON.stringify({ action: "run_reviewer", prompt: "review the change" }),
+        JSON.stringify({ action: "finish", summary: summary("none") }),
+      ];
+      const orchAdapter = scripted(orchReplies);
+      const reviewerAdapter = scripted([
+        async () => {
+          await writeFile(join(temp, name), "");
+          return `Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: ${verdict}`;
+        },
+      ]);
+
+      const result = await runLoop({
+        task: "Task 1",
+        cwd: repo,
+        maxSteps: 5,
+        roles,
+        tmpdirSettle: { boundMs: 60_000, intervalMs: 60_000 },
+        agents: {
+          orch: orchAdapter,
+          work: scripted(["worker did task"]),
+          rev: reviewerAdapter,
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(orchAdapter.recorded.at(-1).prompt).toContain(name);
+    } finally {
+      vi.unstubAllEnvs();
+      await removePath(temp);
+      await removePath(repo);
+    }
   }
 });
 
@@ -119,6 +218,7 @@ test("a headless result prompt caps and redacts the re-read names", async () => 
       cwd: repo,
       maxSteps: 5,
       roles,
+      tmpdirSettle: { boundMs: 40, intervalMs: 10 },
       agents: {
         orch: orchAdapter,
         work: scripted(["worker did task"]),
