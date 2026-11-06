@@ -33,7 +33,8 @@ needed: the subcommand records each dispatched turn itself.
   states is refused and the state file stays unchanged. The call prints
   `{"status": "ok", "lifecycle": "active", "maxSteps": 40, "stepsUsed": 20}`. It shows after
   which turn the budget changed (ADR 0014). A run never extended has no `budgetChanges`.
-  Because `maxSteps` only grows, `turns` still holds at most `maxSteps` entries.
+  Because `maxSteps` only grows, a run with no refunded first-turn refusal still holds at
+  most `maxSteps` entries; each refunded refusal adds one entry for its role.
 - Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
   The CLI refuses a `--max-steps` outside it, and `dispatch`, `finish`, and
   `extend` re-check the stored `maxSteps` against the same range before reading the

@@ -279,8 +279,7 @@ async function dispatchLocked(
 
   // The turn history names a first turn of the role. A refunded first-turn refusal still records
   // its entry, so a later refusal charges a step (issue #1565).
-  const firstRoleTurn =
-    !Array.isArray(state.turns) || !state.turns.some((turn) => turn.role === roleName);
+  const firstRoleTurn = isFirstRoleTurn(state, roleName);
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -401,6 +400,19 @@ async function dispatchLocked(
       sparseCheckout,
     ),
   };
+}
+
+/**
+ * True when the state proves this is the first turn of the role. A state written before `turns`
+ * existed proves a first turn only when it records no dispatch at all and the role holds no
+ * session. Any other legacy state cannot prove it, so a refusal charges a step (issue #1565).
+ */
+function isFirstRoleTurn(state, roleName) {
+  if (Array.isArray(state.turns)) {
+    return !state.turns.some((turn) => turn.role === roleName);
+  }
+  const role = state.roles?.[roleName];
+  return role?.sessionId == null && state.lastResult == null && state.lastDispatch == null;
 }
 
 /**

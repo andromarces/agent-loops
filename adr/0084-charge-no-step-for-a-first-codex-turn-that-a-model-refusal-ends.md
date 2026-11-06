@@ -6,7 +6,9 @@ accepted
 
 Partially supersedes [ADR 0070: Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md). It replaces the consequence that the runtime does not tell a refused-model failure from another first-turn failure.
 
-Every decision and every other consequence of ADR 0070 remains in force.
+Partially supersedes [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md). It replaces decision 2's rule that exactly one entry exists per charged step, decision 5's `maxSteps` bound, and the consequence that the history is bounded by `maxSteps`.
+
+Every other decision and consequence of ADR 0070 and ADR 0008 remains in force.
 
 ## Date
 
@@ -52,7 +54,9 @@ Andro Marces
 ## Links
 
 - [Issue #1565](https://github.com/andromarces/agent-loops/issues/1565)
+- [PR #1574](https://github.com/andromarces/agent-loops/pull/1574)
 - [ADR 0070: Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md)
+- [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - Implementation:
   - Recognition: `runCodex` in `src/agents/codex.mjs`
   - Result field: `runChild` in `src/child-turn.mjs`

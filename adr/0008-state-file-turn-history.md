@@ -2,7 +2,15 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md). The superseded parts are:
+
+- Decision 2's rule that exactly one entry exists per charged step. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): a first turn that a recognized Codex model refusal ends records an entry without charging a step.
+- Decision 5's size bound that `turns` holds at most `maxSteps` entries. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): the array holds at most `maxSteps` entries plus one refunded first-turn refusal for each role.
+- The consequence that the state file grows by one entry per turn, bounded by `maxSteps`. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md).
+
+The entry shape, the status values, the append points, the recovery entry, decision 5's recovery accounting and no-truncation rule, decisions 3, 4, 6 to 10, and every other consequence stay in force.
 
 ## Date
 

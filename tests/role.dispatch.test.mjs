@@ -477,6 +477,26 @@ test("a model refusal on a later turn charges a step", async () => {
   expect(state.turns).toHaveLength(2);
 });
 
+// Usefulness: verifies #1565 — a legacy state without `turns` cannot prove a first turn when the
+// role kept a session from an earlier successful turn, so its refusal charges a step.
+test("a legacy state with an earlier role turn charges a refusal", async () => {
+  const repo = await newRunRepo();
+  const paths = statePaths({ cwd: repo });
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+
+  const legacy = await readState(paths.stateFile);
+  expect(legacy.roles.worker.sessionId).not.toBeNull();
+  delete legacy.turns;
+  await writeState(paths.stateFile, legacy);
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: refusingAdapter("gpt-6.1"), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect((await readRepoState(repo)).stepsUsed).toBe(2);
+});
+
 // Usefulness: verifies the dispatch seam — the parsed verdict and report reach
 // the payload, and the reviewer session id is recorded in state. Parser edge
 // cases are unit-tested in tests/lib/report.test.mjs.
