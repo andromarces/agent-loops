@@ -489,7 +489,7 @@ test("worker turns link issues only in the PR body and never with a closing keyw
 });
 
 // Usefulness: verifies acceptance #1560: a worker wrote a PR body whose closing keyword sat inside a
-// code span, so GitHub recorded no link and the issue stayed unlinked. Every turn that can set or
+// code span. GitHub recorded no link, and the issue stayed unlinked. Every turn that can set or
 // edit the body reads the recorded links and fixes the body until the issue is listed.
 test("worker turns check that a PR body closing keyword reached closingIssuesReferences", () => {
   for (const first of [true, false]) {
