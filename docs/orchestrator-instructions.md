@@ -330,11 +330,11 @@ Apply these parent rules:
     to a turn, so the parent cannot prove ownership.
   - The parent re-checks the names that the reviewer turns reported before the finish summary. It
     reports under `open` only a name that the re-read still holds. Run
-    `agent-loop role recheck-tmpdir --cwd "<work tree>"`. It returns only the names that still
-    exist.
+    `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
+    returns only the names that still exist.
   - A failed or over-bound read keeps every name. So does a name that the read cannot check. The
-    re-read deletes nothing. `role finish` refuses a summary that still lists a name the re-read
-    does not hold.
+    re-read deletes nothing. A headless run carries the same names in `inheritedTmpdirPresent` in
+    the result prompt.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish
@@ -714,7 +714,7 @@ PR does not exist at init, and when a headless run declares its PR itself.
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `declare-pr`, `refresh-local`, `finish`, or `abort`. The spawn marker and its
+  role never runs `extend`, `declare-pr`, `refresh-local`, `set-model`, `recheck-tmpdir`, `finish`, or `abort`. The spawn marker and its
   limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not

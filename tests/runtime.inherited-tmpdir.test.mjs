@@ -30,29 +30,37 @@ async function cleanRepo() {
   return createCleanRepoDir();
 }
 
-// Usefulness: verifies acceptance — a GUID .tmp name that the reviewer turn reported and that is
-// gone at the finish re-read never reaches the accepted finish summary as an `open` item (issue
-// #1559). The first finish still lists it, and the runtime refuses that finish with no child turn.
-test("a finish that still lists an entry the finish re-read no longer holds is refused", async () => {
+const roles = {
+  orchestrator: { kind: "orch", sessionId: null },
+  worker: { kind: "work", sessionId: null },
+  reviewer: { kind: "rev", sessionId: null },
+};
+
+const summary = (open) => ({ changed: "a", verified: "b", deferred: "c", notDone: "d", open });
+
+// Usefulness: verifies the headless parent receives only the names that the re-read still holds.
+// A finish is accepted even when its summary lists a name removed after the turn (issue #1559).
+test("a headless run carries the re-read names and never refuses a finish for them", async () => {
   const repo = await cleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
-  const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+  const stays = "stays-probe";
+  const gone = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
   try {
     for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, temp);
-    const summary = (open) => ({ changed: "a", verified: "b", deferred: "c", notDone: "d", open });
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "start work" }),
       JSON.stringify({ action: "run_reviewer", prompt: "review the change" }),
       async () => {
-        await rm(join(temp, name));
-        return JSON.stringify({ action: "finish", summary: summary(`left ${name}`) });
+        await rm(join(temp, stays));
+        await rm(join(temp, gone));
+        return JSON.stringify({ action: "finish", summary: summary(`left ${stays} ${gone}`) });
       },
-      JSON.stringify({ action: "finish", summary: summary("none") }),
     ];
     const orchAdapter = scripted(orchReplies);
     const reviewerAdapter = scripted([
       async () => {
-        await writeFile(join(temp, name), "");
+        await writeFile(join(temp, stays), "");
+        await writeFile(join(temp, gone), "");
         return "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept";
       },
     ]);
@@ -61,11 +69,7 @@ test("a finish that still lists an entry the finish re-read no longer holds is r
       task: "Task 1",
       cwd: repo,
       maxSteps: 5,
-      roles: {
-        orchestrator: { kind: "orch", sessionId: null },
-        worker: { kind: "work", sessionId: null },
-        reviewer: { kind: "rev", sessionId: null },
-      },
+      roles,
       agents: {
         orch: orchAdapter,
         work: scripted(["worker did task"]),
@@ -73,9 +77,12 @@ test("a finish that still lists an entry the finish re-read no longer holds is r
       },
     });
 
+    const reviewerPrompt = orchAdapter.recorded.at(-1).prompt;
     expect(result.exitCode).toBe(0);
-    expect(result.summary.open).toBe("none");
-    expect(orchAdapter.recorded.at(-1).prompt).toContain(name);
+    expect(result.summary.open).toBe(`left ${stays} ${gone}`);
+    expect(reviewerPrompt).toContain('"inheritedTmpdirPresent"');
+    expect(reviewerPrompt).toContain(stays);
+    expect(reviewerPrompt).toContain(gone);
   } finally {
     vi.unstubAllEnvs();
     await removePath(temp);
@@ -83,48 +90,32 @@ test("a finish that still lists an entry the finish re-read no longer holds is r
   }
 });
 
-// Usefulness: verifies requirement "a name that still exists at the finish re-read stays reportable
-// under open" (issue #1559), so the re-check drops only a gone name.
-test("a finish that lists an entry the finish re-read still holds is accepted", async () => {
+// Usefulness: verifies a run with no reviewer turn carries no re-read field. The parent then has
+// no inherited temporary directory names to report (issue #1559).
+test("a worker result prompt carries no inherited temporary directory re-read", async () => {
   const repo = await cleanRepo();
-  const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
-  const name = "stays-probe";
   try {
-    for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, temp);
-    const summary = (open) => ({ changed: "a", verified: "b", deferred: "c", notDone: "d", open });
     const orchReplies = [
       JSON.stringify({ action: "run_worker", prompt: "start work" }),
-      JSON.stringify({ action: "run_reviewer", prompt: "review the change" }),
-      JSON.stringify({ action: "finish", summary: summary(`left ${name}`) }),
+      JSON.stringify({ action: "finish", summary: summary("none") }),
     ];
-    const reviewerAdapter = scripted([
-      async () => {
-        await writeFile(join(temp, name), "");
-        return "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept";
-      },
-    ]);
+    const orchAdapter = scripted(orchReplies);
 
     const result = await runLoop({
       task: "Task 1",
       cwd: repo,
       maxSteps: 5,
-      roles: {
-        orchestrator: { kind: "orch", sessionId: null },
-        worker: { kind: "work", sessionId: null },
-        reviewer: { kind: "rev", sessionId: null },
-      },
+      roles,
       agents: {
-        orch: scripted(orchReplies),
+        orch: orchAdapter,
         work: scripted(["worker did task"]),
-        rev: reviewerAdapter,
+        rev: scripted([]),
       },
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.summary.open).toBe(`left ${name}`);
+    expect(orchAdapter.recorded[1].prompt).not.toContain("inheritedTmpdirPresent");
   } finally {
-    vi.unstubAllEnvs();
-    await removePath(temp);
     await removePath(repo);
   }
 });

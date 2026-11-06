@@ -8,7 +8,6 @@ import {
 import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";
-import { goneInheritedTmpdirNames } from "./lib/tmpdir-entries.mjs";
 
 /**
  * Reads one PR gate for a finish. A `gh` failure is a refusal, not a thrown error: the read throws
@@ -78,7 +77,6 @@ export async function evaluateFinish({
   signal,
   onEvent,
   stopLoop,
-  inheritedTmpdirNames = [],
 }) {
   // Every applicable gate is evaluated, and every refusal is reported in one
   // prompt, because the run grants a single corrective turn and a second
@@ -208,17 +206,6 @@ export async function evaluateFinish({
       needsChildTurn = true;
       refusals.push(compare);
     }
-  }
-  // A finish summary that still lists an inherited temporary directory name which the later read
-  // no longer holds is refused. The marker rule covers the same shape: editing the summary
-  // satisfies the refusal, so no child turn is needed (issue #1559).
-  const goneNames = await goneInheritedTmpdirNames(inheritedTmpdirNames, action.summary.open);
-  if (goneNames.length > 0) {
-    refusals.push({
-      reason: `the inherited temporary directory no longer holds ${goneNames.join(", ")}, which open still lists`,
-      recovery:
-        "Remove each of those names from open, then finish again. The re-read no longer holds them, so they need no open item, and this refusal needs no child turn.",
-    });
   }
   if (refusals.length === 0) {
     if (compareHead !== null) {

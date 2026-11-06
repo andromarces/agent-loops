@@ -25,7 +25,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const recheck = (repo) => executeRoleCommand(withRepo(["recheck-tmpdir", "--cwd", "<repo>"], repo));
+const recheck = (repo, extra = ["--parent-session", "parent-sess-1"]) =>
+  executeRoleCommand(withRepo(["recheck-tmpdir", "--cwd", "<repo>", ...extra], repo));
 
 /** A reviewer reply that writes `names` into the inherited temporary directory `dir`. */
 const leaving = (dir, names) => async () => {
@@ -51,9 +52,8 @@ async function dispatchReviewerTurn(repo, reply) {
   });
 }
 
-// Usefulness: verifies acceptance — a GUID .tmp name that the reviewer turn reported and that is
-// gone at the later read does not reach the re-check result, while a name that stays does, and the
-// command writes no state (issue #1559).
+// Usefulness: verifies acceptance. A name gone at the later read is left out, and a name that
+// stays is kept (issue #1559). The command writes no state.
 test("recheck-tmpdir drops a name gone at the later read and keeps one that stays", async () => {
   const repo = await newRunRepo();
   await initWorkerRun(repo);
@@ -75,7 +75,7 @@ test("recheck-tmpdir drops a name gone at the later read and keeps one that stay
 });
 
 // Usefulness: verifies requirement "several reviewer turns that report overlapping names are
-// re-checked once, and a name created again counts as present" (issue #1559).
+// re-checked once" (issue #1559). A name created again counts as present.
 test("recheck-tmpdir dedupes overlapping turns and keeps a name created again", async () => {
   const repo = await newRunRepo();
   await initWorkerRun(repo);
@@ -95,10 +95,9 @@ test("recheck-tmpdir dedupes overlapping turns and keeps a name created again", 
   });
 });
 
-// Usefulness: verifies acceptance end to end — a finish summary that lists a reported name which
-// is gone at the later read is refused, and the run ends only after the parent removes it (issue
-// #1559).
-test("finish refuses a summary that lists a name the later read no longer holds", async () => {
+// Usefulness: verifies scope cut (issue #1559). A finish never refuses a summary because it lists
+// a name that the later read no longer holds. The parent rule alone keeps the name out.
+test("finish accepts a summary that lists a name the later read no longer holds", async () => {
   const repo = await newRunRepo();
   await initWorkerRun(repo);
   await withInheritedDir(async (dir) => {
@@ -106,18 +105,60 @@ test("finish refuses a summary that lists a name the later read no longer holds"
     await dispatchReviewerTurn(repo, leaving(dir, [name]));
     await rm(join(dir, name));
 
-    const refused = await finishCall(repo, [], {
-      stdin: async () => JSON.stringify({ ...GATE_SUMMARY, open: `left ${name}` }),
-    });
-    expect(refused.exitCode).toBe(1);
-    expect(refused.payload.error).toContain(name);
-    expect((await readRepoState(repo)).lifecycle).toBe("active");
-
     const accepted = await finishCall(repo, [], {
-      stdin: async () => JSON.stringify({ ...GATE_SUMMARY, open: "none" }),
+      stdin: async () => JSON.stringify({ ...GATE_SUMMARY, open: `left ${name}` }),
     });
     expect(accepted.exitCode).toBe(0);
     expect(accepted.payload.lifecycle).toBe("finished");
+    expect((await readRepoState(repo)).summary.open).toBe(`left ${name}`);
+  });
+});
+
+// Usefulness: verifies requirement "the command requires the stored parent session id, as extend
+// does" (issue #1559). A missing id and a different id are both refused and read nothing.
+test("recheck-tmpdir refuses a missing or wrong parent session", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+
+  const missing = await recheck(repo, []);
+  expect(missing.exitCode).toBe(1);
+  expect(missing.payload.error).toContain("recheck-tmpdir requires --parent-session");
+
+  const wrong = await recheck(repo, ["--parent-session", "another-session"]);
+  expect(wrong.exitCode).toBe(1);
+  expect(wrong.payload.error).toContain("--parent-session does not match");
+});
+
+// Usefulness: verifies requirement "a terminal run is refused" (issue #1559), so the documented
+// lifecycle set matches the code.
+test("recheck-tmpdir refuses a terminal run", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  expect((await finishCall(repo)).exitCode).toBe(0);
+  const result = await recheck(repo);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("Run is already finished");
+});
+
+// Usefulness: verifies requirement "a state file written before inheritedTmpdirNames existed still
+// reports its reviewer names" (issue #1559). Those names live in lastResult on origin/main.
+test("recheck-tmpdir includes the names that a legacy state holds in lastResult", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const state = await readRepoState(repo);
+    delete state.inheritedTmpdirNames;
+    state.lastResult = {
+      role: "reviewer",
+      status: "ok",
+      inheritedTmpdirEntries: ["legacy.tmp", "gone-legacy.tmp"],
+    };
+    state.turns = [{ role: "reviewer", status: "ok", verdict: "accept", head: null, at: "t" }];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, "legacy.tmp"), "");
+
+    const result = await recheck(repo);
+    expect(result.payload.inheritedTmpdirEntries).toEqual(["legacy.tmp"]);
   });
 });
 
@@ -131,7 +172,7 @@ test("recheck-tmpdir reports no name for a run with no reviewer turn", async () 
   expect(result.payload.inheritedTmpdirEntries).toEqual([]);
 });
 
-// Usefulness: verifies requirement "a child role never runs the parent read" (issue #1559): the
+// Usefulness: verifies requirement "a child role never runs the parent read" (issue #1559). The
 // command is refused through the run marker, as extend is.
 test("recheck-tmpdir is refused for a child role", async () => {
   const repo = await newRunRepo();
@@ -143,7 +184,7 @@ test("recheck-tmpdir is refused for a child role", async () => {
 });
 
 // Usefulness: verifies requirement "a recorded name with a separator or .. never resolves outside
-// the inherited directory" (issue #1559): each unsafe name cannot be re-checked, so it stays
+// the inherited directory" (issue #1559). Each unsafe name cannot be re-checked, so it stays
 // listed and no file outside the directory is read.
 test("recheck-tmpdir keeps an unsafe recorded name and resolves no path", async () => {
   const repo = await newRunRepo();
@@ -160,7 +201,7 @@ test("recheck-tmpdir keeps an unsafe recorded name and resolves no path", async 
 });
 
 // Usefulness: verifies requirement "the re-read reports names only, redacted and capped at 20 at
-// the reporting boundary" (issue #1559, ADR 0017): a recorded name can echo a secret value.
+// the reporting boundary" (issue #1559, ADR 0017). A recorded name can echo a secret value.
 test("recheck-tmpdir redacts and caps its reported names", async () => {
   const repo = await newRunRepo();
   await initWorkerRun(repo);

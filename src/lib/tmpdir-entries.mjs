@@ -14,8 +14,9 @@ const READ_BATCH_SIZE = 32;
 // A later read answers in milliseconds. The bound ends a read that hangs, and a read that reaches
 // the bound keeps every recorded name (issue #1559).
 const RE_READ_BOUND_MS = 5_000;
-// A recorded name that holds one of these cannot name a direct entry, so the read keeps it.
-const UNSAFE_NAME = /[/\\\0]/;
+// A recorded name that holds one of these cannot name a direct entry, so the read keeps it. The
+// colon keeps a Windows drive letter or stream name unsafe on every platform.
+const UNSAFE_NAME = /[/\\:\0]/;
 const REDACTED_NAME = /\[redacted:|\[\*\]/;
 // A transient file, such as a GUID `.tmp` file, can be in the post-turn read and then be gone a
 // moment later. The second read after this window keeps only the entries that still exist (issue
@@ -90,12 +91,12 @@ const carrier = entryCarrier("inheritedTmpdirEntries");
 
 /**
  * Re-reads the inherited temporary directory and returns the recorded names that it still holds,
- * in the recorded order. A name that the read cannot check stays listed: a redacted name, one with
- * a separator or `..`, and every name after a failed or over-bound read. The read lists names
- * only, deletes nothing, and follows no link. It returns [] when no name was recorded.
+ * in the recorded order. A name that the read cannot check stays listed. That covers a redacted
+ * name, one with a separator or `..`, and every name after a failed or over-bound read. The read
+ * lists names only, deletes nothing, and follows no link. It returns [] when no name was recorded.
  * @param {Iterable<string>} names the names that the reviewer turns reported
- * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] `read` replaces the
- *   directory read, so a test fixes the order without a wall-clock wait.
+ * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] an injected read and
+ *   bound, for a test
  * @returns {Promise<string[]>}
  */
 export async function presentInheritedTmpdir(
@@ -127,28 +128,6 @@ export async function presentInheritedTmpdir(
 
 async function readInheritedTmpdirNames() {
   return readdir(tmpdir());
-}
-
-/**
- * The recorded names that `open` still lists as a token and that the later read no longer holds. A
- * name that the read cannot check stays present, so a failed or over-bound read returns none.
- * @param {string[]} names
- * @param {string} open
- * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] as for
- *   `presentInheritedTmpdir`
- * @returns {Promise<string[]>}
- */
-export async function goneInheritedTmpdirNames(names, open, options) {
-  if (!Array.isArray(names) || names.length === 0) return [];
-  const present = new Set(await presentInheritedTmpdir(names, options));
-  const gone = names.filter((name) => !present.has(name));
-  if (gone.length === 0) return [];
-  const tokens = String(open ?? "")
-    .split(/[\s,;:"'`()[\]{}]+/)
-    .filter(Boolean);
-  return gone.filter((name) =>
-    tokens.some((token) => token === name || token.endsWith(`/${name}`)),
-  );
 }
 
 // Whether a further read still holds `name`. A name that cannot be checked stays present, because

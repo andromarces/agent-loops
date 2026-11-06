@@ -268,6 +268,27 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /verified/, /reviewed`? identifies no change/i, /what the reviewer checked/i),
 ];
 
+// Usefulness: verifies the child guard and the parent-session rule name the parent read (issue
+// #1559). A child never runs it, and a caller must pass the stored id.
+test("the child guard and parent-session docs name recheck-tmpdir", async () => {
+  const child = (await readFile(join(referenceSectionsDir, "child-run-guard.md"), "utf8")).replace(
+    /\s+/g,
+    " ",
+  );
+  const parent = (
+    await readFile(join(referenceSectionsDir, "parent-session-guard.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  const fields = (
+    await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  expectRule(child, /child role never runs/i, /recheck-tmpdir/i);
+  expectRule(parent, /recheck-tmpdir/i, /required/i);
+  expectRule(fields, /recheck-tmpdir/i, /parent-session/i);
+  expectRule(fields, /non-terminal/i);
+  expect(fields).not.toContain("role finish");
+  expect(fields).not.toContain("headless finish is refused");
+});
+
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
 // reviewed-state parent rules (issue #217, issue #252, issue #328). The two parent paths never
 // diverge. The reviewer-Checks gate rule uses the same presence check as the gate test. A reword

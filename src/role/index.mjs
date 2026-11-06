@@ -138,25 +138,43 @@ async function abort(args) {
 
 /**
  * `recheck-tmpdir`: re-reads the inherited temporary directory and reports the names that the
- * reviewer turns of the run reported and that a later read still holds. It is a read-only parent
- * status read: it writes no state, deletes nothing, and reports names only, redacted and capped.
- * A failed or over-bound read, and a name it cannot re-check, stays listed. A child role is
- * refused.
+ * reviewer turns of the run reported and that a later read still holds. It is a read-only status
+ * read of a non-terminal run: it writes no run state, deletes nothing, and reports names only,
+ * redacted and capped. It requires the stored parent session id, as `extend` does, and a child
+ * role is refused. A failed or over-bound read, and a name it cannot re-check, stays listed.
  */
 async function recheckTmpdir(args) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
-  const paths = statePaths({ cwd: args.cwd });
-  const state = requireState(await readState(paths.stateFile), args.cwd);
-  const recorded = Array.isArray(state.inheritedTmpdirNames) ? state.inheritedTmpdirNames : [];
-  const present = await presentInheritedTmpdir(recorded);
-  return {
-    exitCode: 0,
-    payload: {
-      status: "ok",
-      lifecycle: state.lifecycle,
-      inheritedTmpdirEntries: reportedEntryNames(present),
+  return withOpenRun(
+    args,
+    {},
+    async (state) => {
+      const recorded = inheritedTmpdirNames(state);
+      const present = await presentInheritedTmpdir(recorded);
+      return {
+        exitCode: 0,
+        payload: {
+          status: "ok",
+          lifecycle: state.lifecycle,
+          inheritedTmpdirEntries: reportedEntryNames(present),
+        },
+      };
     },
-  };
+    [],
+    "recheck-tmpdir",
+  );
+}
+
+// A state file can hold names in three places. They are the field this change writes, the last
+// result of an older run, and a turn entry from a hand-edited state. A missing or malformed value
+// adds nothing.
+function inheritedTmpdirNames(state) {
+  const lists = [
+    state.inheritedTmpdirNames,
+    state.lastResult?.inheritedTmpdirEntries,
+    ...(Array.isArray(state.turns) ? state.turns.map((turn) => turn?.inheritedTmpdirEntries) : []),
+  ];
+  return lists.flatMap((list) => (Array.isArray(list) ? list : []));
 }
 
 /**

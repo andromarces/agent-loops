@@ -155,9 +155,9 @@ test("keeps a directory listed when a turn forges a registration for it", async 
   expect(entries.some((entry) => entry.endsWith("al-Ab1234"))).toBe(true);
 });
 
-// Usefulness: verifies acceptance — a name that a later read no longer holds is left out, a name
-// that stays is kept, and a name removed and created again counts as present (issue #1559). The
-// ordering is fixed by the files, so no wall-clock wait decides it.
+// Usefulness: verifies acceptance. A name gone at a later read is left out, and a name that stays
+// is kept. A name removed and created again counts as present (issue #1559). The ordering is fixed
+// by the files, so no wall-clock wait decides it.
 test("reports only the recorded names that a later read still holds", async () => {
   const gone = join(root, "4a09873d-cff3-4dee-98a7-9f6f98072662.tmp");
   const stays = join(root, "stays.txt");
@@ -178,7 +178,7 @@ test("reports only the recorded names that a later read still holds", async () =
 });
 
 // Usefulness: verifies requirement "a failed or over-bound later read keeps every recorded name"
-// (issue #1559): the list is advisory, so a lost name would hide a leftover.
+// (issue #1559). The list is advisory, so a lost name can hide a leftover.
 test("keeps every recorded name when the later read fails or passes its bound", async () => {
   const recorded = ["a.tmp", "b.tmp"];
   expect(
@@ -204,8 +204,17 @@ test("keeps a name that holds a separator or .. without resolving it", async () 
   expect(await presentInheritedTmpdir([".."], { read: async () => [] })).toEqual([".."]);
 });
 
+// Usefulness: verifies requirement "a Windows-shaped recorded name is unsafe on every platform"
+// (issue #1559). A backslash, a drive letter, and a UNC prefix never resolve a path and stay
+// listed, whatever the read returns.
+test("keeps a Windows-shaped name without resolving it", async () => {
+  const names = ["a\\b", "C:name", "C:\\temp\\x", "\\\\server\\share\\x"];
+  expect(await presentInheritedTmpdir(names, { read: async () => [] })).toEqual(names);
+  expect(await presentInheritedTmpdir(names, { read: async () => ["C:name"] })).toEqual(names);
+});
+
 // Usefulness: verifies requirement "a name that carries the registered mark is re-checked by the
-// entry name" (issue #1559): the mark is not part of the directory entry.
+// entry name" (issue #1559). The mark is not part of the directory entry.
 test("re-checks a registered name without its mark and keeps the mark", async () => {
   expect(
     await presentInheritedTmpdir(["registered/al-Ab1234", "registered/al-Gone"], {

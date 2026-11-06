@@ -6,7 +6,7 @@ accepted
 
 Partially superseded by [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md).
 
-- Decision 1's rule that the settle re-read is the last filter: superseded by ADR 0081, which re-checks the recorded names at the parent before the finish summary.
+- Decision 1's rule that the settle re-read is the last filter: superseded by ADR 0081. That ADR re-checks the recorded names at the parent before the finish summary.
 - The consequence that a longer-lived file still needs an `open` item: superseded by ADR 0081.
 
 The settle read, decisions 2 to 6, and the guard stay in force.

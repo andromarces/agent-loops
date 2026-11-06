@@ -6,7 +6,7 @@ A run stores the `--parent-session` of the session that started it. The
 parent-edit guard and `extend` match that id, and no later call changes it. After init,
 each subcommand treats `--parent-session` as follows:
 
-- `extend`, `declare-pr`, `refresh-local`, and `set-model`: required. A missing value or any value other than the stored id is
+- `extend`, `recheck-tmpdir`, `declare-pr`, `refresh-local`, and `set-model`: required. A missing value or any value other than the stored id is
   refused, and the refusal does not name the stored id. The stored id is
   accepted.
 - `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
@@ -15,7 +15,6 @@ each subcommand treats `--parent-session` as follows:
   A value equal to the stored id is accepted. `dispatch` also refuses a malformed
   id.
 - `wait-checks`: reads no run state and ignores the flag.
-- `recheck-tmpdir`: reads the run state and ignores the flag. A child role is refused.
 
 A run that a new session resumes is therefore unguarded for that session (issue #435). No
 call moves the stored id to the new session. The new session can run `dispatch`,
