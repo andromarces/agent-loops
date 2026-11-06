@@ -339,9 +339,9 @@ test("wait-checks --all waits for the listed checks of the head", async () => {
   });
 });
 
-// Usefulness: verifies `role wait-checks` reports a merge conflict as its own exit-0 outcome with
-// `conflicting: true`, `timedOut: false`, and an empty `checks`, in both wait modes, so no parent
-// reads the conflict as a pass or waits out its bound (issue #1536).
+// Usefulness: verifies `role wait-checks` reports a merge conflict as its own exit-0 outcome.
+// The envelope carries `conflicting: true`, `timedOut: false`, and an empty `checks`, in both modes.
+// No parent reads the conflict as a pass or waits out its bound (issue #1536).
 test.each([
   ["required", false],
   ["all", true],
