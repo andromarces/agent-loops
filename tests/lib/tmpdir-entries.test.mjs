@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
@@ -38,6 +39,20 @@ test("lists only entries that appeared after the snapshot", async () => {
   const before = await snapshotInheritedTmpdir();
   await mkdir(join(root, "m54-3db54ca8"));
   expect(await appearedInInheritedTmpdir(before)).toEqual(["m54-3db54ca8"]);
+});
+
+// Usefulness: verifies requirement "a transient file that another process creates and removes
+// during a turn does not appear in inheritedTmpdirEntries" (issue #1542): the post-turn read can
+// catch the GUID `.tmp` file of a desktop application, and the second read after a short settle
+// leaves it out while a file that stays is listed.
+test("leaves out a file that another process removes while the read settles", async () => {
+  const before = await snapshotInheritedTmpdir();
+  await writeFile(join(root, "stays.txt"), "");
+  const transient = join(root, "4a09873d-cff3-4dee-98a7-9f6f98072662.tmp");
+  await writeFile(transient, "");
+  const removal = delay(25).then(() => rm(transient));
+  expect(await appearedInInheritedTmpdir(before)).toEqual(["stays.txt"]);
+  await removal;
 });
 
 // Usefulness: verifies requirement "only the runtime's own turn directories are left out" (issue

@@ -17,8 +17,11 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
     own, so the prefix is a hint and never proof: the entry stays listed, and the parent reports it
     under `open` as such.
-  - The runtime reads the directory once, after the last
-    child call of the dispatch, a task-only turn in a replacement conversation included.
+  - The runtime reads the directory after the last
+    child call of the dispatch, a task-only turn in a replacement conversation included. It reads
+    the directory again after a short settle and leaves out a name that is then gone, because
+    another process created and removed that file during the turn, so it needs no `open` item
+    (issue #1542).
     Every reviewer turn that read the directory before it started carries the field: an ok turn, a
     handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
     `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted
