@@ -418,19 +418,34 @@ test("the main work tree read leaves the index file unchanged", async () => {
 });
 
 /**
- * Resolves on the next filesystem event in `dir`. The test uses it to order a write before a
- * restore, so both land inside the turn window with no fixed sleep.
+ * Resolves after a filesystem event for `path` and one for `dir`. The test uses it to order a
+ * write before a restore, so both land inside the turn window with no fixed sleep.
  */
-function nextDirChange(dir) {
+function nextFileAndDirChange(path, dir) {
   return new Promise((resolve, reject) => {
-    const watcher = watch(dir, () => {
-      watcher.close();
+    let fileSeen = false;
+    let dirSeen = false;
+    const done = () => {
+      if (!fileSeen || !dirSeen) return;
+      fileWatcher.close();
+      dirWatcher.close();
       resolve();
-    });
-    watcher.on("error", (err) => {
-      watcher.close();
+    };
+    const fail = (err) => {
+      fileWatcher.close();
+      dirWatcher.close();
       reject(err);
+    };
+    const fileWatcher = watch(path, () => {
+      fileSeen = true;
+      done();
     });
+    const dirWatcher = watch(dir, () => {
+      dirSeen = true;
+      done();
+    });
+    fileWatcher.on("error", fail);
+    dirWatcher.on("error", fail);
   });
 }
 
@@ -448,7 +463,7 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null } 
     observed = resolve;
   });
   // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextDirChange(tree.main);
+  const event = nextFileAndDirChange(join(tree.main, path), tree.main);
   const run = turn(async () => {
     await writeFile(join(tree.main, path), written);
     await event;
@@ -475,7 +490,7 @@ test("a worker turn that restores a tracked main work tree file reports it in th
 // tracked files and untracked files that Git does not ignore are in scope.
 test("a directory-only change in the main work tree reports no path", async () => {
   // The watcher exists before the turn starts, so the file event cannot precede it.
-  const event = nextDirChange(tree.main);
+  const event = nextFileAndDirChange(join(tree.main, "init.txt"), tree.main);
   const result = await turn(async () => {
     await mkdir(join(tree.main, "made-dir"));
     await writeFile(join(tree.main, "init.txt"), "changed\n");
@@ -530,7 +545,7 @@ test("a failed worker turn carries the in-turn main work tree change", async () 
     observed = resolve;
   });
   // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextDirChange(tree.main);
+  const event = nextFileAndDirChange(join(tree.main, "init.txt"), tree.main);
   const run = turn(async () => {
     await writeFile(join(tree.main, "init.txt"), "changed\n");
     await event;
@@ -560,7 +575,7 @@ test("a canceled worker turn carries the in-turn main work tree change", async (
     observed = resolve;
   });
   // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextDirChange(tree.main);
+  const event = nextFileAndDirChange(join(tree.main, "init.txt"), tree.main);
   const run = turn(async () => {
     await writeFile(join(tree.main, "init.txt"), "changed\n");
     await event;
