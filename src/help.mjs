@@ -87,17 +87,18 @@ Role operations:
   recheck-tmpdir                Re-read the inherited temporary directory and report
                                 the names that the reviewer turns reported and that
                                 are still present, on a non-terminal run. Polls every
-                                2 seconds, ends every read by 3 minutes, returns
-                                at once when every checkable name is gone, and
-                                reports the last read. Needs the run
-                                state file and the stored --parent-session id, as
-                                extend does. Takes no state lock, and writes or
-                                deletes nothing, and refuses a child role. The
-                                parent runs it before the finish summary and reports
-                                only the names it returns, and a headless run waits
-                                only after an accept. A cancel ends the sleep or an
-                                in-flight read at once, and a failed or over-bound
-                                read, and a name it cannot check, stay listed.
+                                2 seconds, starts the 3-minute bound after the state
+                                read, ends every read by it, and reports the last
+                                read. Returns at once when every checkable name is
+                                gone, and a failed or over-bound read, and a name it
+                                cannot check, stay listed. Needs the run state file
+                                and the stored --parent-session id, as extend does.
+                                Takes no state lock, writes or deletes nothing,
+                                refuses a child role, and a cancel ends the sleep or
+                                an in-flight read at once. The parent runs it before
+                                the finish summary and reports only the names it
+                                returns, and a headless run waits only after an
+                                accept.
   declare-pr                    Set the run PR once, after init, on a non-terminal run
                                 that declared none, for a task whose worker opens the
                                 PR. Needs --pr and the stored --parent-session id.

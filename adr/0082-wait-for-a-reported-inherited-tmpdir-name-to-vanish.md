@@ -25,18 +25,18 @@ A single read cannot separate a transient name from a leftover. A bounded later 
 3. **Fail closed.** A failed or over-bound read on the first poll keeps every name and ends the wait. A later failed poll keeps every name that the last successful read still held.
 4. **Keep an uncheckable name.** A name that the read cannot check stays listed. The first failed read ends the wait, because no later read can prove that name gone.
 5. **No wait when none can help.** An empty name list returns at once. A list with no checkable name returns at once, because a later read changes no name. A missing inherited directory counts as a first failed read and keeps every name.
-6. **Bound the clock.** The deadline uses a monotonic clock, so a wall-clock jump never ends or extends the wait. The final read starts one read bound before the deadline, so every read ends by the bound.
+6. **Bound the clock.** The deadline uses a monotonic clock, so a wall-clock jump never ends or extends the wait. The final read starts one read bound before the deadline, so every read ends by the bound. The bound starts after the run state read and covers every directory read.
 7. **End on cancel.** A SIGINT ends the sleep and an in-flight read at once with the cancel envelope. It deletes nothing.
 8. **Headless path.** The runtime waits only after a reviewer turn whose verdict is accept, because only an accept can lead to a finish. Every other verdict keeps the single read with no wait.
 9. **Keep it testable.** `presentInheritedTmpdir` accepts the bound, the interval, the read, the clock, and the sleep. A test injects each with no real minute wait.
 
 ## Consequences
 
-- A GUID `.tmp` file that another process removes within the bound stays out of `open` when the parent follows the rule.
-- A finish that follows the last reviewer turn within a minute now waits until the transient names vanish.
+- A GUID `.tmp` file is excluded when the last read, which ends by the deadline, no longer finds it.
+- A finish that follows the last reviewer turn within a minute can now wait up to the bound for a transient name.
 - A name that stays for the whole bound adds up to 3 minutes. On the headless path, that cost applies once per accepted reviewer turn.
 - A name that one read misses stays eligible, so a recreated name reaches the report.
-- The report comes from a read at or after the deadline.
+- The report comes from the last read, which starts one read bound before the deadline.
 - A name removed after the bound still reaches the summary, because no wait proves a later state.
 - A redacted or unsafe name always reaches `open`, because the read cannot prove it gone, but it adds no wait.
 - A cancel before the bound ends the command with no envelope names, and no name is deleted.

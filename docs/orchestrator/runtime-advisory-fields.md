@@ -22,7 +22,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - The re-read reports a name that still exists, one that another process created again included.
     A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
     redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
-  - The re-check polls every 2 seconds for up to 3 minutes. The final read starts one read bound
+  - The re-check polls every 2 seconds for up to 3 minutes, starting the bound after the run state
+    read. The final read starts one read bound
     early, so every read ends by the bound. It returns at once when every checkable name is gone,
     and reports the final read otherwise. A failed first read keeps every name and ends the wait,
     and a later failed poll keeps the last successful read. Every read checks every recorded name,
