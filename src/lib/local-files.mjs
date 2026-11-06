@@ -921,6 +921,54 @@ function changedSide(rel, source, copy, hashes) {
 }
 
 /**
+ * Copies the main work tree source file `rel` over its run copy and returns the SHA-256 of the
+ * refreshed copy, so a parent can record a hand refresh without reading the file. Refuses, before
+ * any write, when the source or copy is missing or unreadable, either side is a link at the file or
+ * at any parent component, the path leaves the work tree, or `expectedCopyHash` differs from the
+ * current copy. `expectedCopyHash` is the init hash: a differing copy holds a turn edit that a
+ * refresh must not hide. Content and hashes never reach a log line or an error text.
+ * @param {string} cwd
+ * @param {string} rel
+ * @param {{ signal?: AbortSignal, expectedCopyHash?: string }} [options]
+ * @returns {Promise<string>} the new SHA-256 of the copy
+ * @throws {Error} with a message that starts `refresh-local`
+ */
+export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash } = {}) {
+  const refuse = (why) => new Error(`refresh-local is refused: ${why}`);
+  if (!isPlainRelativeName(rel)) {
+    throw refuse("the path must stay inside the work tree");
+  }
+  const located = await locateWorkTrees(cwd, (dir, args, options) =>
+    git(dir, args, { signal, ...options }),
+  );
+  if (located === null) {
+    throw refuse("there is no main work tree to refresh from");
+  }
+  const { mainReal, rootReal } = located;
+  const source = await sha256Of(mainReal, rel);
+  if (typeof source !== "string") {
+    throw refuse("the source is missing or unreadable");
+  }
+  const copy = await sha256Of(rootReal, rel);
+  if (typeof copy !== "string") {
+    throw refuse("the copy is missing or unreadable");
+  }
+  if (expectedCopyHash !== undefined && copy !== expectedCopyHash) {
+    throw refuse("the copy changed after init, so a turn changed it");
+  }
+  try {
+    await copyFile(join(mainReal, rel), join(rootReal, rel));
+  } catch (err) {
+    throw refuse(`the copy failed (${err.code ?? "error"})`);
+  }
+  const stored = await sha256Of(rootReal, rel);
+  if (stored !== source) {
+    throw refuse("the copy could not be verified after the refresh");
+  }
+  return stored;
+}
+
+/**
  * Names the copied local files whose content differs from the file of the same name in the main
  * work tree, so a parent can see a stale copy. `names` is the `copied` list of the init copy.
  * Content is compared by SHA-256 and is never returned or logged. Nothing is written: a copy that
