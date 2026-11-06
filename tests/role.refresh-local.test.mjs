@@ -79,6 +79,11 @@ test("a recorded refresh stops a later envelope from reporting the path", async 
   expect(refreshed.payload).toEqual({ status: "ok", lifecycle: "active", path: ".env" });
   expect((await dispatchAgain(linked)).payload).not.toHaveProperty("localFilesDiffer");
   expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=CHANGED\n");
+
+  await writeFile(join(main, ".env"), "KEY=CHANGED-AGAIN\n");
+  expect((await dispatchAgain(linked)).payload.localFilesDiffer).toEqual([
+    { path: ".env", changed: "source" },
+  ]);
 });
 
 // Usefulness: verifies the refresh stores the new hash only for the named path.

@@ -453,7 +453,7 @@ async function applyInitSideEffects(
       { signal, extraPaths: state.copyLocalPaths ?? [] },
     );
     if (localFiles) {
-      // Names only, so a later dispatch can compare each copy with its source. The init hash of
+      // Names only, so a later dispatch can compare each copy with its source. The stored hash of
       // each copy stays in the state file and never reaches an envelope or a log line.
       state.localFilesCopied = localFiles.copied;
       try {
@@ -466,7 +466,7 @@ async function applyInitSideEffects(
         }
         // A present but empty map fails closed for every later compare.
         state.localFilesCopiedSha256 = {};
-        logWarn(`local files: the init hash could not be recorded (${err.code ?? "error"})`);
+        logWarn(`local files: the stored hash could not be recorded (${err.code ?? "error"})`);
       }
       onEvent({ type: "local-files", ...localFiles });
     }
@@ -514,7 +514,7 @@ function recordRoleSession(target, source) {
 }
 
 /**
- * Names the copied local files whose source or copy differs from the init hash. Read-only: nothing
+ * Names the copied local files whose source or copy differs from the stored hash. Read-only: nothing
  * is replaced. A failed comparison is a warning, not a failed dispatch, and fails closed: every
  * copied name is reported as `unknown`. A cancel propagates.
  */
@@ -548,7 +548,7 @@ function reportedLocalFileChanges(changes) {
 
 /**
  * Adds the copied and skipped path names of the init copy to the envelope. On a later dispatch it
- * adds the names and sides of copies that differ from the init hash.
+ * adds the names and sides of copies that differ from the stored hash.
  */
 function withLocalFiles(payload, localFiles, localFilesDiffer) {
   return {

@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -6,6 +7,7 @@ import {
   rename,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -1373,6 +1375,60 @@ test("a source save between the read and the write leaves the read bytes and rep
   expect(await findLocalFileChanges(linked, [".env"], { ".env": hash })).toEqual([
     { path: ".env", changed: "source" },
   ]);
+});
+
+// Usefulness: verifies a refresh keeps the copy's private mode, so no wider access appears.
+// Not redundant: it is the only test that checks the mode after a refresh.
+// Windows does not expose POSIX mode bits, so the mode check is POSIX only.
+test.skipIf(process.platform === "win32")("a refresh keeps the mode of a 0600 copy", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  await chmod(join(linked, ".env"), 0o600);
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+  await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+
+  expect((await stat(join(linked, ".env"))).mode & 0o777).toBe(0o600);
+});
+
+// Usefulness: verifies a refresh keeps a wider copy mode, so the mode follows the copy.
+// Not redundant: the 0600 test passes when the temporary file alone sets the mode.
+// Windows does not expose POSIX mode bits, so the mode check is POSIX only.
+test.skipIf(process.platform === "win32")("a refresh keeps a 0640 copy at 0640", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  await chmod(join(linked, ".env"), 0o640);
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+  await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+
+  expect((await stat(join(linked, ".env"))).mode & 0o777).toBe(0o640);
+});
+
+// Usefulness: verifies a failed exclusive create leaves an entry the command did not make.
+// Not redundant: it forces the temporary create to fail on an existing entry.
+test("a failed exclusive create leaves the existing temporary entry", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  let temp = "";
+
+  await expect(
+    refreshLocalFile(linked, ".env", {
+      expectedCopyHash: baseline[".env"],
+      beforeTempCreate: async (path) => {
+        temp = path;
+        await writeFile(path, "KEEP\n");
+      },
+    }),
+  ).rejects.toThrow("the copy failed");
+
+  expect(temp === "").toBe(false);
+  expect(await readFile(temp, "utf8")).toBe("KEEP\n");
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=OLD\n");
 });
 
 // Usefulness: verifies every later side change is still reported after a refresh.

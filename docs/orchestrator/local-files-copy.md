@@ -31,9 +31,11 @@ source and the copy with that hash.
 
 The envelope reports `localFilesDiffer` as a list of `{path, changed}` entries. The key is
 absent when neither side changed. `changed` is `source`, `copy`, `both`, or `unknown`.
-A side counts as changed when it is missing, unreadable, or its hash differs from the init
-hash. `unknown` means the runtime cannot prove a side, and it never means no change. A
-legacy state with no init hash reports every copied path as `unknown`.
+
+A side counts as changed when it is missing, unreadable, or its hash differs from the stored
+hash. The stored hash is the init hash, or the hash of the last refresh. `unknown` means the
+runtime cannot prove a side, and it never means no change. A legacy state with no init hash
+reports every copied path as `unknown`.
 
 For `source`, the main work tree changed after init. Run
 `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored

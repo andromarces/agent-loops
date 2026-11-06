@@ -5,17 +5,7 @@
 // is a path name.
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  copyFile,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import {
@@ -752,26 +742,15 @@ const isPlainRecord = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
- * Reads the regular file `rel` under `base` (a canonical path) and returns `{ bytes, hash }`.
- * It returns `MISSING` when the first probe finds no file, or `NOT_COMPARABLE` when it cannot be
- * compared. The causes are a link on the final entry or an ancestor, a non-regular file, or a file
- * over the size cap. It also covers an unresolved path, or a file that changed or vanished after the
- * first probe. The caller never counts `NOT_COMPARABLE` as equal, even when both sides return it.
- *
- * Order, so that no read starts on a path that is not proven inside `base`:
- * 1. Resolve the canonical path and `lstat` the file. An absence here is the only `MISSING`.
- * 2. Require the canonical path to equal `base` plus `rel`, then check the ancestors, then
- *    resolve the path again and require the same canonical path.
- * 3. Open the file. `O_NOFOLLOW` is 0 on Windows, so the identity checks carry the guard: the
- *    open handle must be the regular file with the `dev` and `ino` of the first `lstat`, and the
- *    path must still resolve to the same canonical path.
- * 4. Read from the handle only, then check the ancestors and the canonical path again.
- * Any mismatch, and any error after step 1, is `NOT_COMPARABLE`.
- * known-limit: a swap that is made and undone between two checks is not detected. A swap that
- * stays in place is caught before the read. The swap needs local write access to the work trees.
- * Node has no descriptor-relative open.
+ * Reads the regular file `rel` under `base` and returns `{ bytes, hash, mode }`.
+ * It returns `MISSING` when no file exists, or `NOT_COMPARABLE` when the path cannot be proven safe.
+ * The caller never counts `NOT_COMPARABLE` as equal, even when both sides return it.
+ * The checks follow the order marked in the body, and any error after the first probe is not comparable.
+ * known-limit: a swap that is made and undone between two checks is not detected.
+ * A swap that stays in place needs local write access and is caught before the read.
  */
 async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {}) {
+  // Resolve and stat first, so only a proven absence is MISSING.
   const path = join(base, rel);
   let canon;
   let named;
@@ -786,6 +765,7 @@ async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {
   }
   let handle = null;
   try {
+    // Require the canonical path to equal the requested path and every ancestor to be plain.
     if (
       canon !== path ||
       !named.isFile() ||
@@ -799,6 +779,7 @@ async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {
       return NOT_COMPARABLE;
     }
     await beforeRead?.(path);
+    // Open without a final link, then require the handle identity and path to match the first stat.
     handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = await handle.stat({ bigint: true });
     if (
@@ -809,14 +790,16 @@ async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {
     ) {
       return NOT_COMPARABLE;
     }
+    // Read from the handle only.
     const bytes = await handle.readFile();
+    // Recheck the path and ancestors, so a swap during the read is not comparable.
     if (
       (await hasBlockedAncestor(base, rel, new Set())) ||
       !(await namesFile(path, canon, opened))
     ) {
       return NOT_COMPARABLE;
     }
-    return { bytes, hash: sha256(bytes) };
+    return { bytes, hash: sha256(bytes), mode: Number(named.mode & 0o777n) };
   } catch (err) {
     // A file that vanished, a link met by `O_NOFOLLOW`, or a path that cannot be opened after the
     // first probe is not comparable, never "missing": an absence after the probe is not proven.
@@ -881,7 +864,7 @@ async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf) {
 }
 
 /**
- * Names the copied local files whose source or copy differs from the init hash, so a parent can
+ * Names the copied local files whose source or copy differs from the stored hash, so a parent can
  * tell a stale copy from a turn edit. `changed` is `source`, `copy`, `both`, or `unknown`.
  * `unknown` is the fail-closed result of a legacy or malformed init hash, and an absent hash field
  * is legacy. A missing or unreadable side counts as changed on that side. Nothing is written, and
@@ -920,7 +903,7 @@ export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
-/** The side that the init hash proves changed, or `unknown` when it proves none. */
+/** The side that the stored hash proves changed, or `unknown` when it proves none. */
 function changedSide(rel, source, copy, hashes) {
   if (hashes === null || !Object.hasOwn(hashes, rel)) {
     return "unknown";
@@ -939,17 +922,21 @@ function changedSide(rel, source, copy, hashes) {
 
 /**
  * Copies one source file over its run copy and returns the hash of the bytes written.
- * Reads the source once, then writes those same bytes, so a later source save cannot mix bytes.
+ * Reads the source once, then writes those bytes through a temporary file and a rename.
+ * The temporary file starts at 0600, then takes the copy's prior mode on the open handle.
  * Refuses before any write when a side is missing or unreadable, a link sits on the path, or the
- * copy differs from `expectedCopyHash`. Writes through a temporary file in the copy directory and a
- * rename. Content and hashes never reach a log line or an error text.
+ * copy differs from `expectedCopyHash`. Content and hashes never reach a log line or an error text.
  * @param {string} cwd
  * @param {string} rel
- * @param {{ signal?: AbortSignal, expectedCopyHash?: string, beforeWrite?: (path: string) => Promise<void> }} [options]
+ * @param {{ signal?: AbortSignal, expectedCopyHash?: string, beforeWrite?: (path: string) => Promise<void>, beforeTempCreate?: (path: string) => Promise<void> }} [options]
  * @returns {Promise<string>} the new SHA-256 of the copy
  * @throws {Error} with a message that starts `refresh-local`
  */
-export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash, beforeWrite } = {}) {
+export async function refreshLocalFile(
+  cwd,
+  rel,
+  { signal, expectedCopyHash, beforeWrite, beforeTempCreate } = {},
+) {
   const refuse = (why) => new Error(`refresh-local is refused: ${why}`);
   if (!isPlainRelativeName(rel)) {
     throw refuse("the path must stay inside the work tree");
@@ -965,21 +952,34 @@ export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash, bef
   if (typeof source !== "object") {
     throw refuse("the source is missing or unreadable");
   }
-  const copy = await sha256Of(rootReal, rel);
-  if (typeof copy !== "string") {
+  const copy = await readGuardedFile(rootReal, rel);
+  if (typeof copy !== "object") {
     throw refuse("the copy is missing or unreadable");
   }
-  if (expectedCopyHash !== undefined && copy !== expectedCopyHash) {
+  if (expectedCopyHash !== undefined && copy.hash !== expectedCopyHash) {
     throw refuse("the copy changed after init, so a turn changed it");
   }
   const target = join(rootReal, rel);
   await beforeWrite?.(target);
   const temp = join(dirname(target), `.refresh-${randomUUID()}.tmp`);
+  await beforeTempCreate?.(temp);
+  // Remove the temporary path only after this call creates it.
+  let created = false;
+  let handle = null;
   try {
-    await writeFile(temp, source.bytes, { flag: "wx" });
+    handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    created = true;
+    await handle.writeFile(source.bytes);
+    // Set the prior copy mode on the handle, so the umask cannot widen it.
+    await handle.chmod(copy.mode);
+    await handle.close();
+    handle = null;
     await rename(temp, target);
   } catch (err) {
-    await rm(temp, { force: true }).catch(() => {});
+    await handle?.close().catch(() => {});
+    if (created) {
+      await rm(temp, { force: true }).catch(() => {});
+    }
     throw refuse(`the copy failed (${err.code ?? "error"})`);
   }
   return source.hash;

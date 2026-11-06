@@ -4,7 +4,7 @@
 
 accepted
 
-Partially supersedes [ADR 0074: Report the side that changed in localFilesDiffer](0074-report-the-side-that-changed-in-local-files-differ.md). This ADR replaces decision 2's init-hash compare with a stored hash that a recorded refresh updates. It also names `refresh-local` for decision 5's source action. Decisions 1, 3, and 4, and decision 5's action for `copy`, still hold.
+Partially supersedes [ADR 0074: Report the side that changed in localFilesDiffer](0074-report-the-side-that-changed-in-local-files-differ.md). This ADR replaces decision 2's init-hash compare and decision 3's init-hash comparison with a stored hash that a recorded refresh updates. It also names `refresh-local` for decision 5's source action. Decisions 1 and 4, the rest of decision 3, and decision 5's action for `copy`, still hold.
 
 ## Date
 
@@ -46,5 +46,5 @@ Andro Marces
 - Implementation: `refreshLocalFile` in `src/lib/local-files.mjs`, the `refresh-local` operation in `src/role/index.mjs`, and `--path` in `src/role/args.mjs`
 - Documented in [Local files copied into the work tree](../docs/orchestrator/local-files-copy.md), the [orchestrator instructions](../docs/orchestrator-instructions.md), the [role reference](../docs/reference/role.md), and the headless orchestrator prompt in `src/prompts/orchestrator.mjs`
 - Extends [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
-- Supersedes (partially): [ADR 0074](0074-report-the-side-that-changed-in-local-files-differ.md), decision 2's init-hash compare, and decision 5's source action
+- Supersedes (partially): [ADR 0074](0074-report-the-side-that-changed-in-local-files-differ.md), decision 2's init-hash compare, decision 3's init-hash comparison, and decision 5's source action
 - [ADR Index](README.md)
