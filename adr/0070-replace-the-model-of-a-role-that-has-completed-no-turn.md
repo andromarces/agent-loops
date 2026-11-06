@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md). The superseded part is the consequence that the runtime does not tell a refused-model failure from another first-turn failure.
+
+Every decision and every other consequence stays in force.
 
 ## Date
 

@@ -583,6 +583,67 @@ test.each([
   expect(caught.transient).toBeUndefined();
 });
 
+const MODEL_REFUSAL =
+  "The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.";
+
+// Usefulness: verifies #1565 — the adapter names the refused model on the error, so the parent can
+// run role set-model without reading the error text, and the refusal is not marked transient.
+test("codex names the refused model on a model refusal", async () => {
+  const stdout = [
+    { type: "thread.started", thread_id: "th-refused" },
+    { type: "error", message: MODEL_REFUSAL },
+    { type: "turn.failed", error: { message: MODEL_REFUSAL } },
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: "gpt-6.1", effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.refusedModel).toBe("gpt-6.1");
+  expect(caught.transient).toBeUndefined();
+  expect(state.sessionId).toBe("th-refused");
+});
+
+// Usefulness: verifies #1565 — only the terminal failure message marks a refusal; another cause,
+// a message that only quotes the refusal, and a timeout stay unmarked, so no other first-turn
+// failure is treated as a model refusal.
+test.each([
+  [
+    "another cause",
+    JSON.stringify({ type: "turn.failed", error: { message: "Authentication failed" } }),
+    {},
+  ],
+  [
+    "the refusal text in an agent message",
+    JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: MODEL_REFUSAL },
+    }),
+    {},
+  ],
+  [
+    "a timeout",
+    JSON.stringify({ type: "turn.failed", error: { message: MODEL_REFUSAL } }),
+    { timedOut: true },
+  ],
+])("codex does not mark %s as a model refusal", async (_name, stdout, overrides) => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), {
+      exitCode: 1,
+      stdout,
+      stderr: "",
+      ...overrides,
+    }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: "gpt-6.1", effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.refusedModel).toBeUndefined();
+});
+
 const AGGREGATED_SENTINEL = "AGGREGATED-OUTPUT-SENTINEL";
 
 const largeStream = (events) =>

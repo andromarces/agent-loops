@@ -89,7 +89,7 @@ test("extend lets an exhausted run continue with its stored role session", async
 
 // Usefulness: verifies the state file shows where the budget changed — each
 // change records the old and new budget, the steps used at that point, and the
-// time, while `turns` keeps one entry per charged step (issue #361).
+// time, while `turns` keeps one entry per dispatched turn (issue #361).
 test("extend records the change in budgetChanges beside an intact turn history", async () => {
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   const repo = await startRun(1, agents);

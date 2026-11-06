@@ -40,6 +40,18 @@ import { createTempRepo, gitWhileDotGitExists } from "./git-helpers.mjs";
 import { PASSING_RUN, prGateGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
+const MODEL_REFUSAL =
+  "The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.";
+
+/** An adapter that fails every turn with a recognized model refusal for `model`. */
+function refusingAdapter(model) {
+  const adapter = recordingAdapter([]);
+  adapter.run = async () => {
+    throw Object.assign(new Error(MODEL_REFUSAL), { refusedModel: model });
+  };
+  return adapter;
+}
+
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
 
@@ -370,6 +382,147 @@ test("dispatch past the step budget or in a terminal lifecycle is rejected", asy
   expect(terminal.exitCode).toBe(1);
   expect(terminal.payload.error).toContain("aborted");
   expect(worker.recorded.length).toBe(1);
+});
+
+// Usefulness: verifies acceptance of #1565 — a first Codex turn that fails on a recognized model
+// refusal charges no step and names the refused model, so the parent can run role set-model and
+// dispatch again inside the same budget.
+test("a first-turn model refusal charges no step and names the refused model", async () => {
+  const repo = await newRunRepo();
+  const agents = { fake1: refusingAdapter("gpt-6.1"), fake2: recordingAdapter([]) };
+
+  const refused = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "1"]), repo),
+    { agents, stdin: stdinPrompt },
+  );
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload).toMatchObject({
+    role: "worker",
+    status: "error",
+    refusedModel: "gpt-6.1",
+  });
+  expect(refused.payload.error).toContain("model is not supported");
+
+  const state = await readRepoState(repo);
+  expect(state.stepsUsed).toBe(0);
+  expect(state.turns).toEqual([expect.objectContaining({ role: "worker", status: "error" })]);
+
+  const repaired = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(repaired.exitCode).toBe(0);
+  expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
+// Usefulness: verifies acceptance of #1565 on the observed reviewer case — the first turn of the
+// reviewer role is refunded even though the worker already has a turn, so the role, not the run,
+// decides which turn is first.
+test("a first-turn reviewer model refusal charges no step after a worker turn", async () => {
+  const repo = await newRunRepo();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: refusingAdapter("gpt-6.1") },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload).toMatchObject({
+    role: "reviewer",
+    status: "error",
+    refusedModel: "gpt-6.1",
+  });
+
+  const state = await readRepoState(repo);
+  expect(state.stepsUsed).toBe(1);
+  expect(state.turns).toEqual([
+    expect.objectContaining({ role: "worker", status: "ok" }),
+    expect.objectContaining({ role: "reviewer", status: "error" }),
+  ]);
+});
+
+// Usefulness: verifies acceptance of #1565 — a first-turn failure that is not a model refusal
+// still charges a step, so the refund is narrow.
+test("a first-turn failure without a model refusal charges a step", async () => {
+  const repo = await newRunRepo();
+  const adapter = recordingAdapter([]);
+  adapter.run = async () => {
+    throw new Error("the provider failed");
+  };
+
+  const failed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: adapter, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(failed.exitCode).toBe(1);
+  expect(failed.payload.refusedModel).toBeUndefined();
+  expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
+// Usefulness: verifies acceptance of #1565 — a model refusal on a later turn charges a step as
+// before, so only the first turn of the role is refunded.
+test("a model refusal on a later turn charges a step", async () => {
+  const repo = await newRunRepo();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: refusingAdapter("gpt-6.1"), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.refusedModel).toBe("gpt-6.1");
+
+  const state = await readRepoState(repo);
+  expect(state.stepsUsed).toBe(2);
+  expect(state.turns).toHaveLength(2);
+});
+
+// Usefulness: verifies #1565 — a legacy state without `turns` cannot prove a first turn when the
+// role kept a session from an earlier successful turn, so its refusal charges a step.
+test("a legacy state with an earlier role turn charges a refusal", async () => {
+  const repo = await newRunRepo();
+  const paths = statePaths({ cwd: repo });
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+
+  const legacy = await readState(paths.stateFile);
+  expect(legacy.roles.worker.sessionId).not.toBeNull();
+  delete legacy.turns;
+  delete legacy.turnsComplete;
+  await writeState(paths.stateFile, legacy);
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents: { fake1: refusingAdapter("gpt-6.1"), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect((await readRepoState(repo)).stepsUsed).toBe(2);
+});
+
+// Usefulness: verifies #1565 — a legacy state that both roles already ran cannot refund a later
+// refusal after a worker dispatch recreates a history that holds only the worker turn. The state
+// has no `turnsComplete` mark, so the refund never applies.
+test("a legacy state with both roles run does not refund a later reviewer refusal", async () => {
+  const repo = await newRunRepo();
+  const paths = statePaths({ cwd: repo });
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), basicDeps());
+
+  const legacy = await readState(paths.stateFile);
+  expect(legacy.turns).toHaveLength(2);
+  delete legacy.turns;
+  delete legacy.turnsComplete;
+  await writeState(paths.stateFile, legacy);
+
+  const worker = await executeRoleCommand(withRepo(dispatchArgv(), repo), basicDeps());
+  expect(worker.exitCode).toBe(0);
+  expect((await readRepoState(repo)).turns).toHaveLength(1);
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: refusingAdapter("gpt-6.1") },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect((await readRepoState(repo)).stepsUsed).toBe(4);
 });
 
 // Usefulness: verifies the dispatch seam — the parsed verdict and report reach

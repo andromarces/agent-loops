@@ -56,9 +56,9 @@ test("state keeps one turn per dispatch across later dispatches", async () => {
   }
 });
 
-// Usefulness: verifies the size bound — `turns` holds at most one entry per
-// charged step, so the run's own `maxSteps` budget caps the history and a
-// refused over-budget dispatch adds nothing (issue #312).
+// Usefulness: verifies the size bound — a run with no refunded first-turn model
+// refusal holds one entry per dispatched turn, so its `maxSteps` budget caps the
+// history and a refused over-budget dispatch adds nothing (issue #312).
 test("turn history holds no more entries than the step budget allows", async () => {
   const repo = await newRunRepo();
 
@@ -275,8 +275,8 @@ test("a resumed turn records one entry after the interrupted entry", async () =>
   const state = await readRepoState(repo);
   expect(state.turns.map((turn) => turn.status)).toEqual(["interrupted", "ok"]);
   // The recovery call charges no step, so its entry accounts for the step the
-  // crashed call already charged. Entries stay at one per charged step, so the
-  // bound of `maxSteps` still holds.
+  // crashed call already charged. This run has no refunded first-turn refusal,
+  // so the bound of `maxSteps` still holds.
   expect(state.stepsUsed).toBe(2);
   expect(state.turns).toHaveLength(state.stepsUsed);
   expect(state.turns).toHaveLength(state.maxSteps);

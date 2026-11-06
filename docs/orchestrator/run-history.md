@@ -7,9 +7,13 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
 needed: the subcommand records each dispatched turn itself.
 
-- The state file's `turns` array holds one entry per charged step, in order, and
+- The state file's `turns` array holds one entry per dispatched turn, in order, and
   each entry survives every later dispatch that overwrites `lastDispatch` and
-  `lastResult`.
+  `lastResult`. A first turn that a recognized Codex model refusal ends charges no
+  step but still records its entry, so a later refusal charges one (issue #1565,
+  ADR 0084). A state written before this version has no `turnsComplete` mark, so a
+  refusal on it charges a step even if a later write recreates a history that holds
+  no entry for the role.
 - Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
   ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
   otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
@@ -18,9 +22,10 @@ needed: the subcommand records each dispatched turn itself.
   whose step was charged but whose outcome is unknown: no child result was ever
   recorded for it, so its verdict and head are `null`. The call that marks the
   run `interrupted` records it, so the history stays complete across recovery.
-- Size bound: exactly one entry per charged step, and a dispatch past `maxSteps`
-  is refused before it runs, so `turns` holds at most `maxSteps` entries. The
-  recovery call runs no child, records an already-charged step from the `lastDispatch`
+- Size bound: exactly one entry per dispatched turn, and a dispatch past `maxSteps`
+  is refused before it runs, so `turns` holds at most `maxSteps` entries plus one
+  refunded first-turn refusal for each role. The recovery call runs no child,
+  records an already-charged step from the `lastDispatch`
   role and time of that turn, and charges none of its own, so
   it does not push the history past that bound. The entries are fixed-shape, so
   the history cannot grow with the text a child returns.
@@ -30,7 +35,8 @@ needed: the subcommand records each dispatched turn itself.
   states is refused and the state file stays unchanged. The call prints
   `{"status": "ok", "lifecycle": "active", "maxSteps": 40, "stepsUsed": 20}`. It shows after
   which turn the budget changed (ADR 0014). A run never extended has no `budgetChanges`.
-  Because `maxSteps` only grows, `turns` still holds at most `maxSteps` entries.
+  Because `maxSteps` only grows, a run with no refunded first-turn refusal still holds at
+  most `maxSteps` entries; each refunded refusal adds one entry for its role.
 - Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
   The CLI refuses a `--max-steps` outside it, and `dispatch`, `finish`, and
   `extend` re-check the stored `maxSteps` against the same range before reading the

@@ -8,6 +8,7 @@ import {
   closingText,
   failureMessage as sharedFailureMessage,
   flagMissingSession,
+  isModelId,
   keepFailedSessionId,
   markCapacityFailure,
   setMainLoopUsage,
@@ -20,6 +21,10 @@ const missingSession = (id) =>
 
 // Codex reports this model capacity reply in an `error` event and a `turn.failed` event (issue #1012).
 const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
+
+// Codex reports a model it refuses in a `turn.failed` event, for example
+// `The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.` (issue #1565).
+const MODEL_REFUSAL = /\bThe '([^']+)' model is not supported\b/;
 
 // A failed Codex turn reports the exit cause and the last failure message only. It never reports
 // the stream, so command output cannot reach the envelope or the state file (issue #1353). The
@@ -49,6 +54,21 @@ function terminalFailureMessage(events) {
 function flagCapacityFailure(err, events) {
   if (terminalFailureMessage(events) === CAPACITY_MESSAGE) {
     markCapacityFailure(err);
+  }
+}
+
+/**
+ * Marks a failed turn whose terminal failure is a model refusal with the refused model, so the
+ * parent can replace it with `role set-model` without reading the error text. A timeout, cancel,
+ * or signal ends the turn for another reason, so it is never marked.
+ */
+function flagModelRefusal(err, events) {
+  if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
+    return;
+  }
+  const model = MODEL_REFUSAL.exec(terminalFailureMessage(events))?.[1];
+  if (isModelId(model)) {
+    err.refusedModel = model;
   }
 }
 
@@ -140,6 +160,7 @@ export async function runCodex(state, prompt, options = {}) {
       throw err;
     }
     flagCapacityFailure(err, failedEvents);
+    flagModelRefusal(err, failedEvents);
     flagMissingSession(err, requestedSessionId, missingSession);
     // Only an `exec` failure carries the message that this adapter bounds. Any other error, such
     // as a failed turn-directory callback, reaches the caller unchanged (issue #1353).

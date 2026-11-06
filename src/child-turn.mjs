@@ -418,7 +418,7 @@ async function readFailedTurnEvidence(state) {
  *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
- *   { role: string, status: "error", error: string, transient?: string } & TurnEvidence
+ *   { role: string, status: "error", error: string, transient?: string, refusedModel?: string } & TurnEvidence
  * >}
  */
 export async function runChild(options) {
@@ -833,11 +833,15 @@ export async function runChild(options) {
     }
     // An adapter marks a failure the provider is expected to clear (issue #1012).
     const transient = readProp(err, "transient");
+    // An adapter marks a model that the CLI refused, so a first turn can be refunded and repaired
+    // with `role set-model` (issue #1565).
+    const refusedModel = readProp(err, "refusedModel");
     return {
       role: roleName,
       status: "error",
       error: errorMessage,
       ...(typeof transient === "string" ? { transient } : {}),
+      ...(typeof refusedModel === "string" ? { refusedModel } : {}),
       ...pickTurnEvidence({ ...failedEvidence, testRun }),
     };
   } finally {
