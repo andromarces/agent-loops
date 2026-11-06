@@ -250,13 +250,22 @@ export function openCodeOptionsError(role, kind, model, effort) {
   return null;
 }
 
+const DEFAULT_CODEX_PROVIDER = "openai";
+
+/**
+ * The directory of the Codex state for a child spawned in `cwd`. A relative `CODEX_HOME` resolves
+ * against that directory, as the child resolves it; the default is `~/.codex`.
+ */
+function codexHome(cwd) {
+  const configured = process.env.CODEX_HOME;
+  return configured ? resolve(cwd ?? process.cwd(), configured) : join(homedir(), ".codex");
+}
+
 /**
  * The slugs of the Codex model cache, or null when the cache is unreadable or its shape is unknown,
- * so an init proceeds as before. `CODEX_HOME` selects the cache directory, as the Codex CLI does;
- * the default is `~/.codex`.
+ * so an init proceeds as before.
  */
-function codexCachedModelSlugs() {
-  const home = process.env.CODEX_HOME || join(homedir(), ".codex");
+function codexCachedModelSlugs(home) {
   try {
     const cache = JSON.parse(readFileSync(join(home, "models_cache.json"), "utf8"));
     const models = Array.isArray(cache) ? cache : cache?.models;
@@ -274,24 +283,69 @@ function codexCachedModelSlugs() {
 }
 
 /**
- * Refuses a model that a readable Codex model cache does not list. The refusal names the cached
- * slugs that share the model prefix, so a near match is visible before the first turn. An
- * unreadable cache, a model that is not Codex, and no model all pass.
+ * True when the Codex config has no `model_provider` override, so the default provider applies. A
+ * config that cannot be read or parsed, and a provider other than the default, both mean that the
+ * cache cannot judge the model.
  */
-function codexModelRefusal(role, kind, model) {
+function codexUsesDefaultProvider(home) {
+  let text;
+  try {
+    text = readFileSync(join(home, "config.toml"), "utf8");
+  } catch (err) {
+    return err?.code === "ENOENT";
+  }
+  // Only a top-level key counts. A key inside a table names a provider definition, not the default.
+  let inTable = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    if (line.startsWith("[")) {
+      inTable = true;
+      continue;
+    }
+    if (inTable) {
+      continue;
+    }
+    const match = line.match(/^model_provider\s*=\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+    const value = match[1].replace(/\s+#.*$/, "").trim();
+    const quoted = value.match(/^"([^"]*)"$|^'([^']*)'$/);
+    if (!quoted) {
+      return false;
+    }
+    return (quoted[1] ?? quoted[2]) === DEFAULT_CODEX_PROVIDER;
+  }
+  return true;
+}
+
+/**
+ * Refuses a model that a readable Codex model cache does not list, when it is a strict prefix of a
+ * cached slug followed by `-`. The refusal names the matching slugs, so a near miss such as
+ * `gpt-6.1` becomes `gpt-6.1-sol` before the first turn. Every other model passes, and so does the
+ * check when the config names another provider or the config or cache is unreadable.
+ */
+function codexModelRefusal(role, kind, model, cwd) {
   if (model === null || normalizeAgent(kind) !== "codex") {
     return null;
   }
-  const slugs = codexCachedModelSlugs();
+  const home = codexHome(cwd);
+  if (!codexUsesDefaultProvider(home)) {
+    return null;
+  }
+  const slugs = codexCachedModelSlugs(home);
   if (slugs === null || slugs.includes(model)) {
     return null;
   }
-  const matching = slugs.filter((slug) => slug.startsWith(model));
-  const named =
-    matching.length > 0
-      ? ` Cached models with this prefix: ${matching.map((slug) => `"${slug}"`).join(", ")}.`
-      : " No cached model shares this prefix.";
-  return `--${role}-model "${model}" is not in the Codex model cache.${named} Name a cached model, or omit --${role}-model.`;
+  const matching = slugs.filter((slug) => slug.startsWith(`${model}-`));
+  if (matching.length === 0) {
+    return null;
+  }
+  const named = matching.map((slug) => `"${slug}"`).join(", ");
+  return `--${role}-model "${model}" is not in the Codex model cache. Cached models with this prefix: ${named}. Name a cached model, or omit --${role}-model.`;
 }
 
 /**
@@ -306,12 +360,21 @@ function codexModelRefusal(role, kind, model) {
  * @param {(kind: string) => boolean} config.isSupportedAgent
  * @param {string | null} config.blankTaskText refusal for a blank task, or null to skip the check
  * @param {boolean} config.rolesFirst true to run the role checks before the task check
+ * @param {boolean} [config.checkCodexModels] false to skip the Codex cache check, as a continuation does
  * @param {() => string | null} config.pathRefusal checks of one path, run between the two groups
  * @returns {string | null} the first refusal, or null when every check passes
  */
 export function initRefusal(
   args,
-  { roles, requiredRoles, isSupportedAgent, blankTaskText, rolesFirst, pathRefusal },
+  {
+    roles,
+    requiredRoles,
+    isSupportedAgent,
+    blankTaskText,
+    rolesFirst,
+    checkCodexModels = true,
+    pathRefusal,
+  },
 ) {
   const taskCheck = () =>
     blankTaskText !== null && (args.task === null || String(args.task).trim() === "")
@@ -366,7 +429,9 @@ export function initRefusal(
       if (openCodeRefusal) {
         return openCodeRefusal;
       }
-      const codexRefusal = codexModelRefusal(role, kind, args[`${role}Model`]);
+      const codexRefusal = checkCodexModels
+        ? codexModelRefusal(role, kind, args[`${role}Model`], args.cwd)
+        : null;
       if (codexRefusal) {
         return codexRefusal;
       }

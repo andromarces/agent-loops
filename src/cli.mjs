@@ -120,6 +120,7 @@ export function parseArgs(argv) {
     isSupportedAgent: (kind) => supportedAgents.has(kind),
     blankTaskText: options.taskFile === null ? MISSING_TASK_TEXT : null,
     rolesFirst: true,
+    checkCodexModels: options.continueFrom === null,
     pathRefusal: () =>
       options.task !== null && options.taskFile !== null ? TASK_SOURCE_CONFLICT : null,
   });

@@ -227,7 +227,12 @@ Options:
   --<role>-model, the adapter passes no --model and OpenCode selects its own
   default, which varies by machine. An explicit --<role>-model passes through,
   and --<role>-effort applies to it as <model>#<effort>. An effort without a
-  model is rejected.
+  model is rejected. A fresh init reads the Codex model cache: a Codex model
+  that the cache does not list is refused only when it is a strict prefix of a
+  cached slug followed by "-", and the refusal names the matching slugs. The
+  read is skipped when the Codex config sets a model_provider other than
+  "openai", when that config or the cache is unreadable, and on --continue-from.
+  role set-model does not read the cache.
 
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
   --task <text>                 Task description. Required, unless --task-file is given.

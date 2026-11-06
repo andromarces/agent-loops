@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 
@@ -221,11 +221,14 @@ test("init with --pr proceeds when the source read fails for another reason", as
   expect((await readRepoState(repo)).pr).toBe(42);
 });
 
-// A Codex model cache file for tests, under a temporary home that the case removes. `models` uses
-// the cache's `{ slug }` entries.
-async function codexCache(models) {
+// A Codex home for tests, under a temporary directory that the case removes. `models` uses the
+// cache's `{ slug }` entries. `config` writes `config.toml` when it is given.
+async function codexCache(models, config) {
   const home = await trackedTempDir("codex-cache-", cacheDirs);
   await writeFile(join(home, "models_cache.json"), JSON.stringify({ models }));
+  if (config !== undefined) {
+    await writeFile(join(home, "config.toml"), config);
+  }
   return home;
 }
 
@@ -242,9 +245,31 @@ const codexInitArgs = [
   "gpt-6.1",
 ];
 
-// Usefulness: acceptance (#1565) — a readable Codex model cache refuses an init whose model it does
-// not list, before a state file or a step, and names the cached slugs that share the model prefix.
-test("init refuses a Codex model that the readable cache does not list", async () => {
+function initWithModel(repo, model) {
+  return executeRoleCommand(
+    withRepo(
+      dispatchArgv([
+        "--task",
+        "Fix the flaky test.",
+        "--parent-session",
+        "parent-sess-1",
+        "--worker",
+        "fake1",
+        "--reviewer",
+        "codex",
+        "--reviewer-model",
+        model,
+      ]),
+      repo,
+    ),
+    { ...basicDeps() },
+  );
+}
+
+// Usefulness: acceptance (#1565) — a readable Codex model cache refuses an init whose model is a
+// strict prefix of a cached slug followed by "-", before a state file or a step, and names the
+// cached slugs with that prefix.
+test("init refuses a Codex model that is a cache slug prefix", async () => {
   const repo = await newRunRepo();
   const paths = statePaths({ cwd: repo });
   const home = await codexCache([
@@ -267,6 +292,81 @@ test("init refuses a Codex model that the readable cache does not list", async (
   expect(result.payload.error).not.toContain("gpt-5");
   expect(worker.recorded).toHaveLength(0);
   expect(await readState(paths.stateFile)).toBeNull();
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a model that is not a cache slug prefix passes, so
+// an explicit model that the cache does not know is not refused for an unrelated cache entry.
+test.each(["gpt-6.5", "gpt-6"])(
+  "init proceeds for a Codex model outside the cache prefix %s",
+  async (model) => {
+    const repo = await newRunRepo();
+    vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }]));
+
+    const result = await initWithModel(repo, model);
+
+    expect(result.exitCode).toBe(0);
+    expect((await readRepoState(repo)).roles.reviewer.model).toBe(model);
+  },
+);
+
+// Usefulness: acceptance (#1565) as narrowed — a Codex config that names another provider skips
+// the cache check, so a custom provider model is not refused against the OpenAI cache.
+test("init proceeds when the Codex config names another model provider", async () => {
+  const repo = await newRunRepo();
+  vi.stubEnv(
+    "CODEX_HOME",
+    await codexCache([{ slug: "gpt-6.1-sol" }], 'model_provider = "custom"\n'),
+  );
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — an unparseable Codex config skips the check, so a
+// bad config never blocks init on an uncertain provider.
+test("init proceeds when the Codex config cannot be parsed", async () => {
+  const repo = await newRunRepo();
+  vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }], "model_provider =\n"));
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a Codex config that cannot be read skips the check,
+// so a damaged config never blocks init on an uncertain provider.
+test("init proceeds when the Codex config cannot be read", async () => {
+  const repo = await newRunRepo();
+  const home = await codexCache([{ slug: "gpt-6.1-sol" }]);
+  await mkdir(join(home, "config.toml"));
+  vi.stubEnv("CODEX_HOME", home);
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a relative CODEX_HOME resolves against the init
+// work tree, as the Codex child resolves it, so a cache beside that work tree is the one read.
+test("a relative CODEX_HOME reads the cache under the init work tree", async () => {
+  const repo = await newRunRepo();
+  const home = join(repo, "relative-codex");
+  await mkdir(home);
+  await writeFile(
+    join(home, "models_cache.json"),
+    JSON.stringify({ models: [{ slug: "gpt-6.1-sol" }] }),
+  );
+  vi.stubEnv("CODEX_HOME", "relative-codex");
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("gpt-6.1-sol");
+  expect(await readState(statePaths({ cwd: repo }).stateFile)).toBeNull();
 });
 
 // Usefulness: acceptance (#1565) — a missing cache keeps today's behavior, so a Codex model that

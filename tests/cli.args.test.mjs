@@ -1,4 +1,6 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
 import { createBodyBarrier } from "./body-barrier.mjs";
@@ -661,4 +663,47 @@ test("--compare-head conflicts with --pr, --require-ci, and review-only", () => 
   expect(() => parseArgs([...BASE, "--mode", "review-only", "--compare-head", "42"])).toThrow(
     "--compare-head compares a PR head, and review-only has no PR work",
   );
+});
+
+// A Codex home for the two cache-check cases below, removed with the stubbed environment.
+async function withCodexCache(slugs, body) {
+  const home = await mkdtemp(join(tmpdir(), "codex-cache-"));
+  await writeFile(
+    join(home, "models_cache.json"),
+    JSON.stringify({ models: slugs.map((slug) => ({ slug })) }),
+  );
+  vi.stubEnv("CODEX_HOME", home);
+  try {
+    return await body();
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(home);
+  }
+}
+
+// Usefulness: acceptance (#1565) as narrowed — a fresh headless init refuses a Codex model that is
+// a cache slug prefix, so the shared check reaches the headless path.
+test("a fresh headless init refuses a Codex cache prefix", async () => {
+  await withCodexCache(["gpt-6.1-sol"], () => {
+    expect(() =>
+      parseArgs([...BASE, "--reviewer", "codex", "--reviewer-model", "gpt-6.1"]),
+    ).toThrow("gpt-6.1-sol");
+  });
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a --continue-from run keeps the recorded model, so
+// it does not repeat the init check and cannot block a resume when that model left the cache.
+test("--continue-from does not repeat the Codex model cache check", async () => {
+  await withCodexCache(["gpt-6.1-sol"], () => {
+    const parsed = parseArgs([
+      ...BASE,
+      "--reviewer",
+      "codex",
+      "--reviewer-model",
+      "gpt-6.1",
+      "--continue-from",
+      "earlier.json",
+    ]);
+    expect(parsed.reviewerModel).toBe("gpt-6.1");
+  });
 });
