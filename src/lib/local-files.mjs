@@ -866,8 +866,8 @@ async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf) {
 /**
  * Names the copied local files whose source or copy differs from the stored hash.
  * A parent uses the result to tell a stale copy from a turn edit.
- * `changed` is `source`, `copy`, `both`, or `unknown`.
- * `unknown` covers a legacy or malformed init hash.
+ * `changed` is `source`, `copy`, `both`, or `unknown`, and the result is a list of `{path, changed}` entries.
+ * `unknown` covers a legacy or malformed init hash, and a side with an absent stored hash reports `unknown`.
  * A missing or unreadable side counts as changed on that side.
  * Nothing is written, and content is never returned or logged.
  */

@@ -4,7 +4,7 @@
 
 partially-superseded
 
-Partially superseded by [ADR 0075: Report a copied source that changed inside a turn window](0075-report-a-copied-source-that-changed-inside-a-turn-window.md) and [ADR 0078: Record a hand refresh of a copied local file](0078-record-a-hand-refresh-of-a-copied-local-file.md).
+Partially superseded by [ADR 0075](0075-report-a-copied-source-that-changed-inside-a-turn-window.md) and [ADR 0078](0078-record-a-hand-refresh-of-a-copied-local-file.md).
 
 - Decision 5's action for `changed: "source"`: superseded by [ADR 0075](0075-report-a-copied-source-that-changed-inside-a-turn-window.md). When `localSourceChangedInTurn` names the path, the parent reports it under `open` and asks the user before a refresh.
 - Decision 2's init-hash compare and decision 3's init-hash comparison: superseded by [ADR 0078](0078-record-a-hand-refresh-of-a-copied-local-file.md). Both sides are compared with the stored hash, which a recorded refresh updates.
