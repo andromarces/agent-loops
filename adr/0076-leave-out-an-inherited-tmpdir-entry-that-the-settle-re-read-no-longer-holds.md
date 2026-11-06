@@ -2,7 +2,14 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). The superseded parts are:
+
+- Decision 1's rule that the settle re-read is the last filter. Superseded by [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md).
+- The consequence that a longer-lived file still needs an `open` item. Superseded by [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md).
+
+The settle read, decisions 2 to 6, and the guard stay in force.
 
 Partially supersedes [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md). This ADR replaces decision 2's rule that the report lists every entry that appeared, and the matching consequence. It also qualifies the all-entries rule that ADR 0069 restated from ADR 0068 decision 4.
 

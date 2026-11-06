@@ -272,6 +272,51 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /verified/, /reviewed`? identifies no change/i, /what the reviewer checked/i),
 ];
 
+// Usefulness: verifies the child guard and the parent-session rule name the parent read (issue
+// #1559). A child never runs it, and a caller must pass the stored id.
+test("the child guard and parent-session docs name recheck-tmpdir", async () => {
+  const child = (await readFile(join(referenceSectionsDir, "child-run-guard.md"), "utf8")).replace(
+    /\s+/g,
+    " ",
+  );
+  const parent = (
+    await readFile(join(referenceSectionsDir, "parent-session-guard.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  const fields = (
+    await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8")
+  ).replace(/\s+/g, " ");
+  expectRule(child, /child role never runs/i, /recheck-tmpdir/i);
+  expectRule(parent, /recheck-tmpdir/i, /required/i);
+  expectRule(fields, /recheck-tmpdir/i, /parent-session/i);
+  expectRule(fields, /non-terminal/i);
+  expect(fields).not.toContain("role finish");
+  expect(fields).not.toContain("headless finish is refused");
+  const role = await readFile(join(repoRoot, "docs/reference/role.md"), "utf8");
+  const recheckBullet = role.split("\n").find((line) => line.startsWith("- `recheck-tmpdir"));
+  expectRule(recheckBullet, /recheck-tmpdir/i, /state file that init wrote/i);
+  expect(recheckBullet).not.toContain("needs no init");
+});
+
+// Usefulness: verifies ADR 0076 records its partial supersession and ADR 0081 links PR #1564
+// (issue #1559).
+test("ADR 0076 and ADR 0081 state the supersession and the PR link", async () => {
+  const adr76 = await readFile(
+    join(
+      repoRoot,
+      "adr/0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md",
+    ),
+    "utf8",
+  );
+  const adr81 = await readFile(
+    join(repoRoot, "adr/0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md"),
+    "utf8",
+  );
+  expect(adr76).toMatch(/## Status\s+partially-superseded/);
+  expect(adr76).toMatch(/Superseded by \[ADR 0081\]/);
+  expect(adr81).toMatch(/## Status\s+accepted/);
+  expect(adr81).toContain("[PR #1564](https://github.com/andromarces/agent-loops/pull/1564)");
+});
+
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
 // reviewed-state parent rules (issue #217, issue #252, issue #328). The two parent paths never
 // diverge. The reviewer-Checks gate rule uses the same presence check as the gate test. A reword

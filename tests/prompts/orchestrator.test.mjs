@@ -305,6 +305,32 @@ test("resultPrompt carries the inherited temporary directory entries of a review
   expect(prompt).toContain("m54-3db54ca8");
 });
 
+// Usefulness: verifies the headless parent receives the re-read result in the result prompt. It
+// carries into open only the names that still exist (issue #1559).
+test("resultPrompt carries the re-read names of the inherited temporary directory", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: "done",
+      inheritedTmpdirEntries: ["stays.txt", "gone.tmp"],
+    },
+    inheritedTmpdirPresent: ["stays.txt"],
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"inheritedTmpdirPresent"');
+  expect(prompt).toContain("stays.txt");
+  expect(prompt).toContain("Carry into open only");
+});
+
+// Usefulness: verifies the headless prompt no longer refuses a finish for an inherited temporary
+// directory name. The parent rule carries only the names that still exist (issue #1559).
+test("the headless prompt refuses no finish for an inherited temporary directory name", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).not.toContain("It refuses a finish whose open still lists");
+});
+
 // Usefulness: verifies the headless result payload carries the package store entries a reviewer
 // turn changed, so a headless parent holds what a `role dispatch` envelope carries (issue #1045).
 test("resultPrompt carries the package store entries of a reviewer result", () => {

@@ -1,6 +1,6 @@
-// `agent-loop role`: run one worker or reviewer turn, or one of seven other
-// subcommands: finish, abort, extend, declare-pr, refresh-local, set-model, or wait-checks. It
-// runs through the same guards as the headless loop, driven by a lifecycle state
+// `agent-loop role`: run one worker or reviewer turn, or one of eight other
+// subcommands: finish, abort, extend, recheck-tmpdir, declare-pr, refresh-local, set-model, or
+// wait-checks. It runs through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
@@ -23,6 +23,8 @@ import { withStateLock } from "../lib/state-lock.mjs";
 import { withTimeBound } from "../lib/time-bound.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
+import { presentInheritedTmpdir } from "../lib/tmpdir-entries.mjs";
+import { reportedEntryNames } from "../lib/entry-report.mjs";
 import {
   parseRoleArgsWithOperations,
   rejectInitFlagChanges,
@@ -35,12 +37,13 @@ import { readStdin, refuseUnreadableGate, releaseWorkTreeLock, requireState } fr
 
 // Every operation of `agent-loop role`, in default-first usage order. `runEnding` marks an
 // operation that ends, extends, or changes the PR or a model of a run. A child process of that run
-// never runs one.
+// never runs one. `parentOnly` marks a read-only operation that only the parent runs.
 const ROLE_OPERATIONS = [
   { name: "dispatch", runEnding: false, run: dispatch },
   { name: "finish", runEnding: true, run: finish },
   { name: "abort", runEnding: true, run: abort },
   { name: "extend", runEnding: true, run: extend },
+  { name: "recheck-tmpdir", runEnding: false, parentOnly: true, run: recheckTmpdir },
   { name: "declare-pr", runEnding: true, run: declarePr },
   { name: "refresh-local", runEnding: true, run: refreshLocal },
   { name: "set-model", runEnding: true, run: setModel },
@@ -131,6 +134,46 @@ async function abort(args) {
     },
     ["reviewerSandbox"],
   );
+}
+
+/**
+ * `recheck-tmpdir`: re-reads the inherited temporary directory and reports the names that the
+ * reviewer turns of the run reported and that a later read still holds. It is a read-only status
+ * read of a non-terminal run: it writes no run state, deletes nothing, and reports names only,
+ * redacted and capped. It requires the stored parent session id, as `extend` does, and a child
+ * role is refused. A failed or over-bound read, and a name it cannot re-check, stays listed.
+ */
+async function recheckTmpdir(args) {
+  rejectMisplacedFlags(args, "recheck-tmpdir");
+  requireParentSessionFlag(args, "recheck-tmpdir");
+  const paths = statePaths({ cwd: args.cwd });
+  const state = requireState(await readState(paths.stateFile), args.cwd);
+  requireStoredParentSession(args, state);
+  rejectInitFlagChanges(args, state, []);
+  if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
+    throw new RoleError(`Run is already ${state.lifecycle}.`);
+  }
+  const present = await presentInheritedTmpdir(inheritedTmpdirNames(state));
+  return {
+    exitCode: 0,
+    payload: {
+      status: "ok",
+      lifecycle: state.lifecycle,
+      inheritedTmpdirEntries: reportedEntryNames(present),
+    },
+  };
+}
+
+// A state file can hold names in three places. They are the field this change writes, the last
+// result of an older run, and a turn entry from a hand-edited state. A missing or malformed value
+// adds nothing.
+function inheritedTmpdirNames(state) {
+  const lists = [
+    state.inheritedTmpdirNames,
+    state.lastResult?.inheritedTmpdirEntries,
+    ...(Array.isArray(state.turns) ? state.turns.map((turn) => turn?.inheritedTmpdirEntries) : []),
+  ];
+  return lists.flatMap((list) => (Array.isArray(list) ? list : []));
 }
 
 /**
@@ -470,7 +513,7 @@ export async function executeRoleCommand(args, deps = {}) {
     if (!operation) {
       throw new RoleError(`Unsupported operation: ${args.operation}`);
     }
-    if (operation.runEnding && isSpawnedByRun(cwdHash(args.cwd))) {
+    if ((operation.runEnding || operation.parentOnly) && isSpawnedByRun(cwdHash(args.cwd))) {
       throw new RoleError(
         `${args.operation} is refused for a child role; only the parent session runs it.`,
       );

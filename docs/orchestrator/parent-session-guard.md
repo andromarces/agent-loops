@@ -6,7 +6,7 @@ A run stores the `--parent-session` of the session that started it. The
 parent-edit guard and `extend` match that id, and no later call changes it. After init,
 each subcommand treats `--parent-session` as follows:
 
-- `extend`, `declare-pr`, `refresh-local`, and `set-model`: required. A missing value or any value other than the stored id is
+- `extend`, `recheck-tmpdir`, `declare-pr`, `refresh-local`, and `set-model`: required. A missing value or any value other than the stored id is
   refused, and the refusal does not name the stored id. The stored id is
   accepted.
 - `dispatch`, `finish`, and `abort`: optional. When omitted, they check nothing
