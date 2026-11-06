@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { SPAWNED_RUN_ENV } from "../src/lib/exec.mjs";
 import { cwdHash } from "../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../src/role/index.mjs";
+import { symlinkOrSkip } from "./fs-helpers.mjs";
 import { createLinkedWorkTree } from "./git-helpers.mjs";
 import {
   basicDeps,
@@ -207,22 +208,20 @@ test("a refresh refuses a copy that changed after init", async () => {
   expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=TURN-EDIT\n");
 });
 
-// Usefulness: verifies a link at the source file, the copy file, and a parent component.
-// Each is refused without reading or writing through it.
-// Not redundant: each level and side has its own guard in the copy path.
-test("a refresh refuses a link at either file or at a parent component", async () => {
-  const { main, linked, base } = await linkedRun(
-    { ".env": CONTENT, ".vscode/settings.json": "{}\n" },
-    [".env", ".vscode/settings.json"],
-  );
+// Usefulness: verifies a link at the source file and at the copy file is refused without reading
+// or writing through it, and that the copy digest stays the same.
+// Not redundant: the source and the copy have separate guards in the copy path.
+// `symlinkOrSkip` skips this case visibly when the host has no symlink privilege, and lets any
+// other failure through, so the junction case below still runs on Windows.
+test("a refresh refuses a file link at the source or the copy", async (ctx) => {
+  const { main, linked, base } = await linkedRun();
   const outside = join(base, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "settings.json"), "OUTSIDE\n");
-  const dirLink = process.platform === "win32" ? "junction" : "dir";
   const before = await readRepoState(linked);
 
   await rename(join(main, ".env"), join(main, ".env-real"));
-  await symlink(join(outside, "settings.json"), join(main, ".env"));
+  await symlinkOrSkip(ctx, join(outside, "settings.json"), join(main, ".env"), "file");
   expect((await refresh(linked, ".env")).payload.error).toContain(
     "source is missing or unreadable",
   );
@@ -231,11 +230,29 @@ test("a refresh refuses a link at either file or at a parent component", async (
   await rename(join(main, ".env-real"), join(main, ".env"));
 
   await rename(join(linked, ".env"), join(linked, ".env-real"));
-  await symlink(join(outside, "settings.json"), join(linked, ".env"));
+  await symlinkOrSkip(ctx, join(outside, "settings.json"), join(linked, ".env"), "file");
   expect((await refresh(linked, ".env")).payload.error).toContain("copy is missing or unreadable");
   expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("OUTSIDE\n");
   await rm(join(linked, ".env"));
   await rename(join(linked, ".env-real"), join(linked, ".env"));
+
+  expect((await readRepoState(linked)).localFilesCopiedSha256[".env"]).toBe(
+    before.localFilesCopiedSha256[".env"],
+  );
+});
+
+// Usefulness: verifies a link at a parent component on each side is refused without reading or
+// writing through it. A directory junction needs no Windows privilege, so this case always runs.
+// Not redundant: the source and the copy have separate guards in the copy path.
+test("a refresh refuses a directory link at the source or the copy", async () => {
+  const { main, linked, base } = await linkedRun({ ".vscode/settings.json": "{}\n" }, [
+    ".vscode/settings.json",
+  ]);
+  const outside = join(base, "outside");
+  await mkdir(outside);
+  await writeFile(join(outside, "settings.json"), "OUTSIDE\n");
+  const dirLink = process.platform === "win32" ? "junction" : "dir";
+  const before = await readRepoState(linked);
 
   await rename(join(main, ".vscode"), join(main, ".vscode-real"));
   await symlink(outside, join(main, ".vscode"), dirLink);
@@ -248,12 +265,12 @@ test("a refresh refuses a link at either file or at a parent component", async (
   await symlink(outside, join(linked, ".vscode"), dirLink);
   expect((await refresh(linked, ".vscode/settings.json")).exitCode).toBe(1);
   expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("OUTSIDE\n");
-  const after = await readRepoState(linked);
-  expect(after.localFilesCopiedSha256[".env"] === before.localFilesCopiedSha256[".env"]).toBe(true);
-  expect(
-    after.localFilesCopiedSha256[".vscode/settings.json"] ===
-      before.localFilesCopiedSha256[".vscode/settings.json"],
-  ).toBe(true);
+  await rm(join(linked, ".vscode"));
+  await rename(join(linked, ".vscode-real"), join(linked, ".vscode"));
+
+  expect((await readRepoState(linked)).localFilesCopiedSha256[".vscode/settings.json"]).toBe(
+    before.localFilesCopiedSha256[".vscode/settings.json"],
+  );
 });
 
 // Usefulness: verifies the guards that extend and declare-pr share: terminal run, missing run,
