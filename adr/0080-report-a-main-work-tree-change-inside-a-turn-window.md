@@ -14,7 +14,7 @@ accepted
 
 ## Decision
 
-1. **Turn window.** A worker turn in a linked work tree starts a recursive `fs.watch` of the main work tree before its child call. The watch ends on every outcome: ok, error, cancel, and timeout. The recursive option exists in every Node version that `engines` allows on Windows, macOS, and Linux, so no periodic fallback is used. At the turn end, it closes first and drains the remaining queue under a 1000 ms deadline. A missed deadline reports no field and logs a warning.
+1. **Turn window.** A worker turn in a linked work tree starts a recursive `fs.watch` of the main work tree before its child call. The watch ends on every outcome: ok, error, cancel, and timeout. The recursive option exists in every Node version that `engines` allows on Windows, macOS, and Linux, so no periodic fallback is used. At the turn end, it closes first and drains the remaining queue, file classification, and settlement under a 1000 ms deadline. A missed deadline reports no field and logs a warning.
 2. **Scope.** A candidate path is a tracked file or an untracked file that Git does not ignore. A directory-only event is dropped. The `.git` directory and ignored paths stay out, so an install elsewhere never floods the field.
 3. **Confirmation.** A candidate is reported when its state, status and content hash, is the same in the pre-turn and post-turn reads. A path that still differs at the end stays in `mainWorkTreeChanged` only.
 4. **Report.** The turn envelope carries the paths as `mainWorkTreeChangedInTurn`, redacted and capped at 20. The field carries no content and no hash.

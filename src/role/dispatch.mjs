@@ -158,7 +158,7 @@ function createEventSink(transcriptFile) {
  */
 export async function dispatch(
   args,
-  { agents, stdin = readStdin, signal, gh, readProcessCommands, onMainWatch },
+  { agents, stdin = readStdin, signal, gh, readProcessCommands, onMainWatch, mainWatchDeadlineMs },
 ) {
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
@@ -191,6 +191,7 @@ export async function dispatch(
         gh,
         readProcessCommands,
         onMainWatch,
+        mainWatchDeadlineMs,
       }),
     );
   } finally {
@@ -200,7 +201,17 @@ export async function dispatch(
 
 async function dispatchLocked(
   args,
-  { agents, stdin, signal, paths, onEvent, gh, readProcessCommands, onMainWatch },
+  {
+    agents,
+    stdin,
+    signal,
+    paths,
+    onEvent,
+    gh,
+    readProcessCommands,
+    onMainWatch,
+    mainWatchDeadlineMs,
+  },
 ) {
   const existing = await readState(paths.stateFile);
   const init = isInitCall(args);
@@ -323,6 +334,7 @@ async function dispatchLocked(
         await writeState(paths.stateFile, state);
       },
       ...(onMainWatch ? { onMainWatch } : {}),
+      ...(mainWatchDeadlineMs === undefined ? {} : { mainWatchDeadlineMs }),
       // The command is the flag value, which init stored a digest of or the digest
       // check above matched. Nothing the state file holds is run.
       testCmd: testCmdInput(

@@ -60,7 +60,7 @@ afterEach(async () => {
   tree = undefined;
 });
 
-const turn = (act, cwd = tree.linked, onMainWatch = null) =>
+const turn = (act, cwd = tree.linked, onMainWatch = null, mainWatchDeadlineMs = 60_000) =>
   runChild({
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
@@ -68,6 +68,7 @@ const turn = (act, cwd = tree.linked, onMainWatch = null) =>
     prompt: "go",
     cwd,
     ...(onMainWatch ? { onMainWatch } : {}),
+    mainWatchDeadlineMs,
   });
 
 /** Adds the branch `other` at the template commit and a second commit on the checked-out branch. */

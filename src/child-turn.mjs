@@ -139,7 +139,12 @@ async function readBeforeTurn(state) {
     state.lockfilesBefore = lockfiles;
     state.mainBefore = main;
     // The watch starts before the child call, so an edit that the turn restores still leaves a path.
-    state.mainWatch = main ? startMainWorkTreeWatch(main.root) : null;
+    state.mainWatch = main
+      ? startMainWorkTreeWatch(
+          main.root,
+          state.mainWatchDeadlineMs === null ? {} : { drainDeadlineMs: state.mainWatchDeadlineMs },
+        )
+      : null;
     return;
   }
   const [copiedSources, tmpdir, store] = await Promise.all([
@@ -435,8 +440,9 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
-    // A test uses onMainWatch to observe the main work tree watch.
+    // A test uses onMainWatch and mainWatchDeadlineMs to observe and bound the watch.
     onMainWatch,
+    mainWatchDeadlineMs = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
@@ -655,6 +661,7 @@ export async function runChild(options) {
     mainBefore: null,
     // The turn-window watch of the main work tree, stopped on every outcome.
     mainWatch: null,
+    mainWatchDeadlineMs,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,
     localSourcePaths: null,

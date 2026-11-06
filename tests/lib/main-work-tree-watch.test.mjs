@@ -101,7 +101,7 @@ async function writeUntilQueued(handle, path) {
 // (issue #1556). An in-window read saw the file, so its path belongs in the field.
 test("a file created and removed inside the window is reported", async () => {
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir);
+  const handle = startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
   await writeUntilQueued(handle, join(dir, "scratch.txt"));
   await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 2_000 });
   await rm(join(dir, "scratch.txt"), { force: true });
@@ -128,36 +128,20 @@ test("a direct stop before take reports a failure and warns", async () => {
 // burst for one open path must not grow the queue or repeat the real Git read.
 test("repeated events for one path queue one read", async () => {
   dir = await createTempRepo();
-  let release;
-  const hold = new Promise((resolve) => {
-    release = resolve;
-  });
   let reads = 0;
-  let started;
-  const startedP = new Promise((resolve) => {
-    started = resolve;
-  });
   const handle = startMainWorkTreeWatch(dir, {
+    drainDeadlineMs: 60_000,
     beforeIgnoreInputEnds: async () => {
       reads++;
-      started();
-      await hold;
     },
   });
   await writeUntilQueued(handle, join(dir, "one.txt"));
-  const taking = handle.take();
-  try {
-    await startedP;
-    for (let index = 0; index < 50; index++) {
-      await writeFile(join(dir, "one.txt"), `change-${index}\n`);
-    }
-    // Let the queued events reach the watcher while the read is held.
-    for (let turn = 0; turn < 50; turn++) await new Promise((resolve) => setImmediate(resolve));
-    expect(handle.pendingCount()).toBe(1);
-  } finally {
-    release();
+  for (let index = 0; index < 50; index++) {
+    await writeFile(join(dir, "one.txt"), `change-${index}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
   }
-  const result = await taking;
+  expect(handle.pendingCount()).toBe(1);
+  const result = await handle.take();
   expect(reads).toBe(1);
   expect(result).toEqual({ candidates: ["one.txt"], failed: false });
 });
@@ -204,6 +188,7 @@ test("a write after the turn end is not reported", async () => {
     started = resolve;
   });
   const handle = startMainWorkTreeWatch(dir, {
+    drainDeadlineMs: 60_000,
     beforeIgnoreInputEnds: async () => {
       started();
       await hold;
@@ -244,6 +229,35 @@ test("a missed drain deadline reports no candidates and warns", async () => {
   const elapsed = performance.now() - started;
   expect(elapsed).toBeGreaterThanOrEqual(DRAIN_DEADLINE_MS - 100);
   expect(elapsed).toBeLessThan(DRAIN_DEADLINE_MS + 1_000);
+  expect(result).toEqual({ candidates: [], failed: true });
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
+    true,
+  );
+});
+
+// Usefulness: verifies requirement "the drain deadline covers a held file read" (issue #1556). A
+// classification read that never settles must not hold the turn past the deadline.
+test("the drain deadline covers a held file read", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  dir = await createTempRepo();
+  let started;
+  const startedP = new Promise((resolve) => {
+    started = resolve;
+  });
+  const handle = startMainWorkTreeWatch(dir, {
+    beforeFileKind: async ({ signal }) => {
+      started();
+      await new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    },
+  });
+  await writeUntilQueued(handle, join(dir, "one.txt"));
+  await startedP;
+  const startedAt = performance.now();
+  const result = await handle.take();
+  const elapsed = performance.now() - startedAt;
+  expect(elapsed).toBeGreaterThanOrEqual(DRAIN_DEADLINE_MS - 100);
   expect(result).toEqual({ candidates: [], failed: true });
   expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
     true,

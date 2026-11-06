@@ -223,11 +223,13 @@ test("worker dispatch reports a main work tree change restored inside the turn",
       agents,
       stdin: stdinPrompt,
       onMainWatch,
+      mainWatchDeadlineMs: 60_000,
     });
     const run = executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
       agents,
       stdin: stdinPrompt,
       onMainWatch,
+      mainWatchDeadlineMs: 60_000,
     }).catch((error) => ({ error }));
     await vi.waitFor(() => expect(written).toBe(true), { timeout: 5_000 });
     await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
