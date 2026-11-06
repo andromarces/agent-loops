@@ -415,6 +415,32 @@ test("a first-turn model refusal charges no step and names the refused model", a
   expect((await readRepoState(repo)).stepsUsed).toBe(1);
 });
 
+// Usefulness: verifies acceptance of #1565 on the observed reviewer case — the first turn of the
+// reviewer role is refunded even though the worker already has a turn, so the role, not the run,
+// decides which turn is first.
+test("a first-turn reviewer model refusal charges no step after a worker turn", async () => {
+  const repo = await newRunRepo();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: refusingAdapter("gpt-6.1") },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload).toMatchObject({
+    role: "reviewer",
+    status: "error",
+    refusedModel: "gpt-6.1",
+  });
+
+  const state = await readRepoState(repo);
+  expect(state.stepsUsed).toBe(1);
+  expect(state.turns).toEqual([
+    expect.objectContaining({ role: "worker", status: "ok" }),
+    expect.objectContaining({ role: "reviewer", status: "error" }),
+  ]);
+});
+
 // Usefulness: verifies acceptance of #1565 — a first-turn failure that is not a model refusal
 // still charges a step, so the refund is narrow.
 test("a first-turn failure without a model refusal charges a step", async () => {
