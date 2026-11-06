@@ -149,6 +149,7 @@ async function recheckTmpdir(args) {
   const paths = statePaths({ cwd: args.cwd });
   const state = requireState(await readState(paths.stateFile), args.cwd);
   requireStoredParentSession(args, state);
+  rejectInitFlagChanges(args, state, []);
   if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
     throw new RoleError(`Run is already ${state.lifecycle}.`);
   }

@@ -230,6 +230,22 @@ test("a dispatch keeps the legacy lastResult names for the next re-read", async 
   });
 });
 
+// Usefulness: verifies a changed init flag is refused, as every parent command refuses it. The
+// command shares the origin/main init-field check (issue #1559).
+test("recheck-tmpdir refuses a changed init flag", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+
+  const changed = await recheck(repo, [
+    "--parent-session",
+    "parent-sess-1",
+    "--task",
+    "Other task.",
+  ]);
+  expect(changed.exitCode).toBe(1);
+  expect(changed.payload.error).toContain("--task cannot be changed after init");
+});
+
 // Usefulness: verifies requirement "a run with no reviewer turn reports no name" (issue #1559):
 // nothing was recorded, so nothing is re-checked.
 test("recheck-tmpdir reports no name for a run with no reviewer turn", async () => {
