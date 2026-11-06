@@ -92,7 +92,7 @@ test("a headless run carries the re-read names and never refuses a finish for th
 });
 
 // Usefulness: verifies acceptance on the headless path. A name that another process removes during
-// the settle wait is absent from the result prompt, so the finish summary can leave it out (issue
+// the settle wait is absent from the result prompt. The finish summary can then leave it out (issue
 // #1569).
 test("a headless run drops a name removed during the settle wait", async () => {
   const repo = await cleanRepo();

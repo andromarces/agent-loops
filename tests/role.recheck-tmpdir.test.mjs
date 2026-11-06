@@ -18,6 +18,8 @@ import {
   newRunRepo,
   readRepoState,
   recordingAdapter,
+  repos,
+  setup,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
@@ -50,6 +52,22 @@ async function withInheritedDir(run) {
   }
 }
 
+// The poll tests read only the state file, so they need no Git repository and no dispatch.
+async function newStateRun() {
+  await setup();
+  const repo = await mkdtemp(join(tmpdir(), "role-recheck-state-"));
+  repos.push(repo);
+  const paths = statePaths({ cwd: repo });
+  await mkdir(paths.stateDir, { recursive: true });
+  await writeState(paths.stateFile, {
+    cwd: repo,
+    parentSession: "parent-sess-1",
+    lifecycle: "active",
+    inheritedTmpdirNames: [],
+  });
+  return repo;
+}
+
 async function dispatchReviewerTurn(repo, reply) {
   return executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
     agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([reply]) },
@@ -79,11 +97,10 @@ test("recheck-tmpdir drops a name gone at the later read and keeps one that stay
   });
 });
 
-// Usefulness: verifies acceptance. A name removed during the wait returns before the bound, so a
-// GUID `.tmp` file that another process removes stays out of the finish summary (issue #1569).
+// Usefulness: verifies acceptance. A name removed during the wait returns before the bound. A GUID
+// `.tmp` file that another process removes stays out of the finish summary (issue #1569).
 test("recheck-tmpdir returns before the bound once a name removed during the wait is gone", async () => {
-  const repo = await newRunRepo();
-  await initWorkerRun(repo);
+  const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
     const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
     const state = await readRepoState(repo);
@@ -110,10 +127,10 @@ test("recheck-tmpdir returns before the bound once a name removed during the wai
   });
 });
 
-// Usefulness: verifies a name that stays until the bound is reported (issue #1569).
-test("recheck-tmpdir reports a name that stays until the bound", async () => {
-  const repo = await newRunRepo();
-  await initWorkerRun(repo);
+// Usefulness: verifies a name that stays until the final read is reported, and the command ends by
+// the bound (issue #1569).
+test("recheck-tmpdir reports a name that stays until the final read", async () => {
+  const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
     const state = await readRepoState(repo);
     state.inheritedTmpdirNames = ["stays.txt"];
@@ -133,15 +150,15 @@ test("recheck-tmpdir reports a name that stays until the bound", async () => {
     });
 
     expect(result.payload.inheritedTmpdirEntries).toEqual(["stays.txt"]);
-    expect(clock).toBe(30);
+    expect(clock).toBe(15);
+    expect(clock).toBeLessThanOrEqual(30);
   });
 });
 
 // Usefulness: verifies requirement "a later poll whose read fails keeps every name still listed"
 // (issue #1569). A lost name can hide a leftover.
 test("recheck-tmpdir keeps every name when a later poll fails", async () => {
-  const repo = await newRunRepo();
-  await initWorkerRun(repo);
+  const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
     const state = await readRepoState(repo);
     state.inheritedTmpdirNames = ["a.tmp", "b.tmp"];
@@ -174,8 +191,7 @@ test("recheck-tmpdir keeps every name when a later poll fails", async () => {
 // Usefulness: verifies a missing inherited directory keeps every name and pays no wait (issue
 // #1569).
 test("recheck-tmpdir keeps every name when the inherited directory is missing", async () => {
-  const repo = await newRunRepo();
-  await initWorkerRun(repo);
+  const repo = await newStateRun();
   const state = await readRepoState(repo);
   state.inheritedTmpdirNames = ["a.tmp", "gone.tmp"];
   await writeState(statePaths({ cwd: repo }).stateFile, state);
@@ -198,8 +214,7 @@ test("recheck-tmpdir keeps every name when the inherited directory is missing", 
 // Usefulness: verifies a cancel during the wait ends with the SIGINT envelope and deletes nothing
 // (issue #1569).
 test("recheck-tmpdir ends a canceled wait without deleting a name", async () => {
-  const repo = await newRunRepo();
-  await initWorkerRun(repo);
+  const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
     const state = await readRepoState(repo);
     state.inheritedTmpdirNames = ["stays.txt"];
@@ -231,8 +246,7 @@ test("recheck-tmpdir ends a canceled wait without deleting a name", async () => 
 
 // Usefulness: verifies acceptance. An empty name list returns at once with no wait (issue #1569).
 test("recheck-tmpdir waits for no name when the run recorded none", async () => {
-  const repo = await newRunRepo();
-  await initWorkerRun(repo);
+  const repo = await newStateRun();
   let slept = false;
 
   const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {

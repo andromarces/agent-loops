@@ -96,16 +96,15 @@ const carrier = entryCarrier("inheritedTmpdirEntries");
 
 /**
  * Re-reads the inherited temporary directory and returns the recorded names that it still holds,
- * in the recorded order. Without `settle` it reads once. With `settle` it polls to the bound and
+ * in the recorded order, and reads once without `settle`. With `settle` it polls to the bound and
  * reports the names held by the last read. A failed first read keeps every name, and a later failed
  * poll keeps the names of the last successful read. An uncheckable name stays listed. The read
  * lists names only and deletes nothing, with no wait for an empty name list.
  * @param {Iterable<string>} names the names that the reviewer turns reported
- * @param {{ read?: () => Promise<string[]>, boundMs?: number, settle?: object | null }} [options]
- *   an injected read and read bound, and `settle` with `boundMs`, `intervalMs`, `now`, `sleep`,
- *   and `signal`, for a test. Production passes the default settle.
+ * @param {object} [options] an injected read, read bound, and settle settings, for a test.
  * @returns {Promise<string[]>}
  */
+// The settle object holds `boundMs`, `intervalMs`, `now`, `sleep`, and `signal`.
 export async function presentInheritedTmpdir(
   names,
   { read = readInheritedTmpdirNames, boundMs = RE_READ_BOUND_MS, settle = null } = {},
@@ -120,7 +119,7 @@ export async function presentInheritedTmpdir(
 }
 
 // The names that the read still holds. A failed read is null.
-async function readNames(read, boundMs, { warn = true } = {}) {
+async function readNames(read, boundMs, { signal, warn = true } = {}) {
   try {
     const entries = await withTimeBound(
       Math.max(1, boundMs),
@@ -129,11 +128,12 @@ async function readNames(read, boundMs, { warn = true } = {}) {
         // The read cannot be canceled, so the wait ends at the bound too.
         const pending = read();
         pending.catch(() => {});
-        return Promise.race([pending, stopped]);
+        return Promise.race([withCancelRace(pending, signal), stopped]);
       },
     );
     return Array.isArray(entries) ? entries : null;
   } catch (err) {
+    if (err?.isCanceled === true) throw err;
     if (warn) {
       logWarn(
         `inherited temporary directory not re-read: ${firstErrorLine(readableErrorText(err))}`,
@@ -141,6 +141,20 @@ async function readNames(read, boundMs, { warn = true } = {}) {
     }
     return null;
   }
+}
+
+// Races `promise` against the abort signal, so a cancel ends an in-flight read at once.
+function withCancelRace(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(canceledError());
+  let onAbort;
+  const canceled = new Promise((_, reject) => {
+    onAbort = () => reject(canceledError());
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return Promise.race([promise, canceled]).finally(() => {
+    signal.removeEventListener("abort", onAbort);
+  });
 }
 
 async function settledNames(
@@ -156,14 +170,29 @@ async function settledNames(
   },
 ) {
   const deadline = now() + boundMs;
+  // The final read starts one read bound before the deadline, so every read ends by the bound.
+  const readBound = Math.max(1, Math.min(readBoundMs, Math.floor(boundMs / 2) || 1));
+  const finalStart = deadline - readBound;
   let last = null;
   let first = true;
   let warnedFailure = false;
+  const reported = () => (last === null ? recorded : heldNames(recorded, last));
   while (true) {
     throwIfCanceled(signal);
     const startedAt = now();
-    const readBound = first ? Math.max(1, Math.min(readBoundMs, boundMs)) : readBoundMs;
-    const entries = await readNames(read, readBound, { warn: !warnedFailure });
+    const available = deadline - startedAt;
+    // A late read cannot end by the deadline, so the last completed read supplies the report.
+    if (available <= 0) return reported();
+    if (!first && startedAt >= finalStart) {
+      const entries = await readNames(read, available, { signal, warn: !warnedFailure });
+      throwIfCanceled(signal);
+      if (entries !== null) last = entries;
+      return reported();
+    }
+    const entries = await readNames(read, Math.max(1, Math.min(readBound, available)), {
+      signal,
+      warn: !warnedFailure,
+    });
     throwIfCanceled(signal);
     if (entries === null) {
       warnedFailure = true;
@@ -175,18 +204,16 @@ async function settledNames(
     first = false;
     // Every read checks every recorded name. A name that one read missed stays eligible, so a
     // name that another process created again reaches the report (issue #1569).
-    const current = last === null ? recorded : heldNames(recorded, last);
+    const current = reported();
     // An uncheckable name stays listed, but it never changes, so it adds no wait.
     if (!current.some(isCheckableName)) return current;
-    const pause = deadline - now();
-    if (pause <= 0) {
-      // A read that began before the deadline is stale. Take one read at the bound.
-      if (startedAt >= deadline) return current;
-      continue;
-    }
+    const nowAt = now();
+    if (nowAt >= deadline) return current;
+    const pause = Math.min(intervalMs, finalStart - nowAt);
+    if (pause <= 0) continue;
     try {
       // The sleep is abortable, so a cancel ends the wait at once.
-      await sleep(Math.min(intervalMs, pause), signal);
+      await sleep(pause, signal);
     } catch (err) {
       if (signal?.aborted) throw canceledError();
       throw err;

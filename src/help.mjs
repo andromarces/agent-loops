@@ -87,15 +87,16 @@ Role operations:
   recheck-tmpdir                Re-read the inherited temporary directory and report
                                 the names that the reviewer turns reported and that
                                 are still present, on a non-terminal run. Polls every
-                                2 seconds for up to 3 minutes, returns at once
-                                when every checkable name is gone, and reports
-                                the last read. Needs the run
+                                2 seconds, ends every read by 3 minutes, returns
+                                at once when every checkable name is gone, and
+                                reports the last read. Needs the run
                                 state file and the stored --parent-session id, as
                                 extend does. Takes no state lock, and writes or
                                 deletes nothing, and refuses a child role. The
                                 parent runs it before the finish summary and reports
                                 only the names it returns, and a headless run waits
-                                only after an accept. A failed or over-bound
+                                only after an accept. A cancel ends the sleep or an
+                                in-flight read at once, and a failed or over-bound
                                 read, and a name it cannot check, stay listed.
   declare-pr                    Set the run PR once, after init, on a non-terminal run
                                 that declared none, for a task whose worker opens the

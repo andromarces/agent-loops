@@ -22,11 +22,12 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - The re-read reports a name that still exists, one that another process created again included.
     A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
     redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
-  - The re-check polls every 2 seconds for up to 3 minutes. It returns at once when every checkable
-    name is gone, and reports the names that remain at the bound. A failed first read keeps every
-    name and ends the wait. A later failed poll keeps every name that the last successful read still
-    held. Every read checks every recorded name, and the report is the last read. A name that
-    another process created again counts as present.
+  - The re-check polls every 2 seconds for up to 3 minutes. The final read starts one read bound
+    early, so every read ends by the bound. It returns at once when every checkable name is gone,
+    and reports the final read otherwise. A failed first read keeps every name and ends the wait,
+    and a later failed poll keeps the last successful read. Every read checks every recorded name,
+    including a name created again, and the report is the last read. A cancel ends the sleep or an
+    in-flight read at once.
   - The read compares names, so such a name never resolves a path. The read lists names only,
     deletes nothing, and follows no link. Its report is redacted and capped at 20 like the envelope
     field. A child role is refused.

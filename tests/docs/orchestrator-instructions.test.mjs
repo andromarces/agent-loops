@@ -304,8 +304,8 @@ test("the child guard and parent-session docs name recheck-tmpdir", async () => 
   expect(recheckBullet).not.toContain("needs no init");
 });
 
-// Usefulness: verifies ADR 0076 records its partial supersession, ADR 0081 links PR #1564, and
-// ADR 0082 supersedes the single read of ADR 0081 (issues #1559 and #1569).
+// Usefulness: verifies ADR 0076 records its partial supersession. It also verifies ADR 0081 links
+// PR #1564, and ADR 0082 supersedes the single read of ADR 0081 (issues #1559 and #1569).
 test("ADR 0076, ADR 0081, and ADR 0082 state the supersession and the links", async () => {
   const adr76 = await readFile(
     join(
