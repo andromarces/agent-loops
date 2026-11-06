@@ -418,12 +418,12 @@ Dispatch one worker turn for a required check that fails on a known flaky test. 
 1. The worker turn must wait, with a bound, until the run completes.
 2. The worker turn must read the failure, with `gh run view --log-failed`.
 3. The worker turn must decide whether the diff reaches the failing test.
-4. The worker turn must record a known flaky recurrence in #1067, as the rules of that issue state.
+4. The worker turn must record a known flaky recurrence in the flaky-test record of the target repository, for example its open issue for that test, as the rules of that record state. When the target repository has no such record, the worker turn records nothing and names the recurrence in its report.
 5. The worker turn must rerun only the failed jobs with `gh run rerun <run id> --failed`.
 
 The wait comes first because of two `gh` limits. `gh run view --log-failed` has no log until the run completes. `gh run rerun` refuses while another job of the run is in progress.
 
-If the diff reaches the failure, or no #1067 section matches it, the worker turn reruns nothing and reports the failure. If the run is still in progress at the bound, the worker turn reruns nothing and reports that.
+If the diff reaches the failure, the worker turn reruns nothing and reports the failure. If the target repository keeps a flaky-test record and no section of it matches the failure, the worker turn reruns nothing and reports it too. A repository that keeps no such record blocks no rerun. If the run is still in progress at the bound, the worker turn reruns nothing and reports that.
 
 After that worker turn, run `wait-checks` again for the same head before the reviewer turn. Never use `wait-checks` to wait for the rest of the run, because it settles on the first failing check.
 
