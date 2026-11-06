@@ -1,14 +1,13 @@
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
   snapshotInheritedTmpdir,
 } from "../../src/lib/tmpdir-entries.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
-import { removePath } from "../fs-helpers.mjs";
+import { exists, removePath } from "../fs-helpers.mjs";
 
 let root;
 let runsRoot;
@@ -41,18 +40,22 @@ test("lists only entries that appeared after the snapshot", async () => {
   expect(await appearedInInheritedTmpdir(before)).toEqual(["m54-3db54ca8"]);
 });
 
-// Usefulness: verifies requirement "a transient file that another process creates and removes
-// during a turn does not appear in inheritedTmpdirEntries" (issue #1542): the post-turn read can
-// catch the GUID `.tmp` file of a desktop application, and the second read after a short settle
-// leaves it out while a file that stays is listed.
-test("leaves out a file that another process removes while the read settles", async () => {
+// Usefulness: verifies requirement "a file that is gone at the settle re-read does not appear in
+// inheritedTmpdirEntries" (issue #1542): the transient file exists for the post-turn read, and the
+// settle step removes it before the confirming read, so the ordering is fixed and no wall-clock
+// wait decides it. A file that stays is still listed.
+test("leaves out a file that is gone at the settle read and keeps one that stays", async () => {
   const before = await snapshotInheritedTmpdir();
   await writeFile(join(root, "stays.txt"), "");
   const transient = join(root, "4a09873d-cff3-4dee-98a7-9f6f98072662.tmp");
   await writeFile(transient, "");
-  const removal = delay(25).then(() => rm(transient));
-  expect(await appearedInInheritedTmpdir(before)).toEqual(["stays.txt"]);
-  await removal;
+  const entries = await appearedInInheritedTmpdir(before, {
+    settle: async () => {
+      expect(await exists(transient)).toBe(true);
+      await rm(transient);
+    },
+  });
+  expect(entries).toEqual(["stays.txt"]);
 });
 
 // Usefulness: verifies requirement "only the runtime's own turn directories are left out" (issue
