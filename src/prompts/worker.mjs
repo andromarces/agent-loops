@@ -53,6 +53,11 @@ const workTreeEditRule =
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
 const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
 
+// A Claude worker moved its suite to a background shell task when it could outlive the foreground
+// bound, then ended the turn with no closing block (issue #1530).
+const longSuiteRule =
+  "Never end the turn while a command that you started is still running. When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.";
+
 // A worker that waits on CI outlives its turn timeout after the push, and its work is already done
 // (issue #1459).
 const ciWaitRule =
@@ -98,6 +103,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${longSuiteRule}
 - ${ciWaitRule}
 - ${unnamedHostRule({ namesHost: true })}
 - ${ownNodeModulesRule}

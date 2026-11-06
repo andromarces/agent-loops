@@ -307,6 +307,18 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   await access(match[2]);
 });
 
+// Usefulness: verifies acceptance #1530: a Claude worker moved its suite to a background shell task
+// when the foreground command could outlive the shell tool bound, then ended its turn with no
+// closing block. The rule keeps the command in the foreground and names the report when it cannot
+// finish: the local suite is not run, and the required CI checks are the evidence.
+test("first worker turn reports a suite that cannot finish in the foreground as not run", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("Never end the turn while a command that you started is still running.");
+  expect(prompt).toContain(
+    "When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker starts no load generator or process that outlives the turn" (issue #934): an unguarded busy-loop script left 64 loops running after an interrupt.
 test("first worker turn bars load generators and processes that outlive the turn", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
