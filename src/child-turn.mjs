@@ -831,7 +831,8 @@ export async function runChild(options) {
       ...pickTurnEvidence({ ...failedEvidence, testRun }),
     };
   } finally {
-    evidence.mainWatch?.stop();
+    // The stop closes the watcher and settles every read before this turn returns.
+    await evidence.mainWatch?.stop();
     if (!keepReplacedMark) delete role.conversationReplaced;
     delete role.shellDenied;
     delete role.multiPartUnidentified;

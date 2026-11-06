@@ -1,5 +1,5 @@
 import { watch } from "node:fs";
-import { realpath, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
@@ -418,15 +418,14 @@ test("the main work tree read leaves the index file unchanged", async () => {
 });
 
 /**
- * Resolves on the next filesystem event for an entry of `dir`. The test uses it to order a write
- * before a restore, so both land inside the turn window with no fixed sleep.
+ * Resolves on the next filesystem event in `dir`. The test uses it to order a write before a
+ * restore, so both land inside the turn window with no fixed sleep.
  */
-function nextDirChange(dir, name) {
+function nextDirChange(dir) {
   return new Promise((resolve, reject) => {
-    const watcher = watch(dir, (_event, filename) => {
-      if (name !== undefined && filename !== name) return;
+    const watcher = watch(dir, () => {
       watcher.close();
-      resolve(filename);
+      resolve();
     });
     watcher.on("error", (err) => {
       watcher.close();
@@ -449,7 +448,7 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null } 
     observed = resolve;
   });
   // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextDirChange(tree.main, path);
+  const event = nextDirChange(tree.main);
   const run = turn(async () => {
     await writeFile(join(tree.main, path), written);
     await event;
@@ -468,6 +467,22 @@ test("a worker turn that restores a tracked main work tree file reports it in th
   await hold.seen;
   hold.release();
   const result = await hold.run;
+  expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
+// Usefulness: verifies that a directory-only change carries no in-turn field (issue #1556). Only
+// tracked files and untracked files that Git does not ignore are in scope.
+test("a directory-only change in the main work tree reports no path", async () => {
+  // The watcher exists before the turn starts, so the file event cannot precede it.
+  const event = nextDirChange(tree.main);
+  const result = await turn(async () => {
+    await mkdir(join(tree.main, "made-dir"));
+    await writeFile(join(tree.main, "init.txt"), "changed\n");
+    await event;
+    await rm(join(tree.main, "made-dir"), { recursive: true, force: true });
+    await writeFile(join(tree.main, "init.txt"), "hello\n");
+  });
   expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
@@ -515,7 +530,7 @@ test("a failed worker turn carries the in-turn main work tree change", async () 
     observed = resolve;
   });
   // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextDirChange(tree.main, "init.txt");
+  const event = nextDirChange(tree.main);
   const run = turn(async () => {
     await writeFile(join(tree.main, "init.txt"), "changed\n");
     await event;
@@ -545,7 +560,7 @@ test("a canceled worker turn carries the in-turn main work tree change", async (
     observed = resolve;
   });
   // The watcher exists before the turn starts, so the write cannot precede its registration.
-  const event = nextDirChange(tree.main, "init.txt");
+  const event = nextDirChange(tree.main);
   const run = turn(async () => {
     await writeFile(join(tree.main, "init.txt"), "changed\n");
     await event;
