@@ -60,7 +60,7 @@ function holdGh({
   let fileReads = 0;
   const note = (read, ok) => reads?.push({ read, ok, poll: pollIndex });
   return async (args, cwd) => {
-    if (args[0] === "pr" && args[1] === "view") {
+    if (args[0] === "pr" && args[1] === "view" && args.at(-1) === "headRefOid,baseRefName") {
       polls += 1;
     }
     if (args[0] === "pr" && args[1] === "checks") {

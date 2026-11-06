@@ -329,7 +329,8 @@ function requireStoredParentSession(args, state) {
 
 /**
  * `wait-checks`: polls the required checks of `--pr`, or every check of its head with `--all`.
- * It stops when none is pending or the bound elapses, then prints the last states with a `timedOut` flag.
+ * It stops when none is pending, a merge conflict is read, or the bound elapses, then prints the
+ * last states with a `timedOut` flag or the conflict field.
  * `--expect <name>` (repeatable, with `--all`) waits until each named check has a run on the head,
  * so a late check is not missed (#978).
  * `--head <sha>` waits until the PR head is that commit, and the result names that commit in `head` (#961).
@@ -341,7 +342,9 @@ async function waitChecksOperation(
   {
     gh,
     signal,
-    now = Date.now,
+    // The same monotonic clock that the wait uses, in whole milliseconds, so the bound cannot move
+    // with wall time and every child timeout stays an integer.
+    now = () => Math.floor(performance.now()),
     sleep,
     assertWorkTree = assertGitWorkTree,
     // `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it.

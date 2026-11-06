@@ -356,6 +356,28 @@ test("the parent surfaces name --expect for a check that registers late", async 
   }
 });
 
+// Usefulness: verifies the headless prompt and the wait instructions state the conflict field, its
+// parent action, and the merge states that keep the wait, so a parent never reads a conflict as a
+// pass or mistakes a fresh push for one (issue #1536).
+test("the parent surfaces state the conflict field and its action", async () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    pr: 42,
+    requireCi: 42,
+    orchestratorKind: "claude",
+    reviewerKind: "claude",
+    waitCommand: [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }],
+  });
+  const instructions = await readInstructions();
+  const waitDoc = await readFile(join(referenceSectionsDir, "waiting-for-checks.md"), "utf8");
+  for (const text of [prompt, instructions, waitDoc]) {
+    expect(text).toMatch(/conflicting[\s\S]{0,400}(?:no|never a) pass/i);
+    expect(text).toMatch(/merge the base branch[\s\S]{0,160}(?:wait again|same wait)/i);
+    expect(text).toMatch(/UNKNOWN[\s\S]{0,300}keep the wait/i);
+  }
+});
+
 // The hold rule of the --all wait (issue #1228), word for word on every surface that states it. The
 // hold is the default, and only the exclusions named here skip it, so a surface that drops an
 // exclusion, or adds one, fails here instead of telling a parent that --expect is unneeded where the

@@ -25,12 +25,23 @@ export const HEAD_A = "a".repeat(40);
 export const HEAD_B = "b".repeat(40);
 
 // True when `args` is exactly the wait's head read, `gh pr view <pr> --json headRefOid,baseRefName`.
-function isHeadRead(args) {
+export function isHeadRead(args) {
   return (
     args.length === 5 &&
     startsWithArgs(args, ["pr", "view"]) &&
     Number.isInteger(Number(args[2])) &&
     equalsArgs(args.slice(3), ["--json", "headRefOid,baseRefName"])
+  );
+}
+
+// True when `args` is exactly the wait's merge-state read,
+// `gh pr view <pr> --json mergeable,mergeStateStatus`.
+export function isMergeStateRead(args) {
+  return (
+    args.length === 5 &&
+    startsWithArgs(args, ["pr", "view"]) &&
+    Number.isInteger(Number(args[2])) &&
+    equalsArgs(args.slice(3), ["--json", "mergeable,mergeStateStatus"])
   );
 }
 
@@ -41,6 +52,14 @@ function headReply(head) {
     stderr: "",
     timedOut: false,
   };
+}
+
+/** A merge-state reply: a full `gh` result, or a `{ mergeable, mergeStateStatus }` state. */
+function mergeReply(entry) {
+  if (entry.status !== undefined || entry.stdout !== undefined || entry.stderr !== undefined) {
+    return entry;
+  }
+  return { status: 0, stdout: JSON.stringify(entry), stderr: "", timedOut: false };
 }
 
 const RUN_STATUS_OF_STATE = {
@@ -88,7 +107,9 @@ function readItems(read) {
  * stdout, stderr }` and answers `gh pr checks`; the last entry repeats, so a wait that
  * polls more times than the script holds still answers. A `stdout` value is used verbatim,
  * which covers a read whose output is not a check list. The head read, `gh pr view <pr>
- * --json headRefOid`, answers the next entry of `heads`, and the last one repeats.
+ * --json headRefOid,baseRefName`, answers the next entry of `heads`, and the last one repeats.
+ * The merge-state read, `gh pr view <pr> --json mergeable,mergeStateStatus`, answers the next
+ * entry of `mergeStates`, and the last one repeats.
  * The check runs of a commit read by SHA come from `commits[sha]`, a list of
  * `{ name, state, bucket }` items; a commit the map does not hold answers with the items of
  * the latest `pr checks` read, so a test that scripts only `reads` sees one consistent source.
@@ -101,6 +122,7 @@ export function scriptedGh(
   {
     all = false,
     heads = [HEAD_A],
+    mergeStates = [{ mergeable: "MERGEABLE", mergeStateStatus: "CLEAN" }],
     commits = {},
     statuses = [],
     required = [],
@@ -110,11 +132,15 @@ export function scriptedGh(
 ) {
   let n = 0;
   let h = 0;
+  let m = 0;
   let current = [];
   let lastRead = null;
   return async (args, cwd) => {
     if (isHeadRead(args)) {
       return headReply(heads[Math.min(h++, heads.length - 1)]);
+    }
+    if (isMergeStateRead(args)) {
+      return mergeReply(mergeStates[Math.min(m++, mergeStates.length - 1)]);
     }
     if (args[0] === "repo" && args[1] === "view") {
       return ok("owner/repo");
