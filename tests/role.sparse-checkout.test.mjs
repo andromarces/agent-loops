@@ -28,6 +28,16 @@ async function addTrackedFile(repo, rel, text = `${rel}\n`) {
   await git(repo, ["commit", "-qm", rel]);
 }
 
+/** Adds and commits many tracked files in one Git call, so a Windows case stays inside its timeout. */
+async function addTrackedFiles(repo, rels) {
+  for (const rel of rels) {
+    await mkdir(dirname(join(repo, rel)), { recursive: true });
+    await writeFile(join(repo, rel), `${rel}\n`);
+  }
+  await git(repo, ["add", ...rels]);
+  await git(repo, ["commit", "-qm", "tracked files"]);
+}
+
 /** Runs the init dispatch in `repo` and returns the envelope. */
 const initIn = (repo) =>
   executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -192,9 +202,11 @@ test("a failed or overdue sparse-checkout read reports no result", async () => {
 test("init caps the reported skip-worktree paths at 20", async () => {
   const { base, linked } = await createLinkedWorkTree({
     seed: async (main) => {
-      for (let index = 1; index <= 25; index += 1) {
-        await addTrackedFile(main, `excluded/f${String(index).padStart(2, "0")}.txt`);
-      }
+      const rels = Array.from(
+        { length: 25 },
+        (_, index) => `excluded/f${String(index + 1).padStart(2, "0")}.txt`,
+      );
+      await addTrackedFiles(main, rels);
       await git(main, ["config", "extensions.worktreeConfig", "true"]);
       await git(main, ["sparse-checkout", "set", "--no-cone", "/init.txt"]);
     },
