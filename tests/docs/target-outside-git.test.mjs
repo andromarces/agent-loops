@@ -31,9 +31,9 @@ const hasBash = await execa("bash", ["-c", "exit 0"], { reject: false }).then(
 
 // Usefulness: verifies the copy-back keeps a modified target's mode, gives an added target the
 // reviewed executable mode or the umask default, removes a deleted target, and that the delivery
-// check rejects a wrong executable bit or a remaining deleted target (issue #1576). No other test
-// runs the documented blocks, so a regression in their handling or in the check would reach an
-// operator's target.
+// check rejects a wrong executable bit, a remaining deleted target, an unreadable reviewed
+// revision, or a mistyped path (issue #1576). No other test runs the documented blocks, so a
+// regression in their handling or in the check would reach an operator's target.
 test.skipIf(!hasBash)(
   "the copy-back delivers modified, added, and deleted targets and the delivery check rejects a wrong state",
   async () => {
@@ -109,7 +109,7 @@ test.skipIf(!hasBash)(
         block
           .replaceAll("<throwaway repository>", "repo")
           .replaceAll("<import commit>", imported)
-          .replaceAll("<reviewed.head>", reviewed)
+          .replaceAll("<reviewed.head>", values.reviewed ?? reviewed)
           .replaceAll("<path>", values.file)
           .replaceAll("<target>", values.target)
           .replaceAll("<original hash>", values.original);
@@ -197,6 +197,32 @@ rm -f deleted.txt
   exit 1
 }
 `;
+      const rejected = [
+        {
+          label: "unreadable revision",
+          file: "deleted.txt",
+          target: "deleted.txt",
+          original: originalDeleted,
+          reviewed: "0".repeat(40),
+        },
+        {
+          label: "mistyped path",
+          file: "missing.txt",
+          target: "deleted.txt",
+          original: "",
+        },
+      ];
+      for (const item of rejected) {
+        script += `(
+${render(delivery, item)}
+)
+delivery_status=$?
+[ "$delivery_status" -eq 1 ] || {
+  echo "delivery check exited $delivery_status for the ${item.label}" >&2
+  exit 1
+}
+`;
+      }
       const negative = {
         file: "modified-exec.txt",
         target: "modified.txt",
