@@ -42,6 +42,7 @@ Andro Marces
 ## Links
 
 - [Issue #1534](https://github.com/andromarces/agent-loops/issues/1534)
+- [Pull request #1545](https://github.com/andromarces/agent-loops/pull/1545)
 - Implementation: `refreshLocalFile` in `src/lib/local-files.mjs`, the `refresh-local` operation in `src/role/index.mjs`, and `--path` in `src/role/args.mjs`
 - Documented in [Local files copied into the work tree](../docs/orchestrator/local-files-copy.md), the [orchestrator instructions](../docs/orchestrator-instructions.md), the [role reference](../docs/reference/role.md), and the headless orchestrator prompt in `src/prompts/orchestrator.mjs`
 - Extends [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
