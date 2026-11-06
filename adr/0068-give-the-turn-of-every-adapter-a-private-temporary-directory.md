@@ -8,7 +8,11 @@ Partially supersedes [ADR 0047: Give each Codex turn a private temporary directo
 
 Superseded by [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md):
 
-- Decision 4, the `al-*` names stay reported: ADR 0069 keeps every entry listed and marks the turn directory that an agent-loop process registered with the prefix `registered/`. The exact-name leave-out of the turn directories of this process stays.
+- Decision 4, the `al-*` names stay reported: ADR 0069 keeps every entry listed, as ADR 0076 qualifies, and marks the turn directory that an agent-loop process registered with the prefix `registered/`. The exact-name leave-out of the turn directories of this process stays.
+
+Superseded by [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md):
+
+- The all-entries rule, as restated by ADR 0069 decision 2: ADR 0076 leaves out an entry that a second read after a short settle no longer holds. A still-existing entry stays listed, and a record cannot hide it.
 
 Decisions 1 to 3 remain in force: every adapter, one place, and recovery.
 
@@ -57,6 +61,7 @@ Andro Marces
 - [ADR 0049: Pin the machine-wide roots for every child turn](0049-pin-the-machine-wide-roots-for-every-child-turn.md)
 - [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - Superseded by: [ADR 0069](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md)
+- Superseded by: [ADR 0076](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md)
 - [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md)
 - Implementation:
   - Source: `runAgent` and `defaultAgents` in `src/agents/index.mjs`, `src/agents/claude.mjs`, `src/agents/agy.mjs`, `src/agents/copilot.mjs`, `src/agents/opencode.mjs`
