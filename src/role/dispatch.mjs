@@ -277,6 +277,11 @@ async function dispatchLocked(
   // Read after the init side effects, before the first child turn, and never change the setting.
   const sparseCheckout = init ? await readSparseCheckout(args.cwd) : null;
 
+  // The turn history names a first turn of the role. A refunded first-turn refusal still records
+  // its entry, so a later refusal charges a step (issue #1565).
+  const firstRoleTurn =
+    !Array.isArray(state.turns) || !state.turns.some((turn) => turn.role === roleName);
+
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
   state.lifecycle = "dispatched";
@@ -347,11 +352,16 @@ async function dispatchLocked(
     });
   } catch (err) {
     const canceled = Boolean(readProp(err, "isCanceled"));
+    const refusedModel = readProp(err, "refusedModel");
     const payload = dispatchPayload(roleName, {
       status: "error",
       error: readableErrorMessage(err),
+      ...(typeof refusedModel === "string" ? { refusedModel } : {}),
       ...failedTurnEvidence(err),
     });
+    if (firstRoleTurn && typeof refusedModel === "string") {
+      refundModelRefusalStep(state, roleName);
+    }
     // A cancel or a fatal guard error can end the turn after the CLI reported its session.
     // Keep the id for the resume that follows. A null id records a session the fallback cleared.
     await recordResult(state, roleName, role, payload, {
@@ -372,6 +382,10 @@ async function dispatchLocked(
     };
   }
 
+  if (firstRoleTurn && result.status === "error" && typeof result.refusedModel === "string") {
+    refundModelRefusalStep(state, roleName);
+  }
+
   await recordResult(state, roleName, role, result, {
     lifecycle: "active",
     stateFile: paths.stateFile,
@@ -387,6 +401,18 @@ async function dispatchLocked(
       sparseCheckout,
     ),
   };
+}
+
+/**
+ * Refunds the step charged for a first turn that a recognized model refusal ended, so the parent
+ * can repair the model with `role set-model` and dispatch again inside the same budget (issue
+ * #1565). The turn still records its entry, so a later refusal charges a step.
+ */
+function refundModelRefusalStep(state, roleName) {
+  state.stepsUsed = Math.max(0, state.stepsUsed - 1);
+  logInfo(
+    `${roleName}: the first turn failed on a model refusal, so it charged no step (${state.stepsUsed} steps used)`,
+  );
 }
 
 /**
@@ -642,10 +668,11 @@ function withSparseCheckout(payload, sparseCheckout) {
  * and response text stay out of it, so the state file cannot grow with the text
  * a child returns (#312).
  *
- * Exactly one entry exists per charged step. An entry is written when a dispatch
- * records its result, when a child fails, or when recovery records a crash's
- * uncertain turn. A dispatch past `maxSteps` is refused before it runs, so the
- * array holds at most `maxSteps` entries.
+ * Exactly one entry exists per dispatched turn. A first turn that a recognized model refusal ends
+ * charges no step but still records one, so a later refusal charges a step (issue #1565). An entry
+ * is written when a dispatch records its result, when a child fails, or when recovery records a
+ * crash's uncertain turn. A dispatch past `maxSteps` is refused before it runs, so the array holds
+ * at most `maxSteps` entries plus one refunded first-turn refusal for each role.
  */
 function recordTurn(state, roleName, result, at) {
   // A state file written before this field exists starts with an empty history.
@@ -675,7 +702,7 @@ function dispatchPayload(roleName, result) {
       role: roleName,
       status: "error",
       error: result.error,
-      ...turnResultFields(result, ["transient", ...TURN_EVIDENCE_FIELDS]),
+      ...turnResultFields(result, ["transient", "refusedModel", ...TURN_EVIDENCE_FIELDS]),
     };
   }
   const report = result.report === undefined ? parseReportBlock(result.response) : result.report;
