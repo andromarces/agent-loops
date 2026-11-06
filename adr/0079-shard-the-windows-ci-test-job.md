@@ -20,7 +20,7 @@ Branch protection requires the contexts `ci (ubuntu-latest)`, `ci (windows-lates
 2. A `windows-tests` job runs on `windows-latest` with `shard: [1, 2, 3]` and runs `pnpm exec vp test run --shard=<i>/3`. The runner supports the flag: `vp test --help` lists `--shard <shards>` as `<index>/<count>`. The step calls the runner directly because `pnpm test -- --shard=<i>/3` inserts a `--` separator on the script command, and vp drops the arguments after it, so every shard would run the full suite.
 3. A `windows-smoke` job runs on `windows-latest` and runs the unchanged install/uninstall probe once, unsharded.
 4. A `windows-gate` job is named `ci (windows-latest)`, needs both Windows jobs, runs `if: always()` on `ubuntu-latest`, and exits non-zero unless both `needs` results are `success`. The required context becomes the aggregate, so `main-protection` needs no edit.
-5. All jobs keep `fail-fast: false`, the existing workflow-level concurrency group, the existing `pull_request` and `workflow_dispatch` triggers, and no `setup-node` pnpm cache. The `pull_request` event also lists `ready_for_review`, and every job skips a draft PR, per the repository merge-efficiency rule; that rule is not a decision of this ADR.
+5. All jobs keep `fail-fast: false`, the existing workflow-level concurrency group, the existing `pull_request` and `workflow_dispatch` triggers, and no `setup-node` pnpm cache.
 6. Sharding covers the test step only. No test is deleted, skipped, weakened, or moved off Windows, and no timeout is changed.
 
 ## Consequences
@@ -48,5 +48,5 @@ Andro Marces
 
 - [Issue #1552](https://github.com/andromarces/agent-loops/issues/1552)
 - [PR #1555](https://github.com/andromarces/agent-loops/pull/1555)
-- [CI workflow](../../.github/workflows/ci.yml)
+- [CI workflow](../.github/workflows/ci.yml)
 - [ADR Index](README.md)
