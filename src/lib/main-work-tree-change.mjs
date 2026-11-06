@@ -34,7 +34,9 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
           Promise.race([snapshot(main, { ...bound, env: { GIT_OPTIONAL_LOCKS: "0" } }), stopped]),
           Promise.race([readBranch(main, bound), stopped]),
         ]);
+        // root lets the turn watch the work tree that the before read resolved.
         const state = {
+          root: main,
           entries: new Map(snap.workTree.map((entry) => [entry.path, stateOf(entry)])),
           head: snap.head,
           branch,
@@ -184,6 +186,28 @@ export function diffMainWorkTree(before, after) {
   return reportedEntryNames(changed);
 }
 
+/**
+ * Names the candidate paths whose state is the same before and after the turn, by path relative to
+ * the main work tree. A filesystem watch supplied the candidates, so a restored path appears here.
+ * Returns [] when either read is missing, at most 20 names, and never content. `exclude` names the
+ * paths of the end-of-turn field, which stay there only.
+ * @param {object | null} before
+ * @param {object | null} after
+ * @param {Iterable<string>} candidates
+ * @param {{ exclude?: Iterable<string> }} [options]
+ * @returns {string[]}
+ */
+export function diffMainWorkTreeInTurn(before, after, candidates, { exclude = [] } = {}) {
+  if (!before || !after) return [];
+  const excluded = new Set(exclude);
+  const restored = new Set();
+  for (const path of candidates) {
+    if (excluded.has(path)) continue;
+    if ((before.entries.get(path) ?? "") === (after.entries.get(path) ?? "")) restored.add(path);
+  }
+  return reportedEntryNames(restored);
+}
+
 const carrier = entryCarrier("mainWorkTreeChanged");
 
 /**
@@ -194,6 +218,18 @@ export const carryMainWorkTreeChanged = carrier.carry;
 
 /** Returns the paths a fatal error carries, or `undefined` when it carries none. */
 export const failedMainWorkTreeChanged = carrier.failed;
+
+const inTurnCarrier = entryCarrier("mainWorkTreeChangedInTurn");
+
+/**
+ * Carries the in-window paths on a fatal error as `err.mainWorkTreeChangedInTurn`. A frozen error
+ * or a throwing setter keeps the original error, and the paths stay readable through
+ * `failedMainWorkTreeChangedInTurn`.
+ */
+export const carryMainWorkTreeChangedInTurn = inTurnCarrier.carry;
+
+/** Returns the in-window paths a fatal error carries, or `undefined` when it carries none. */
+export const failedMainWorkTreeChangedInTurn = inTurnCarrier.failed;
 
 const fastForwardCarrier = entryCarrier("mainWorkTreeFastForward");
 

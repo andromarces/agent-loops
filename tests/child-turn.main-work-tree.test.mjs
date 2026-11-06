@@ -1,3 +1,4 @@
+import { watch } from "node:fs";
 import { realpath, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -22,6 +23,7 @@ import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import {
   failedMainWorkTreeChanged,
+  failedMainWorkTreeChangedInTurn,
   failedMainWorkTreeFastForward,
   readMainWorkTree,
 } from "../src/lib/main-work-tree-change.mjs";
@@ -413,4 +415,144 @@ test("the main work tree read leaves the index file unchanged", async () => {
   });
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
   expect((await stat(indexPath)).mtimeMs).toBe(before);
+});
+
+/**
+ * Resolves on the next filesystem event for an entry of `dir`. The test uses it to order a write
+ * before a restore, so both land inside the turn window with no fixed sleep.
+ */
+function nextDirChange(dir) {
+  return new Promise((resolve, reject) => {
+    const watcher = watch(dir, (_event, filename) => {
+      watcher.close();
+      resolve(filename);
+    });
+    watcher.on("error", (err) => {
+      watcher.close();
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Starts a turn that writes `path` in the main work tree, waits for a filesystem event, then holds
+ * until the test releases it. A `restore` value writes the first content back before the turn ends.
+ */
+function heldWrite({ path = "init.txt", written = "changed\n", restore = null } = {}) {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let observed;
+  const seen = new Promise((resolve) => {
+    observed = resolve;
+  });
+  const run = turn(async () => {
+    const event = nextDirChange(tree.main);
+    await writeFile(join(tree.main, path), written);
+    await event;
+    observed();
+    await held;
+    if (restore !== null) await writeFile(join(tree.main, path), restore);
+  });
+  return { run, seen, release };
+}
+
+// Usefulness: verifies requirement "a worker turn that writes a tracked main work tree file and
+// restores its first content reports the path in its own envelope" (issue #1556). The end-of-turn
+// read cannot see the restored file, so only the in-window watch names it.
+test("a worker turn that restores a tracked main work tree file reports it in the turn", async () => {
+  const hold = heldWrite({ restore: "hello\n" });
+  await hold.seen;
+  hold.release();
+  const result = await hold.run;
+  expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
+// Usefulness: verifies requirement "a turn that changes no main work tree file carries no field"
+// (issue #1556), so a clean main work tree never reports an in-window change.
+test("a worker turn that writes nothing carries no in-turn field", async () => {
+  const result = await turn(async () => {});
+  expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
+});
+
+// Usefulness: verifies requirement "a file that still differs at the end stays in
+// mainWorkTreeChanged only" (issue #1556). The in-window field names a restored change only.
+test("a worker turn that leaves the main work tree file changed reports it only at the end", async () => {
+  const hold = heldWrite();
+  await hold.seen;
+  hold.release();
+  const result = await hold.run;
+  expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
+});
+
+// Usefulness: verifies requirement "scope leaves out ignored paths" (issue #1556). An install or a
+// secret write in an ignored path must not flood the field.
+test("a worker turn that restores an ignored main work tree file reports nothing", async () => {
+  await writeFile(join(tree.main, ".git", "info", "exclude"), "ignored.txt\n");
+  await writeFile(join(tree.main, "ignored.txt"), "hello\n");
+  const hold = heldWrite({ path: "ignored.txt", restore: "hello\n" });
+  await hold.seen;
+  hold.release();
+  const result = await hold.run;
+  expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
+// Usefulness: verifies requirement "a failed worker turn carries the in-turn change" (issue #1556).
+// The handled error result is the turn's only record, so a lost field leaves the edit with no trace.
+test("a failed worker turn carries the in-turn main work tree change", async () => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let observed;
+  const seen = new Promise((resolve) => {
+    observed = resolve;
+  });
+  const run = turn(async () => {
+    const event = nextDirChange(tree.main);
+    await writeFile(join(tree.main, "init.txt"), "changed\n");
+    await event;
+    observed();
+    await held;
+    await writeFile(join(tree.main, "init.txt"), "hello\n");
+    throw new Error("adapter failed");
+  });
+  await seen;
+  release();
+  const result = await run;
+  expect(result).toMatchObject({ status: "error" });
+  expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
+// Usefulness: verifies requirement "a canceled worker turn carries the in-window change" (issue
+// #1556). The dispatcher builds the interrupted envelope from the error, so a lost field leaves
+// the restored edit with no trace.
+test("a canceled worker turn carries the in-turn main work tree change", async () => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let observed;
+  const seen = new Promise((resolve) => {
+    observed = resolve;
+  });
+  const run = turn(async () => {
+    const event = nextDirChange(tree.main);
+    await writeFile(join(tree.main, "init.txt"), "changed\n");
+    await event;
+    observed();
+    await held;
+    await writeFile(join(tree.main, "init.txt"), "hello\n");
+    throw new ExecError("canceled", { isCanceled: true });
+  }).catch((err) => err);
+  await seen;
+  release();
+  const error = await run;
+  expect(error).toMatchObject({ isCanceled: true });
+  expect(failedMainWorkTreeChangedInTurn(error)).toEqual(["init.txt"]);
 });

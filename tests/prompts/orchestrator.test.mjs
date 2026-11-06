@@ -322,6 +322,24 @@ test("resultPrompt carries the package store entries of a reviewer result", () =
   expect(prompt).toContain("v11/projects/hash1");
 });
 
+// Usefulness: verifies the headless result payload carries the main work tree change that a worker
+// turn restored inside its window, so a headless parent holds what a `role dispatch` envelope
+// carries (issue #1556).
+test("resultPrompt carries the in-turn main work tree change of a worker result", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "worker",
+      status: "ok",
+      response: "done",
+      mainWorkTreeChangedInTurn: ["init.txt"],
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"mainWorkTreeChangedInTurn"');
+  expect(prompt).toContain("init.txt");
+});
+
 // Usefulness: verifies the headless prompt states the completion rule and its
 // mode mapping: a worker change needs a later reviewer accept, a run with no
 // worker turn finishes on the report, and the loop policy stays interactive

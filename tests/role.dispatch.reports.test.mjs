@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
@@ -182,6 +182,57 @@ test("worker dispatch reports a main work tree change by path and omits the fiel
     });
     expect(unchanged.payload.workTree).toBeDefined();
     expect(unchanged.payload).not.toHaveProperty("mainWorkTreeChanged");
+  } finally {
+    await removePath(parent);
+  }
+});
+
+// Usefulness: verifies requirement "a worker turn that restores a tracked main work tree file
+// reports the path in its own envelope and its state record" (issue #1556). The end-of-turn read
+// cannot see the restored file, so a lost watch leaves the edit with no trace.
+test("worker dispatch reports a main work tree change restored inside the turn", async () => {
+  const repo = await newRunRepo();
+  gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
+  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-in-turn-"));
+  const linked = join(parent, "linked");
+  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
+  try {
+    const original = await readFile(join(repo, "init.txt"));
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let written = false;
+    const worker = recordingAdapter([
+      async () => WORKER_REPLY,
+      async () => {
+        await writeFile(join(repo, "init.txt"), "changed inside the turn\n");
+        written = true;
+        await held;
+        await writeFile(join(repo, "init.txt"), original);
+        return WORKER_REPLY;
+      },
+    ]);
+    const agents = { fake1: worker, fake2: recordingAdapter([]) };
+
+    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+      agents,
+      stdin: stdinPrompt,
+    });
+    const run = executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+      agents,
+      stdin: stdinPrompt,
+    }).catch((error) => ({ error }));
+    await vi.waitFor(() => expect(written).toBe(true), { timeout: 5_000 });
+    release();
+    const changed = await run;
+    expect(changed.error).toBeUndefined();
+
+    expect(changed.payload.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
+    expect(changed.payload).not.toHaveProperty("mainWorkTreeChanged");
+    expect((await readRepoState(linked)).lastResult.mainWorkTreeChangedInTurn).toEqual([
+      "init.txt",
+    ]);
   } finally {
     await removePath(parent);
   }
