@@ -1,4 +1,5 @@
 import {
+  appendFile,
   cp,
   mkdir,
   mkdtemp,
@@ -364,9 +365,11 @@ test("a transcript in a directory named '..records' inside the work tree is writ
 
 const git_ = (cwd, ...args) => execa("git", args, { cwd });
 
-// One repository per file whose `sub` is a nested repository committed as a gitlink, so a copy is a
-// work tree with a clean submodule and a write inside `sub` shows as a dirty submodule. The copy is
-// self-contained, because `sub/.git` is a directory and holds no absolute path to the template.
+// One repository per file whose `sub` is a registered submodule with the state that
+// `git submodule add` leaves: `.gitmodules` is committed, and the Git directory of `sub` lives under
+// `.git/modules/sub` and is named by a relative `.git` file. A recursive copy is therefore a
+// self-contained work tree with the same registered submodule. The source is a copy of the seeded
+// template, so the template build starts no Git call for it.
 let submoduleTemplate;
 let submoduleTemplateDir;
 
@@ -376,9 +379,23 @@ async function createSubmoduleRepo() {
     submoduleTemplateDir = dir;
     const source = await createTempRepo();
     try {
+      await mkdir(join(dir, ".git", "modules"), { recursive: true });
+      await cp(join(source, ".git"), join(dir, ".git", "modules", "sub"), { recursive: true });
       await cp(source, join(dir, "sub"), { recursive: true });
-      await git_(dir, "add", "sub");
+      await rm(join(dir, "sub", ".git"), { recursive: true, force: true });
+      await writeFile(join(dir, "sub", ".git"), "gitdir: ../.git/modules/sub\n");
+      await writeFile(join(dir, ".gitmodules"), '[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n');
+      // Registration is local, as `git submodule init` writes it, and makes the status report an
+      // initialized submodule rather than `-sub`.
+      await appendFile(
+        join(dir, ".git", "config"),
+        '[submodule "sub"]\n\turl = ./sub\n\tactive = true\n',
+      );
+      await git_(dir, "add", ".gitmodules", "sub");
       await git_(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
+      // One status check covers every copy, because a copy is byte-identical to this template. The
+      // check starts 16 Git processes on Windows, so each case would pay that cost for no new state.
+      expect((await git_(dir, "submodule", "status")).stdout).toMatch(/^ [0-9a-f]{40} sub\b/);
     } finally {
       await removePath(source);
     }
@@ -386,6 +403,12 @@ async function createSubmoduleRepo() {
   })();
   const dir = await mkdtemp(join(tmpdir(), "runtime-test-submodule-"));
   await cp(await submoduleTemplate, dir, { recursive: true });
+  // The copy keeps the committed `.gitmodules` and the gitlink, and its relative `.git` file still
+  // names the Git directory that the copy holds.
+  const staged = (await git_(dir, "ls-files", "--stage", "--", ".gitmodules", "sub")).stdout;
+  expect(staged).toContain("\t.gitmodules\n");
+  expect(staged).toContain("160000 ");
+  expect(await readFile(join(dir, "sub", ".git"), "utf8")).toBe("gitdir: ../.git/modules/sub\n");
   return dir;
 }
 
