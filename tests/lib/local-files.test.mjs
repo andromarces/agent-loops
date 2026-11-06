@@ -1375,6 +1375,69 @@ test("a source save between the read and the write leaves the read bytes and rep
   ]);
 });
 
+// Usefulness: verifies every later side change is still reported after a refresh.
+// Not redundant: it applies all edit and delete combinations to the refreshed hash.
+test("a later change on either side is still reported after a refresh", async () => {
+  const { main, linked } = await createComparePair();
+  const source = join(main, ".env");
+  const copy = join(linked, ".env");
+  await writeFile(source, "KEY=OLD\n");
+  await writeFile(copy, "KEY=OLD\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  const hash = await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+  const restore = async () => {
+    await rm(source, { force: true });
+    await rm(copy, { force: true });
+    await writeFile(source, "KEY=OLD\n");
+    await writeFile(copy, "KEY=OLD\n");
+  };
+  const cases = [
+    ["source edit", async () => writeFile(source, "KEY=S\n"), "source"],
+    ["source delete", async () => rm(source), "source"],
+    ["copy edit", async () => writeFile(copy, "KEY=C\n"), "copy"],
+    ["copy delete", async () => rm(copy), "copy"],
+    [
+      "both edit",
+      async () => {
+        await writeFile(source, "KEY=S\n");
+        await writeFile(copy, "KEY=C\n");
+      },
+      "both",
+    ],
+    [
+      "both delete",
+      async () => {
+        await rm(source);
+        await rm(copy);
+      },
+      "both",
+    ],
+    [
+      "source delete and copy edit",
+      async () => {
+        await rm(source);
+        await writeFile(copy, "KEY=C\n");
+      },
+      "both",
+    ],
+    [
+      "source edit and copy delete",
+      async () => {
+        await writeFile(source, "KEY=S\n");
+        await rm(copy);
+      },
+      "both",
+    ],
+  ];
+  for (const [name, change, changed] of cases) {
+    await restore();
+    await change();
+    expect(await findLocalFileChanges(linked, [".env"], { ".env": hash }), name).toEqual([
+      { path: ".env", changed },
+    ]);
+  }
+});
+
 // Usefulness: verifies that a deleted source and an edited copy report both sides.
 // Not redundant: the other deletion tests leave the second side unchanged.
 test("a deleted source and an edited copy report both", async () => {

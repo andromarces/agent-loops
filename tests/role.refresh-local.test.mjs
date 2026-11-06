@@ -128,66 +128,6 @@ test("the refresh reports no content and no hash", async () => {
   ).toBe(false);
 });
 
-// Usefulness: verifies a later edit or delete on either side is still reported after a refresh.
-// Not redundant: it applies every side combination to the refreshed hash.
-test("a later change on either side is still reported after a refresh", async () => {
-  const { main, linked } = await linkedRun();
-  const source = join(main, ".env");
-  const copy = join(linked, ".env");
-  const restore = async () => {
-    await rm(source, { force: true });
-    await rm(copy, { force: true });
-    await writeFile(source, "KEY=CHANGED\n");
-    await writeFile(copy, "KEY=CHANGED\n");
-  };
-  await writeFile(source, "KEY=CHANGED\n");
-  expect((await refresh(linked, ".env")).exitCode).toBe(0);
-  const cases = [
-    ["source edit", async () => writeFile(source, "KEY=S\n"), "source"],
-    ["source delete", async () => rm(source), "source"],
-    ["copy edit", async () => writeFile(copy, "KEY=C\n"), "copy"],
-    ["copy delete", async () => rm(copy), "copy"],
-    [
-      "both edit",
-      async () => {
-        await writeFile(source, "KEY=S\n");
-        await writeFile(copy, "KEY=C\n");
-      },
-      "both",
-    ],
-    [
-      "both delete",
-      async () => {
-        await rm(source);
-        await rm(copy);
-      },
-      "both",
-    ],
-    [
-      "source delete and copy edit",
-      async () => {
-        await rm(source);
-        await writeFile(copy, "KEY=C\n");
-      },
-      "both",
-    ],
-    [
-      "source edit and copy delete",
-      async () => {
-        await writeFile(source, "KEY=S\n");
-        await rm(copy);
-      },
-      "both",
-    ],
-  ];
-  for (const [name, change, changed] of cases) {
-    await restore();
-    await change();
-    const result = await dispatchAgain(linked);
-    expect(result.payload.localFilesDiffer, name).toEqual([{ path: ".env", changed }]);
-  }
-});
-
 // Usefulness: verifies a path that init did not copy, an absolute path, and an escaping path.
 // Each is refused with no state change.
 // Not redundant: the accepted path tests never exercise the guards.
