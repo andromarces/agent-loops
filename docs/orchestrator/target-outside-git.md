@@ -20,7 +20,7 @@ Call it `<import commit>`. Create the run work tree from the local default branc
 
 Run the loop on that work tree. The run is not PR work, because no pull request can exist. Finish it with a plain `role finish` and no PR gate. Do this after a reviewer `verdict: accept` with a `Checks` line on the latest changed state, as that file states.
 
-The copy-back is the delivery step of this run, like the merge or hand-off of a no-remote run. It runs after `finish`, when the run is terminal. The parent is allowed to run this step, and the [role rule](../orchestrator-instructions.md#role) names it as the exception. Write the accepted file from the blob at `reviewed.head` over the original target. Do not copy the work tree file, because the work tree can hold line endings that the blob does not. Never write the `git show` output straight to the target: the redirect truncates the target before the command runs. The block below sets `ORIGINAL` to the hash recorded before the import, or to an empty string when the target was absent. It compares `<import commit>` with `<reviewed.head>` and removes the target only on a deletion that the diff proves, so a mistyped path or a failed lookup stops with an error and leaves the target in place. It delivers an added path only when the target is still absent. Run this in bash, where `<path>` is the relative path of the target:
+The copy-back is the delivery step of this run, like the merge or hand-off of a no-remote run. It runs after `finish`, when the run is terminal. The parent is allowed to run this step, and the [role rule](../orchestrator-instructions.md#role) names it as the exception. Write the accepted file from the blob at `reviewed.head` over the original target. Do not copy the work tree file, because the work tree can hold line endings that the blob does not. Never write the `git show` output straight to the target: the redirect truncates the target before the command runs. The block below sets `ORIGINAL` to the hash recorded before the import, or to an empty string when the target was absent. It compares `<import commit>` with `<reviewed.head>` and removes the target only on a deletion that the diff proves, so a mistyped path or a failed lookup stops with an error and leaves the target in place. It delivers an added path only when the target is still absent, and creates the parent directory of an added target before the temporary file. Run this in bash, where `<path>` is the relative path of the target:
 
 ```bash
 REPO="<throwaway repository>"
@@ -35,11 +35,11 @@ git -C "$REPO" cat-file -e "$IMPORT^{commit}" 2>/dev/null &&
     echo "copy-back failed: a commit is not readable" >&2
     exit 1
   }
-DELETED=$(git -C "$REPO" diff --name-only --diff-filter=D "$IMPORT" "$REVIEWED" -- "$FILE") || {
+DELETED=$(git -C "$REPO" -c core.quotePath=false diff --name-only --diff-filter=D "$IMPORT" "$REVIEWED" -- "$FILE") || {
   echo "copy-back failed: the reviewed diff is not readable" >&2
   exit 1
 }
-ADDED=$(git -C "$REPO" diff --name-only --diff-filter=A "$IMPORT" "$REVIEWED" -- "$FILE") || {
+ADDED=$(git -C "$REPO" -c core.quotePath=false diff --name-only --diff-filter=A "$IMPORT" "$REVIEWED" -- "$FILE") || {
   echo "copy-back failed: the reviewed diff is not readable" >&2
   exit 1
 }
@@ -64,6 +64,7 @@ elif git -C "$REPO" cat-file -e "$REVIEWED:$FILE" 2>/dev/null; then
       echo "copy-back failed: the added target already exists" >&2
       exit 1
     }
+    mkdir -p "$(dirname "$TARGET")"
   else
     [ -n "$ORIGINAL" ] && [ "$(git hash-object --no-filters "$TARGET" 2>/dev/null)" = "$ORIGINAL" ] || {
       echo "copy-back failed: the original changed" >&2
