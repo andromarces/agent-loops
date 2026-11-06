@@ -298,19 +298,46 @@ function codexConfigAllowsCacheCheck(home) {
   if (CODEX_PROVIDER_KEY.test(text)) {
     return false;
   }
-  return text.split(/\r?\n/).every(isSimpleTomlLine);
+  // A duplicate key in one table and a duplicate table header are both invalid TOML, so either is
+  // a parse doubt and skips the check.
+  const seenTables = new Set();
+  const seenKeys = new Map();
+  let table = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    if (line.startsWith("[")) {
+      if (!isSimpleTableHeader(line) || seenTables.has(line)) {
+        return false;
+      }
+      seenTables.add(line);
+      table = line;
+      continue;
+    }
+    if (!isSimpleTomlLine(line)) {
+      return false;
+    }
+    const key = line.slice(0, line.indexOf("=")).trim();
+    const keys = seenKeys.get(table) ?? new Set();
+    if (keys.has(key)) {
+      return false;
+    }
+    keys.add(key);
+    seenKeys.set(table, keys);
+  }
+  return true;
 }
 
-// One line of the small TOML subset that the config reader proves. Anything else, such as an
-// unclosed array or an incomplete table header, makes the caller skip the check rather than guess.
-function isSimpleTomlLine(raw) {
-  const line = raw.trim();
-  if (line === "" || line.startsWith("#")) {
-    return true;
-  }
-  if (line.startsWith("[")) {
-    return /^\[\[[^[\]]+\]\]$|^\[[^[\]]+\]$/.test(line);
-  }
+// A table header line of the small TOML subset that the config reader proves.
+function isSimpleTableHeader(line) {
+  return /^\[\[[^[\]]+\]\]$|^\[[^[\]]+\]$/.test(line);
+}
+
+// One key/value line of the small TOML subset that the config reader proves. Anything else, such
+// as an unclosed array, makes the caller skip the check.
+function isSimpleTomlLine(line) {
   const match = line.match(/^[A-Za-z0-9_.-]+\s*=\s*(.+)$/);
   if (!match) {
     return false;

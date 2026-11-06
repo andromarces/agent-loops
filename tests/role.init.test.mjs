@@ -374,6 +374,8 @@ test("a relative CODEX_HOME reads the cache under the init work tree", async () 
 test.each([
   ["an unclosed array", "model = [\n"],
   ["an incomplete table", "[profiles.local\n"],
+  ["a duplicate value key", 'model = "gpt-5"\nmodel = "gpt-6.1-sol"\n'],
+  ["a duplicate table header", "[features]\na = 1\n[features]\nb = 2\n"],
 ])("init proceeds when the Codex config is malformed: %s", async (_name, config) => {
   const repo = await newRunRepo();
   vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }], config));
