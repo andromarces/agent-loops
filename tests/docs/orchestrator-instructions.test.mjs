@@ -1684,6 +1684,17 @@ test("a sentence that the headless prompt shares with the instructions is in the
   ).toEqual([]);
 });
 
+// Usefulness: verifies the reviewer-sandbox reference keeps the write prohibition of the rendered
+// reviewer prompt, so a reader never learns that a literal `/tmp` path is allowed.
+test("the reviewer-sandbox reference bars a literal system temporary path", async () => {
+  const text = await readFile(join(referenceSectionsDir, "reviewer-sandbox.md"), "utf8");
+  expectRule(
+    text,
+    /never to write a literal path to the system temporary directory/i,
+    /such as `\/tmp`/i,
+  );
+});
+
 // Usefulness: verifies the instructions send a flaky required-check failure to one worker turn (#1303).
 // The parent writes nothing to GitHub. It then waits again on the same head.
 test("the instructions state the one-turn flaky-check procedure", async () => {
