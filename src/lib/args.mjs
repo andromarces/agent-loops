@@ -250,8 +250,6 @@ export function openCodeOptionsError(role, kind, model, effort) {
   return null;
 }
 
-const DEFAULT_CODEX_PROVIDER = "openai";
-
 /**
  * The directory of the Codex state for a child spawned in `cwd`. A relative `CODEX_HOME` resolves
  * against that directory, as the child resolves it; the default is `~/.codex`.
@@ -282,58 +280,64 @@ function codexCachedModelSlugs(home) {
   }
 }
 
+const CODEX_PROVIDER_KEY = /(^|[^A-Za-z0-9_])(model_provider|profile)([^A-Za-z0-9_]|$)/;
+
 /**
- * True when the Codex config has no `model_provider` override, so the default provider applies. A
- * config that cannot be read or parsed, and a provider other than the default, both mean that the
- * cache cannot judge the model.
+ * True when the Codex config is absent, or when this small reader parses the whole file and finds
+ * no `model_provider` and no `profile` key. Any provider or profile key can change the provider or
+ * the model set, and any line that the reader cannot prove well formed is a parse doubt, so each
+ * skips the check and there is no refusal. The reader fails open on purpose.
  */
-function codexUsesDefaultProvider(home) {
+function codexConfigAllowsCacheCheck(home) {
   let text;
   try {
     text = readFileSync(join(home, "config.toml"), "utf8");
   } catch (err) {
     return err?.code === "ENOENT";
   }
-  // Only a top-level key counts. A key inside a table names a provider definition, not the default.
-  let inTable = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line === "" || line.startsWith("#")) {
-      continue;
-    }
-    if (line.startsWith("[")) {
-      inTable = true;
-      continue;
-    }
-    if (inTable) {
-      continue;
-    }
-    const match = line.match(/^model_provider\s*=\s*(.*)$/);
-    if (!match) {
-      continue;
-    }
-    const value = match[1].replace(/\s+#.*$/, "").trim();
-    const quoted = value.match(/^"([^"]*)"$|^'([^']*)'$/);
-    if (!quoted) {
-      return false;
-    }
-    return (quoted[1] ?? quoted[2]) === DEFAULT_CODEX_PROVIDER;
+  if (CODEX_PROVIDER_KEY.test(text)) {
+    return false;
   }
-  return true;
+  return text.split(/\r?\n/).every(isSimpleTomlLine);
+}
+
+// One line of the small TOML subset that the config reader proves. Anything else, such as an
+// unclosed array or an incomplete table header, makes the caller skip the check rather than guess.
+function isSimpleTomlLine(raw) {
+  const line = raw.trim();
+  if (line === "" || line.startsWith("#")) {
+    return true;
+  }
+  if (line.startsWith("[")) {
+    return /^\[\[[^[\]]+\]\]$|^\[[^[\]]+\]$/.test(line);
+  }
+  const match = line.match(/^[A-Za-z0-9_.-]+\s*=\s*(.+)$/);
+  if (!match) {
+    return false;
+  }
+  const value = match[1].trim();
+  return (
+    /^"([^"\\]|\\.)*"(?:\s+#.*)?$/.test(value) ||
+    /^'[^']*'(?:\s+#.*)?$/.test(value) ||
+    /^(?:true|false|[-+]?(?:\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|inf|nan))(?:\s+#.*)?$/.test(value) ||
+    /^\[[^[\]{}]*\](?:\s+#.*)?$/.test(value) ||
+    /^\{[^[\]{}]*\}(?:\s+#.*)?$/.test(value)
+  );
 }
 
 /**
  * Refuses a model that a readable Codex model cache does not list, when it is a strict prefix of a
  * cached slug followed by `-`. The refusal names the matching slugs, so a near miss such as
  * `gpt-6.1` becomes `gpt-6.1-sol` before the first turn. Every other model passes, and so does the
- * check when the config names another provider or the config or cache is unreadable.
+ * check when the config names any provider or profile key, does not fully parse, or either file is
+ * unreadable.
  */
 function codexModelRefusal(role, kind, model, cwd) {
   if (model === null || normalizeAgent(kind) !== "codex") {
     return null;
   }
   const home = codexHome(cwd);
-  if (!codexUsesDefaultProvider(home)) {
+  if (!codexConfigAllowsCacheCheck(home)) {
     return null;
   }
   const slugs = codexCachedModelSlugs(home);

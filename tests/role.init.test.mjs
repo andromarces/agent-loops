@@ -369,6 +369,63 @@ test("a relative CODEX_HOME reads the cache under the init work tree", async () 
   expect(await readState(statePaths({ cwd: repo }).stateFile)).toBeNull();
 });
 
+// Usefulness: acceptance (#1565) as narrowed — the reader fails open on a config it cannot fully
+// parse, so a malformed value never refuses a model.
+test.each([
+  ["an unclosed array", "model = [\n"],
+  ["an incomplete table", "[profiles.local\n"],
+])("init proceeds when the Codex config is malformed: %s", async (_name, config) => {
+  const repo = await newRunRepo();
+  vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }], config));
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a profile selector can change the provider, so any
+// profile key skips the cache check.
+test("init proceeds when the Codex config selects a profile", async () => {
+  const repo = await newRunRepo();
+  const config = 'profile = "local"\n\n[profiles.local]\nmodel_provider = "custom"\n';
+  vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }], config));
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — any model_provider key skips the check, because the
+// reader cannot prove which provider the cache belongs to.
+test("init proceeds when the Codex config sets model_provider explicitly", async () => {
+  const repo = await newRunRepo();
+  vi.stubEnv(
+    "CODEX_HOME",
+    await codexCache([{ slug: "gpt-6.1-sol" }], 'model_provider = "openai"\n'),
+  );
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a simple, unrelated config still permits the check,
+// so failing open does not skip every config file.
+test("init refuses a cache prefix when the Codex config is simple and unrelated", async () => {
+  const repo = await newRunRepo();
+  const config = 'model = "gpt-5"\napproval_policy = "never"\n';
+  vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }], config));
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("gpt-6.1-sol");
+  expect(await readState(statePaths({ cwd: repo }).stateFile)).toBeNull();
+});
+
 // Usefulness: acceptance (#1565) — a missing cache keeps today's behavior, so a Codex model that
 // the cache cannot judge does not block init.
 test("init proceeds when the Codex model cache is missing", async () => {
