@@ -39,15 +39,22 @@ import {
 import { createCleanRepoDir } from "./git-helpers.mjs";
 import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
+import { removePath, trackedTempDir } from "./fs-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
 
 const newRunRepo = () => newCleanRunRepo(gitDouble);
 
+const cacheDirs = [];
+
 afterEach(async () => {
   gitDouble.answer = null;
   await cleanup();
+  vi.unstubAllEnvs();
+  for (const dir of cacheDirs.splice(0)) {
+    await removePath(dir);
+  }
 });
 
 // Usefulness: verifies an empty shell expansion cannot start an unguarded run.
@@ -212,6 +219,83 @@ test("init with --pr proceeds when the source read fails for another reason", as
   );
   expect(result.exitCode).toBe(0);
   expect((await readRepoState(repo)).pr).toBe(42);
+});
+
+// A Codex model cache file for tests, under a temporary home that the case removes. `models` uses
+// the cache's `{ slug }` entries.
+async function codexCache(models) {
+  const home = await trackedTempDir("codex-cache-", cacheDirs);
+  await writeFile(join(home, "models_cache.json"), JSON.stringify({ models }));
+  return home;
+}
+
+const codexInitArgs = [
+  "--task",
+  "Fix the flaky test.",
+  "--parent-session",
+  "parent-sess-1",
+  "--worker",
+  "fake1",
+  "--reviewer",
+  "codex",
+  "--reviewer-model",
+  "gpt-6.1",
+];
+
+// Usefulness: acceptance (#1565) — a readable Codex model cache refuses an init whose model it does
+// not list, before a state file or a step, and names the cached slugs that share the model prefix.
+test("init refuses a Codex model that the readable cache does not list", async () => {
+  const repo = await newRunRepo();
+  const paths = statePaths({ cwd: repo });
+  const home = await codexCache([
+    { slug: "gpt-6.1-sol" },
+    { slug: "gpt-6.1-terra" },
+    { slug: "gpt-5" },
+  ]);
+  vi.stubEnv("CODEX_HOME", home);
+  const worker = recordingAdapter([]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(codexInitArgs), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload.error).toContain("--reviewer-model");
+  expect(result.payload.error).toContain("gpt-6.1-sol");
+  expect(result.payload.error).toContain("gpt-6.1-terra");
+  expect(result.payload.error).not.toContain("gpt-5");
+  expect(worker.recorded).toHaveLength(0);
+  expect(await readState(paths.stateFile)).toBeNull();
+});
+
+// Usefulness: acceptance (#1565) — a missing cache keeps today's behavior, so a Codex model that
+// the cache cannot judge does not block init.
+test("init proceeds when the Codex model cache is missing", async () => {
+  const repo = await newRunRepo();
+  const home = await trackedTempDir("codex-cache-", cacheDirs);
+  vi.stubEnv("CODEX_HOME", join(home, "absent"));
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(codexInitArgs), repo), {
+    ...basicDeps(),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: verifies a readable cache that lists the model does not refuse the init, so the check
+// rejects only the models the cache does not hold.
+test("init proceeds when the Codex cache lists the model", async () => {
+  const repo = await newRunRepo();
+  vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1" }, { slug: "gpt-6.1-sol" }]));
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(codexInitArgs), repo), {
+    ...basicDeps(),
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
 });
 
 // Usefulness: verifies review-only refuses a declared PR at init, because

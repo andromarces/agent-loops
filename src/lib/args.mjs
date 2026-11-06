@@ -1,7 +1,9 @@
 // Shared CLI argument readers and agent option validation, used by both the
 // headless loop (src/cli.mjs) and the role subcommand (src/role/index.mjs).
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { readableErrorText, readProp } from "./error-message.mjs";
 import { normalizeAgent } from "./agent-kinds.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "./gate-refusal.mjs";
@@ -249,6 +251,50 @@ export function openCodeOptionsError(role, kind, model, effort) {
 }
 
 /**
+ * The slugs of the Codex model cache, or null when the cache is unreadable or its shape is unknown,
+ * so an init proceeds as before. `CODEX_HOME` selects the cache directory, as the Codex CLI does;
+ * the default is `~/.codex`.
+ */
+function codexCachedModelSlugs() {
+  const home = process.env.CODEX_HOME || join(homedir(), ".codex");
+  try {
+    const cache = JSON.parse(readFileSync(join(home, "models_cache.json"), "utf8"));
+    const models = Array.isArray(cache) ? cache : cache?.models;
+    if (!Array.isArray(models)) {
+      return null;
+    }
+    const slugs = models
+      .map((model) => (typeof model === "string" ? model : model?.slug))
+      .filter((slug) => typeof slug === "string");
+    // An empty or unrecognized list cannot judge a model, so it keeps the earlier behavior.
+    return slugs.length > 0 ? slugs : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refuses a model that a readable Codex model cache does not list. The refusal names the cached
+ * slugs that share the model prefix, so a near match is visible before the first turn. An
+ * unreadable cache, a model that is not Codex, and no model all pass.
+ */
+function codexModelRefusal(role, kind, model) {
+  if (model === null || normalizeAgent(kind) !== "codex") {
+    return null;
+  }
+  const slugs = codexCachedModelSlugs();
+  if (slugs === null || slugs.includes(model)) {
+    return null;
+  }
+  const matching = slugs.filter((slug) => slug.startsWith(model));
+  const named =
+    matching.length > 0
+      ? ` Cached models with this prefix: ${matching.map((slug) => `"${slug}"`).join(", ")}.`
+      : " No cached model shares this prefix.";
+  return `--${role}-model "${model}" is not in the Codex model cache.${named} Name a cached model, or omit --${role}-model.`;
+}
+
+/**
  * The init checks that the headless command and `role` init share. Each caller throws its own
  * error type for the returned text. The checks that only one path has run in `pathRefusal`, at
  * the point where that path ran them: after the first group of shared checks and before the rest.
@@ -319,6 +365,10 @@ export function initRefusal(
       );
       if (openCodeRefusal) {
         return openCodeRefusal;
+      }
+      const codexRefusal = codexModelRefusal(role, kind, args[`${role}Model`]);
+      if (codexRefusal) {
+        return codexRefusal;
       }
     }
     return null;
