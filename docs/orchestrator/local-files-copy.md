@@ -32,18 +32,19 @@ source and the copy with that hash.
 The envelope reports `localFilesDiffer` as a list of `{path, changed}` entries. The key is
 absent when neither side changed. `changed` is `source`, `copy`, `both`, or `unknown`.
 A side counts as changed when it is missing, unreadable, or its hash differs from the init
-hash. `unknown` means the runtime could not prove a side, and it never means no change. A
+hash. `unknown` means the runtime cannot prove a side, and it never means no change. A
 legacy state with no init hash reports every copied path as `unknown`.
 
-For `source`, the main work tree changed after init: run
+For `source`, the main work tree changed after init. Run
 `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
-`--parent-session` id when no `localSourceChangedInTurn` entry names it. The command copies the
-source over the copy and stores the new hash, so a later envelope stops reporting the path unless
+`--parent-session` id when no `localSourceChangedInTurn` entry names it. The command writes the
+source bytes over the copy and stores their hash, so later envelopes stop reporting the path until
 a side changes again.
 
-The command refuses a path that init did not copy, a missing or unreadable side, a link at the
-file or a parent component, a copy that differs from its stored hash, a terminal run, and a child
-role. A refused refresh writes nothing. It reports the path only, never the content or a hash.
+The command refuses a path that init did not copy, a missing or unreadable side, and a link at the
+file or a parent component. It also refuses a copy that differs from its stored hash, a terminal
+run, and a child role. A refused refresh writes nothing. It reports the path only, never the content
+or a hash.
 
 For `copy`, a turn changed the copy: report a breach under `open`. For `both`, the stored hash
 records no refresh of the current copy: report a breach under `open`. The first action checks

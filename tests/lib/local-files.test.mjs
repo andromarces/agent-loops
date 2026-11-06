@@ -37,6 +37,7 @@ import {
   findLocalFileChanges,
   hashCopiedLocalFiles,
   MAX_WALKED_ENTRIES,
+  refreshLocalFile,
 } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
 import { exists, removePath } from "../fs-helpers.mjs";
@@ -1345,6 +1346,32 @@ test("the side-aware compare fails closed on a missing hash or a missing file", 
   await rm(join(linked, ".env"));
   expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
     { path: ".env", changed: "both" },
+  ]);
+});
+
+// Usefulness: verifies a source save between the read and the write cannot mix bytes.
+// Not redundant: it is the only refresh test that changes the source during the call.
+test("a source save between the read and the write leaves the read bytes and reports source", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  let saved = false;
+
+  const hash = await refreshLocalFile(linked, ".env", {
+    expectedCopyHash: baseline[".env"],
+    beforeWrite: async () => {
+      saved = true;
+      await writeFile(join(main, ".env"), "KEY=NEW\n");
+    },
+  });
+
+  expect(saved).toBe(true);
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=OLD\n");
+  expect(hash === baseline[".env"]).toBe(true);
+  expect(await readdir(linked)).toEqual([".env"]);
+  expect(await findLocalFileChanges(linked, [".env"], { ".env": hash })).toEqual([
+    { path: ".env", changed: "source" },
   ]);
 });
 

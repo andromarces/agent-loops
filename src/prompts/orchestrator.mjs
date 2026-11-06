@@ -526,8 +526,8 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Require reviewed.clean: true for PR work.
 - When a PR resolves its issue only in part, read the commit messages of the PR branch before finish. A closing keyword in one, such as \`Closes #N\`, closes the issue at merge, even after the PR body says \`Refs\`. Dispatch a worker to remove it.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
-- A later dispatch envelope carries localFilesDiffer only when a copied local file changed. The field lists \`{path, changed}\` entries. \`changed\` is \`source\`, \`copy\`, \`both\`, or \`unknown\`. \`unknown\` means the runtime could not prove a side, and it never means no change.
-  - For \`source\`, the main work tree changed after init: run \`agent-loop role refresh-local --cwd "<work tree>" --path <path>\` with the stored \`--parent-session\` id when no localSourceChangedInTurn entry names it.
+- A later dispatch envelope carries localFilesDiffer only when a copied local file changed. The field lists \`{path, changed}\` entries. \`changed\` is \`source\`, \`copy\`, \`both\`, or \`unknown\`. \`unknown\` means the runtime cannot prove a side, and it never means no change.
+  - For \`source\`, the main work tree changed after init: report the path under open and do not refresh the copy.
   - For \`copy\`, a turn changed the copy: report a breach under open.
   - For \`both\`, the stored hash records no refresh of the current copy: report a breach under open.
 - A worker or reviewer envelope carries localSourceChangedInTurn when a copied source changed inside that turn window. The field names the paths only, at most 20, and never content. The user or another process can cause the change too. Report it under open, and ask the user before refreshing the copy: a refresh would copy content that the turn wrote.

@@ -4,8 +4,11 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 A child role never runs `extend`, `declare-pr`, `refresh-local`, `set-model`, `finish`, or `abort`. Each subcommand refuses a
 caller whose `AGENT_LOOP_SPAWNED_RUN` list holds the key of the run it acts on. The
-runtime sets the variable, as a comma-separated list of the keys of every
-enclosing run and then the key of the dispatching run, in the environment of every worker and reviewer process, and in no other spawn. The key
+runtime sets the variable in the environment of every worker and reviewer process, and in
+no other spawn. The value is a comma-separated list of the keys of every enclosing run,
+then the key of the dispatching run.
+
+The key
 is the name of the run's state directory, the hash each subcommand uses to find
 the run state. A path spelled another way, such as a symlink alias, finds no
 state. A child that names the work tree as the run does is refused even when the

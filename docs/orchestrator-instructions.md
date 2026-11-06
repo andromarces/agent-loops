@@ -407,12 +407,13 @@ once as a first turn, with the worker preamble and the `Init task:` block. A rev
 `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files of the
-main work tree that `--cwd` ignores, such as agent instructions and `.env`, into `--cwd`.
-Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env`
-into the run work tree, so remove that work tree when the run ends. The copy rules,
-`--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
-[Local files copied into the work tree](orchestrator/local-files-copy.md). For `source`, the main
-work tree changed after init: run
+main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent
+instructions and `.env`. Do not read, print, or quote any copied file. The copy duplicates
+secrets such as `.env` into the run work tree, so remove that work tree when the run ends. The
+copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
+[Local files copied into the work tree](orchestrator/local-files-copy.md).
+
+For `source`, the main work tree changed after init. Run
 `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
 `--parent-session` id when no `localSourceChangedInTurn` entry names it. For `copy`, a turn
 changed the copy: report a breach under `open`. For `both`, the stored hash records no refresh of

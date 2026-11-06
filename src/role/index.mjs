@@ -229,12 +229,11 @@ async function declarePr(args, { gh, signal } = {}) {
 }
 
 /**
- * `refresh-local`: copies the main work tree source of one copied local file over its run copy and
- * stores the new hash, for the `changed: "source"` action of the orchestrator rules. The call needs
- * the stored parent session id on a non-terminal run, and a child role cannot run it. The path must
- * be one that init copied, with an init hash. The copy must still equal that hash, so a turn edit is
- * refused and stays reported as a breach. Other paths keep their init hashes. The envelope names the
- * path only, never the content or a hash.
+ * `refresh-local`: copies one copied local file's source over its run copy and stores the new hash.
+ * The call needs the stored parent session id on a non-terminal run, and a child role cannot run it.
+ * The path must be one that init copied, with a stored hash.
+ * The copy must still equal that hash, so a turn edit is refused and stays reported as a breach.
+ * Other paths keep their stored hashes. The envelope names the path only, never content or a hash.
  */
 async function refreshLocal(args, { signal } = {}) {
   rejectMisplacedFlags(args, "refresh-local");
@@ -267,7 +266,7 @@ async function refreshLocal(args, { signal } = {}) {
           : undefined;
       if (typeof expected !== "string" || !/^[0-9a-f]{64}$/.test(expected)) {
         throw new RoleError(
-          `refresh-local --path ${JSON.stringify(rel)} is refused: the run holds no init hash for it, so it cannot prove the copy unchanged.`,
+          `refresh-local --path ${JSON.stringify(rel)} is refused: the run holds no stored hash for it, so it cannot prove the copy unchanged.`,
         );
       }
       let hash;

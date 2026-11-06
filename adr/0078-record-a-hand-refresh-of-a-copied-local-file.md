@@ -16,11 +16,11 @@ ADR 0074 gives `localFilesDiffer` a side. A source that the parent refreshes by 
 
 ## Decision
 
-1. **Command.** `agent-loop role refresh-local --cwd <dir> --path <path> --parent-session <id>` copies one copied local file over its run copy. Only the parent session runs it, on a non-terminal run, with the stored parent session id. A child role is refused.
-2. **Stored hash.** The command stores the refreshed copy's SHA-256 for the named path only. Every other path keeps its stored hash. Content and hashes never reach an envelope, a log line, or an error text.
-3. **Guards.** The command refuses a path that init did not copy, an absolute path, a path that leaves the work tree, a missing or unreadable side, a link at the file or a parent component, and a copy that differs from its stored hash. A refused refresh writes nothing.
+1. **Command.** `agent-loop role refresh-local --cwd <dir> --path <path> --parent-session <id>` copies one copied local file over its run copy. It reads the source once, then writes those bytes through a temporary file and a rename. Only the parent session runs it, on a non-terminal run, with the stored parent session id. A child role is refused.
+2. **Stored hash.** The command stores the SHA-256 of the bytes it wrote for the named path only. Every other path keeps its stored hash. Content and hashes never reach an envelope, a log line, or an error text.
+3. **Guards.** The command refuses a path that init did not copy, an absolute path, and a path that leaves the work tree. It also refuses a missing or unreadable side, and a link at the file or a parent component. It refuses a copy that differs from its stored hash. A refused refresh writes nothing.
 4. **Meaning.** The stored hash is the last content that the runtime recorded, not only the init content. `both` means the current copy has no recorded refresh, so it stays a breach.
-5. **Action.** The docs and the headless prompt tell the parent to run `refresh-local` for `changed: "source"` when no `localSourceChangedInTurn` entry names the path. A `localSourceChangedInTurn` path still needs the user before any refresh.
+5. **Action.** The docs tell the interactive parent to run `refresh-local` for `changed: "source"` when no `localSourceChangedInTurn` entry names the path. The headless prompt tells its parent to report the path under `open` and not refresh the copy. A `localSourceChangedInTurn` path still needs the user before any refresh.
 
 ## Consequences
 

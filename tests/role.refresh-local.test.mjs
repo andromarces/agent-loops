@@ -188,8 +188,8 @@ test("a later change on either side is still reported after a refresh", async ()
   }
 });
 
-// Usefulness: verifies a path that init did not copy, an absolute path, and a path that leaves
-// the work tree are refused with no state change.
+// Usefulness: verifies a path that init did not copy, an absolute path, and an escaping path.
+// Each is refused with no state change.
 // Not redundant: the accepted path tests never exercise the guards.
 test("a refresh refuses an unknown, absolute, or escaping path and writes nothing", async () => {
   const { main, linked } = await linkedRun();
@@ -264,8 +264,8 @@ test("a refresh refuses a copy that changed after init", async () => {
   expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=TURN-EDIT\n");
 });
 
-// Usefulness: verifies a link at the source file, at the copy file, and at a parent component
-// of either side is refused without reading or writing through it.
+// Usefulness: verifies a link at the source file, the copy file, and a parent component.
+// Each is refused without reading or writing through it.
 // Not redundant: each level and side has its own guard in the copy path.
 test("a refresh refuses a link at either file or at a parent component", async () => {
   const { main, linked, base } = await linkedRun(

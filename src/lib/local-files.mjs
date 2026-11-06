@@ -3,9 +3,20 @@
 // `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
 // deleted. The module never prints, logs, or returns file content: every report
 // is a path name.
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import {
   gitRead,
@@ -741,10 +752,10 @@ const isPlainRecord = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /**
- * Returns the SHA-256 of the regular file `rel` under `base` (a canonical path), `MISSING` when
- * the first probe finds no file, or `NOT_COMPARABLE` when it cannot be compared: a link on the
- * final entry or on any ancestor below `base`, a non-regular file, a file over the size cap, a
- * path that does not resolve to `base` plus `rel`, or a file that changed or vanished after the
+ * Reads the regular file `rel` under `base` (a canonical path) and returns `{ bytes, hash }`.
+ * It returns `MISSING` when the first probe finds no file, or `NOT_COMPARABLE` when it cannot be
+ * compared. The causes are a link on the final entry or an ancestor, a non-regular file, or a file
+ * over the size cap. It also covers an unresolved path, or a file that changed or vanished after the
  * first probe. The caller never counts `NOT_COMPARABLE` as equal, even when both sides return it.
  *
  * Order, so that no read starts on a path that is not proven inside `base`:
@@ -760,7 +771,7 @@ const isPlainRecord = (value) =>
  * stays in place is caught before the read. The swap needs local write access to the work trees.
  * Node has no descriptor-relative open.
  */
-async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
+async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {}) {
   const path = join(base, rel);
   let canon;
   let named;
@@ -798,14 +809,14 @@ async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
     ) {
       return NOT_COMPARABLE;
     }
-    const hash = sha256(await handle.readFile());
+    const bytes = await handle.readFile();
     if (
       (await hasBlockedAncestor(base, rel, new Set())) ||
       !(await namesFile(path, canon, opened))
     ) {
       return NOT_COMPARABLE;
     }
-    return hash;
+    return { bytes, hash: sha256(bytes) };
   } catch (err) {
     // A file that vanished, a link met by `O_NOFOLLOW`, or a path that cannot be opened after the
     // first probe is not comparable, never "missing": an absence after the probe is not proven.
@@ -816,6 +827,12 @@ async function sha256Of(base, rel, { beforeRead, afterAncestorCheck } = {}) {
   } finally {
     await handle?.close();
   }
+}
+
+/** The SHA-256 from `readGuardedFile`, or its `MISSING` or `NOT_COMPARABLE` symbol. */
+async function sha256Of(base, rel, hooks) {
+  const read = await readGuardedFile(base, rel, hooks);
+  return typeof read === "object" ? read.hash : read;
 }
 
 /**
@@ -921,19 +938,18 @@ function changedSide(rel, source, copy, hashes) {
 }
 
 /**
- * Copies the main work tree source file `rel` over its run copy and returns the SHA-256 of the
- * refreshed copy, so a parent can record a hand refresh without reading the file. Refuses, before
- * any write, when the source or copy is missing or unreadable, either side is a link at the file or
- * at any parent component, the path leaves the work tree, or `expectedCopyHash` differs from the
- * current copy. `expectedCopyHash` is the init hash: a differing copy holds a turn edit that a
- * refresh must not hide. Content and hashes never reach a log line or an error text.
+ * Copies one source file over its run copy and returns the hash of the bytes written.
+ * Reads the source once, then writes those same bytes, so a later source save cannot mix bytes.
+ * Refuses before any write when a side is missing or unreadable, a link sits on the path, or the
+ * copy differs from `expectedCopyHash`. Writes through a temporary file in the copy directory and a
+ * rename. Content and hashes never reach a log line or an error text.
  * @param {string} cwd
  * @param {string} rel
- * @param {{ signal?: AbortSignal, expectedCopyHash?: string }} [options]
+ * @param {{ signal?: AbortSignal, expectedCopyHash?: string, beforeWrite?: (path: string) => Promise<void> }} [options]
  * @returns {Promise<string>} the new SHA-256 of the copy
  * @throws {Error} with a message that starts `refresh-local`
  */
-export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash } = {}) {
+export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash, beforeWrite } = {}) {
   const refuse = (why) => new Error(`refresh-local is refused: ${why}`);
   if (!isPlainRelativeName(rel)) {
     throw refuse("the path must stay inside the work tree");
@@ -945,8 +961,8 @@ export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash } = 
     throw refuse("there is no main work tree to refresh from");
   }
   const { mainReal, rootReal } = located;
-  const source = await sha256Of(mainReal, rel);
-  if (typeof source !== "string") {
+  const source = await readGuardedFile(mainReal, rel);
+  if (typeof source !== "object") {
     throw refuse("the source is missing or unreadable");
   }
   const copy = await sha256Of(rootReal, rel);
@@ -956,16 +972,17 @@ export async function refreshLocalFile(cwd, rel, { signal, expectedCopyHash } = 
   if (expectedCopyHash !== undefined && copy !== expectedCopyHash) {
     throw refuse("the copy changed after init, so a turn changed it");
   }
+  const target = join(rootReal, rel);
+  await beforeWrite?.(target);
+  const temp = join(dirname(target), `.refresh-${randomUUID()}.tmp`);
   try {
-    await copyFile(join(mainReal, rel), join(rootReal, rel));
+    await writeFile(temp, source.bytes, { flag: "wx" });
+    await rename(temp, target);
   } catch (err) {
+    await rm(temp, { force: true }).catch(() => {});
     throw refuse(`the copy failed (${err.code ?? "error"})`);
   }
-  const stored = await sha256Of(rootReal, rel);
-  if (stored !== source) {
-    throw refuse("the copy could not be verified after the refresh");
-  }
-  return stored;
+  return source.hash;
 }
 
 /**
