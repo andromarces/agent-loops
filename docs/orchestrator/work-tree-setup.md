@@ -8,6 +8,14 @@ value. The `git config push.default` read in
 [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership) reads the
 effective value of the work tree, override included.
 
+With `extensions.worktreeConfig` on, a new linked work tree inherits the sparse-checkout
+setting of the main work tree. The run work tree then lacks
+every tracked file that the main work tree excludes. Before the first dispatch, run
+`git sparse-checkout disable` in the run work tree, or state the exclusion in the task
+text. The init envelope reports the setting as `sparseCheckout: {enabled, skipWorktree}`,
+by path only, at most 20 paths. A Git read that fails or passes its 10 second bound adds
+no field, and the absent field then proves nothing.
+
 A repository with no remote has no `origin/<default>`, so the creation
 command in [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership)
 fails. Use the local default branch as the base:

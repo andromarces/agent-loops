@@ -175,9 +175,11 @@ function readOutcome(pr, { status, stdout, stderr }, all, source = null) {
 }
 
 /**
- * The PR head `{ head, base }` that a `gh pr view --json headRefOid,baseRefName` read reports, the
- * head lowercase. Throws when the read failed or names no full SHA or base branch, so an
- * unreadable head is unresolved, never a pass.
+ * The PR head and merge state that one `gh pr view` read reports: `{ head, base, conflicting }`.
+ * A `CONFLICTING` mergeable value or a `DIRTY` merge state is a conflict. A missing or unreadable
+ * one is no conflict, so a value the wait cannot read never ends it as one.
+ * Throws when the read failed or names no full SHA or base branch, so an unreadable head is
+ * unresolved, never a pass.
  */
 function readHead(pr, { status, stdout, stderr }) {
   const label = `gh pr view ${pr}`;
@@ -194,7 +196,8 @@ function readHead(pr, { status, stdout, stderr }) {
   if (typeof base !== "string" || base === "") {
     throw new Error(`${label} returned no base branch; the read is unresolved.`);
   }
-  return { head: head.toLowerCase(), base };
+  const conflicting = parsed.mergeable === "CONFLICTING" || parsed.mergeStateStatus === "DIRTY";
+  return { head: head.toLowerCase(), base, conflicting };
 }
 
 // The check items of one commit, read by SHA. `gh pr checks` queries by PR identity and
@@ -452,7 +455,7 @@ async function absenceOf(
  * A retryable failure is retried on the next poll, and one that lasts to the bound throws.
  * @param {{ pr: number, cwd: string, timeoutSeconds?: number, deadline?: number | null, all?: boolean,
  *           head?: string | null, expect?: string[], gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
- * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }>, prFailures?: Array<{ name: string, state: string|null, bucket: string|null }>, awaiting?: string[], noRequiredChecks?: true, noCheckSource?: true, childExitUnconfirmed?: true }>}
+ * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }>, conflicting?: true, prFailures?: Array<{ name: string, state: string|null, bucket: string|null }>, awaiting?: string[], noRequiredChecks?: true, noCheckSource?: true, childExitUnconfirmed?: true }>}
  */
 export async function waitChecks({
   pr,
@@ -463,7 +466,9 @@ export async function waitChecks({
   head = null,
   expect = [],
   gh = runGh,
-  now = Date.now,
+  // A monotonic clock in whole milliseconds, so a wall-clock jump never ends or extends the bound.
+  // Whole milliseconds keep every child timeout an integer (issue #1536).
+  now = () => Math.floor(performance.now()),
   sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
   // Injectable so a test can use a short bound; production keeps the 5000 ms default (issue #1465).
   childExitCeilingMs = CHILD_EXIT_CEILING_MS,
@@ -535,7 +540,15 @@ function createWaitContext(options) {
       "--json",
       "name,state,bucket",
     ],
-    headArgv: ["pr", "view", String(options.pr), "--json", "headRefOid,baseRefName"],
+    // One reply carries the head and the merge state, so a conflict never pairs with another head
+    // (issue #1536).
+    headArgv: [
+      "pr",
+      "view",
+      String(options.pr),
+      "--json",
+      "headRefOid,baseRefName,mergeable,mergeStateStatus",
+    ],
     last: [],
     // `head` is null when no read completed (#961).
     lastHead: null,
@@ -756,13 +769,19 @@ async function probe(context, sha, base) {
 }
 
 /**
- * The `gh pr` reads of one poll: the head, and the check list when the head is the one waited for.
- * `listed` is null for another head.
+ * The `gh pr` reads of one poll: the head and merge state from one reply.
+ * Then the check list, when the head is the one waited for. `listed` is null for another head.
+ * A conflict settles the wait only on the head it names.
+ * With `--head`, a conflict on another commit keeps the wait, as the `--head` rule keeps it for
+ * checks (issue #1536).
  */
 async function readPr(context) {
-  const { head: sha, base } = await readPrHead(context);
+  const { head: sha, base, conflicting } = await readPrHead(context);
   if (context.head !== null && sha !== context.head) {
     return { sha, base, listed: null };
+  }
+  if (conflicting) {
+    return { sha, base, conflicting: true };
   }
   const read = await context.bounded(context.checksArgv);
   const listed = readOutcome(context.pr, read, context.all);
@@ -897,6 +916,12 @@ async function poll(context) {
     } catch (raw) {
       // A retryable failure of a `gh pr` read is retried on the next poll.
       context.failed = retryableOrThrow(raw);
+    }
+    // A conflict is no pass and holds no check state.
+    // The wait names the head it read and ends before the bound.
+    // The parent then merges the base branch and waits on the new head (issue #1536).
+    if (state?.conflicting) {
+      return { timedOut: false, conflicting: true, head: state.sha, checks: [] };
     }
     if (state?.listed) {
       const { sha, base, listed, names } = state;
