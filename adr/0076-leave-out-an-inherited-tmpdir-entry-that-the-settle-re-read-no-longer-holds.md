@@ -30,7 +30,7 @@ The runtime reads the directory before and after the turn. A file whose lifetime
 ## Consequences
 
 - A file that is created and removed within the settle window no longer reaches the envelope or `open`. A file that lives past the window is still listed, and the reads still cannot attribute it to any process.
-- A reviewer turn that leaves a new entry waits up to 250 ms longer before its envelope. A turn that leaves none waits no longer.
+- A reviewer turn that leaves a new entry waits a 250 ms settle delay plus the confirming read before its envelope. A turn that leaves none waits no longer.
 - The guard of ADR 0069 holds: a still-existing entry cannot be hidden by a registration, and a leftover that stays past the confirming read is listed.
 - Residual limit: the window is a fixed wait. A file whose lifetime spans the confirming read is still listed, and a longer-lived file still needs an `open` item.
 - Residual limit: a turn that creates and removes an entry within the window leaves no name. The entry is gone, so it needs no action.
