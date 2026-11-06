@@ -273,9 +273,10 @@ Apply these parent rules:
   the run, and leave the main work tree change to the user.
   - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
     only, at most 20 paths, and never content. A failed or canceled worker turn carries the field
-    too. A watch, read, or bound failure reports no field, so the absent field then proves nothing. Report
-    it under `open` in the finish summary. The user or another process can cause the change too. A
-    path that still differs at the end appears in `mainWorkTreeChanged` only.
+    too. Report it under `open` in the finish summary. The user or another process can cause the
+    change too. A path that still differs at the end appears in `mainWorkTreeChanged` only.
+  - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
+    bound failure reports no field, so the absent field then proves nothing.
   - For a clean fast-forward, report `mainWorkTreeFastForward` under open in the finish summary with
     no stop. The `mainWorkTreeFastForward` field names the old and new head SHAs, and never content.
   - The field holds only when the main work tree had no dirty, untracked, or unignored change before

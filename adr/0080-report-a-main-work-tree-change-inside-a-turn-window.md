@@ -29,6 +29,7 @@ accepted
 - A watch adds one recursive watcher per worker turn, and it closes on every outcome.
 - A write and a restore that both land before the watch event is delivered can be missed.
 - A directory created and removed inside the window carries no path.
+- A file created and removed before an in-window read sees it stays unseen, so the absent field proves nothing.
 - An ignored write in a copied local source stays covered by `localSourceChangedInTurn`, not this field.
 - A write of the same bytes can report a path, because the watch sees a filesystem event. The field proves no actor.
 - The watch runs one `git check-ignore` call per batch of event paths, so an install elsewhere never reads every path.

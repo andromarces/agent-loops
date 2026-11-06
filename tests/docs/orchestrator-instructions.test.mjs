@@ -120,6 +120,7 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /mainWorkTreeChangedInTurn/, /restores? before it ends/i),
   (text) => expectRule(text, /under open/i, /finish summary/i),
   (text) => expectRule(text, /watch, read, or bound failure/i, /no field/i),
+  (text) => expectRule(text, /created and removed before an in-window read/i, /unseen/i),
   // Issue #1485: a clean fast-forward to the remote default branch goes under open with no stop,
   // and every other change keeps the stop rule.
   (text) => expectRule(text, /mainWorkTreeFastForward/, /old and new head/i),
