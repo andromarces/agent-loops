@@ -93,6 +93,9 @@ function initialState(args) {
     lastDispatch: null,
     lastResult: null,
     turns: [],
+    // Marks a history that this version recorded from the run's first turn. A state written before
+    // `turns` existed lacks the mark, so it never refunds a refusal (issue #1565).
+    turnsComplete: true,
     inheritedTmpdirNames: [],
   };
 }
@@ -403,16 +406,16 @@ async function dispatchLocked(
 }
 
 /**
- * True when the state proves this is the first turn of the role. A state written before `turns`
- * existed proves a first turn only when it records no dispatch at all and the role holds no
- * session. Any other legacy state cannot prove it, so a refusal charges a step (issue #1565).
+ * True when the run marks its turn history complete from its first turn, and the history holds no
+ * earlier turn of the role. A state written before `turns` existed has no mark, so it never
+ * refunds a refusal, now or after a later write recreates part of the history (issue #1565).
  */
 function isFirstRoleTurn(state, roleName) {
-  if (Array.isArray(state.turns)) {
-    return !state.turns.some((turn) => turn.role === roleName);
-  }
-  const role = state.roles?.[roleName];
-  return role?.sessionId == null && state.lastResult == null && state.lastDispatch == null;
+  return (
+    state.turnsComplete === true &&
+    Array.isArray(state.turns) &&
+    !state.turns.some((turn) => turn.role === roleName)
+  );
 }
 
 /**

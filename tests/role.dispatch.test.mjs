@@ -487,6 +487,7 @@ test("a legacy state with an earlier role turn charges a refusal", async () => {
   const legacy = await readState(paths.stateFile);
   expect(legacy.roles.worker.sessionId).not.toBeNull();
   delete legacy.turns;
+  delete legacy.turnsComplete;
   await writeState(paths.stateFile, legacy);
 
   const refused = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
@@ -495,6 +496,33 @@ test("a legacy state with an earlier role turn charges a refusal", async () => {
   });
   expect(refused.exitCode).toBe(1);
   expect((await readRepoState(repo)).stepsUsed).toBe(2);
+});
+
+// Usefulness: verifies #1565 — a legacy state that both roles already ran cannot refund a later
+// refusal after a worker dispatch recreates a history that holds only the worker turn. The state
+// has no `turnsComplete` mark, so the refund never applies.
+test("a legacy state with both roles run does not refund a later reviewer refusal", async () => {
+  const repo = await newRunRepo();
+  const paths = statePaths({ cwd: repo });
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), basicDeps());
+
+  const legacy = await readState(paths.stateFile);
+  expect(legacy.turns).toHaveLength(2);
+  delete legacy.turns;
+  delete legacy.turnsComplete;
+  await writeState(paths.stateFile, legacy);
+
+  const worker = await executeRoleCommand(withRepo(dispatchArgv(), repo), basicDeps());
+  expect(worker.exitCode).toBe(0);
+  expect((await readRepoState(repo)).turns).toHaveLength(1);
+
+  const refused = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: refusingAdapter("gpt-6.1") },
+    stdin: stdinPrompt,
+  });
+  expect(refused.exitCode).toBe(1);
+  expect((await readRepoState(repo)).stepsUsed).toBe(4);
 });
 
 // Usefulness: verifies the dispatch seam — the parsed verdict and report reach

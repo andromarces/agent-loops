@@ -8,7 +8,9 @@ Partially supersedes [ADR 0070: Replace the model of a role that has completed n
 
 Partially supersedes [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md). It replaces decision 2's rule that exactly one entry exists per charged step, decision 5's `maxSteps` bound, and the consequence that the history is bounded by `maxSteps`.
 
-Every other decision and consequence of ADR 0070 and ADR 0008 remains in force.
+Partially supersedes [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md). It replaces decision 5's one-entry-per-charged-step rule and the consequence that the ADR 0008 point 5 bound still holds.
+
+Every other decision and consequence of ADR 0070, ADR 0008, and ADR 0014 remains in force.
 
 ## Date
 
@@ -26,7 +28,7 @@ A check against `~/.codex/models_cache.json` was dropped (PR #1568, closed unmer
 
 1. **Recognize the refusal in the Codex adapter.** When the last `error` or `turn.failed` event of a failed turn carries `The '<model>' model is not supported`, and the turn did not time out, get canceled, or end on a signal, the adapter sets `refusedModel` to that model id on the error. The match is narrow: a message that only quotes the text in another event, or another cause, marks nothing.
 2. **Name the refusal and the model in the envelope.** The `role dispatch` error envelope carries `"refusedModel": "<model>"` beside `error`, which still carries the provider text. The parent can run `role set-model` without reading the error text.
-3. **Refund the first turn of the role.** A dispatch that ends the first turn of a role on a recognized model refusal decrements `stepsUsed`. The turn still appends its `turns` entry, so the later refusal of a replaced model charges a step as before.
+3. **Refund the first turn of the role.** A dispatch that ends the first turn of a role on a recognized model refusal decrements `stepsUsed`. The turn still appends its `turns` entry, so the later refusal of a replaced model charges a step as before. The refund needs the `turnsComplete` mark that init writes, and a `turns` history with no earlier turn of the role. A state written before the mark existed never refunds, now or after a later write recreates part of the history.
 4. **Charge every other failure.** A first turn that fails for another cause, and a refusal on a later turn, charge a step as before.
 5. **Read no Codex config or model cache at init.** The adapter recognizes the refusal from the turn output. Init reads no provider config, requirements file, managed preference, or model cache.
 
@@ -37,7 +39,7 @@ The headless runtime keeps its step charge: it has no `role set-model` call on i
 - A refused first turn costs no step, so the parent can repair the model and dispatch again inside the same budget.
 - A model refusal on a later turn, and every other first-turn failure, still costs one step.
 - Only Codex is covered, because only its adapter marks `refusedModel`. The other adapters keep their current first-turn charge.
-- The state file keeps one `turns` entry per dispatched turn, so a refunded first turn is still visible to `set-model` and to a later dispatch.
+- The state file keeps one `turns` entry per dispatched turn, so a refunded first turn is still visible to `set-model` and to a later dispatch. A state written before `turnsComplete` existed never refunds a refusal.
 - A provider message that words its refusal another way is not recognized and charges a step, as before.
 
 ## Alternatives
@@ -57,6 +59,7 @@ Andro Marces
 - [PR #1574](https://github.com/andromarces/agent-loops/pull/1574)
 - [ADR 0070: Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
+- [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - Implementation:
   - Recognition: `runCodex` in `src/agents/codex.mjs`
   - Result field: `runChild` in `src/child-turn.mjs`

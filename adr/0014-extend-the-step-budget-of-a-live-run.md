@@ -2,7 +2,14 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md). The superseded parts are:
+
+- Decision 5's rule that `turns` keeps its one-entry-per-charged-step rule. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): a refunded first-turn model refusal records an entry without a charge, so a budget change still is not a turn.
+- The consequence that the ADR 0008 point 5 bound still holds and `turns` never exceeds `maxSteps`. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): the array holds at most `maxSteps` entries plus one refunded first-turn refusal for each role.
+
+Decisions 1 to 4, 6 to 8, the `budgetChanges` shape, the child guard, the live harness check, and every other consequence stay in force.
 
 ## Date
 

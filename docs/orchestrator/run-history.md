@@ -11,7 +11,9 @@ needed: the subcommand records each dispatched turn itself.
   each entry survives every later dispatch that overwrites `lastDispatch` and
   `lastResult`. A first turn that a recognized Codex model refusal ends charges no
   step but still records its entry, so a later refusal charges one (issue #1565,
-  ADR 0084).
+  ADR 0084). A state written before this version has no `turnsComplete` mark, so a
+  refusal on it charges a step even if a later write recreates a history that holds
+  no entry for the role.
 - Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
   ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
   otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
