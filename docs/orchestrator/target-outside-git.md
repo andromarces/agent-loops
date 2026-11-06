@@ -99,8 +99,8 @@ elif git -C "$REPO" cat-file -e "$REVIEWED:$FILE" 2>/dev/null; then
       MODE=$(printf '%04o' $(( 0666 & ~0$UMASK )))
     fi
   else
-    MODE=$(stat -L -c %a -- "$TARGET" 2>/dev/null ||
-      stat -L -f %Lp -- "$TARGET" 2>/dev/null) || {
+    MODE=$(stat -L -c %a "$TARGET" 2>/dev/null ||
+      stat -L -f %Lp "$TARGET" 2>/dev/null) || {
       echo "copy-back failed: the target mode is not readable" >&2
       rm -f -- "$TMP"
       cleanup_dirs
@@ -108,7 +108,7 @@ elif git -C "$REPO" cat-file -e "$REVIEWED:$FILE" 2>/dev/null; then
     }
   fi
   git -C "$REPO" show "$REVIEWED:$FILE" > "$TMP" &&
-    chmod "$MODE" -- "$TMP" &&
+    chmod "$MODE" "$TMP" &&
     mv -f -- "$TMP" "$TARGET" || {
       rm -f -- "$TMP"
       cleanup_dirs

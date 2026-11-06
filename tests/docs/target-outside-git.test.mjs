@@ -38,7 +38,7 @@ test.skipIf(!hasBash)(
   async () => {
     const doc = await readFile(docPath, "utf8");
     const copyBack = bashBlockAfter(doc, 'REPO="<throwaway repository>"');
-    const delivery = bashBlockAfter(doc, 'git -C "<throwaway repository>" rev-parse');
+    const delivery = bashBlockAfter(doc, 'MODE=$(git -C "<throwaway repository>" ls-tree');
 
     const base = await mkdtemp(join(tmpdir(), "target-outside-git-"));
     try {
@@ -161,11 +161,13 @@ ${render(delivery, item)}
 }
 `;
       }
-      if (!isWindows) {
-        const item = cases.find((entry) => entry.label === "modified executable");
-        script += `chmod u-x,go-x -- modified-exec.txt
-(
-${render(delivery, item)}
+      const negative = {
+        file: "modified-exec.txt",
+        target: "modified.txt",
+        original: originalExec,
+      };
+      script += `(
+${render(delivery, negative)}
 )
 delivery_status=$?
 [ "$delivery_status" -eq 1 ] || {
@@ -173,9 +175,9 @@ delivery_status=$?
   exit 1
 }
 `;
-      }
 
-      const run = await execa("bash", ["-c", script], { cwd: base, reject: false, all: true });
+      await writeFile(join(base, "run.sh"), script);
+      const run = await execa("bash", ["run.sh"], { cwd: base, reject: false, all: true });
       expect(run.exitCode, run.all).toBe(0);
 
       for (const item of cases) {
