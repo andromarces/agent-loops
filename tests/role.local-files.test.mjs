@@ -1,5 +1,5 @@
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import {
@@ -58,6 +58,52 @@ const ROLE_READS = new Set([
 function cutRoleReads(command, args, options) {
   if (!ROLE_READS.has(JSON.stringify(args))) return undefined;
   return cleanRepoGit(command, args, options);
+}
+
+// A path as Git prints it: absolute, with `/` separators.
+const gitPath = (path) => resolve(path).replaceAll("\\", "/");
+
+// True when `child` is `parent` or inside it, by the same rule the copy uses.
+function isInsideByText(parent, child) {
+  const rel = relative(parent, child);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * Answers the three work tree location reads for a case that runs against one linked work tree:
+ * `show-toplevel` is the tree that holds `cwd`, `git-common-dir` is `main/.git`, and the list holds
+ * `main` then `linked`. Every other call goes to `cutRoleReads`. Only the path field of each list
+ * record is emitted, because no read in this file uses its HEAD, branch, or lock field.
+ */
+function linkedTreeReads({ main, linked }) {
+  const trees = [resolve(main), resolve(linked)];
+  const common = `${gitPath(main)}/.git`;
+  const list = `worktree ${gitPath(main)}\0\0worktree ${gitPath(linked)}\0\0`;
+  return (command, args, options) => {
+    if (command !== "git") return cutRoleReads(command, args, options);
+    const cwd = resolve(options.cwd);
+    if (!trees.some((tree) => isInsideByText(tree, cwd))) {
+      return cutRoleReads(command, args, options);
+    }
+    // execa strips one final newline unless `stripFinalNewline` is false.
+    const text = (stdout) => ({
+      exitCode: 0,
+      stdout: options?.stripFinalNewline === false ? stdout : stdout.replace(/\r?\n$/, ""),
+      stderr: "",
+    });
+    switch (JSON.stringify(args)) {
+      case '["rev-parse","--show-toplevel"]': {
+        const tree = trees.find((candidate) => isInsideByText(candidate, cwd));
+        return text(`${gitPath(tree)}\n`);
+      }
+      case '["rev-parse","--git-common-dir"]':
+        return text(`${common}\n`);
+      case '["worktree","list","--porcelain","-z"]':
+        return text(list);
+      default:
+        return cutRoleReads(command, args, options);
+    }
+  };
 }
 
 beforeEach(() => {
@@ -340,6 +386,9 @@ test("a source write during a failed replacement task turn is named on the error
 test("a source write during a canceled replacement task turn is named on the cancel envelope", async () => {
   await setup();
   const { main, linked } = await linkedWithEnv();
+  // The case asserts the source-write evidence, not a Git result, so the three work tree location
+  // reads are answered from memory. The copy, tracked-name, and lock reads stay real.
+  gitDouble.answer = linkedTreeReads({ main, linked });
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), basicDeps());
   const reviewer = recordingAdapter([
     ACCEPT,
