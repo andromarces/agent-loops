@@ -247,7 +247,7 @@ Apply these parent rules:
     main work tree's worktree config names only that key. A global change affects every repository
     of the user.
   - The field reports a change observed between the two reads. It does not prove the turn made the
-    change. Another process or another run on the host can cause a reported change.
+    change. Another process or another run on the host can cause a change.
   - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or an identity or signing key needs
     action before the next dispatch. Such a key can change the author or signing of every later
     commit. It can break the main work tree or every later commit at once.
@@ -270,9 +270,10 @@ Apply these parent rules:
   between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
   the run, and leave the main work tree change to the user.
   - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
-    only, at most 20 paths, and never content. A failed or canceled worker turn carries the field
-    too. Report it under `open` in the finish summary. The user or another process can cause the
-    change too. A path that still differs at the end appears in `mainWorkTreeChanged` only.
+    only, at most 20 paths, and never content. A failed or canceled turn carries the field
+    too. Report it under `open` in the finish summary. A path that still differs at the end appears
+    in `mainWorkTreeChanged` only. A read-only access moves no size or modification time, so it
+    names no path.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field then proves nothing.
   - At the turn end the watch closes first, then drains the remaining queue, file classification,

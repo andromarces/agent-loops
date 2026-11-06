@@ -16,7 +16,7 @@ accepted
 
 1. **Turn window.** A worker turn in a linked work tree starts a recursive `fs.watch` of the main work tree before its child call. The watch ends on every outcome: ok, error, cancel, and timeout. The recursive option exists in every Node version that `engines` allows on Windows, macOS, and Linux, so no periodic fallback is used. At the turn end, it closes first and drains the remaining queue, file classification, and settlement under a 1000 ms deadline. A missed deadline reports no field and logs a warning.
 2. **Scope.** A candidate path is a tracked file or an untracked file that Git does not ignore. A directory-only event is dropped. The `.git` directory and ignored paths stay out, so an install elsewhere never floods the field.
-3. **Confirmation.** A candidate is reported when its state, status and content hash, is the same in the pre-turn and post-turn reads. A path that still differs at the end stays in `mainWorkTreeChanged` only.
+3. **Confirmation.** A candidate is reported when its state, status and content hash, is the same in the pre-turn and post-turn reads. A path that still differs at the end stays in `mainWorkTreeChanged` only. A candidate whose size and modification time at the turn end equal the values its first in-window read saw is dropped, because a read-only access moves the access time only (issue #1583). NTFS updates an access time older than one hour on a read, and `fs.watch` reports that update as a `change` event, so a read otherwise looks like a restored edit.
 4. **Report.** The turn envelope carries the paths as `mainWorkTreeChangedInTurn`, redacted and capped at 20. The field carries no content and no hash.
 5. **Failure.** A watch that fails to start, a watch error, or a failed read reports no field and logs a warning. A queue, seen-file, candidate, or read bound that overflows does the same. The pending, seen-file, candidate, and read sets each stop at 500. The docs state that the absent field then proves nothing.
 6. **No actor.** The field reports a change observed inside the window. The user or another process can write the same paths.
@@ -33,6 +33,8 @@ accepted
 - A file created and removed before an in-window read sees it stays unseen, so the absent field proves nothing.
 - An ignored write in a copied local source stays covered by `localSourceChangedInTurn`, not this field.
 - A write of the same bytes can report a path, because the watch sees a filesystem event. The field proves no actor.
+- A read-only access names no path, because its size and modification time equal the first in-window read. A turn that only reads the main work tree then carries no field.
+- A write that restores the size and the modification time by the turn end is indistinguishable from a read, so it stays out.
 - The watch runs one `git check-ignore` call per batch of event paths, so an install elsewhere never reads every path.
 
 ## Alternatives
@@ -50,6 +52,7 @@ Andro Marces
 
 - [Issue #1556](https://github.com/andromarces/agent-loops/issues/1556)
 - [Pull request #1563](https://github.com/andromarces/agent-loops/pull/1563)
+- [Issue #1583](https://github.com/andromarces/agent-loops/issues/1583)
 - [Issue #1551](https://github.com/andromarces/agent-loops/issues/1551)
 - [Issue #1448](https://github.com/andromarces/agent-loops/issues/1448)
 - Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`, `diffMainWorkTreeInTurn` in `src/lib/main-work-tree-change.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`

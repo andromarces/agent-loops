@@ -23,10 +23,11 @@ const FILE_BATCH_SIZE = 32;
 /**
  * Watches the main work tree of a linked run for the turn window. One `Map` holds every pending
  * path, with its merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
- * records a file, and the `.git` directory stays out. `take()` returns the candidates and then
- * stops the watch on every outcome. A failed watch, read, or bound returns `failed: true` and logs
- * a warning, so the caller reports no path. The options lower the bounds and hold the ignore input,
- * for a test.
+ * records a file, and the `.git` directory stays out. A recorded file that ends with the size and
+ * modification time of its first in-window read is a read-only access, and stays out. `take()`
+ * returns the candidates and then stops the watch on every outcome. A failed watch, read, or bound
+ * returns `failed: true` and logs a warning, so the caller reports no path. The options lower the
+ * bounds and hold the ignore input, for a test.
  * @param {string} root absolute main work tree root
  * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
  * @returns {{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null}
@@ -53,6 +54,8 @@ export function startMainWorkTreeWatch(
   const pending = new Map();
   const candidates = new Set();
   const seenFiles = new Set();
+  // Size and modification time that the first in-window read saw for each seen file.
+  const seenStats = new Map();
   const ignoredPrefixes = new Set();
   const reads = new Set();
   const controller = new AbortController();
@@ -166,6 +169,8 @@ export function startMainWorkTreeWatch(
         return;
       }
       seenFiles.add(path);
+      // The first read wins, so a later event cannot hide the size or time the turn found.
+      if (!seenStats.has(path)) seenStats.set(path, { size: entry.size, mtimeMs: entry.mtimeMs });
     } catch (err) {
       if (err?.code !== "ENOENT") fail(err);
     }
@@ -267,10 +272,9 @@ export function startMainWorkTreeWatch(
     if (flushing !== null) await flushing.catch(() => {});
   };
 
-  /** The candidates that an in-window read or the end read sees as a file. */
+  /** The candidates that an in-window read or the end read sees as a changed file. */
   const fileCandidates = () =>
     mapInBatches([...candidates], FILE_BATCH_SIZE, async (path) => {
-      if (seenFiles.has(path)) return path;
       if (stopped) return null;
       if (reads.size >= maxReads) {
         fail(new Error(`more than ${maxReads} reads`));
@@ -286,9 +290,14 @@ export function startMainWorkTreeWatch(
           expire();
           return null;
         }
-        return entry.isFile() || entry.isSymbolicLink() ? path : null;
+        if (!entry.isFile() && !entry.isSymbolicLink()) return null;
+        // A read-only access moves no size and no modification time, so a path that ends in the
+        // state its first in-window read saw was not written by the turn.
+        const first = seenStats.get(path);
+        if (first && first.size === entry.size && first.mtimeMs === entry.mtimeMs) return null;
+        return path;
       } catch (err) {
-        if (err?.code === "ENOENT") return null;
+        if (err?.code === "ENOENT") return seenFiles.has(path) ? path : null;
         throw err;
       }
     });
