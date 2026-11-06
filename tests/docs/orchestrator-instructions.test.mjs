@@ -258,6 +258,10 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /only in part/i, /commit messages/i, /before finish/i),
   (text) => expectRule(text, /closing keyword/i, /closes the issue at merge/i),
   (text) => expectRule(text, /dispatch a worker/i, /remove it/i),
+  // Issue #1560: for PR work that must close an issue, the parent reads the recorded links before
+  // finish. A missing issue gets a worker turn before the final reviewer turn.
+  (text) => expectRule(text, /closingIssuesReferences/, /before finish/i),
+  (text) => expectRule(text, /missing issue/i, /worker turn/i, /final reviewer turn/i),
   // Issue #1162: a task whose change is outside the work tree has an accept that is a reviewer
   // report, a reviewer prompt that names the read-only limits, and a `verified` that says
   // `reviewed` identifies no change.

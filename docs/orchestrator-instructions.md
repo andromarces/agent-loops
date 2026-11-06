@@ -228,6 +228,8 @@ Apply these parent rules:
 - When a PR resolves its issue only in part, read the commit messages of the PR branch before
   finish. A closing keyword in one, such as `Closes #N`, closes the issue at merge, even after the
   PR body says `Refs`. Dispatch a worker to remove it.
+- For PR work that must close an issue, read `closingIssuesReferences` on the PR before finish.
+  A missing issue gets a worker turn before the final reviewer turn.
 - A worker envelope carries `workTree`, the runtime-owned `head` and `clean` state read after
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.

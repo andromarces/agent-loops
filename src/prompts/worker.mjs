@@ -19,6 +19,11 @@ const commitLinkRule =
 
 const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
+// A worker wrote a PR body whose closing keyword sat inside a code span, so GitHub recorded no link.
+// The issue stayed unlinked (issue #1560).
+const closingIssuesRule =
+  "After you set or edit a pull request body that links an issue with a closing keyword, read `gh pr view <pr> --json closingIssuesReferences`. Fix the body until the issue is listed.";
+
 // A worker ran the test suite and committed an unignored Vitest report with `git add -A`
 // (issue #1510).
 const stageOnlyNeededPathsRule =
@@ -56,7 +61,7 @@ const workTreeEditRule =
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
-const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
+const tmpdirRule = tempPathRule("work tree", ", such as `/tmp`");
 
 // A Claude worker moved its suite to a background shell task when it could outlive the foreground
 // bound, then ended the turn with no closing block (issue #1530).
@@ -93,6 +98,8 @@ ${hookOutputRule}
 
 ${prBodyRule}
 
+${closingIssuesRule}
+
 ${commitLinkRule}
 
 ${stageOnlyNeededPathsRule}
@@ -124,6 +131,7 @@ Your role:
 - ${matchingPushNote}
 - ${hookOutputRule}
 - ${prBodyRule}
+- ${closingIssuesRule}
 - ${commitLinkRule}
 - ${stageOnlyNeededPathsRule}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
