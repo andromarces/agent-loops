@@ -53,6 +53,7 @@ Andro Marces
 - [Issue #1556](https://github.com/andromarces/agent-loops/issues/1556)
 - [Pull request #1563](https://github.com/andromarces/agent-loops/pull/1563)
 - [Issue #1583](https://github.com/andromarces/agent-loops/issues/1583)
+- [Pull request #1586](https://github.com/andromarces/agent-loops/pull/1586)
 - [Issue #1551](https://github.com/andromarces/agent-loops/issues/1551)
 - [Issue #1448](https://github.com/andromarces/agent-loops/issues/1448)
 - Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`, `diffMainWorkTreeInTurn` in `src/lib/main-work-tree-change.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`
