@@ -329,6 +329,7 @@ test("ADR 0076, ADR 0081, and ADR 0082 state the supersession and the links", as
   expect(adr81).toContain("[ADR 0082:");
   expect(adr82).toMatch(/## Status\s+accepted/);
   expect(adr82).toContain("[Issue #1569](https://github.com/andromarces/agent-loops/issues/1569)");
+  expect(adr82).toContain("[PR #1570](https://github.com/andromarces/agent-loops/pull/1570)");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
