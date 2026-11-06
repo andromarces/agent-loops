@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve, win32 } from "node:path";
 import { readableErrorText, readProp } from "./error-message.mjs";
 import { normalizeAgent } from "./agent-kinds.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "./gate-refusal.mjs";
@@ -283,18 +283,50 @@ function codexCachedModelSlugs(home) {
 const CODEX_PROVIDER_KEY = /(^|[^A-Za-z0-9_])(model_provider|profile)([^A-Za-z0-9_]|$)/;
 
 /**
- * True when the Codex config is absent, or when this small reader parses the whole file and finds
- * no `model_provider` and no `profile` key. Any provider or profile key can change the provider or
- * the model set, and any line that the reader cannot prove well formed is a parse doubt, so each
- * skips the check and there is no refusal. The reader fails open on purpose.
+ * The file paths of the Codex config layers that Codex loads besides the user config: the system
+ * config and the legacy managed config. On Windows the default legacy managed config is ignored by
+ * Codex, so only the system config remains. The paths follow the loader of
+ * codex-rs config rust-v0.168.0-alpha.3. `AGENT_LOOP_CODEX_CONFIG_LAYERS` overrides the list for a
+ * test or an unusual install; an empty value reads no additional layer.
  */
-function codexConfigAllowsCacheCheck(home) {
-  let text;
-  try {
-    text = readFileSync(join(home, "config.toml"), "utf8");
-  } catch (err) {
-    return err?.code === "ENOENT";
+export function codexSystemConfigPaths({
+  platform = process.platform,
+  programData = process.env.ProgramData,
+} = {}) {
+  const override = process.env.AGENT_LOOP_CODEX_CONFIG_LAYERS;
+  if (override !== undefined) {
+    return override === "" ? [] : override.split(delimiter);
   }
+  if (platform === "win32") {
+    return [win32.join(programData || "C:\\ProgramData", "OpenAI", "Codex", "config.toml")];
+  }
+  return ["/etc/codex/config.toml", "/etc/codex/managed_config.toml"];
+}
+
+/**
+ * True when every Codex config layer in `paths` is absent, or parses fully with no
+ * `model_provider` and no `profile` key. A present layer that cannot be read or parsed, and any
+ * provider or profile key, skips the check. The reader fails open on purpose.
+ */
+export function codexConfigLayersAllowCacheCheck(paths) {
+  for (const path of paths) {
+    let text;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch (err) {
+      if (err?.code === "ENOENT") {
+        continue;
+      }
+      return false;
+    }
+    if (!codexConfigTextAllowsCacheCheck(text)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function codexConfigTextAllowsCacheCheck(text) {
   if (CODEX_PROVIDER_KEY.test(text)) {
     return false;
   }
@@ -328,6 +360,10 @@ function codexConfigAllowsCacheCheck(home) {
     seenKeys.set(table, keys);
   }
   return true;
+}
+
+function codexConfigAllowsCacheCheck(home) {
+  return codexConfigLayersAllowCacheCheck([join(home, "config.toml"), ...codexSystemConfigPaths()]);
 }
 
 // A table header line of the small TOML subset that the config reader proves.

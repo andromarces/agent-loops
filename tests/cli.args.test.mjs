@@ -673,6 +673,7 @@ async function withCodexCache(slugs, body) {
     JSON.stringify({ models: slugs.map((slug) => ({ slug })) }),
   );
   vi.stubEnv("CODEX_HOME", home);
+  vi.stubEnv("AGENT_LOOP_CODEX_CONFIG_LAYERS", "");
   try {
     return await body();
   } finally {

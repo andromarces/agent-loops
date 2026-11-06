@@ -230,9 +230,10 @@ Options:
   model is rejected. A fresh init reads the Codex model cache: a Codex model
   that the cache does not list is refused only when it is a strict prefix of a
   cached slug followed by "-", and the refusal names the matching slugs. The
-  read is skipped when the Codex config holds any model_provider or profile
-  key, when that config does not fully parse, or when either file is unreadable,
-  and on --continue-from. role set-model does not read the cache.
+  read is skipped when any Codex config layer (user, system, or managed) holds
+  any model_provider or profile key, when a present layer does not fully parse,
+  or when a present layer or the cache is unreadable, and on --continue-from.
+  role set-model does not read the cache.
 
   --cwd <directory>             Working directory for the agents. Must be inside a Git work tree. Defaults to current directory.
   --task <text>                 Task description. Required, unless --task-file is given.

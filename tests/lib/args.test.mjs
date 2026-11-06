@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 
 // Value that the mocked `readFile` throws while `active`; otherwise it reads the real file.
@@ -17,12 +20,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import {
+  codexConfigLayersAllowCacheCheck,
+  codexSystemConfigPaths,
   initRefusal,
   readStdinText,
   readTaskFile,
   STOP_FLAG_WALK,
   walkFlags,
 } from "../../src/lib/args.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 // Usefulness: acceptance (#490) — a read failure that is `null`, `undefined`, or has a throwing
 // `message` getter still ends in the documented read error, so the catch block adds no second error.
@@ -69,6 +75,80 @@ test("readStdinText refuses a terminal with the message of the caller", async ()
       delete process.stdin.isTTY;
     }
   }
+});
+
+// Runs `fn` over fixture config layers in a temporary directory that the case removes.
+async function withLayerFiles(contents, fn) {
+  const dir = await mkdtemp(join(tmpdir(), "codex-layers-"));
+  try {
+    const paths = [];
+    for (const [name, content] of contents) {
+      const path = join(dir, name);
+      await writeFile(path, content);
+      paths.push(path);
+    }
+    return await fn(paths, dir);
+  } finally {
+    await removePath(dir);
+  }
+}
+
+// Usefulness: acceptance (#1565) as narrowed — any Codex config layer that sets a provider or
+// profile key skips the cache check, so the merged provider selection is not judged by the user
+// cache.
+test.each([
+  ["a system provider", 'model_provider = "custom"\n'],
+  ["a system profile selector", 'profile = "local"\n'],
+  ["a profile table provider", '[profiles.local]\nmodel_provider = "custom"\n'],
+  ["an unparseable layer", "model = [\n"],
+  ["a duplicate key", 'model = "gpt-5"\nmodel = "gpt-6.1-sol"\n'],
+])("a Codex layer with %s skips the cache check", async (_name, content) => {
+  await withLayerFiles(
+    [
+      ["user.toml", 'model = "gpt-5"\n'],
+      ["system.toml", content],
+    ],
+    (paths) => {
+      expect(codexConfigLayersAllowCacheCheck(paths)).toBe(false);
+    },
+  );
+});
+
+// Usefulness: acceptance (#1565) as narrowed — an absent layer counts as no setting, so it does
+// not skip the check.
+test("an absent Codex layer counts as no setting", async () => {
+  await withLayerFiles([["user.toml", 'model = "gpt-5"\n']], (paths, dir) => {
+    expect(codexConfigLayersAllowCacheCheck([...paths, join(dir, "absent.toml")])).toBe(true);
+  });
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a present layer that cannot be read skips the
+// check, so an unreadable managed file never refuses a model.
+test("a present unreadable Codex layer skips the cache check", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codex-layers-"));
+  try {
+    const unreadable = join(dir, "config.toml");
+    await mkdir(unreadable);
+    expect(codexConfigLayersAllowCacheCheck([unreadable])).toBe(false);
+  } finally {
+    await removePath(dir);
+  }
+});
+
+// Usefulness: acceptance (#1565) as narrowed — the layer paths follow the Codex loader for each
+// OS, so the check reads the system config and the file-based managed config.
+test("the Codex layer paths follow the loader for each OS", () => {
+  expect(codexSystemConfigPaths({ platform: "win32", programData: "C:\\PD" })).toEqual([
+    "C:\\PD\\OpenAI\\Codex\\config.toml",
+  ]);
+  expect(codexSystemConfigPaths({ platform: "darwin" })).toEqual([
+    "/etc/codex/config.toml",
+    "/etc/codex/managed_config.toml",
+  ]);
+  expect(codexSystemConfigPaths({ platform: "linux" })).toEqual([
+    "/etc/codex/config.toml",
+    "/etc/codex/managed_config.toml",
+  ]);
 });
 
 const validInit = {

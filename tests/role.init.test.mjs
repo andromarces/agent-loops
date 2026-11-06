@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the cases that open their repo with `newCleanRunRepo`: they assert
 // init state, never a Git result. The reviewer mutation case uses a real repo. Every other command
@@ -47,6 +47,11 @@ const test = createBarrierTest();
 const newRunRepo = () => newCleanRunRepo(gitDouble);
 
 const cacheDirs = [];
+
+// No case reads the real system or managed Codex config layers.
+beforeEach(() => {
+  vi.stubEnv("AGENT_LOOP_CODEX_CONFIG_LAYERS", "");
+});
 
 afterEach(async () => {
   gitDouble.answer = null;
@@ -317,6 +322,22 @@ test("init proceeds when the Codex config names another model provider", async (
     "CODEX_HOME",
     await codexCache([{ slug: "gpt-6.1-sol" }], 'model_provider = "custom"\n'),
   );
+
+  const result = await initWithModel(repo, "gpt-6.1");
+
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer.model).toBe("gpt-6.1");
+});
+
+// Usefulness: acceptance (#1565) as narrowed — a system config layer that names another provider
+// skips the user cache check, so a model that the user cache does not list still runs.
+test("init proceeds when a Codex system layer names another provider", async () => {
+  const repo = await newRunRepo();
+  vi.stubEnv("CODEX_HOME", await codexCache([{ slug: "gpt-6.1-sol" }]));
+  const systemHome = await trackedTempDir("codex-system-", cacheDirs);
+  const systemConfig = join(systemHome, "config.toml");
+  await writeFile(systemConfig, 'model_provider = "custom"\n');
+  vi.stubEnv("AGENT_LOOP_CODEX_CONFIG_LAYERS", systemConfig);
 
   const result = await initWithModel(repo, "gpt-6.1");
 
