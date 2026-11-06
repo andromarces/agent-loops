@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { SPAWNED_RUN_ENV } from "../src/lib/exec.mjs";
@@ -207,6 +208,29 @@ test("a refresh refuses a copy that changed after init", async () => {
   expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=TURN-EDIT\n");
 });
 
+/**
+ * Reports whether this host allows a file symlink, probing once per test file. Windows without
+ * Developer Mode or the symlink privilege refuses with EPERM, and only that refusal counts as a
+ * missing capability; any other failure throws so a real break is not hidden.
+ */
+let fileSymlinkAllowed;
+async function canCreateFileSymlink() {
+  if (fileSymlinkAllowed === undefined) {
+    const dir = await mkdtemp(join(tmpdir(), "refresh-local-symlink-"));
+    try {
+      await writeFile(join(dir, "target"), "");
+      await symlink(join(dir, "target"), join(dir, "link"), "file");
+      fileSymlinkAllowed = true;
+    } catch (err) {
+      if (process.platform !== "win32" || err?.code !== "EPERM") throw err;
+      fileSymlinkAllowed = false;
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+  return fileSymlinkAllowed;
+}
+
 // Usefulness: verifies a link at the source file, the copy file, and a parent component.
 // Each is refused without reading or writing through it.
 // Not redundant: each level and side has its own guard in the copy path.
@@ -221,21 +245,27 @@ test("a refresh refuses a link at either file or at a parent component", async (
   const dirLink = process.platform === "win32" ? "junction" : "dir";
   const before = await readRepoState(linked);
 
-  await rename(join(main, ".env"), join(main, ".env-real"));
-  await symlink(join(outside, "settings.json"), join(main, ".env"));
-  expect((await refresh(linked, ".env")).payload.error).toContain(
-    "source is missing or unreadable",
-  );
-  expect(await readFile(join(linked, ".env"), "utf8")).toBe(CONTENT);
-  await rm(join(main, ".env"));
-  await rename(join(main, ".env-real"), join(main, ".env"));
+  // Windows without the symlink privilege refuses a file symlink, so only the junction
+  // assertions run there; the file assertions keep running wherever a symlink is allowed.
+  if (await canCreateFileSymlink()) {
+    await rename(join(main, ".env"), join(main, ".env-real"));
+    await symlink(join(outside, "settings.json"), join(main, ".env"));
+    expect((await refresh(linked, ".env")).payload.error).toContain(
+      "source is missing or unreadable",
+    );
+    expect(await readFile(join(linked, ".env"), "utf8")).toBe(CONTENT);
+    await rm(join(main, ".env"));
+    await rename(join(main, ".env-real"), join(main, ".env"));
 
-  await rename(join(linked, ".env"), join(linked, ".env-real"));
-  await symlink(join(outside, "settings.json"), join(linked, ".env"));
-  expect((await refresh(linked, ".env")).payload.error).toContain("copy is missing or unreadable");
-  expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("OUTSIDE\n");
-  await rm(join(linked, ".env"));
-  await rename(join(linked, ".env-real"), join(linked, ".env"));
+    await rename(join(linked, ".env"), join(linked, ".env-real"));
+    await symlink(join(outside, "settings.json"), join(linked, ".env"));
+    expect((await refresh(linked, ".env")).payload.error).toContain(
+      "copy is missing or unreadable",
+    );
+    expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("OUTSIDE\n");
+    await rm(join(linked, ".env"));
+    await rename(join(linked, ".env-real"), join(linked, ".env"));
+  }
 
   await rename(join(main, ".vscode"), join(main, ".vscode-real"));
   await symlink(outside, join(main, ".vscode"), dirLink);
