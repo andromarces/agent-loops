@@ -1685,7 +1685,7 @@ test("a sentence that the headless prompt shares with the instructions is in the
 });
 
 // Usefulness: verifies the reviewer-sandbox reference keeps the write prohibition of the rendered
-// reviewer prompt, so a reader never learns that a literal `/tmp` path is allowed.
+// reviewer prompt, so a reader never learns a literal `/tmp` path is allowed.
 test("the reviewer-sandbox reference bars a literal system temporary path", async () => {
   const text = await readFile(join(referenceSectionsDir, "reviewer-sandbox.md"), "utf8");
   expectRule(
