@@ -43,6 +43,7 @@ Andro Marces
 ## Links
 
 - [Issue #1575](https://github.com/andromarces/agent-loops/issues/1575)
+- [PR #1580](https://github.com/andromarces/agent-loops/pull/1580)
 - [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md)
 - [ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md)
 - Implementation:

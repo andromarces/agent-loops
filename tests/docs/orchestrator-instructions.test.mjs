@@ -342,6 +342,7 @@ test("ADR 0076, ADR 0081, ADR 0082, and ADR 0085 state the supersession and the 
   expect(adr82).toContain("[ADR 0085:");
   expect(adr85).toMatch(/## Status\s+accepted/);
   expect(adr85).toContain("[Issue #1575](https://github.com/andromarces/agent-loops/issues/1575)");
+  expect(adr85).toContain("[PR #1580](https://github.com/andromarces/agent-loops/pull/1580)");
   expect(adr85).toContain("[ADR 0081:");
 });
 
