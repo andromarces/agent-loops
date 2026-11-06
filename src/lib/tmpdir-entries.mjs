@@ -22,6 +22,11 @@ const REDACTED_NAME = /\[redacted:|\[\*\]/;
 // moment later. The second read after this window keeps only the entries that still exist (issue
 // #1542).
 const SETTLE_MS = 250;
+// A reported name can vanish minutes after the last reviewer turn. The re-check polls for this
+// long and returns as soon as every checkable name is gone (issue #1569).
+export const TMPDIR_SETTLE_BOUND_MS = 180_000;
+// The fixed pause between two polls of the re-check. Tests inject another value (issue #1569).
+export const TMPDIR_SETTLE_INTERVAL_MS = 2_000;
 
 // Reads `os.tmpdir()` of this process, which is the inherited temporary directory of a turn. The
 // `AGENT_LOOP_INHERITED_TMPDIR` list is read in `inherited-tmpdir.mjs`.
@@ -91,24 +96,37 @@ const carrier = entryCarrier("inheritedTmpdirEntries");
 
 /**
  * Re-reads the inherited temporary directory and returns the recorded names that it still holds,
- * in the recorded order. A name that the read cannot check stays listed. That covers a redacted
- * name, one with a separator or `..`, and every name after a failed or over-bound read. The read
- * lists names only, deletes nothing, and follows no link. It returns [] when no name was recorded.
+ * in the recorded order. Without `settle` it reads once. With `settle` it polls until every
+ * checkable name is gone, or until the bound. A name that the read cannot check stays listed. That
+ * covers a redacted name, one with a separator or `..`, and every name after a failed or over-bound
+ * read. A first failed read keeps every name and ends the wait, because no later read can prove a
+ * name gone. A later failed poll keeps every name that the last successful read still held. The
+ * read lists names only, deletes nothing, and follows no link. It returns [] when no name was
+ * recorded, with no wait.
  * @param {Iterable<string>} names the names that the reviewer turns reported
- * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] an injected read and
- *   bound, for a test
+ * @param {{ read?: () => Promise<string[]>, boundMs?: number, settle?: object | null }} [options]
+ *   an injected read and read bound, and `settle` with `boundMs`, `intervalMs`, `now`, `sleep`,
+ *   and `signal`, for a test. Production passes the default settle.
  * @returns {Promise<string[]>}
  */
 export async function presentInheritedTmpdir(
   names,
-  { read = readInheritedTmpdirNames, boundMs = RE_READ_BOUND_MS } = {},
+  { read = readInheritedTmpdirNames, boundMs = RE_READ_BOUND_MS, settle = null } = {},
 ) {
   const recorded = [...new Set(names)].filter((name) => typeof name === "string" && name !== "");
   if (recorded.length === 0) return [];
-  let entries;
+  if (settle === null) {
+    const entries = await readNames(read, boundMs);
+    return entries === null ? recorded : heldNames(recorded, entries);
+  }
+  return settledNames(recorded, { read, readBoundMs: boundMs, ...settle });
+}
+
+// The names that the read still holds. A failed read is null.
+async function readNames(read, boundMs, { warn = true } = {}) {
   try {
-    entries = await withTimeBound(
-      boundMs,
+    const entries = await withTimeBound(
+      Math.max(1, boundMs),
       `inherited temporary directory re-read took over ${boundMs} ms`,
       ({ stopped }) => {
         // The read cannot be canceled, so the wait ends at the bound too.
@@ -117,26 +135,98 @@ export async function presentInheritedTmpdir(
         return Promise.race([pending, stopped]);
       },
     );
+    return Array.isArray(entries) ? entries : null;
   } catch (err) {
-    logWarn(`inherited temporary directory not re-read: ${firstErrorLine(readableErrorText(err))}`);
-    return recorded;
+    if (warn) {
+      logWarn(
+        `inherited temporary directory not re-read: ${firstErrorLine(readableErrorText(err))}`,
+      );
+    }
+    return null;
   }
-  if (!Array.isArray(entries)) return recorded;
-  const present = new Set(entries);
-  return recorded.filter((name) => stillHeld(name, present));
 }
+
+async function settledNames(
+  recorded,
+  {
+    read,
+    readBoundMs,
+    boundMs = TMPDIR_SETTLE_BOUND_MS,
+    intervalMs = TMPDIR_SETTLE_INTERVAL_MS,
+    now = () => performance.now(),
+    sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
+    signal,
+  },
+) {
+  const deadline = now() + boundMs;
+  let remaining = recorded;
+  let first = true;
+  let warnedFailure = false;
+  while (true) {
+    throwIfCanceled(signal);
+    const left = deadline - now();
+    if (!first && left <= 0) return remaining;
+    const entries = await readNames(
+      read,
+      first ? Math.min(readBoundMs, boundMs) : Math.min(readBoundMs, left),
+      { warn: !warnedFailure },
+    );
+    throwIfCanceled(signal);
+    const firstFailed = first && entries === null;
+    first = false;
+    if (entries !== null) {
+      remaining = heldNames(remaining, entries);
+    } else {
+      // A failed read warns once, so a run of failures never floods the log.
+      warnedFailure = true;
+    }
+    // A first failed read cannot check any name, and no later read can prove one gone.
+    if (firstFailed) return remaining;
+    // An uncheckable name stays listed, but it never changes, so it adds no wait.
+    if (!remaining.some(isCheckableName)) return remaining;
+    const pause = deadline - now();
+    if (pause <= 0) return remaining;
+    try {
+      await sleep(Math.min(intervalMs, pause), signal);
+    } catch (err) {
+      // The sleep rejects on an abort. Report it as the cancel that the role CLI uses (issue #1569).
+      if (signal?.aborted) throw canceledError();
+      throw err;
+    }
+  }
+}
+
+const heldNames = (names, entries) => {
+  const present = new Set(entries);
+  return names.filter((name) => stillHeld(name, present));
+};
+
+function throwIfCanceled(signal) {
+  if (signal?.aborted) throw canceledError();
+}
+
+const canceledError = () => Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
 
 async function readInheritedTmpdirNames() {
   return readdir(tmpdir());
 }
 
-// Whether a further read still holds `name`. A name that cannot be checked stays present, because
-// a lost name can hide a leftover.
+// Whether an entry still holds `name`. A name that cannot be checked stays present, because a lost
+// name can hide a leftover.
 function stillHeld(name, present) {
-  const bare = name.startsWith(REGISTERED_PREFIX) ? name.slice(REGISTERED_PREFIX.length) : name;
-  if (bare === "" || bare === "." || bare === "..") return true;
-  if (UNSAFE_NAME.test(bare) || REDACTED_NAME.test(bare)) return true;
-  return present.has(bare);
+  if (!isCheckableName(name)) return true;
+  return present.has(bareName(name));
+}
+
+// Whether the read can establish that `name` is gone. A registered mark is not part of the entry.
+function isCheckableName(name) {
+  const bare = bareName(name);
+  if (bare === "" || bare === "." || bare === "..") return false;
+  return !UNSAFE_NAME.test(bare) && !REDACTED_NAME.test(bare);
+}
+
+function bareName(name) {
+  return name.startsWith(REGISTERED_PREFIX) ? name.slice(REGISTERED_PREFIX.length) : name;
 }
 
 /**

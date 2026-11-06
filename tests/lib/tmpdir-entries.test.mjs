@@ -193,6 +193,162 @@ test("keeps every recorded name when the later read fails or passes its bound", 
   ).toEqual(recorded);
 });
 
+// Usefulness: verifies acceptance. A name removed during the wait returns before the bound, so a
+// transient GUID `.tmp` file stays out of the finish summary (issue #1569).
+test("returns before the bound once every recorded name is gone", async () => {
+  let reads = 0;
+  let clock = 0;
+  const result = await presentInheritedTmpdir(["gone.tmp"], {
+    read: async () => {
+      reads += 1;
+      return reads === 1 ? ["gone.tmp"] : [];
+    },
+    settle: {
+      boundMs: 60_000,
+      intervalMs: 5_000,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  });
+  expect(result).toEqual([]);
+  expect(reads).toBe(2);
+  expect(clock).toBeLessThan(60_000);
+});
+
+// Usefulness: verifies acceptance. A name that stays until the bound is reported, and the poll
+// interval and bound decide the wait (issue #1569).
+test("reports a name that stays until the bound", async () => {
+  let clock = 0;
+  let reads = 0;
+  const result = await presentInheritedTmpdir(["stays.tmp"], {
+    read: async () => {
+      reads += 1;
+      return ["stays.tmp"];
+    },
+    settle: {
+      boundMs: 30_000,
+      intervalMs: 10_000,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  });
+  expect(result).toEqual(["stays.tmp"]);
+  expect(clock).toBe(30_000);
+  expect(reads).toBe(3);
+});
+
+// Usefulness: verifies requirement "a later poll whose read fails keeps every name still listed"
+// (issue #1569). A lost name can hide a leftover.
+test("keeps every name still listed when a later poll fails", async () => {
+  let clock = 0;
+  let reads = 0;
+  const result = await presentInheritedTmpdir(["a.tmp", "b.tmp"], {
+    read: async () => {
+      reads += 1;
+      if (reads === 1) return ["a.tmp"];
+      throw new Error("EACCES");
+    },
+    settle: {
+      boundMs: 20,
+      intervalMs: 10,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    },
+  });
+  expect(result).toEqual(["a.tmp"]);
+  expect(reads).toBeGreaterThan(1);
+});
+
+// Usefulness: verifies an empty list returns at once, so a run with no reviewer name pays no wait
+// (issue #1569).
+test("returns at once for an empty name list", async () => {
+  let read = false;
+  let slept = false;
+  expect(
+    await presentInheritedTmpdir([], {
+      read: async () => {
+        read = true;
+        return [];
+      },
+      settle: {
+        sleep: async () => {
+          slept = true;
+        },
+      },
+    }),
+  ).toEqual([]);
+  expect(read).toBe(false);
+  expect(slept).toBe(false);
+});
+
+// Usefulness: verifies a missing inherited directory keeps every name without a wait, because no
+// later read can prove a name gone (issue #1569).
+test("keeps every name when the inherited directory is missing", async () => {
+  let slept = false;
+  const result = await presentInheritedTmpdir(["a.tmp", "b.tmp"], {
+    read: async () => {
+      const err = new Error("ENOENT");
+      err.code = "ENOENT";
+      throw err;
+    },
+    settle: {
+      sleep: async () => {
+        slept = true;
+      },
+    },
+  });
+  expect(result).toEqual(["a.tmp", "b.tmp"]);
+  expect(slept).toBe(false);
+});
+
+// Usefulness: verifies a cancel during the wait ends at once with the cancel error, so Ctrl+C
+// exits 130 and deletes nothing (issue #1569).
+test("a cancel during the wait ends the command", async () => {
+  let clock = 0;
+  const controller = new AbortController();
+  await expect(
+    presentInheritedTmpdir(["a.tmp"], {
+      read: async () => ["a.tmp"],
+      settle: {
+        boundMs: 60_000,
+        intervalMs: 10_000,
+        now: () => clock,
+        signal: controller.signal,
+        sleep: async (ms) => {
+          clock += ms;
+          controller.abort();
+          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+        },
+      },
+    }),
+  ).rejects.toMatchObject({ isCanceled: true });
+  expect(clock).toBeLessThan(60_000);
+});
+
+// Usefulness: verifies a name that the read cannot check stays listed and adds no wait, so a
+// redacted or unsafe name never holds the command for the whole bound (issue #1569).
+test("a name that cannot be checked adds no wait", async () => {
+  let slept = false;
+  const names = ["../outside.txt", "C:\\temp\\x"];
+  expect(
+    await presentInheritedTmpdir(names, {
+      read: async () => [],
+      settle: {
+        sleep: async () => {
+          slept = true;
+        },
+      },
+    }),
+  ).toEqual(names);
+  expect(slept).toBe(false);
+});
+
 // Usefulness: verifies that the read never resolves a recorded name outside the inherited
 // directory. A name with a separator or `..` stays listed, and no path is joined (issue #1559).
 test("keeps a name that holds a separator or .. without resolving it", async () => {

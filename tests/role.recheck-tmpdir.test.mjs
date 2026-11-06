@@ -27,8 +27,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const recheck = (repo, extra = ["--parent-session", "parent-sess-1"]) =>
-  executeRoleCommand(withRepo(["recheck-tmpdir", "--cwd", "<repo>", ...extra], repo));
+const recheck = (repo, extra = ["--parent-session", "parent-sess-1"], deps = {}) =>
+  executeRoleCommand(withRepo(["recheck-tmpdir", "--cwd", "<repo>", ...extra], repo), {
+    tmpdirSettle: { boundMs: 20, intervalMs: 10 },
+    ...deps,
+  });
 
 /** A reviewer reply that writes `names` into the inherited temporary directory `dir`. */
 const leaving = (dir, names) => async () => {
@@ -74,6 +77,175 @@ test("recheck-tmpdir drops a name gone at the later read and keeps one that stay
     });
     expect(await readRepoState(repo)).toEqual(before);
   });
+});
+
+// Usefulness: verifies acceptance. A name removed during the wait returns before the bound, so a
+// GUID `.tmp` file that another process removes stays out of the finish summary (issue #1569).
+test("recheck-tmpdir returns before the bound once a name removed during the wait is gone", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+    let clock = 0;
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      tmpdirSettle: {
+        boundMs: 60_000,
+        intervalMs: 5_000,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+          await rm(join(dir, name));
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.payload.inheritedTmpdirEntries).toEqual([]);
+    expect(clock).toBeLessThan(60_000);
+  });
+});
+
+// Usefulness: verifies a name that stays until the bound is reported (issue #1569).
+test("recheck-tmpdir reports a name that stays until the bound", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = ["stays.txt"];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, "stays.txt"), "");
+    let clock = 0;
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      tmpdirSettle: {
+        boundMs: 30,
+        intervalMs: 10,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      },
+    });
+
+    expect(result.payload.inheritedTmpdirEntries).toEqual(["stays.txt"]);
+    expect(clock).toBe(30);
+  });
+});
+
+// Usefulness: verifies requirement "a later poll whose read fails keeps every name still listed"
+// (issue #1569). A lost name can hide a leftover.
+test("recheck-tmpdir keeps every name when a later poll fails", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = ["a.tmp", "b.tmp"];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, "a.tmp"), "");
+    let clock = 0;
+    let reads = 0;
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      read: async () => {
+        reads += 1;
+        if (reads === 1) return ["a.tmp"];
+        throw new Error("EACCES");
+      },
+      tmpdirSettle: {
+        boundMs: 20,
+        intervalMs: 10,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      },
+    });
+
+    expect(result.payload.inheritedTmpdirEntries).toEqual(["a.tmp"]);
+    expect(reads).toBeGreaterThan(1);
+  });
+});
+
+// Usefulness: verifies a missing inherited directory keeps every name and pays no wait (issue
+// #1569).
+test("recheck-tmpdir keeps every name when the inherited directory is missing", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = ["a.tmp", "gone.tmp"];
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+  let slept = false;
+  for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, join(repo, "missing-tmpdir"));
+
+  const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+    tmpdirSettle: {
+      sleep: async () => {
+        slept = true;
+      },
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.inheritedTmpdirEntries).toEqual(["a.tmp", "gone.tmp"]);
+  expect(slept).toBe(false);
+});
+
+// Usefulness: verifies a cancel during the wait ends with the SIGINT envelope and deletes nothing
+// (issue #1569).
+test("recheck-tmpdir ends a canceled wait without deleting a name", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  await withInheritedDir(async (dir) => {
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = ["stays.txt"];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, "stays.txt"), "");
+    const controller = new AbortController();
+    let clock = 0;
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      signal: controller.signal,
+      tmpdirSettle: {
+        boundMs: 60_000,
+        intervalMs: 5_000,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+          controller.abort();
+          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.error).toBe("Interrupted by SIGINT");
+    expect(existsSync(join(dir, "stays.txt"))).toBe(true);
+    expect(clock).toBeLessThan(60_000);
+  });
+});
+
+// Usefulness: verifies acceptance. An empty name list returns at once with no wait (issue #1569).
+test("recheck-tmpdir waits for no name when the run recorded none", async () => {
+  const repo = await newRunRepo();
+  await initWorkerRun(repo);
+  let slept = false;
+
+  const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+    tmpdirSettle: {
+      sleep: async () => {
+        slept = true;
+      },
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.inheritedTmpdirEntries).toEqual([]);
+  expect(slept).toBe(false);
 });
 
 // Usefulness: verifies requirement "several reviewer turns that report overlapping names are

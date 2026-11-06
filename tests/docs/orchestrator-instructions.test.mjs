@@ -304,9 +304,9 @@ test("the child guard and parent-session docs name recheck-tmpdir", async () => 
   expect(recheckBullet).not.toContain("needs no init");
 });
 
-// Usefulness: verifies ADR 0076 records its partial supersession and ADR 0081 links PR #1564
-// (issue #1559).
-test("ADR 0076 and ADR 0081 state the supersession and the PR link", async () => {
+// Usefulness: verifies ADR 0076 records its partial supersession, ADR 0081 links PR #1564, and
+// ADR 0082 supersedes the single read of ADR 0081 (issues #1559 and #1569).
+test("ADR 0076, ADR 0081, and ADR 0082 state the supersession and the links", async () => {
   const adr76 = await readFile(
     join(
       repoRoot,
@@ -318,10 +318,17 @@ test("ADR 0076 and ADR 0081 state the supersession and the PR link", async () =>
     join(repoRoot, "adr/0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md"),
     "utf8",
   );
+  const adr82 = await readFile(
+    join(repoRoot, "adr/0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md"),
+    "utf8",
+  );
   expect(adr76).toMatch(/## Status\s+partially-superseded/);
   expect(adr76).toMatch(/Superseded by \[ADR 0081\]/);
-  expect(adr81).toMatch(/## Status\s+accepted/);
+  expect(adr81).toMatch(/## Status\s+partially-superseded/);
   expect(adr81).toContain("[PR #1564](https://github.com/andromarces/agent-loops/pull/1564)");
+  expect(adr81).toContain("[ADR 0082:");
+  expect(adr82).toMatch(/## Status\s+accepted/);
+  expect(adr82).toContain("[Issue #1569](https://github.com/andromarces/agent-loops/issues/1569)");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

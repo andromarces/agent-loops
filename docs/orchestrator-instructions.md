@@ -335,7 +335,7 @@ Apply these parent rules:
   - The parent re-checks the names that the reviewer turns reported before the finish summary. It
     reports under `open` only a name that the re-read still holds. Run
     `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
-    returns only the names that still exist.
+    returns only the names that remain after a wait of up to 3 minutes.
   - A failed or over-bound read keeps every name. So does a name that the read cannot check. The
     re-read deletes nothing. A headless run carries the same names in `inheritedTmpdirPresent` in
     the result prompt.

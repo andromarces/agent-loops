@@ -88,6 +88,9 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * reviewer that is not Codex has no mode. The reviewer and orchestrator prompts
  * state it, and worker turns get none. The mutation check wraps every reviewer
  * turn (ADR 0019, ADR 0038).
+ * `tmpdirSettle`: the `boundMs` and `intervalMs` of the inherited temporary directory
+ * re-check after a reviewer turn, or null for the defaults. A test injects a short wait
+ * (issue #1569).
  * `onSessionAssigned(roleName, id)`: awaited for any role whose adapter pre-assigns
  * a session id (the Claude adapter), before its CLI starts, and with `null` when
  * the CLI rejected the id. It does not change the role state. The caller records
@@ -119,6 +122,7 @@ export async function runLoop(options) {
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
+    tmpdirSettle = null,
     onEvent = () => {},
   } = options;
 
@@ -382,8 +386,12 @@ export async function runLoop(options) {
       for (const name of result.inheritedTmpdirEntries) reportedTmpdirNames.add(name);
     }
     if (reportedTmpdirNames.size > 0) {
+      // The headless finish follows the same rule as the interactive parent, so a reviewer turn
+      // waits for a transient name to vanish before the result prompt (issue #1569). A worker
+      // turn refreshes the list with one read.
+      const settle = roleName === "reviewer" ? { ...tmpdirSettle, signal } : null;
       inheritedTmpdirPresent = reportedEntryNames(
-        await presentInheritedTmpdir([...reportedTmpdirNames]),
+        await presentInheritedTmpdir([...reportedTmpdirNames], settle === null ? {} : { settle }),
       );
     }
 
