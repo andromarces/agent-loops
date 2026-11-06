@@ -8,6 +8,7 @@ import {
 import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";
+import { presentInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
 
 /**
  * Reads one PR gate for a finish. A `gh` failure is a refusal, not a thrown error: the read throws
@@ -77,6 +78,7 @@ export async function evaluateFinish({
   signal,
   onEvent,
   stopLoop,
+  inheritedTmpdirNames = [],
 }) {
   // Every applicable gate is evaluated, and every refusal is reported in one
   // prompt, because the run grants a single corrective turn and a second
@@ -207,6 +209,17 @@ export async function evaluateFinish({
       refusals.push(compare);
     }
   }
+  // A finish summary that still lists an inherited temporary directory name which the later read
+  // no longer holds is refused. The marker rule covers the same shape: editing the summary
+  // satisfies the refusal, so no child turn is needed (issue #1559).
+  const goneNames = await goneInheritedTmpdirNames(inheritedTmpdirNames, action.summary.open);
+  if (goneNames.length > 0) {
+    refusals.push({
+      reason: `the inherited temporary directory no longer holds ${goneNames.join(", ")}, which open still lists`,
+      recovery:
+        "Remove each of those names from open, then finish again. The re-read no longer holds them, so they need no open item, and this refusal needs no child turn.",
+    });
+  }
   if (refusals.length === 0) {
     if (compareHead !== null) {
       onEvent({ type: "head-compare", pr: compareHead, stepsUsed });
@@ -268,6 +281,24 @@ export async function evaluateFinish({
       `Finish refused: ${reason}. ${refusals.map((entry) => entry.recovery).join(" ")}${ending}`,
     ),
   };
+}
+
+/**
+ * The recorded names that `open` still lists as a token and that the later read no longer holds. A
+ * name that the read cannot check stays present, so a failed or over-bound read returns none.
+ * @param {string[]} names
+ * @param {string} open
+ * @returns {Promise<string[]>}
+ */
+async function goneInheritedTmpdirNames(names, open) {
+  if (!Array.isArray(names) || names.length === 0) return [];
+  const present = new Set(await presentInheritedTmpdir(names));
+  const gone = names.filter((name) => !present.has(name));
+  if (gone.length === 0) return [];
+  const tokens = open.split(/[\s,;:"'`()[\]{}]+/).filter(Boolean);
+  return gone.filter((name) =>
+    tokens.some((token) => token === name || token.endsWith(`/${name}`)),
+  );
 }
 
 /**

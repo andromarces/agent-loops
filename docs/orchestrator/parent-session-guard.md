@@ -15,6 +15,7 @@ each subcommand treats `--parent-session` as follows:
   A value equal to the stored id is accepted. `dispatch` also refuses a malformed
   id.
 - `wait-checks`: reads no run state and ignores the flag.
+- `recheck-tmpdir`: reads the run state and ignores the flag. A child role is refused.
 
 A run that a new session resumes is therefore unguarded for that session (issue #435). No
 call moves the stored id to the new session. The new session can run `dispatch`,

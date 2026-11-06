@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
+  presentInheritedTmpdir,
   snapshotInheritedTmpdir,
 } from "../../src/lib/tmpdir-entries.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
@@ -152,6 +153,65 @@ test("keeps a directory listed when a turn forges a registration for it", async 
   await writeFile(join(runsRoot, "turn-tmpdirs", "al-Ab1234"), `${dev}:${ino}`);
   const entries = await appearedInInheritedTmpdir(before);
   expect(entries.some((entry) => entry.endsWith("al-Ab1234"))).toBe(true);
+});
+
+// Usefulness: verifies acceptance — a name that a later read no longer holds is left out, a name
+// that stays is kept, and a name removed and created again counts as present (issue #1559). The
+// ordering is fixed by the files, so no wall-clock wait decides it.
+test("reports only the recorded names that a later read still holds", async () => {
+  const gone = join(root, "4a09873d-cff3-4dee-98a7-9f6f98072662.tmp");
+  const stays = join(root, "stays.txt");
+  const again = join(root, "created-again.txt");
+  await writeFile(gone, "");
+  await writeFile(stays, "");
+  await writeFile(again, "");
+  await rm(gone);
+  await rm(again);
+  await writeFile(again, "");
+  expect(
+    await presentInheritedTmpdir([
+      "4a09873d-cff3-4dee-98a7-9f6f98072662.tmp",
+      "stays.txt",
+      "created-again.txt",
+    ]),
+  ).toEqual(["stays.txt", "created-again.txt"]);
+});
+
+// Usefulness: verifies requirement "a failed or over-bound later read keeps every recorded name"
+// (issue #1559): the list is advisory, so a lost name would hide a leftover.
+test("keeps every recorded name when the later read fails or passes its bound", async () => {
+  const recorded = ["a.tmp", "b.tmp"];
+  expect(
+    await presentInheritedTmpdir(recorded, {
+      read: async () => {
+        throw new Error("EACCES");
+      },
+    }),
+  ).toEqual(recorded);
+  expect(
+    await presentInheritedTmpdir(recorded, { read: () => new Promise(() => {}), boundMs: 10 }),
+  ).toEqual(recorded);
+});
+
+// Usefulness: verifies requirement "a recorded name with a separator or .. never resolves outside
+// the inherited directory" (issue #1559): the read compares names, so an unsafe name stays listed
+// and no path is joined.
+test("keeps a name that holds a separator or .. without resolving it", async () => {
+  expect(
+    await presentInheritedTmpdir(["../outside.txt"], { read: async () => ["outside.txt"] }),
+  ).toEqual(["../outside.txt"]);
+  expect(await presentInheritedTmpdir(["a/b"], { read: async () => ["a/b"] })).toEqual(["a/b"]);
+  expect(await presentInheritedTmpdir([".."], { read: async () => [] })).toEqual([".."]);
+});
+
+// Usefulness: verifies requirement "a name that carries the registered mark is re-checked by the
+// entry name" (issue #1559): the mark is not part of the directory entry.
+test("re-checks a registered name without its mark and keeps the mark", async () => {
+  expect(
+    await presentInheritedTmpdir(["registered/al-Ab1234", "registered/al-Gone"], {
+      read: async () => ["al-Ab1234"],
+    }),
+  ).toEqual(["registered/al-Ab1234"]);
 });
 
 // Usefulness: verifies requirement "a registered name does not mark a different directory" (issue

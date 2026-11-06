@@ -22,6 +22,8 @@ Reference sections list below names each file and when to read it.
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+- `agent-loop role recheck-tmpdir` reads this run's state and the inherited temporary
+  directory. It changes nothing, so it is a status read that the role rule allows.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
@@ -326,6 +328,12 @@ Apply these parent rules:
     removal to the user. A reviewer `Notes` line never makes an entry safe to delete, because
     another process can hold a matching name (issue #1529). The runtime cannot attribute an entry
     to a turn, so the parent cannot prove ownership.
+  - The parent re-checks the names that the reviewer turns reported before the finish summary. It
+    reports under `open` only a name that the re-read still holds. Run
+    `agent-loop role recheck-tmpdir --cwd "<work tree>"`. It returns only the names that still
+    exist.
+  - A failed or over-bound read keeps every name. So does a name that the read cannot check. The
+    re-read deletes nothing.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish

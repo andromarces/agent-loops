@@ -7,9 +7,16 @@ import { logWarn } from "./log.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { isTurnTmpdirName } from "./turn-tmpdir.mjs";
 import { isRegisteredTurnTmpdir } from "./turn-tmpdir-registry.mjs";
+import { withTimeBound } from "./time-bound.mjs";
 
 const REGISTERED_PREFIX = "registered/";
 const READ_BATCH_SIZE = 32;
+// A later read answers in milliseconds. The bound ends a read that hangs, and a read that reaches
+// the bound keeps every recorded name (issue #1559).
+const RE_READ_BOUND_MS = 5_000;
+// A recorded name that holds one of these cannot name a direct entry, so the read keeps it.
+const UNSAFE_NAME = /[/\\\0]/;
+const REDACTED_NAME = /\[redacted:|\[\*\]/;
 // A transient file, such as a GUID `.tmp` file, can be in the post-turn read and then be gone a
 // moment later. The second read after this window keeps only the entries that still exist (issue
 // #1542).
@@ -80,6 +87,56 @@ async function entriesAfterSettle(names, settle) {
 }
 
 const carrier = entryCarrier("inheritedTmpdirEntries");
+
+/**
+ * Re-reads the inherited temporary directory and returns the recorded names that it still holds,
+ * in the recorded order. A name that the read cannot check stays listed: a redacted name, one with
+ * a separator or `..`, and every name after a failed or over-bound read. The read lists names
+ * only, deletes nothing, and follows no link. It returns [] when no name was recorded.
+ * @param {Iterable<string>} names the names that the reviewer turns reported
+ * @param {{ read?: () => Promise<string[]>, boundMs?: number }} [options] `read` replaces the
+ *   directory read, so a test fixes the order without a wall-clock wait.
+ * @returns {Promise<string[]>}
+ */
+export async function presentInheritedTmpdir(
+  names,
+  { read = readInheritedTmpdirNames, boundMs = RE_READ_BOUND_MS } = {},
+) {
+  const recorded = [...new Set(names)].filter((name) => typeof name === "string" && name !== "");
+  if (recorded.length === 0) return [];
+  let entries;
+  try {
+    entries = await withTimeBound(
+      boundMs,
+      `inherited temporary directory re-read took over ${boundMs} ms`,
+      ({ stopped }) => {
+        // The read cannot be canceled, so the wait ends at the bound too.
+        const pending = read();
+        pending.catch(() => {});
+        return Promise.race([pending, stopped]);
+      },
+    );
+  } catch (err) {
+    logWarn(`inherited temporary directory not re-read: ${firstErrorLine(readableErrorText(err))}`);
+    return recorded;
+  }
+  if (!Array.isArray(entries)) return recorded;
+  const present = new Set(entries);
+  return recorded.filter((name) => stillHeld(name, present));
+}
+
+async function readInheritedTmpdirNames() {
+  return readdir(tmpdir());
+}
+
+// Whether a further read still holds `name`. A name that cannot be checked stays present, because
+// a lost name can hide a leftover.
+function stillHeld(name, present) {
+  const bare = name.startsWith(REGISTERED_PREFIX) ? name.slice(REGISTERED_PREFIX.length) : name;
+  if (bare === "" || bare === "." || bare === "..") return true;
+  if (UNSAFE_NAME.test(bare) || REDACTED_NAME.test(bare)) return true;
+  return present.has(bare);
+}
 
 /**
  * Carries the list on a fatal error as `err.inheritedTmpdirEntries`. A frozen error or a throwing

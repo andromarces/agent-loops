@@ -93,6 +93,7 @@ function initialState(args) {
     lastDispatch: null,
     lastResult: null,
     turns: [],
+    inheritedTmpdirNames: [],
   };
 }
 
@@ -367,17 +368,31 @@ async function dispatchLocked(
 }
 
 /**
- * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, and the
- * role session. It then writes the state and emits the `result` event.
+ * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, the
+ * reviewer temporary names, and the role session. It then writes the state and emits the `result`
+ * event.
  */
 async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
   state.lifecycle = lifecycle;
   const at = new Date().toISOString();
   state.lastResult = { ...result, at };
   recordTurn(state, roleName, result, at);
+  recordInheritedTmpdirNames(state, roleName, result);
   recordRoleSession(state.roles[roleName], role);
   await writeState(stateFile, state);
   onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
+}
+
+/**
+ * Keeps the inherited temporary directory names that reviewer turns reported, so the parent can
+ * re-check them before the finish summary. A name is kept once, and the re-check caps its report.
+ */
+function recordInheritedTmpdirNames(state, roleName, result) {
+  if (roleName !== "reviewer") return;
+  const names = result.inheritedTmpdirEntries;
+  if (!Array.isArray(names) || names.length === 0) return;
+  const held = Array.isArray(state.inheritedTmpdirNames) ? state.inheritedTmpdirNames : [];
+  state.inheritedTmpdirNames = [...new Set([...held, ...names])];
 }
 
 /**

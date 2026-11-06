@@ -206,6 +206,10 @@ export async function runLoop(options) {
   // against the older head (#293).
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
+  // The inherited temporary directory names that reviewer turns of this loop reported. The finish
+  // re-checks them, so a name that another process removed before the summary is not reported
+  // (issue #1559). A continued run restores none, because its earlier turns are outside this loop.
+  const reportedTmpdirNames = new Set();
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
   // from null to a number, and only the runtime sets it. A continued run with neither flag takes
@@ -301,6 +305,7 @@ export async function runLoop(options) {
         signal,
         onEvent,
         stopLoop,
+        inheritedTmpdirNames: [...reportedTmpdirNames],
       });
       if (outcome.stop) return outcome.stop;
       finishRefused = true;
@@ -370,6 +375,10 @@ export async function runLoop(options) {
       throw err;
     }
     onEvent({ type: "result", role: roleName, result, stepsUsed });
+
+    if (roleName === "reviewer" && Array.isArray(result.inheritedTmpdirEntries)) {
+      for (const name of result.inheritedTmpdirEntries) reportedTmpdirNames.add(name);
+    }
 
     // Set whatever the turn returned: a reviewer turn that ended in a handled error
     // is still the report a `review-only` finish records (#337). The replay of a
