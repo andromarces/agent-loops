@@ -152,8 +152,7 @@ test("a writer that rewrites ignored files cannot extend the turn", async () => 
   dir = await createTempRepo();
   await writeFile(join(dir, ".git", "info", "exclude"), "ignored-*\n");
   const handle = startMainWorkTreeWatch(dir);
-  await writeFile(join(dir, "ignored-0.txt"), "write\n");
-  await vi.waitFor(() => expect(handle.pendingCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  await writeUntilQueued(handle, join(dir, "ignored-0.txt"));
   let running = true;
   const writeLoop = async () => {
     let index = 1;
