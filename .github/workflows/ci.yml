@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -86,11 +86,11 @@ jobs:
             sleep 15
           done
           exit 1
-      # Call the runner directly. `pnpm test -- --shard=<i>/2` inserts a `--`
+      # Call the runner directly. `pnpm test -- --shard=<i>/4` inserts a `--`
       # separator on the script command, and vp drops the arguments after it,
       # so every shard ran the full suite.
-      - name: Run tests (shard ${{ matrix.shard }}/2)
-        run: pnpm exec vp test run --shard=${{ matrix.shard }}/2
+      - name: Run tests (shard ${{ matrix.shard }}/4)
+        run: pnpm exec vp test run --shard=${{ matrix.shard }}/4
 
   windows-smoke:
     runs-on: windows-latest
