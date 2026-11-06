@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readdir,
@@ -6,6 +7,7 @@ import {
   rename,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -37,6 +39,7 @@ import {
   findLocalFileChanges,
   hashCopiedLocalFiles,
   MAX_WALKED_ENTRIES,
+  refreshLocalFile,
 } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
 import { exists, removePath } from "../fs-helpers.mjs";
@@ -1346,6 +1349,149 @@ test("the side-aware compare fails closed on a missing hash or a missing file", 
   expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
     { path: ".env", changed: "both" },
   ]);
+});
+
+// Usefulness: verifies a source save between the read and the write cannot mix bytes.
+// Not redundant: it is the only refresh test that changes the source during the call.
+test("a source save between the read and the write leaves the read bytes and reports source", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  let saved = false;
+
+  const hash = await refreshLocalFile(linked, ".env", {
+    expectedCopyHash: baseline[".env"],
+    beforeWrite: async () => {
+      saved = true;
+      await writeFile(join(main, ".env"), "KEY=NEW\n");
+    },
+  });
+
+  expect(saved).toBe(true);
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=OLD\n");
+  expect(hash === baseline[".env"]).toBe(true);
+  expect(await readdir(linked)).toEqual([".env"]);
+  expect(await findLocalFileChanges(linked, [".env"], { ".env": hash })).toEqual([
+    { path: ".env", changed: "source" },
+  ]);
+});
+
+// Usefulness: verifies a refresh keeps the copy's private mode, so no wider access appears.
+// Not redundant: it is the only test that checks the mode after a refresh.
+// Windows does not expose POSIX mode bits, so the mode check is POSIX only.
+test.skipIf(process.platform === "win32")("a refresh keeps the mode of a 0600 copy", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  await chmod(join(linked, ".env"), 0o600);
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+  await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+
+  expect((await stat(join(linked, ".env"))).mode & 0o777).toBe(0o600);
+});
+
+// Usefulness: verifies a refresh keeps a wider copy mode, so the mode follows the copy.
+// Not redundant: the 0600 test passes when the temporary file alone sets the mode.
+// Windows does not expose POSIX mode bits, so the mode check is POSIX only.
+test.skipIf(process.platform === "win32")("a refresh keeps a 0640 copy at 0640", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  await chmod(join(linked, ".env"), 0o640);
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+  await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+
+  expect((await stat(join(linked, ".env"))).mode & 0o777).toBe(0o640);
+});
+
+// Usefulness: verifies a failed exclusive create leaves an entry the command did not make.
+// Not redundant: it forces the temporary create to fail on an existing entry.
+test("a failed exclusive create leaves the existing temporary entry", async () => {
+  const { main, linked } = await createComparePair();
+  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(linked, ".env"), "KEY=OLD\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  let temp = "";
+
+  await expect(
+    refreshLocalFile(linked, ".env", {
+      expectedCopyHash: baseline[".env"],
+      beforeTempCreate: async (path) => {
+        temp = path;
+        await writeFile(path, "KEEP\n");
+      },
+    }),
+  ).rejects.toThrow("the copy failed");
+
+  expect(temp === "").toBe(false);
+  expect(await readFile(temp, "utf8")).toBe("KEEP\n");
+  expect(await readFile(join(linked, ".env"), "utf8")).toBe("KEY=OLD\n");
+});
+
+// Usefulness: verifies every later side change is still reported after a refresh.
+// Not redundant: it applies all edit and delete combinations to the refreshed hash.
+test("a later change on either side is still reported after a refresh", async () => {
+  const { main, linked } = await createComparePair();
+  const source = join(main, ".env");
+  const copy = join(linked, ".env");
+  await writeFile(source, "KEY=OLD\n");
+  await writeFile(copy, "KEY=OLD\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+  const hash = await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+  const restore = async () => {
+    await rm(source, { force: true });
+    await rm(copy, { force: true });
+    await writeFile(source, "KEY=OLD\n");
+    await writeFile(copy, "KEY=OLD\n");
+  };
+  const cases = [
+    ["source edit", async () => writeFile(source, "KEY=S\n"), "source"],
+    ["source delete", async () => rm(source), "source"],
+    ["copy edit", async () => writeFile(copy, "KEY=C\n"), "copy"],
+    ["copy delete", async () => rm(copy), "copy"],
+    [
+      "both edit",
+      async () => {
+        await writeFile(source, "KEY=S\n");
+        await writeFile(copy, "KEY=C\n");
+      },
+      "both",
+    ],
+    [
+      "both delete",
+      async () => {
+        await rm(source);
+        await rm(copy);
+      },
+      "both",
+    ],
+    [
+      "source delete and copy edit",
+      async () => {
+        await rm(source);
+        await writeFile(copy, "KEY=C\n");
+      },
+      "both",
+    ],
+    [
+      "source edit and copy delete",
+      async () => {
+        await writeFile(source, "KEY=S\n");
+        await rm(copy);
+      },
+      "both",
+    ],
+  ];
+  for (const [name, change, changed] of cases) {
+    await restore();
+    await change();
+    expect(await findLocalFileChanges(linked, [".env"], { ".env": hash }), name).toEqual([
+      { path: ".env", changed },
+    ]);
+  }
 });
 
 // Usefulness: verifies that a deleted source and an edited copy report both sides.

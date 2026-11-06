@@ -19,15 +19,21 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
     own, so the prefix is a hint and never proof: the entry stays listed, and the parent reports it
     under `open` as such.
+  - The runtime cannot attribute an entry to a turn, so the parent cannot prove ownership. The
+    parent never deletes an entry that `inheritedTmpdirEntries` names: it reports each such entry
+    under `open` and leaves removal to the user. A reviewer `Notes` line never makes an entry safe
+    to delete, because another process can hold a matching name (issue #1529). The directory is
+    shared with the user and with other processes.
   - The runtime reads the directory after the last
     child call of the dispatch, a task-only turn in a replacement conversation included. It reads
     the directory again after a short settle and keeps only the names that the second read still
-    holds, so a name that is gone by then needs no `open` item (issue #1542, ADR 0076).
-    Every reviewer turn that read the directory before it started carries the field: an ok turn, a
-    handled error, a turn that a mutation or a snapshot error halted, and a canceled turn. The
-    `role dispatch` envelope and the state file `lastResult` carry it for a halted or interrupted
-    dispatch, and a headless run emits an `inherited-tmpdir` event with `fatal: true` for a fatal
-    error, which the transcript keeps.
+    holds. A name that is gone by then needs no `open` item (issue #1542, ADR 0076).
+    - Every reviewer turn that read the directory before it started carries the field. The turns
+      are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
+      canceled turn.
+    - The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
+      interrupted dispatch. A headless run also emits an `inherited-tmpdir` event with `fatal: true`
+      for a fatal error. The transcript keeps that event.
   - A turn that cannot carry it is one whose process ended
     without a throw, for example a crash or a kill, because the before-read lives in memory, and
     one whose before-read failed. A run that the next call marks `interrupted` after such an end

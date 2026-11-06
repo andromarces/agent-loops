@@ -356,7 +356,7 @@ test("first worker turn requires a clean work tree for PR work", () => {
 test("first worker turn tells the worker to remove temporary files it created outside the work tree", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Before the closing block, remove every temporary file or directory that this turn created outside the work tree, and name in Notes any that you could not remove.",
+    "Before the closing block, remove every temporary file or directory that this turn created outside the work tree. Name in Notes any entry that you cannot remove.",
   );
 });
 
@@ -367,7 +367,7 @@ test("first worker turn tells the worker to remove temporary files it created ou
 test("first worker turn bars a literal path to the system temporary directory", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "When a temporary path outside the work tree is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
 });
 
@@ -453,6 +453,22 @@ test("worker turns push only with a named refspec and never a plain git push", (
       "Push only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`.",
     );
     expect(prompt).toContain("`push.default=matching`");
+  }
+});
+
+// Usefulness: acceptance #1533: three of four workers piped `git push` through `tail`, so the
+// pre-push hook result was cut and never reached Checks. Every turn that can commit or push keeps
+// the hook output and reports its result.
+test("worker turns keep and report the commit and push hook output", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`.",
+    );
+    expect(prompt).toContain(
+      "Keep the full output of a commit or push hook, or at least its failing and summary lines.",
+    );
+    expect(prompt).toContain("Report the hook result in Checks.");
   }
 });
 

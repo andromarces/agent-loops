@@ -110,6 +110,29 @@ test("the interactive worker preamble limits every edit to the run work tree", a
   );
 });
 
+// Usefulness: acceptance #1533 on the interactive path. The dispatched first worker turn keeps the
+// commit and push hook output. It reports the result in Checks, so a cut pre-push result cannot
+// reach the parent as a missing check.
+test("the interactive worker preamble keeps and reports the hook output", async () => {
+  const repo = await newRunRepo();
+  const worker = recordingAdapter([]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  const prompt = worker.recorded[0].prompt.replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`.",
+  );
+  expect(prompt).toContain(
+    "Keep the full output of a commit or push hook, or at least its failing and summary lines.",
+  );
+  expect(prompt).toContain("Report the hook result in Checks.");
+});
+
 // Usefulness: verifies acceptance — after an init call with --cwd set to a
 // directory other than the process cwd, the session entry for --parent-session
 // resolves to that run's state file through the shared helper.

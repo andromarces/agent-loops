@@ -297,9 +297,10 @@ Apply these parent rules:
     never installs, so the installed dependencies no longer match
     the lockfile. When the runtime cannot read the dependency file list, the field names every
     lockfile and every non-Node path known from the other read. See issues #1225 and #1457.
-  - When the field appears, run only the dependency setup that the repository documents for its
-    tests in the work tree, such as the Node lockfile install, before the next reviewer dispatch.
-    For a non-Node file, run only the setup that its toolchain documents for those tests in the
+  - When the field appears, run only the dependency setup, such as the Node lockfile install, before
+    the next reviewer dispatch. The dependency setup is the one that the repository documents for
+    the tests in the work tree.
+  - For a non-Node file, run only the setup that its toolchain documents for those tests in the
     work tree before the next reviewer dispatch. A changed dependency file that no test setup reads
     needs no action: record that judgment under `open`. Never install outside the work tree. A
     failed worker turn carries the field too. A turn that changed none carries no field. See issues
@@ -310,12 +311,21 @@ Apply these parent rules:
   - The field redacts each path like the other path fields, names at most 20 paths, and keeps a
     fixed root lockfile name byte-identical.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory during the turn. It is advisory: the runtime cannot attribute an
-  entry to the turn, and it does not delete one. A name with the prefix `registered/` is the turn
-  directory of another agent-loop process, most likely a concurrent run: the prefix is a hint,
-  not proof. Report it in the finish summary under `open`, and
-  do not treat it as a reason to reject (issue #1024). Field rules:
+  inherited temporary directory during the turn. One example is a probe directory that the
+  reviewer created there. The field names the entries, redacted like the test command output, and
+  never their content, at most 20. It is advisory: the directory is shared with other processes.
+- The runtime cannot attribute an entry to the turn, and it does not delete one. Turn directories
+  that this process created are left out, and every other name that the settle re-read still holds
+  is listed, an `al-` name too. Every reviewer turn that read the directory before it started
+  carries the field, a failed, halted, or canceled turn too. Report it in the finish summary under
+  `open`, and do not treat it as a reason to reject (issue #1024). Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
+  - A name with the prefix `registered/` is the turn directory of another agent-loop process,
+    most likely a concurrent run. The prefix is a hint, not proof. The parent never deletes an
+    entry that `inheritedTmpdirEntries` names: it reports each such entry under `open` and leaves
+    removal to the user. A reviewer `Notes` line never makes an entry safe to delete, because
+    another process can hold a matching name (issue #1529). The runtime cannot attribute an entry
+    to a turn, so the parent cannot prove ownership.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish
@@ -415,15 +425,18 @@ once as a first turn, with the worker preamble and the `Init task:` block. A rev
 `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files of the
-main work tree that `--cwd` ignores, such as agent instructions and `.env`, into `--cwd`.
-Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env`
-into the run work tree, so remove that work tree when the run ends. The copy rules,
-`--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
-[Local files copied into the work tree](orchestrator/local-files-copy.md). For a
-`localFilesDiffer` entry with `changed: "source"`, refresh the copy by hand when no
-`localSourceChangedInTurn` entry names it. For `copy`, a turn changed the copy: report a breach
-under `open`. When `localSourceChangedInTurn` names a path, report it under `open` and ask the
-user before a refresh.
+main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent
+instructions and `.env`. Do not read, print, or quote any copied file. The copy duplicates
+secrets such as `.env` into the run work tree, so remove that work tree when the run ends. The
+copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
+[Local files copied into the work tree](orchestrator/local-files-copy.md).
+
+For `source`, the main work tree changed after init. Run
+`agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
+`--parent-session` id when no `localSourceChangedInTurn` entry names it. For `copy`, a turn
+changed the copy: report a breach under `open`. For `both`, the stored hash records no refresh of
+the current copy: report a breach under `open`. When `localSourceChangedInTurn` names a path, report
+it under `open` and ask the user before a refresh.
 
 Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
 with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused
@@ -531,7 +544,8 @@ of this file.
 - [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
-  `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
+  `declare-pr`, `refresh-local`, `finish`, or `abort`, or when a call is refused for
+  `AGENT_LOOP_SPAWNED_RUN`.
 
 ## Selecting issues for a batch
 
@@ -696,7 +710,7 @@ PR does not exist at init, and when a headless run declares its PR itself.
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `declare-pr`, `finish`, or `abort`. The spawn marker and its
+  role never runs `extend`, `declare-pr`, `refresh-local`, `finish`, or `abort`. The spawn marker and its
   limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not

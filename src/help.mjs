@@ -46,7 +46,7 @@ The runtime enforces step limits and mutation boundaries.
 
 Subcommands:
 
-  agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend
+  agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend/refresh
                                 a run, from a lifecycle state file (see below). One JSON
                                 object on stdout, except --help, which prints plain
                                 usage; logs on stderr.
@@ -90,6 +90,13 @@ Role operations:
                                 Refuses a run that already has a PR, a terminal run,
                                 and review-only. The run then ends only through
                                 --require-ci <pr> for that PR.
+  refresh-local                 Record a hand refresh of one copied local file on a
+                                non-terminal run. Copy the main work tree source over
+                                the run copy and store the new hash, so a later
+                                envelope stops reporting it. Needs --path and the
+                                stored --parent-session id. Refuses an uncopied path,
+                                a missing or linked side, and a copy that a turn
+                                changed. Refuses a terminal run and a child role.
   set-model                     Replace the model of one role that has completed no
                                 turn, on an active run, with --worker-model or
                                 --reviewer-model (exactly one), so a model that the CLI
@@ -120,9 +127,11 @@ Role flags:
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Must be inside a Git work tree.
                                 Defaults to the current directory.
-  --parent-session <id>         Required on the init call, on extend, declare-pr, and set-model. The harness
+  --parent-session <id>         Required on the init call, on extend, declare-pr, refresh-local, and set-model.
+                                The harness
                                 session id the parent-edit guard matches; later calls
-                                reject a changed value, and extend, declare-pr, and set-model refuse a mismatch. The headless form (no subcommand) is the explicit
+                                reject a changed value, and extend, declare-pr,
+                                refresh-local, and set-model refuse a mismatch. The headless form (no subcommand) is the explicit
                                 unguarded path.
   --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files / --copy-local-path
                                 First (init) call only. Later calls read these from the
@@ -150,6 +159,8 @@ Role flags:
                                 calls read it from the state file and reject any
                                 attempt to change it, except declare-pr on a run
                                 that has none. declare-pr and wait-checks also take it.
+  --path <relative path>        refresh-local only: the copied local file to record.
+                                It must be a path that init copied, with a stored hash.
   --all                         wait-checks only: wait on every check of the PR head,
                                 not only the required ones.
   --expect <check name>         wait-checks only, with --all, repeatable: the wait

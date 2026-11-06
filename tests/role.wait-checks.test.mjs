@@ -339,6 +339,45 @@ test("wait-checks --all waits for the listed checks of the head", async () => {
   });
 });
 
+// Usefulness: verifies `role wait-checks` reports a merge conflict as its own exit-0 outcome.
+// The envelope carries `conflicting: true`, `timedOut: false`, and an empty `checks`, in both modes.
+// No parent reads the conflict as a pass or waits out its bound (issue #1536).
+test.each([
+  ["required", false],
+  ["all", true],
+])("wait-checks reports a merge conflict in %s mode", async (_mode, all) => {
+  const repo = await newRunRepo();
+
+  const result = await executeRoleCommand(
+    parseRoleArgs([
+      "wait-checks",
+      ...(all ? ["--all"] : []),
+      "--cwd",
+      repo,
+      "--pr",
+      "42",
+      "--timeout",
+      "60",
+    ]),
+    {
+      gh: scriptedGh([PENDING], {
+        all,
+        mergeStates: [{ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" }],
+      }),
+      ...fakeClock(),
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    pr: 42,
+    timedOut: false,
+    conflicting: true,
+    head: HEAD_A,
+    checks: [],
+  });
+});
+
 // Usefulness: verifies `--all` is a wait-checks flag only, so a dispatch or finish
 // that carries it fails loudly instead of ignoring it (issue #896).
 test("--all is refused on an operation other than wait-checks", async () => {

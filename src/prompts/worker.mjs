@@ -32,6 +32,11 @@ const namedPushRule =
 const matchingPushNote =
   "Under `push.default=matching`, a plain `git push` also pushes each local branch with a same-name remote branch, such as the default branch.";
 
+// A worker piped `git push` through `tail`, so the pre-push hook output was cut and its result never
+// reached Checks (issue #1533). A hook can print a warning or a phase result that the turn needs.
+const hookOutputRule =
+  "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`. Keep the full output of a commit or push hook, or at least its failing and summary lines. Report the hook result in Checks.";
+
 // The pnpm dependency check also defaults to install in the run work tree.
 // A worker command there can run the project lifecycle scripts (issue #1385).
 const pnpmRunRule =
@@ -89,6 +94,8 @@ ${namedPushRule}
 
 ${matchingPushNote}
 
+${hookOutputRule}
+
 ${prBodyRule}
 
 ${commitLinkRule}
@@ -120,6 +127,7 @@ Your role:
   request.
 - ${namedPushRule}
 - ${matchingPushNote}
+- ${hookOutputRule}
 - ${prBodyRule}
 - ${commitLinkRule}
 - ${stageOnlyNeededPathsRule}
