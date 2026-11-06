@@ -175,6 +175,19 @@ test("worker turns repeat the bold-lead paragraph rule", () => {
   }
 });
 
+// Usefulness: verifies the issue #1532 rule reaches the first worker turn and every later one. A
+// Claude worker quoted the PR body text between `Why:` and `Blockers:`, and the block parsed to
+// null. The later turn repeats reportBlock, so the next prompt to that child carries the rule again.
+test("worker turns repeat the quoted-text placement rule", () => {
+  for (const firstTurn of [true, false]) {
+    const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Put quoted or multi-paragraph text before the closing block, not inside it",
+    );
+    expect(prompt).toContain("refer to it from one label with a short line");
+  }
+});
+
 // Usefulness: verifies a worker prompt states that a table makes the block unparseable.
 // It checks the first and later turns, and keeps the tabular-data rule (issue #1359).
 test("worker turns state that the closing block holds no Markdown table", () => {

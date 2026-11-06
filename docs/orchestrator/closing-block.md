@@ -45,6 +45,11 @@ whitespace, and a colon. A `**bold** note` line with trailing text is no heading
 A paragraph holds a bold lead and more prose on the same line. With its own dash list between two
 labels it makes the block unparseable: put the paragraph and its list under one label (issue #1386).
 
+Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one
+label with a short line. The label keeps the short result that the parent reads. A quoted paragraph
+between two labels, or a block line that starts with a backtick, makes the block unparseable (issue
+#1532).
+
 A column-0 label line whose name and colon sit inside `**...**` is that label, for example
 `**Blockers:** none` (issue #1483). Only the six report labels gain this form, so `**Rule:**`
 stays text. `**Blockers**:` with the colon outside the bold still makes the block unparseable.

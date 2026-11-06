@@ -180,6 +180,29 @@ test("the closing-block rule names a bold-lead paragraph with its own dash list"
   );
 });
 
+// Usefulness: verifies the issue #1532 rule sends quoted or multi-paragraph text before the
+// closing block and that a response which follows it parses. A Claude worker quoted the PR body
+// text between `Why:` and `Blockers:`, so the block parsed to null. No other test covers this shape.
+test("the closing-block rule puts quoted or multi-paragraph text before the block", () => {
+  expect(reportBlock).toMatch(/quoted or multi-paragraph text before the closing block/);
+  expect(reportBlock).toMatch(/refer to it from one label/);
+  const response = [
+    'Final flag text now in the PR body, under "Flag with an effect":',
+    "",
+    "`flag_name` (2026-10-01) — <paragraph>",
+    "- <item>",
+    "- <item>",
+    "",
+    "Conclusion: done",
+    "Why: one line",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).not.toBeNull();
+});
+
 // Usefulness: verifies the issue #1380 rule forbids only the two observed shapes. A general
 // one-line label rule fails the test. So does a prompt that drops a documented fold.
 test("the closing-block rule forbids only the two observed shapes", () => {
