@@ -24,20 +24,34 @@ a path that holds a tracked file, a path that holds a file that is not ignored, 
 `--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and
 `localFilesDiffer` covers the files.
 
-The copy runs once. A later dispatch never replaces or refreshes a copied file. The init
+The copy runs once. No dispatch replaces or refreshes a copied file; only an explicit
+`refresh-local` call writes a copy after init. The init
 stores the content hash of each copy in the run state only. Each later dispatch compares the
 source and the copy with that hash.
 
 The envelope reports `localFilesDiffer` as a list of `{path, changed}` entries. The key is
 absent when neither side changed. `changed` is `source`, `copy`, `both`, or `unknown`.
-A side counts as changed when it is missing, unreadable, or its hash differs from the init
-hash. `unknown` means the runtime could not prove a side, and it never means no change. A
-legacy state with no init hash reports every copied path as `unknown`.
 
-For `source`, the main work tree changed after init: refresh the copy by hand when it holds
-no turn edit and no `localSourceChangedInTurn` entry names it. For `copy`, a turn changed the
-copy: report a breach under `open`. The first action checks whether the main work tree holds a
-newer rule file, such as `AGENTS.md`. Never read, print, or quote the file to decide.
+A side counts as changed when it is missing, unreadable, or its hash differs from the stored
+hash. The stored hash is the init hash, or the hash of the last refresh. `unknown` means the
+runtime cannot prove a side, and it never means no change. A legacy state with no init hash
+reports every copied path as `unknown`.
+
+For `source`, the main work tree changed after init. Run
+`agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
+`--parent-session` id when no `localSourceChangedInTurn` entry names it. The command writes the
+source bytes over the copy and stores their hash, so later envelopes stop reporting the path until
+a side changes again.
+
+The command refuses a path that init did not copy, a missing or unreadable side, and a link at the
+file or a parent component. It also refuses a copy that differs from its stored hash, a terminal
+run, and a child role. A refused refresh writes nothing. It reports the path only, never the content
+or a hash.
+
+For `copy`, a turn changed the copy: report a breach under `open`. For `both`, the stored hash
+records no refresh of the current copy: report a breach under `open`. The first action checks
+whether the main work tree holds a newer rule file, such as `AGENTS.md`. Never read, print, or
+quote the file to decide.
 
 Each worker and reviewer turn also hashes every copied source before and after its window. A
 source that changed inside the window is reported on that turn's envelope as

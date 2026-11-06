@@ -175,6 +175,19 @@ test("worker turns repeat the bold-lead paragraph rule", () => {
   }
 });
 
+// Usefulness: verifies the issue #1532 rule reaches the first worker turn and every later one. A
+// Claude worker quoted the PR body text between `Why:` and `Blockers:`, and the block parsed to
+// null. The later turn repeats reportBlock, so the next prompt to that child carries the rule again.
+test("worker turns repeat the quoted-text placement rule", () => {
+  for (const firstTurn of [true, false]) {
+    const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Put quoted or multi-paragraph text before the closing block, not inside it",
+    );
+    expect(prompt).toContain("refer to it from one label with a short line");
+  }
+});
+
 // Usefulness: verifies a worker prompt states that a table makes the block unparseable.
 // It checks the first and later turns, and keeps the tabular-data rule (issue #1359).
 test("worker turns state that the closing block holds no Markdown table", () => {
@@ -200,16 +213,20 @@ test("later worker turns name Conclusion as the required first line of the block
 });
 
 // Usefulness: verifies requirement "a worker states each result the parent needs inside the closing
-// block" (issue #976): the parent reads only the block, so a pointer to text above it loses the
-// result. The reviewer has the same rule for blockers (issue #434).
-test("first worker turn requires each result inside the closing block", () => {
+// block" (issue #976) and that the preamble does not forbid the quoted-text exception of issue
+// #1532. A request for final PR wording triggers both lines, so the two rules must agree.
+test("first worker turn reconciles quoted text with the inside-the-block rule", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
     "State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line.",
   );
   expect(prompt).toContain(
-    'Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.',
+    "The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states.",
   );
+  expect(prompt).toContain(
+    'Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.',
+  );
+  expect(prompt).not.toContain("Never refer to text outside the block");
 });
 
 // Usefulness: verifies later worker turns carry the task text and no preamble; the session already
@@ -288,6 +305,18 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   expect(match).not.toBeNull();
   expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
   await access(match[2]);
+});
+
+// Usefulness: verifies acceptance #1530: a Claude worker moved its suite to a background shell task
+// when the foreground command could outlive the shell tool bound, then ended its turn with no
+// closing block. The rule keeps the command in the foreground and names the report when it cannot
+// finish: the local suite is not run, and the required CI checks are the evidence.
+test("first worker turn reports a suite that cannot finish in the foreground as not run", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain("Never end the turn while a command that you started is still running.");
+  expect(prompt).toContain(
+    "When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.",
+  );
 });
 
 // Usefulness: verifies requirement "a worker starts no load generator or process that outlives the turn" (issue #934): an unguarded busy-loop script left 64 loops running after an interrupt.
@@ -411,6 +440,22 @@ test("worker turns push only with a named refspec and never a plain git push", (
       "Push only with `git push -u origin <branch>`, which names the refspec, and never with a plain `git push`.",
     );
     expect(prompt).toContain("`push.default=matching`");
+  }
+});
+
+// Usefulness: acceptance #1533: three of four workers piped `git push` through `tail`, so the
+// pre-push hook result was cut and never reached Checks. Every turn that can commit or push keeps
+// the hook output and reports its result.
+test("worker turns keep and report the commit and push hook output", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`.",
+    );
+    expect(prompt).toContain(
+      "Keep the full output of a commit or push hook, or at least its failing and summary lines.",
+    );
+    expect(prompt).toContain("Report the hook result in Checks.");
   }
 });
 

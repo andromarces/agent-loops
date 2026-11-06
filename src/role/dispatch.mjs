@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { normalizeAgent } from "../agents/index.mjs";
 import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
+import { reportedPathNames } from "../lib/entry-report.mjs";
 import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { copyLocalFiles, findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-files.mjs";
@@ -21,6 +22,7 @@ import {
   writeState,
 } from "../lib/runstate.mjs";
 import { assertGitWorkTree } from "../lib/snapshot.mjs";
+import { readSparseCheckout } from "../lib/sparse-checkout.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "../lib/test-cmd.mjs";
 import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
@@ -251,6 +253,8 @@ async function dispatchLocked(
       })
     : null;
   const localFilesDiffer = init ? [] : await differingLocalFiles(state, args.cwd, signal);
+  // Read after the init side effects, before the first child turn, and never change the setting.
+  const sparseCheckout = init ? await readSparseCheckout(args.cwd) : null;
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -338,7 +342,10 @@ async function dispatchLocked(
     }
     return {
       exitCode: canceled ? 130 : 1,
-      payload: withLocalFiles(payload, localFiles, localFilesDiffer),
+      payload: withSparseCheckout(
+        withLocalFiles(payload, localFiles, localFilesDiffer),
+        sparseCheckout,
+      ),
     };
   }
 
@@ -352,7 +359,10 @@ async function dispatchLocked(
   // non-zero command outcome for the calling parent.
   return {
     exitCode: result.status === "ok" ? 0 : 1,
-    payload: withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
+    payload: withSparseCheckout(
+      withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
+      sparseCheckout,
+    ),
   };
 }
 
@@ -453,7 +463,7 @@ async function applyInitSideEffects(
       { signal, extraPaths: state.copyLocalPaths ?? [] },
     );
     if (localFiles) {
-      // Names only, so a later dispatch can compare each copy with its source. The init hash of
+      // Names only, so a later dispatch can compare each copy with its source. The stored hash of
       // each copy stays in the state file and never reaches an envelope or a log line.
       state.localFilesCopied = localFiles.copied;
       try {
@@ -466,7 +476,7 @@ async function applyInitSideEffects(
         }
         // A present but empty map fails closed for every later compare.
         state.localFilesCopiedSha256 = {};
-        logWarn(`local files: the init hash could not be recorded (${err.code ?? "error"})`);
+        logWarn(`local files: the stored hash could not be recorded (${err.code ?? "error"})`);
       }
       onEvent({ type: "local-files", ...localFiles });
     }
@@ -514,7 +524,7 @@ function recordRoleSession(target, source) {
 }
 
 /**
- * Names the copied local files whose source or copy differs from the init hash. Read-only: nothing
+ * Names the copied local files whose source or copy differs from the stored hash. Read-only: nothing
  * is replaced. A failed comparison is a warning, not a failed dispatch, and fails closed: every
  * copied name is reported as `unknown`. A cancel propagates.
  */
@@ -548,7 +558,7 @@ function reportedLocalFileChanges(changes) {
 
 /**
  * Adds the copied and skipped path names of the init copy to the envelope. On a later dispatch it
- * adds the names and sides of copies that differ from the init hash.
+ * adds the names and sides of copies that differ from the stored hash.
  */
 function withLocalFiles(payload, localFiles, localFilesDiffer) {
   return {
@@ -557,6 +567,22 @@ function withLocalFiles(payload, localFiles, localFilesDiffer) {
     ...(localFilesDiffer.length > 0
       ? { localFilesDiffer: reportedLocalFileChanges(localFilesDiffer) }
       : {}),
+  };
+}
+
+/**
+ * Adds the sparse checkout that a linked `--cwd` inherits to the init envelope. The paths are
+ * redacted and capped like the other path fields. A null read adds no field, and the absent field
+ * then proves nothing, because a failed read adds none either.
+ */
+function withSparseCheckout(payload, sparseCheckout) {
+  if (sparseCheckout === null) return payload;
+  return {
+    ...payload,
+    sparseCheckout: {
+      enabled: sparseCheckout.enabled,
+      skipWorktree: reportedPathNames(sparseCheckout.skipWorktree),
+    },
   };
 }
 

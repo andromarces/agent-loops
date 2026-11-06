@@ -273,10 +273,17 @@ returns `timedOut: true` and an empty `checks`, which is never a pass. A
 repository with no CI workflow therefore waits the full `--timeout` before it
 returns, unless `noCheckSource` ends the wait, as stated below.
 
-An empty `checks` list with `timedOut: true` on a PR with a merge conflict does not
-mean the repository has no CI. GitHub runs no `pull_request` workflow for a conflicted
-PR, so no check reports and the wait reaches its bound. Resolve the conflict, then run
-the `--all` wait again on the new head.
+Every poll of both waits reads the head and the merge state in one `gh pr view` reply.
+When GitHub reports that head as conflicting, the wait returns at once with
+`"conflicting": true` and `"timedOut": false`. Its `checks` list is empty, and `head`
+names the head from that same reply. That envelope is never a pass. Dispatch a worker to
+merge the base branch, then run the wait again on the new head.
+
+Without `--head`, a conflict names the head from that reply. With `--head`, a conflict
+settles the wait only when that reply names the `--head` commit. A conflict on another
+commit keeps the wait, which reaches the bound with `timedOut: true`, `head: null`, and an
+empty `checks`. An `UNKNOWN` or null merge state, and merge fields that the read cannot
+parse, keep the wait.
 
 Exit 1 with `no required checks reported on the '<branch>' branch` stays
 unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
@@ -363,6 +370,8 @@ the reason.
 
 `head` names the commit that `checks` describe. `gh pr checks` queries by PR identity and names no commit, so the wait never takes a check state from it. Each poll reads the PR head `<sha>` and the base branch with `gh pr view <pr> --json headRefOid,baseRefName`, runs `gh pr checks` for its exit-code outcome, and reads every state from the check runs and commit statuses of `<sha>` by SHA (`repos/<slug>/commits/<sha>/check-runs` and `.../status`, every page, read together). The required wait judges each required context as the `--require-ci` gate does, with the gate's own matching and verdict: the contexts come from `requiredContexts` (repository rulesets with `integration_id`, classic protection with `app_id`, and the names `gh pr checks --required` lists), an app-qualified context is satisfied only by a check run of that app, the latest matching entry decides, and a context with no entry on `<sha>` is pending. The `--all` wait judges the latest check run of each name and app and the latest commit status of each context.
 
+Each poll reads the head and the merge state in one reply with `gh pr view <pr> --json headRefOid,baseRefName,mergeable,mergeStateStatus`. A `CONFLICTING` mergeable value or a `DIRTY` merge state ends it with `"conflicting": true`. A merge field that the read cannot parse keeps the wait.
+
 A head that moves away and back, or a stale view, therefore cannot put another commit's checks under `head`. The states of `<sha>` only make the outcome stricter: a failing state of `<sha>` settles the wait, and a pass needs both the `gh pr checks` outcome and every state of `<sha>` to pass, so exit 8 or the no-check-yet reply keeps the wait running while `<sha>` shows a pass, until the bound ends it with `timedOut: true`. A failure that `gh pr checks` lists settles the wait whatever `<sha>` shows, and it is reported in `prFailures`, apart from `checks`, because it is PR-level evidence that is not pinned to `<sha>`: `checks` holds only states read for `head`, and a parent never records a pass from an envelope that carries `prFailures`. `prFailures` appears only when `gh pr checks` listed a failure in the last poll, and it survives a bound that a later read reaches and a commit or source read that fails (`head: null`, empty `checks`).
 
 The required wait refuses a context it cannot resolve, with the rule of the supplied status (`requiredResolutionRefusal`): a ruleset or protection source that cannot be read, a source reply that cannot be parsed, and a failed read of the required names each exit 1 with `status: "error"` before any state is judged, because such a source can hold a required check or an app qualifier that the wait never saw; a listed failure still settles the wait then, and the `--all` wait reads no source. A commit read that fails, or that returns a reply the wait fails to parse or order, is an error too, with one exception.
@@ -418,12 +427,12 @@ Dispatch one worker turn for a required check that fails on a known flaky test. 
 1. The worker turn must wait, with a bound, until the run completes.
 2. The worker turn must read the failure, with `gh run view --log-failed`.
 3. The worker turn must decide whether the diff reaches the failing test.
-4. The worker turn must record a known flaky recurrence in #1067, as the rules of that issue state.
+4. The worker turn must record a known flaky recurrence in the flaky-test record of the target repository, for example its open issue for that test, as the rules of that record state. When the target repository has no such record, the worker turn records nothing and names the recurrence in its report.
 5. The worker turn must rerun only the failed jobs with `gh run rerun <run id> --failed`.
 
 The wait comes first because of two `gh` limits. `gh run view --log-failed` has no log until the run completes. `gh run rerun` refuses while another job of the run is in progress.
 
-If the diff reaches the failure, or no #1067 section matches it, the worker turn reruns nothing and reports the failure. If the run is still in progress at the bound, the worker turn reruns nothing and reports that.
+If the diff reaches the failure, or no section of the target repository's flaky-test record matches it, the worker turn reruns nothing and reports the failure. A target repository with no such record has no matching section, so the worker turn reruns nothing and reports the failure. If the run is still in progress at the bound, the worker turn reruns nothing and reports that.
 
 After that worker turn, run `wait-checks` again for the same head before the reviewer turn. Never use `wait-checks` to wait for the rest of the run, because it settles on the first failing check.
 

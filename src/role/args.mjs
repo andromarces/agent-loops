@@ -223,6 +223,7 @@ export function parseRoleArgsWithOperations(argv, operations) {
     resumeInterrupted: false,
     noCopyLocalFiles: false,
     copyLocalPaths: [],
+    localPath: null,
     reason: null,
     requireAccept: false,
     requireCi: null,
@@ -299,6 +300,10 @@ export function parseRoleArgsWithOperations(argv, operations) {
           args.copyLocalPaths.push(readInline(arg));
           return true;
 
+        case "--path":
+          args.localPath = readInline(arg);
+          return true;
+
         case "--reason":
           args.reason = readInline(arg);
           return true;
@@ -359,5 +364,8 @@ export function rejectMisplacedFlags(args, operation) {
     throw new RoleError(
       `--require-accept and --require-ci are only valid for finish, not ${operation}.`,
     );
+  }
+  if (operation !== "refresh-local" && args.localPath !== null) {
+    throw new RoleError(`--path is only valid for refresh-local, not ${operation}.`);
   }
 }

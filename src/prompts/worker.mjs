@@ -32,6 +32,11 @@ const namedPushRule =
 const matchingPushNote =
   "Under `push.default=matching`, a plain `git push` also pushes each local branch with a same-name remote branch, such as the default branch.";
 
+// A worker piped `git push` through `tail`, so the pre-push hook output was cut and its result never
+// reached Checks (issue #1533). A hook can print a warning or a phase result that the turn needs.
+const hookOutputRule =
+  "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`. Keep the full output of a commit or push hook, or at least its failing and summary lines. Report the hook result in Checks.";
+
 // The pnpm dependency check also defaults to install in the run work tree.
 // A worker command there can run the project lifecycle scripts (issue #1385).
 const pnpmRunRule =
@@ -52,6 +57,11 @@ const workTreeEditRule =
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
 const tmpdirRule = tempPathRule("work tree", ", such as `/tmp` or `%TEMP%`");
+
+// A Claude worker moved its suite to a background shell task when it could outlive the foreground
+// bound, then ended the turn with no closing block (issue #1530).
+const longSuiteRule =
+  "Never end the turn while a command that you started is still running. When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.";
 
 // A worker that waits on CI outlives its turn timeout after the push, and its work is already done
 // (issue #1459).
@@ -79,6 +89,8 @@ ${namedPushRule}
 
 ${matchingPushNote}
 
+${hookOutputRule}
+
 ${prBodyRule}
 
 ${commitLinkRule}
@@ -98,6 +110,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${longSuiteRule}
 - ${ciWaitRule}
 - ${unnamedHostRule({ namesHost: true })}
 - ${ownNodeModulesRule}
@@ -109,6 +122,7 @@ Your role:
   request.
 - ${namedPushRule}
 - ${matchingPushNote}
+- ${hookOutputRule}
 - ${prBodyRule}
 - ${commitLinkRule}
 - ${stageOnlyNeededPathsRule}
@@ -118,7 +132,7 @@ Your role:
   this run targets the same \`--cwd\`.
 - ${workTreeEditRule}
 - Report what changed, what was verified, and state any disagreements with evidence.
-- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
+- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states. Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - ${tmpdirRule}
 - ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.")}

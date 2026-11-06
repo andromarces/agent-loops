@@ -180,6 +180,48 @@ test("the closing-block rule names a bold-lead paragraph with its own dash list"
   );
 });
 
+// Usefulness: verifies the issue #1532 rule sends quoted or multi-paragraph text before the
+// closing block and names the shape that actually fails. A standalone quoted paragraph parses and
+// is dropped, so the rule must not call it unparseable. A dash list under a quoted prose line is
+// the failing shape that made the block null.
+test("the closing-block rule puts quoted or multi-paragraph text before the block", () => {
+  expect(reportBlock).toMatch(/quoted or multi-paragraph text before the closing block/);
+  expect(reportBlock).toMatch(/refer to it from one label/);
+  expect(reportBlock).toMatch(/quoted paragraph alone is dropped from the block/);
+  expect(reportBlock).toMatch(
+    /dash list directly under a quoted prose line makes the block unparseable/,
+  );
+  const labels = ["Conclusion: done", "Why: one line", "Blockers: none", "Checks: none"];
+  const standalone = [
+    ...labels,
+    "",
+    "`flag_name` (2026-10-01) — <paragraph>",
+    "",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(standalone);
+  expect(report).not.toBeNull();
+  expect(JSON.stringify(report)).not.toContain("flag_name");
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- <item>",
+    "",
+    'Final flag text now in the PR body, under "Flag with an effect":',
+    "",
+    "`flag_name` (2026-10-01) — <paragraph>",
+    "- <item>",
+    "- <item>",
+    "",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
 // Usefulness: verifies the issue #1380 rule forbids only the two observed shapes. A general
 // one-line label rule fails the test. So does a prompt that drops a documented fold.
 test("the closing-block rule forbids only the two observed shapes", () => {
