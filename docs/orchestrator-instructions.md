@@ -355,6 +355,11 @@ files only under the run work tree. Before an edit with an absolute path, check
 that the path starts with the work tree root. A path that a tool returns for
 another checkout maps to the same relative path in the run work tree.
 
+The worker preamble also states the report-and-stop rule. If an edit lands in
+another checkout, report the paths in the closing block and stop. Never restore
+or discard a file there, because a restore can discard an uncommitted change of
+the user.
+
 Create the work tree with no upstream, so a plain `git push` of a worker cannot
 reach the default branch:
 
