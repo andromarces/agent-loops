@@ -1,3 +1,4 @@
+import { watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -187,6 +188,21 @@ test("worker dispatch reports a main work tree change by path and omits the fiel
   }
 });
 
+/** Resolves on the next filesystem event for `name` in `dir`, before any write follows it. */
+function nextDirChange(dir, name) {
+  return new Promise((resolve, reject) => {
+    const watcher = watch(dir, (_event, filename) => {
+      if (filename !== name) return;
+      watcher.close();
+      resolve(filename);
+    });
+    watcher.on("error", (err) => {
+      watcher.close();
+      reject(err);
+    });
+  });
+}
+
 // Usefulness: verifies that a worker dispatch reports a restored main work tree file in its
 // envelope and its state record (issue #1556). The end-of-turn read cannot see the restored file,
 // so a lost watch leaves the edit with no trace.
@@ -203,10 +219,12 @@ test("worker dispatch reports a main work tree change restored inside the turn",
       release = resolve;
     });
     let written = false;
+    const event = nextDirChange(repo, "init.txt");
     const worker = recordingAdapter([
       async () => WORKER_REPLY,
       async () => {
         await writeFile(join(repo, "init.txt"), "changed inside the turn\n");
+        await event;
         written = true;
         await held;
         await writeFile(join(repo, "init.txt"), original);

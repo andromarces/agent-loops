@@ -421,9 +421,10 @@ test("the main work tree read leaves the index file unchanged", async () => {
  * Resolves on the next filesystem event for an entry of `dir`. The test uses it to order a write
  * before a restore, so both land inside the turn window with no fixed sleep.
  */
-function nextDirChange(dir) {
+function nextDirChange(dir, name) {
   return new Promise((resolve, reject) => {
     const watcher = watch(dir, (_event, filename) => {
+      if (name !== undefined && filename !== name) return;
       watcher.close();
       resolve(filename);
     });
@@ -447,8 +448,9 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null } 
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
+  // The watcher exists before the turn starts, so the write cannot precede its registration.
+  const event = nextDirChange(tree.main, path);
   const run = turn(async () => {
-    const event = nextDirChange(tree.main);
     await writeFile(join(tree.main, path), written);
     await event;
     observed();
@@ -512,8 +514,9 @@ test("a failed worker turn carries the in-turn main work tree change", async () 
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
+  // The watcher exists before the turn starts, so the write cannot precede its registration.
+  const event = nextDirChange(tree.main, "init.txt");
   const run = turn(async () => {
-    const event = nextDirChange(tree.main);
     await writeFile(join(tree.main, "init.txt"), "changed\n");
     await event;
     observed();
@@ -541,8 +544,9 @@ test("a canceled worker turn carries the in-turn main work tree change", async (
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
+  // The watcher exists before the turn starts, so the write cannot precede its registration.
+  const event = nextDirChange(tree.main, "init.txt");
   const run = turn(async () => {
-    const event = nextDirChange(tree.main);
     await writeFile(join(tree.main, "init.txt"), "changed\n");
     await event;
     observed();

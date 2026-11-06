@@ -221,7 +221,7 @@ async function readMainWorkTreeChanged(state) {
       : null;
     const fastForward = after?.fastForward ?? null;
     const paths = fastForward ? [] : diffMainWorkTree(state.mainBefore, after);
-    const watched = state.mainWatch ? await state.mainWatch.take() : null;
+    const watched = after && state.mainWatch ? await state.mainWatch.take() : null;
     const inTurn =
       watched && !watched.failed
         ? diffMainWorkTreeInTurn(state.mainBefore, after, watched.candidates, {
