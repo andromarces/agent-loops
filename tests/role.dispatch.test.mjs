@@ -26,6 +26,7 @@ import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
+  newCleanRunRepo,
   newRunRepo,
   readRepoState,
   recordingAdapter,
@@ -36,7 +37,7 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo, gitWhileDotGitExists } from "./git-helpers.mjs";
+import { CLEAN_REPO_HEAD, createTempRepo, gitWhileDotGitExists } from "./git-helpers.mjs";
 import { PASSING_RUN, prGateGh } from "./gh-doubles.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
@@ -836,14 +837,16 @@ const failingCheckGh = (localHead) =>
 // read in the envelope and in the state file, so the parent can compare it with
 // the reviewer Checks line (issue #320).
 test("a declared PR supplies the runtime-read required-check status to the reviewer", async () => {
-  const repo = await newRunRepo();
+  // The case asserts no Git result, only the PR-check status, so every Git read is answered
+  // from memory (`cleanRepoGit`) and the work tree starts no `git` process.
+  const repo = await newCleanRunRepo(gitDouble);
   const reviewer = recordingAdapter([]);
   const agents = { fake1: recordingAdapter([]), fake2: reviewer };
   const init = dispatchArgv([...INIT_OVERRIDES, "--pr", "42"], "worker");
   await executeRoleCommand(withRepo(init, repo), {
     agents,
     stdin: stdinPrompt,
-    gh: failingCheckGh("1".repeat(40)),
+    gh: failingCheckGh(CLEAN_REPO_HEAD),
   });
 
   // The status read resolves the PR head and compares it with the local reviewed
