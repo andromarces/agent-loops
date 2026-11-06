@@ -716,8 +716,16 @@ test("reviewer prompt without a scratch folder names none", () => {
 test("reviewer prompt bars a literal path to the system temporary directory", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain(
-    "When a temporary path outside the repository is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+    "When a temporary path outside the repository is needed, build it from the directory that the TMPDIR, TEMP, or TMP environment variable names when one is set, and never write a literal path to the system temporary directory, such as `/tmp` or `%TEMP%`, because the runtime can remove the directory that those variables name after this turn and cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
+});
+
+// Usefulness: verifies acceptance #1529 — the reviewer prompt names a literal `/tmp` path, because
+// a Codex reviewer read only the variable rule and wrote probe files through the Git Bash `/tmp`
+// path, which resolves to the inherited directory that the runtime does not remove.
+test("reviewer prompt names the literal /tmp path as a system temporary path", () => {
+  const prompt = reviewerPrompt({ prompt: "check the fix" }).replace(/\s+/g, " ");
+  expect(prompt).toContain("such as `/tmp` or `%TEMP%`");
 });
 
 // Usefulness: verifies acceptance #1171 — the reviewer is told that a cache that a tool writes to its

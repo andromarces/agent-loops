@@ -215,6 +215,15 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
   (text) => expectRule(text, /Report it/i, /open/i),
+  // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names, because it
+  // cannot attribute the entry and another run or the user can own it.
+  (text) =>
+    expectRule(
+      text,
+      /never deletes an entry/i,
+      /inheritedTmpdirEntries/i,
+      /leaves removal to the user/i,
+    ),
   // Issue #1045: a reviewer envelope names the pnpm package store entries that changed, as advisory
   // evidence, and the parent reports it under open instead of rejecting.
   (text) => expectRule(text, /packageStoreEntries/, /reviewer/i, /package store/i),

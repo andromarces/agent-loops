@@ -17,6 +17,11 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
     own, so the prefix is a hint and never proof: the entry stays listed, and the parent reports it
     under `open` as such.
+  - The runtime cannot attribute an entry to a turn, so the parent cannot prove ownership. The
+    parent never deletes an entry that `inheritedTmpdirEntries` names: it reports each such entry
+    under `open` and leaves removal to the user. A reviewer `Notes` line never makes an entry safe
+    to delete, because another process can hold a matching name (issue #1529). The directory is
+    shared with the user and with other processes.
   - The runtime reads the directory once, after the last
     child call of the dispatch, a task-only turn in a replacement conversation included.
     Every reviewer turn that read the directory before it started carries the field: an ok turn, a
