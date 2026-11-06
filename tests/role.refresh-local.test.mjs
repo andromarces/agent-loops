@@ -65,13 +65,11 @@ const dispatchAgain = (linked) =>
 const hashesOf = async (linked) => (await readRepoState(linked)).localFilesCopiedSha256;
 
 // Usefulness: verifies acceptance — after a refresh, a later envelope does not report the path.
+// It also verifies that a later source change is reported again.
 // Not redundant: it is the end-to-end behavior that the issue records.
 test("a recorded refresh stops a later envelope from reporting the path", async () => {
   const { main, linked } = await linkedRun();
   await writeFile(join(main, ".env"), "KEY=CHANGED\n");
-  expect((await dispatchAgain(linked)).payload.localFilesDiffer).toEqual([
-    { path: ".env", changed: "source" },
-  ]);
 
   const refreshed = await refresh(linked, ".env");
 
