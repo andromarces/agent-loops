@@ -28,7 +28,7 @@ async function addTrackedFile(repo, rel, text = `${rel}\n`) {
   await git(repo, ["commit", "-qm", rel]);
 }
 
-/** Adds and commits many tracked files in one Git call, so a Windows case stays inside its timeout. */
+/** Adds and commits many tracked files in two Git calls, so a Windows case stays inside its timeout. */
 async function addTrackedFiles(repo, rels) {
   for (const rel of rels) {
     await mkdir(dirname(join(repo, rel)), { recursive: true });

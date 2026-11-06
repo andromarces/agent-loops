@@ -120,7 +120,7 @@ export async function runLoop(options) {
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
-    // The bound and interval of the inherited tmpdir re-check; a test injects a short wait.
+    // The bound and interval of the inherited tmpdir re-check. A test injects a short wait.
     tmpdirSettle = null,
     onEvent = () => {},
   } = options;
