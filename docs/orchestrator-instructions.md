@@ -268,16 +268,16 @@ Apply these parent rules:
   main work tree that fails or passes its 10 second deadline reports no `mainWorkTreeChanged`, so
   the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed
   between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
-  the run, and leave the main work tree change to the user.
+  the run and leave the change to the user.
   - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
-    only, at most 20 paths, and never content. A failed or canceled turn carries the field
-    too. Report it under `open` in the finish summary. A path that still differs at the end appears
-    in `mainWorkTreeChanged` only. A read-only access moves no size or modification time, so it
-    names no path.
+    only, at most 20, and never content. A failed or canceled worker turn carries the field too.
+    Report it under `open` in the finish summary. The user or another process can cause the change
+    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only
+    access moves only the access time, so it names no path.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
-    bound failure reports no field, so the absent field then proves nothing.
-  - At the turn end the watch closes first, then drains the remaining queue, file classification,
-    and settlement under a 1000 ms deadline. A missed deadline reports no field and logs a warning.
+    bound failure reports no field, so the absent field proves nothing.
+  - At the turn end the watch closes first, then drains the queue and settlement under a 1000 ms
+    deadline. A missed deadline reports no field and logs a warning.
   - For a clean fast-forward, report `mainWorkTreeFastForward` under open in the finish summary with
     no stop. The `mainWorkTreeFastForward` field names the old and new head SHAs, and never content.
   - The field holds only when the main work tree had no dirty, untracked, or unignored change before

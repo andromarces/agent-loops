@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -130,13 +130,13 @@ test("a direct stop before take reports a failure and warns", async () => {
 test("a read-only access of a watched file reports no candidate", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
-  const { mtime } = await stat(file);
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await utimes(file, old, old);
   const handle = startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
   await vi.waitFor(
     async () => {
       // Windows updates an access time older than one hour, and changes it on a read.
-      await utimes(file, old, mtime);
+      await utimes(file, old, old);
       await readFile(file);
       expect(handle.seenFileCount()).toBeGreaterThan(0);
     },
