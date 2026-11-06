@@ -155,6 +155,46 @@ test("a headless worker preamble limits every edit to the run work tree", async 
   }
 });
 
+// Usefulness: acceptance #1533 on the headless path. The rendered first worker turn keeps the
+// commit and push hook output and reports its result in Checks, because the plumbing that lost it
+// was a filter on the push command.
+test("a headless worker preamble keeps and reports the hook output", async () => {
+  const repo = await cleanRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted(["worker did task"]);
+
+    await runLoop({
+      task: "Task 1533",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "orch", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { orch: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    const prompt = workerAdapter.recorded[0].prompt.replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`.",
+    );
+    expect(prompt).toContain(
+      "Keep the full output of a commit or push hook, or at least its failing and summary lines.",
+    );
+    expect(prompt).toContain("Report the hook result in Checks.");
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies requirement "a refused action charges no step and ends no run" (#1034). With
 // a budget of one step, a run_worker that holds an unknown key is repaired and the repaired dispatch
 // still runs, so the refusal charged nothing.

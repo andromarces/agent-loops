@@ -414,6 +414,22 @@ test("worker turns push only with a named refspec and never a plain git push", (
   }
 });
 
+// Usefulness: acceptance #1533: three of four workers piped `git push` through `tail`, so the
+// pre-push hook result was cut and never reached Checks. Every turn that can commit or push keeps
+// the hook output and reports its result.
+test("worker turns keep and report the commit and push hook output", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain(
+      "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`.",
+    );
+    expect(prompt).toContain(
+      "Keep the full output of a commit or push hook, or at least its failing and summary lines.",
+    );
+    expect(prompt).toContain("Report the hook result in Checks.");
+  }
+});
+
 // Usefulness: acceptance #1510: a worker ran `git add -A` after the test suite and committed an
 // unignored Vitest report, so an extra worker and reviewer turn removed it. Every turn that can
 // commit stages only the paths the change needs and names leftover generated output in Notes.
