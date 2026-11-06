@@ -47,7 +47,7 @@ export function startMainWorkTreeWatch(root) {
     const native = isAbsolute(filename) ? relative(root, filename) : filename;
     if (native.length === 0 || native === ".." || native.startsWith(`..${sep}`)) return null;
     if (isAbsolute(native)) return null;
-    return native.split(/[\\/]/).join("/");
+    return native.split(sep).join("/");
   };
 
   const ignoredByPrefix = (path) => {
