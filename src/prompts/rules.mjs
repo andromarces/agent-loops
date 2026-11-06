@@ -9,7 +9,7 @@ End your response with this block, kept short. Each label appears once, plain at
 
 A paragraph holds a bold lead and more prose on the same line. With its own dash list between two labels it makes the block unparseable: put the paragraph and its list under one label.
 
-Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one label with a short line. The label keeps the short result that the parent reads. A quoted paragraph between two labels, or a block line that starts with a backtick, makes the block unparseable.
+Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one label with a short line. The label keeps the short result that the parent reads. A quoted paragraph alone is dropped from the block, and a dash list directly under a quoted prose line makes the block unparseable.
 
 One level of sub-items under such an item, each a line of two spaces, a hyphen, one space, then the text, folds into that item with a comma. An ordered list (\`1. item\`) directly under a label joins into that label's value the same way, and its sub-items are dash lines indented to the column where the item text starts. A dash list under a label after one blank line joins that label's value too, with \`; \` when the label holds text. An ordered list after a blank line stays unparseable. Two blank lines under a label before a dash list make the block unparseable.
 

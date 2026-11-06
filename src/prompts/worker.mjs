@@ -118,7 +118,7 @@ Your role:
   this run targets the same \`--cwd\`.
 - ${workTreeEditRule}
 - Report what changed, what was verified, and state any disagreements with evidence.
-- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. Never refer to text outside the block, for example "the decisions above", because the parent reads only the block.
+- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states. Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - ${tmpdirRule}
 - ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.")}

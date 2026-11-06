@@ -47,8 +47,8 @@ labels it makes the block unparseable: put the paragraph and its list under one 
 
 Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one
 label with a short line. The label keeps the short result that the parent reads. A quoted paragraph
-between two labels, or a block line that starts with a backtick, makes the block unparseable (issue
-#1532).
+alone is dropped from the block, and a dash list directly under a quoted prose line makes the block
+unparseable (issue #1532).
 
 A column-0 label line whose name and colon sit inside `**...**` is that label, for example
 `**Blockers:** none` (issue #1483). Only the six report labels gain this form, so `**Rule:**`
