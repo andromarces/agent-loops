@@ -7,7 +7,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 When the target exists, record its content hash before the import. When it does not exist, record that it is absent and leave `ORIGINAL` empty at the copy-back:
 
 ```bash
-git hash-object --no-filters "<target>"
+git hash-object --no-filters -- "<target>"
 ```
 
 For an existing target, this hash is the content of the imported commit. The info attributes keep the imported blob and the run work tree at the bytes of the original, whatever line-ending rules a `.gitattributes` states. After the first commit, record the import commit:
@@ -20,7 +20,7 @@ Call it `<import commit>`. Create the run work tree from the local default branc
 
 Run the loop on that work tree. The run is not PR work, because no pull request can exist. Finish it with a plain `role finish` and no PR gate. Do this after a reviewer `verdict: accept` with a `Checks` line on the latest changed state, as that file states.
 
-The copy-back is the delivery step of this run, like the merge or hand-off of a no-remote run. It runs after `finish`, when the run is terminal. The parent is allowed to run this step, and the [role rule](../orchestrator-instructions.md#role) names it as the exception. Write the accepted file from the blob at `reviewed.head` over the original target. Do not copy the work tree file, because the work tree can hold line endings that the blob does not. Never write the `git show` output straight to the target: the redirect truncates the target before the command runs. The block below sets `ORIGINAL` to the hash recorded before the import, or to an empty string when the target was absent. It compares `<import commit>` with `<reviewed.head>` and removes the target only on a deletion that the diff proves, so a mistyped path or a failed lookup stops with an error and leaves the target in place. It delivers an added path only when the target is still absent, and creates the parent directory of an added target before the temporary file. Run this in bash, where `<path>` is the relative path of the target:
+The copy-back is the delivery step of this run, like the merge or hand-off of a no-remote run. It runs after `finish`, when the run is terminal. The parent is allowed to run this step, and the [role rule](../orchestrator-instructions.md#role) names it as the exception. Write the accepted file from the blob at `reviewed.head` over the original target. Do not copy the work tree file, because the work tree can hold line endings that the blob does not. Never write the `git show` output straight to the target: the redirect truncates the target before the command runs. The block below sets `ORIGINAL` to the hash recorded before the import, or to an empty string when the target was absent. It compares `<import commit>` with `<reviewed.head>` and removes the target only on a deletion that the diff proves, so a mistyped path or a failed lookup stops with an error and leaves the target in place. It prefixes a relative `TARGET` with `./`, so a target that begins with `-` is not read as an option. It delivers an added path only when the target is still absent, creates the parent directories of an added target before the temporary file, and removes only the empty directories that delivery created when it fails. Run this in bash, where `<path>` is the relative path of the target:
 
 ```bash
 REPO="<throwaway repository>"
@@ -29,6 +29,18 @@ REVIEWED="<reviewed.head>"
 FILE="<path>"
 TARGET="<target>"
 ORIGINAL="<original hash>"
+
+case "$TARGET" in
+  /* | [A-Za-z]:* | \\* | ./* | ../*) ;;
+  *) TARGET="./$TARGET" ;;
+esac
+CREATED=""
+cleanup_dirs() {
+  while IFS= read -r d; do
+    [ -n "$d" ] && rmdir -- "$d" 2>/dev/null
+  done <<< "$CREATED"
+  CREATED=""
+}
 
 git -C "$REPO" cat-file -e "$IMPORT^{commit}" 2>/dev/null &&
   git -C "$REPO" cat-file -e "$REVIEWED^{commit}" 2>/dev/null || {
@@ -53,43 +65,52 @@ ADDED=$(git -C "$REPO" -c core.quotePath=false diff --name-only --diff-filter=A 
 }
 
 if [ -n "$DELETED" ]; then
-  [ -n "$ORIGINAL" ] && [ "$(git hash-object --no-filters "$TARGET" 2>/dev/null)" = "$ORIGINAL" ] || {
+  [ -n "$ORIGINAL" ] && [ "$(git hash-object --no-filters -- "$TARGET" 2>/dev/null)" = "$ORIGINAL" ] || {
     echo "copy-back failed: the original changed" >&2
     exit 1
   }
-  rm -f "$TARGET"
+  rm -f -- "$TARGET"
 elif git -C "$REPO" cat-file -e "$REVIEWED:$FILE" 2>/dev/null; then
   if [ "$ADDED" = "$FILE" ]; then
     [ ! -e "$TARGET" ] || {
       echo "copy-back failed: the added target already exists" >&2
       exit 1
     }
-    mkdir -p "$(dirname "$TARGET")"
+    DIR=$(dirname -- "$TARGET")
+    D="$DIR"
+    while [ ! -d "$D" ]; do
+      CREATED="$CREATED$D
+"
+      D=$(dirname -- "$D")
+    done
+    mkdir -p -- "$DIR" || { cleanup_dirs; exit 1; }
   else
-    [ -n "$ORIGINAL" ] && [ "$(git hash-object --no-filters "$TARGET" 2>/dev/null)" = "$ORIGINAL" ] || {
+    [ -n "$ORIGINAL" ] && [ "$(git hash-object --no-filters -- "$TARGET" 2>/dev/null)" = "$ORIGINAL" ] || {
       echo "copy-back failed: the original changed" >&2
       exit 1
     }
   fi
-  TMP=$(mktemp "$TARGET.XXXXXX")
+  TMP=$(mktemp "$TARGET.XXXXXX") || { cleanup_dirs; exit 1; }
   git -C "$REPO" show "$REVIEWED:$FILE" > "$TMP" &&
-    mv -f "$TMP" "$TARGET" || {
-      rm -f "$TMP"
+    mv -f -- "$TMP" "$TARGET" || {
+      rm -f -- "$TMP"
+      cleanup_dirs
       exit 1
     }
+  CREATED=""
 else
   echo "copy-back failed: $FILE is in neither commit and the reviewed commit did not delete it" >&2
   exit 1
 fi
 ```
 
-The redirect writes the bytes unchanged, so use bash, not a PowerShell version whose `>` re-encodes the output. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was.
+The redirect writes the bytes unchanged, so use bash, not a PowerShell version whose `>` re-encodes the output. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was. A failed delivery removes only the empty parent directories that it created for an added path, deepest first.
 
 After the copy, check the delivered state. When `reviewed.head` holds `<path>`, compare the content hash of the delivered file with the blob:
 
 ```bash
 git -C "<throwaway repository>" rev-parse "<reviewed.head>:<path>"
-git hash-object --no-filters "<target>"
+git hash-object --no-filters -- "<target>"
 ```
 
 The two hashes must be equal. When the reviewed commit deleted `<path>`, the delivery is complete only when `<target>` is absent. A remaining file, or a different hash, means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
