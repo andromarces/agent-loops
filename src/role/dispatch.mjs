@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { normalizeAgent } from "../agents/index.mjs";
 import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
+import { reportedPathNames } from "../lib/entry-report.mjs";
 import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { copyLocalFiles, findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-files.mjs";
@@ -21,6 +22,7 @@ import {
   writeState,
 } from "../lib/runstate.mjs";
 import { assertGitWorkTree } from "../lib/snapshot.mjs";
+import { readSparseCheckout } from "../lib/sparse-checkout.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "../lib/test-cmd.mjs";
 import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
@@ -251,6 +253,8 @@ async function dispatchLocked(
       })
     : null;
   const localFilesDiffer = init ? [] : await differingLocalFiles(state, args.cwd, signal);
+  // Read after the init side effects, before the first child turn, and never change the setting.
+  const sparseCheckout = init ? await readSparseCheckout(args.cwd) : null;
 
   // Charge the step before execution, matching the headless runtime.
   state.stepsUsed += 1;
@@ -338,7 +342,10 @@ async function dispatchLocked(
     }
     return {
       exitCode: canceled ? 130 : 1,
-      payload: withLocalFiles(payload, localFiles, localFilesDiffer),
+      payload: withSparseCheckout(
+        withLocalFiles(payload, localFiles, localFilesDiffer),
+        sparseCheckout,
+      ),
     };
   }
 
@@ -352,7 +359,10 @@ async function dispatchLocked(
   // non-zero command outcome for the calling parent.
   return {
     exitCode: result.status === "ok" ? 0 : 1,
-    payload: withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
+    payload: withSparseCheckout(
+      withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
+      sparseCheckout,
+    ),
   };
 }
 
@@ -557,6 +567,22 @@ function withLocalFiles(payload, localFiles, localFilesDiffer) {
     ...(localFilesDiffer.length > 0
       ? { localFilesDiffer: reportedLocalFileChanges(localFilesDiffer) }
       : {}),
+  };
+}
+
+/**
+ * Adds the sparse checkout that a linked `--cwd` inherits to the init envelope. The paths are
+ * redacted and capped like the other path fields. A null read adds no field, and the absent field
+ * then proves nothing, because a failed read adds none either.
+ */
+function withSparseCheckout(payload, sparseCheckout) {
+  if (sparseCheckout === null) return payload;
+  return {
+    ...payload,
+    sparseCheckout: {
+      enabled: sparseCheckout.enabled,
+      skipWorktree: reportedPathNames(sparseCheckout.skipWorktree),
+    },
   };
 }
 
