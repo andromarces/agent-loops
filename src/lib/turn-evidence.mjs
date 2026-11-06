@@ -22,10 +22,12 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 //   branch (issue #1485).
 // - localSourceChangedInTurn: paths of the copied local sources that changed inside a worker or
 //   reviewer turn window (issue #1504).
-// - lockfileChanged: paths of the lockfiles the worker turn changed, so the parent reinstalls
-//   before the next reviewer turn (issue #1180).
+// - lockfileChanged: paths of the dependency files the worker turn changed. The parent runs only
+//   the dependency setup that the repository documents for its tests in the work tree, and a
+//   changed dependency file that no test setup reads needs no action (issues #1180 and #1537).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
-//   reviewer turn. Advisory: the runtime cannot attribute them to the turn (issue #1024).
+//   reviewer turn and that a second read after a short settle still holds. Advisory: the runtime
+//   cannot attribute them to the turn (issues #1024 and #1542).
 // - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
 //   Advisory, like the temporary directory entries (issue #1045).
 // - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the
