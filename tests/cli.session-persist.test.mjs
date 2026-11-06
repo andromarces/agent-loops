@@ -1,4 +1,6 @@
 import {
+  appendFile,
+  cp,
   mkdir,
   mkdtemp,
   readdir,
@@ -11,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeEach, expect, vi } from "vite-plus/test";
 import { runClaude } from "../src/agents/claude.mjs";
 import { main } from "../src/cli.mjs";
 import { exec } from "../src/lib/exec.mjs";
@@ -363,17 +365,65 @@ test("a transcript in a directory named '..records' inside the work tree is writ
 
 const git_ = (cwd, ...args) => execa("git", args, { cwd });
 
-// Adds a submodule `sub` to the test repository and commits it. The source is a copy of the
-// seeded template, so no `git init`, add, or commit runs for it.
-async function addSubmodule() {
-  const source = await createTempRepo();
-  try {
-    await git_(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "sub");
-    await git_(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
-  } finally {
-    await removePath(source);
-  }
+// One repository per file whose `sub` is a registered submodule with the state that
+// `git submodule add` leaves: `.gitmodules` is committed, and the Git directory of `sub` lives under
+// `.git/modules/sub` and is named by a relative `.git` file. A recursive copy is therefore a
+// self-contained work tree with the same registered submodule. The source is a copy of the seeded
+// template, so the template build starts no Git call for it.
+let submoduleTemplate;
+let submoduleTemplateDir;
+
+async function createSubmoduleRepo() {
+  submoduleTemplate ??= (async () => {
+    const dir = await createTempRepo();
+    submoduleTemplateDir = dir;
+    const source = await createTempRepo();
+    try {
+      await mkdir(join(dir, ".git", "modules"), { recursive: true });
+      await cp(join(source, ".git"), join(dir, ".git", "modules", "sub"), { recursive: true });
+      await cp(source, join(dir, "sub"), { recursive: true });
+      await rm(join(dir, "sub", ".git"), { recursive: true, force: true });
+      await writeFile(join(dir, "sub", ".git"), "gitdir: ../.git/modules/sub\n");
+      await writeFile(join(dir, ".gitmodules"), '[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n');
+      // Registration is local, as `git submodule init` writes it, and makes the status report an
+      // initialized submodule rather than `-sub`.
+      await appendFile(
+        join(dir, ".git", "config"),
+        '[submodule "sub"]\n\turl = ./sub\n\tactive = true\n',
+      );
+      await git_(dir, "add", ".gitmodules", "sub");
+      await git_(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "sub");
+      // One status check covers every copy, because a copy is byte-identical to this template. The
+      // check starts 16 Git processes on Windows, so each case would pay that cost for no new state.
+      expect((await git_(dir, "submodule", "status")).stdout).toMatch(/^ [0-9a-f]{40} sub\b/);
+    } finally {
+      await removePath(source);
+    }
+    return dir;
+  })();
+  const dir = await mkdtemp(join(tmpdir(), "runtime-test-submodule-"));
+  await cp(await submoduleTemplate, dir, { recursive: true });
+  // The copy keeps the committed `.gitmodules` and the gitlink, and its relative `.git` file still
+  // names the Git directory that the copy holds.
+  const staged = (await git_(dir, "ls-files", "--stage", "--", ".gitmodules", "sub")).stdout;
+  expect(staged).toContain("\t.gitmodules\n");
+  expect(staged).toContain("160000 ");
+  expect(await readFile(join(dir, "sub", ".git"), "utf8")).toBe("gitdir: ../.git/modules/sub\n");
+  return dir;
 }
+
+// A case that asserts a change inside a submodule calls this first. The repository is the prepared
+// submodule copy, so the case runs no Git call to build the submodule.
+async function useSubmoduleRepo() {
+  await removePath(repo);
+  gitDouble.answer = null;
+  repo = await realpath(await createSubmoduleRepo());
+}
+
+afterAll(async () => {
+  submoduleTemplate = undefined;
+  if (submoduleTemplateDir) await removePath(submoduleTemplateDir);
+});
 
 // Usefulness: verifies a transcript named like a mutation marker never hides a reviewer commit.
 test.skipIf(process.platform === "win32")(
@@ -401,8 +451,7 @@ test.skipIf(process.platform === "win32")(
 
 // Usefulness: verifies a transcript path that names a submodule never hides a change inside it.
 test("a transcript path that names a submodule still reports a reviewer change inside it", async () => {
-  await useRealRepo();
-  await addSubmodule();
+  await useSubmoduleRepo();
   await reviewerRun(join(repo, "sub"), repo, () =>
     writeFile(join(repo, "sub", "f.txt"), "changed\n"),
   );
@@ -412,8 +461,7 @@ test("a transcript path that names a submodule still reports a reviewer change i
 // Usefulness: verifies a transcript inside a submodule causes no mutation failure, although the
 // outer snapshot sees a write there as a dirty submodule.
 test("a transcript inside a submodule causes no reviewer mutation failure", async () => {
-  await useRealRepo();
-  await addSubmodule();
+  await useSubmoduleRepo();
   await reviewerRun(join(repo, "sub", "run.json"), repo);
   expect(process.exitCode).toBe(0);
 });
