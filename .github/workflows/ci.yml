@@ -86,8 +86,11 @@ jobs:
             sleep 15
           done
           exit 1
+      # Call the runner directly. `pnpm test -- --shard=<i>/3` inserts a `--`
+      # separator on the script command, and vp drops the arguments after it,
+      # so every shard ran the full suite.
       - name: Run tests (shard ${{ matrix.shard }}/3)
-        run: pnpm test -- --shard=${{ matrix.shard }}/3
+        run: pnpm exec vp test run --shard=${{ matrix.shard }}/3
 
   windows-smoke:
     runs-on: windows-latest
