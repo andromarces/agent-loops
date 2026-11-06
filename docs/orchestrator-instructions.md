@@ -410,15 +410,18 @@ once as a first turn, with the worker preamble and the `Init task:` block. A rev
 `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files of the
-main work tree that `--cwd` ignores, such as agent instructions and `.env`, into `--cwd`.
-Do not read, print, or quote any copied file. The copy duplicates secrets such as `.env`
-into the run work tree, so remove that work tree when the run ends. The copy rules,
-`--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
-[Local files copied into the work tree](orchestrator/local-files-copy.md). For a
-`localFilesDiffer` entry with `changed: "source"`, refresh the copy by hand when no
-`localSourceChangedInTurn` entry names it. For `copy`, a turn changed the copy: report a breach
-under `open`. When `localSourceChangedInTurn` names a path, report it under `open` and ask the
-user before a refresh.
+main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent
+instructions and `.env`. Do not read, print, or quote any copied file. The copy duplicates
+secrets such as `.env` into the run work tree, so remove that work tree when the run ends. The
+copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
+[Local files copied into the work tree](orchestrator/local-files-copy.md).
+
+For `source`, the main work tree changed after init. Run
+`agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
+`--parent-session` id when no `localSourceChangedInTurn` entry names it. For `copy`, a turn
+changed the copy: report a breach under `open`. For `both`, the stored hash records no refresh of
+the current copy: report a breach under `open`. When `localSourceChangedInTurn` names a path, report
+it under `open` and ask the user before a refresh.
 
 Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
 with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused
@@ -526,7 +529,8 @@ of this file.
 - [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
-  `declare-pr`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
+  `declare-pr`, `refresh-local`, `finish`, or `abort`, or when a call is refused for
+  `AGENT_LOOP_SPAWNED_RUN`.
 
 ## Selecting issues for a batch
 
@@ -691,7 +695,7 @@ PR does not exist at init, and when a headless run declares its PR itself.
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
   Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `declare-pr`, `finish`, or `abort`. The spawn marker and its
+  role never runs `extend`, `declare-pr`, `refresh-local`, `finish`, or `abort`. The spawn marker and its
   limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not

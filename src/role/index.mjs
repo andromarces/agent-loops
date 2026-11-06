@@ -1,5 +1,5 @@
-// `agent-loop role`: run one worker or reviewer turn, or one of six other
-// subcommands: finish, abort, extend, declare-pr, set-model, or wait-checks. It
+// `agent-loop role`: run one worker or reviewer turn, or one of seven other
+// subcommands: finish, abort, extend, declare-pr, refresh-local, set-model, or wait-checks. It
 // runs through the same guards as the headless loop, driven by a lifecycle state
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
@@ -9,6 +9,7 @@ import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
+import { normalizeLocalPath, refreshLocalFile } from "../lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
 import {
   TERMINAL_LIFECYCLES,
@@ -41,6 +42,7 @@ const ROLE_OPERATIONS = [
   { name: "abort", runEnding: true, run: abort },
   { name: "extend", runEnding: true, run: extend },
   { name: "declare-pr", runEnding: true, run: declarePr },
+  { name: "refresh-local", runEnding: true, run: refreshLocal },
   { name: "set-model", runEnding: true, run: setModel },
   { name: "wait-checks", runEnding: false, run: waitChecksOperation },
 ];
@@ -50,8 +52,8 @@ const OPERATION_SYNTAX = ROLE_OPERATIONS.map((operation) => operation.name).join
 const ROLE_USAGE = [
   `Usage: agent-loop role [${OPERATION_SYNTAX}] [flags]`,
   "",
-  "Runs one worker or reviewer turn, or ends or extends a run, from a lifecycle",
-  "state file. One JSON object on stdout, except this help; logs on stderr.",
+  "Runs one worker or reviewer turn, or ends, extends, or refreshes a run, from a",
+  "lifecycle state file. One JSON object on stdout, except this help; logs on stderr.",
   "",
   "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",
   "Init task: --task <text> or --task-file <path|-> (- reads stdin; then pass --prompt-file).",
@@ -223,6 +225,69 @@ async function declarePr(args, { gh, signal } = {}) {
     },
     ["pr"],
     "declare-pr",
+  );
+}
+
+/**
+ * `refresh-local`: copies one copied local file's source over its run copy and stores the new hash.
+ * The call needs the stored parent session id on a non-terminal run, and a child role cannot run it.
+ * The path must be one that init copied, with a stored hash.
+ * The copy must still equal that hash, so a turn edit is refused and stays reported as a breach.
+ * Other paths keep their stored hashes. The envelope names the path only, never content or a hash.
+ */
+async function refreshLocal(args, { signal } = {}) {
+  rejectMisplacedFlags(args, "refresh-local");
+  if (args.localPath === null) {
+    throw new RoleError("refresh-local requires --path <path>.");
+  }
+
+  return withOpenRun(
+    args,
+    {},
+    async (state, paths) => {
+      if (state.copyLocalFiles === false || !Array.isArray(state.localFilesCopied)) {
+        throw new RoleError("refresh-local is refused: the run copied no local files.");
+      }
+      let rel;
+      try {
+        rel = normalizeLocalPath(args.localPath);
+      } catch (err) {
+        throw new RoleError(err.message.replace(/^--copy-local-path/, "refresh-local --path"));
+      }
+      if (!state.localFilesCopied.includes(rel)) {
+        throw new RoleError(
+          `refresh-local --path ${JSON.stringify(rel)} is refused: init did not copy it.`,
+        );
+      }
+      const hashes = state.localFilesCopiedSha256;
+      const expected =
+        hashes !== null && typeof hashes === "object" && !Array.isArray(hashes)
+          ? hashes[rel]
+          : undefined;
+      if (typeof expected !== "string" || !/^[0-9a-f]{64}$/.test(expected)) {
+        throw new RoleError(
+          `refresh-local --path ${JSON.stringify(rel)} is refused: the run holds no stored hash for it, so it cannot prove the copy unchanged.`,
+        );
+      }
+      let hash;
+      try {
+        hash = await refreshLocalFile(args.cwd, rel, { signal, expectedCopyHash: expected });
+      } catch (err) {
+        if (err?.isCanceled) {
+          throw err;
+        }
+        throw new RoleError(err.message);
+      }
+      state.localFilesCopiedSha256 = { ...hashes, [rel]: hash };
+      await writeState(paths.stateFile, state);
+      logInfo(`local file refreshed: ${rel} (${state.stepsUsed} steps used)`);
+      return {
+        exitCode: 0,
+        payload: { status: "ok", lifecycle: state.lifecycle, path: rel },
+      };
+    },
+    [],
+    "refresh-local",
   );
 }
 

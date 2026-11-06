@@ -4,7 +4,18 @@
 
 partially-superseded
 
-Superseded by [ADR 0075: Report a copied source that changed inside a turn window](0075-report-a-copied-source-that-changed-inside-a-turn-window.md). Decision 5's action for `changed: "source"` becomes conditional: when `localSourceChangedInTurn` names the path, the parent reports it under `open` and asks the user before a refresh. Decisions 1 to 4 and decision 5's action for `changed: "copy"` and for a source that no turn window names remain in force.
+Partially superseded by [ADR 0075](0075-report-a-copied-source-that-changed-inside-a-turn-window.md) and [ADR 0078](0078-record-a-hand-refresh-of-a-copied-local-file.md).
+
+- Decision 5's action for `changed: "source"`: superseded by [ADR 0075](0075-report-a-copied-source-that-changed-inside-a-turn-window.md). When `localSourceChangedInTurn` names the path, the parent reports it under `open` and asks the user before a refresh.
+- Decision 2's init-hash compare and decision 3's init-hash comparison: superseded by [ADR 0078](0078-record-a-hand-refresh-of-a-copied-local-file.md). Both sides are compared with the stored hash, which a recorded refresh updates.
+- Decision 5's source action: superseded by [ADR 0078](0078-record-a-hand-refresh-of-a-copied-local-file.md). That action names `role refresh-local`.
+
+The rest remains in force:
+
+- Decision 1, the init hash write.
+- Decision 3, except the init-hash comparison.
+- Decision 4, the report shape.
+- Decision 5's action for `changed: "copy"` and for a source that no turn window names.
 
 ## Date
 
