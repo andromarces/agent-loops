@@ -11,7 +11,12 @@ import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockfile-change.mjs";
 import { hashCopiedLocalSources } from "./lib/local-files.mjs";
-import { diffMainWorkTree, readMainWorkTree } from "./lib/main-work-tree-change.mjs";
+import {
+  diffMainWorkTree,
+  diffMainWorkTreeInTurn,
+  readMainWorkTree,
+} from "./lib/main-work-tree-change.mjs";
+import { startMainWorkTreeWatch } from "./lib/main-work-tree-watch.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
 import { missingRequiredReportLabels, reportForResult } from "./lib/report.mjs";
 import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
@@ -133,6 +138,13 @@ async function readBeforeTurn(state) {
     state.sharedBefore = shared;
     state.lockfilesBefore = lockfiles;
     state.mainBefore = main;
+    // The watch starts before the child call, so an edit that the turn restores still leaves a path.
+    state.mainWatch = main
+      ? startMainWorkTreeWatch(
+          main.root,
+          state.mainWatchDeadlineMs === null ? {} : { drainDeadlineMs: state.mainWatchDeadlineMs },
+        )
+      : null;
     return;
   }
   const [copiedSources, tmpdir, store] = await Promise.all([
@@ -202,8 +214,9 @@ async function readWorkTree(state) {
 }
 
 /**
- * Paths of the main work tree that differ from the pre-turn read, or the old and new head of a
- * clean fast-forward. Both are empty or absent when the read found no change.
+ * Paths of the main work tree that differ from the pre-turn read. Also the old and new head of a
+ * clean fast-forward, and the paths that the watch saw change and restore inside the window. Each
+ * list is empty or absent when its read found no change.
  * @param {ChildEvidenceState} state
  */
 async function readMainWorkTreeChanged(state) {
@@ -213,13 +226,27 @@ async function readMainWorkTreeChanged(state) {
       : null;
     const fastForward = after?.fastForward ?? null;
     const paths = fastForward ? [] : diffMainWorkTree(state.mainBefore, after);
-    state.mainEvidence = { mainWorkTreeChanged: paths, mainWorkTreeFastForward: fastForward };
+    const watched = after && state.mainWatch ? await state.mainWatch.take() : null;
+    const inTurn =
+      watched && !watched.failed
+        ? diffMainWorkTreeInTurn(state.mainBefore, after, watched.candidates, {
+            exclude: after?.commitPaths ?? [],
+          })
+        : [];
+    state.mainEvidence = {
+      mainWorkTreeChanged: paths,
+      mainWorkTreeChangedInTurn: inTurn,
+      mainWorkTreeFastForward: fastForward,
+    };
     if (paths.length > 0) {
       logWarn(`worker: the main work tree changed: ${paths.join(", ")}`);
     } else if (fastForward) {
       logInfo(
         `worker: the main work tree fast-forwarded from ${fastForward.before} to ${fastForward.after}`,
       );
+    }
+    if (inTurn.length > 0) {
+      logWarn(`worker: the main work tree changed inside the turn: ${inTurn.join(", ")}`);
     }
   }
   return state.mainEvidence;
@@ -413,6 +440,9 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
+    // A test uses onMainWatch and mainWatchDeadlineMs to observe and bound the watch.
+    onMainWatch,
+    mainWatchDeadlineMs = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
@@ -629,6 +659,9 @@ export async function runChild(options) {
     sharedBefore: null,
     lockfilesBefore: null,
     mainBefore: null,
+    // The turn-window watch of the main work tree, stopped on every outcome.
+    mainWatch: null,
+    mainWatchDeadlineMs,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,
     localSourcePaths: null,
@@ -660,6 +693,7 @@ export async function runChild(options) {
     // removal can neither read as a mutation nor hide one (issue #920).
     const scratchDir = isReviewer ? await createReviewerScratch(cwd, { signal }) : null;
     await readBeforeTurn(evidence);
+    if (evidence.mainWatch && onMainWatch) onMainWatch(evidence.mainWatch);
     let response;
     try {
       response = readOnly
@@ -807,6 +841,8 @@ export async function runChild(options) {
       ...pickTurnEvidence({ ...failedEvidence, testRun }),
     };
   } finally {
+    // The stop closes the watcher and settles every read before this turn returns.
+    await evidence.mainWatch?.stop();
     if (!keepReplacedMark) delete role.conversationReplaced;
     delete role.shellDenied;
     delete role.multiPartUnidentified;

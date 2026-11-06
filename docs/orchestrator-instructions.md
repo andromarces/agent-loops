@@ -173,12 +173,8 @@ The example below is indented for display only. Example reviewer envelope:
   - Dispatch the same turn again, after a short wait, without reading the `error` text. Raise the budget with `extend`
     when no step is left. An error with no `transient` field is not known to be
     transient.
-  - The Codex adapter marks the reply `Selected model is at capacity. Please
-    try a different model.`. The Claude Code adapter marks a `result` event with
-    `is_error: true` and `api_error_status: 529`. The OpenCode adapter marks a
-    `provider.internal` error with `status` 529. The Copilot adapter marks a
-    `session.error` event with `statusCode` 529. The agy adapter marks an
-    `AGY_ERROR` line whose `short_error` carries code 529.
+  - The capacity reply that each adapter marks is in
+    [Supported agents](reference/architecture.md#supported-agents).
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
@@ -191,14 +187,12 @@ The example below is indented for display only. Example reviewer envelope:
 - `report.checks` names the commands that ran in that child turn and their
   results, for a worker turn and for a reviewer turn alike. It is reported
   evidence from the child, not proof that a command ran, so it never replaces
-  the runtime `reviewed` fields. The label is optional, so a child that omits it
-  yields `null` and the block still parses.
+  the runtime `reviewed` fields.
 - `report.notes` holds non-blocking findings the next turn does not need to act
-  on. `report.deferred` holds items found but left out of scope. Both are
-  optional: a child that omits the label yields `null` for that field, and the
-  block still parses. Each value is one line, the label plain at column 0.
-  The rules that fold a list under a label into that value, and the shapes that make the
-  block unparseable, are in [Closing block list rules](orchestrator/closing-block.md).
+  on. `report.deferred` holds items found but left out of scope.
+- The `Checks`, `Notes`, and `Deferred` labels are optional: an omitted label yields `null`, and
+  the block still parses. List folding and unparseable shapes are in
+  [Closing block list rules](orchestrator/closing-block.md).
 
 A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
 the reviewer saw. The runtime writes these fields from the snapshot taken at the
@@ -275,6 +269,14 @@ Apply these parent rules:
   the absent field then proves nothing. The `mainWorkTreeChanged` field reports a change observed
   between two reads, and the user or another process can cause it. For `mainWorkTreeChanged`, stop
   the run, and leave the main work tree change to the user.
+  - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
+    only, at most 20 paths, and never content. A failed or canceled worker turn carries the field
+    too. Report it under `open` in the finish summary. The user or another process can cause the
+    change too. A path that still differs at the end appears in `mainWorkTreeChanged` only.
+  - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
+    bound failure reports no field, so the absent field then proves nothing.
+  - At the turn end the watch closes first, then drains the remaining queue, file classification,
+    and settlement under a 1000 ms deadline. A missed deadline reports no field and logs a warning.
   - For a clean fast-forward, report `mainWorkTreeFastForward` under open in the finish summary with
     no stop. The `mainWorkTreeFastForward` field names the old and new head SHAs, and never content.
   - The field holds only when the main work tree had no dirty, untracked, or unignored change before

@@ -4,8 +4,10 @@ import { entryCarrier } from "./entry-report.mjs";
 import { carryLockfileChanged, failedLockfileChanged } from "./lockfile-change.mjs";
 import {
   carryMainWorkTreeChanged,
+  carryMainWorkTreeChangedInTurn,
   carryMainWorkTreeFastForward,
   failedMainWorkTreeChanged,
+  failedMainWorkTreeChangedInTurn,
   failedMainWorkTreeFastForward,
 } from "./main-work-tree-change.mjs";
 import { carrySharedGitChanged, failedSharedGitChanged } from "./shared-git.mjs";
@@ -18,6 +20,8 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 //   (issue #984).
 // - mainWorkTreeChanged: paths of the main work tree that a worker turn in a linked work tree changed
 //   (issue #1448).
+// - mainWorkTreeChangedInTurn: paths of the main work tree that changed and were restored inside a
+//   worker turn window (issue #1556).
 // - mainWorkTreeFastForward: the old and new head of a clean fast-forward to the remote default
 //   branch (issue #1485).
 // - localSourceChangedInTurn: paths of the copied local sources that changed inside a worker or
@@ -51,6 +55,13 @@ const TURN_EVIDENCE = [
     key: "paths",
     carry: carryMainWorkTreeChanged,
     failed: failedMainWorkTreeChanged,
+  },
+  {
+    field: "mainWorkTreeChangedInTurn",
+    type: "main-work-tree-in-turn",
+    key: "paths",
+    carry: carryMainWorkTreeChangedInTurn,
+    failed: failedMainWorkTreeChangedInTurn,
   },
   {
     field: "mainWorkTreeFastForward",
@@ -148,4 +159,4 @@ export function failedTurnEvidence(err) {
   return Object.fromEntries(TURN_EVIDENCE.map(({ field, failed }) => [field, failed(err)]));
 }
 
-/** @typedef {{ sharedGitChanged?: string[], mainWorkTreeChanged?: string[], mainWorkTreeFastForward?: { before: string, after: string }, localSourceChangedInTurn?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
+/** @typedef {{ sharedGitChanged?: string[], mainWorkTreeChanged?: string[], mainWorkTreeChangedInTurn?: string[], mainWorkTreeFastForward?: { before: string, after: string }, localSourceChangedInTurn?: string[], lockfileChanged?: string[], inheritedTmpdirEntries?: string[], packageStoreEntries?: string[], testRun?: object }} TurnEvidence */
