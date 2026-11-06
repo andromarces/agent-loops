@@ -17,7 +17,7 @@ Branch protection requires the contexts `ci (ubuntu-latest)`, `ci (windows-lates
 ## Decision
 
 1. The `ci` matrix keeps `[ubuntu-latest, macos-latest]`, so its two contexts keep their names and steps. Format and lint stay on the Linux leg.
-2. A `windows-tests` job runs on `windows-latest` with `shard: [1, 2, 3]` and runs `pnpm exec vp test run --shard=<i>/3`. The runner supports the flag: `vp test --help` lists `--shard <shards>` as `<index>/<count>`. The step calls the runner directly because `pnpm test -- --shard=<i>/3` inserts a `--` separator on the script command, and vp drops the arguments after it, so every shard would run the full suite.
+2. A `windows-tests` job runs on `windows-latest` with `shard: [1, 2]` and runs `pnpm exec vp test run --shard=<i>/2`. The runner supports the flag: `vp test --help` lists `--shard <shards>` as `<index>/<count>`. The step calls the runner directly because `pnpm test -- --shard=<i>/2` inserts a `--` separator on the script command, and vp drops the arguments after it, so every shard would run the full suite.
 3. A `windows-smoke` job runs on `windows-latest` and runs the unchanged install/uninstall probe once, unsharded.
 4. A `windows-gate` job is named `ci (windows-latest)`, needs both Windows jobs, runs `if: always()` on `ubuntu-latest`, and exits non-zero unless both `needs` results are `success`. The required context becomes the aggregate, so `main-protection` needs no edit.
 5. All jobs keep `fail-fast: false`, the existing workflow-level concurrency group, the existing `pull_request` and `workflow_dispatch` triggers, and no `setup-node` pnpm cache.
@@ -25,11 +25,11 @@ Branch protection requires the contexts `ci (ubuntu-latest)`, `ci (windows-lates
 
 ## Consequences
 
-- Windows wall time is the slowest shard plus its setup, with the smoke job in parallel. The expected value is near 200 s against 527 to 594 s observed. Per-file cost is uneven, so the split is not guaranteed to balance and stays to be measured.
+- Windows wall time is the slowest shard plus its setup, with the smoke job in parallel. The expected value is about half the single-job test time plus setup, near 300 s against 527 to 594 s observed. Per-file cost is uneven, so the split is not guaranteed to balance and stays to be measured.
 - The required context now reports the aggregate. A failed or cancelled shard or smoke job fails it. A gate job that never runs leaves the context absent, which main protection already treats as unmet.
 - Windows test failures are attributed to one shard job instead of one job, so a failing shard is narrower to read.
 - Each shard and the smoke job repeat checkout, pnpm setup, Node setup, and install. That setup is parallel and costs no wall time when the runner pool is free.
-- Three shard jobs plus the smoke job consume four standard `windows-latest` runners per run. They are free for a public repository.
+- Two shard jobs plus the smoke job consume three standard `windows-latest` runners per run. They are free for a public repository.
 - A single merged test report is not produced. No report or coverage gate exists, so no blob merge is needed.
 
 ## Alternatives
@@ -38,7 +38,8 @@ Branch protection requires the contexts `ci (ubuntu-latest)`, `ci (windows-lates
 2. Drop the Windows install/uninstall probe to save wall time. Not taken. It is the only Windows installer evidence before merge.
 3. Edit the ruleset to require the new shard job names. Not taken. The issue forbids the edit and it would couple merge gating to the shard count.
 4. Shard by directory. Not taken. Per-filesystem locality is not the bottleneck and file count per directory is uneven.
-5. Merge per-shard blob reports. Not taken. Nothing consumes a merged report today.
+5. Use three shards. Not taken. In five measured runs the slowest-to-fastest ratio exceeded 1.5x in three of them, so the split moved to two shards.
+6. Merge per-shard blob reports. Not taken. Nothing consumes a merged report today.
 
 ## Authors
 
