@@ -275,6 +275,7 @@ test("a refresh refuses a link at either file or at a parent component", async (
   const outside = join(base, "outside");
   await mkdir(outside);
   await writeFile(join(outside, "settings.json"), "OUTSIDE\n");
+  const dirLink = process.platform === "win32" ? "junction" : "dir";
   const before = await readRepoState(linked);
 
   await rename(join(main, ".env"), join(main, ".env-real"));
@@ -294,14 +295,14 @@ test("a refresh refuses a link at either file or at a parent component", async (
   await rename(join(linked, ".env-real"), join(linked, ".env"));
 
   await rename(join(main, ".vscode"), join(main, ".vscode-real"));
-  await symlink(outside, join(main, ".vscode"));
+  await symlink(outside, join(main, ".vscode"), dirLink);
   expect((await refresh(linked, ".vscode/settings.json")).exitCode).toBe(1);
   expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("OUTSIDE\n");
   await rm(join(main, ".vscode"));
   await rename(join(main, ".vscode-real"), join(main, ".vscode"));
 
   await rename(join(linked, ".vscode"), join(linked, ".vscode-real"));
-  await symlink(outside, join(linked, ".vscode"));
+  await symlink(outside, join(linked, ".vscode"), dirLink);
   expect((await refresh(linked, ".vscode/settings.json")).exitCode).toBe(1);
   expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("OUTSIDE\n");
   const after = await readRepoState(linked);
