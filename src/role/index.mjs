@@ -139,10 +139,11 @@ async function abort(args) {
 /**
  * `recheck-tmpdir`: re-reads the inherited temporary directory and reports the names that the
  * reviewer turns of the run reported and that a later read still holds. It is a read-only status
- * read of a non-terminal run: it writes no run state, deletes nothing, and reports names only,
- * redacted and capped. It requires the stored parent session id, as `extend` does, and a child
- * role is refused. A failed or over-bound read, and a name it cannot re-check, stays listed. It
- * polls until every checkable name is gone, or for the settle bound.
+ * read of a run in any lifecycle, including a terminal run after `finish`: it writes no run state,
+ * deletes nothing, and reports names only, redacted and capped. It requires the stored parent
+ * session id, as `extend` does, and a child role is refused. A failed or over-bound read, and a name
+ * it cannot re-check, stays listed. It polls until every checkable name is gone, or for the
+ * settle bound.
  */
 async function recheckTmpdir(args, { signal, read, tmpdirSettle } = {}) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
@@ -151,9 +152,6 @@ async function recheckTmpdir(args, { signal, read, tmpdirSettle } = {}) {
   const state = requireState(await readState(paths.stateFile), args.cwd);
   requireStoredParentSession(args, state);
   rejectInitFlagChanges(args, state, []);
-  if (TERMINAL_LIFECYCLES.has(state.lifecycle)) {
-    throw new RoleError(`Run is already ${state.lifecycle}.`);
-  }
   const present = await presentInheritedTmpdir(inheritedTmpdirNames(state), {
     ...(read ? { read } : {}),
     settle: { ...tmpdirSettle, signal },

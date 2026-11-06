@@ -317,15 +317,34 @@ test("recheck-tmpdir refuses a missing or wrong parent session", async () => {
   expect(wrong.payload.error).toContain("--parent-session does not match");
 });
 
-// Usefulness: verifies requirement "a terminal run is refused" (issue #1559), so the documented
-// lifecycle set matches the code.
-test("recheck-tmpdir refuses a terminal run", async () => {
+// Usefulness: verifies acceptance of issue #1575. A parent that finished the run first can still
+// get the names that remain, and the terminal re-read writes no state and deletes nothing.
+test("recheck-tmpdir re-reads a terminal run and still writes no state or deletes a name", async () => {
   const repo = await newRunRepo();
   await initWorkerRun(repo);
-  expect((await finishCall(repo)).exitCode).toBe(0);
-  const result = await recheck(repo);
-  expect(result.exitCode).toBe(1);
-  expect(result.payload.error).toContain("Run is already finished");
+  await withInheritedDir(async (dir) => {
+    const gone = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+    const stays = "stays.txt";
+    await writeFile(join(dir, gone), "");
+    await writeFile(join(dir, stays), "");
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [gone, stays];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    expect((await finishCall(repo)).exitCode).toBe(0);
+    const before = await readRepoState(repo);
+    await rm(join(dir, gone));
+
+    const result = await recheck(repo);
+    expect(result.exitCode).toBe(0);
+    expect(result.payload).toEqual({
+      status: "ok",
+      lifecycle: "finished",
+      inheritedTmpdirEntries: [stays],
+    });
+    expect(existsSync(join(dir, stays))).toBe(true);
+    expect(existsSync(statePaths({ cwd: repo }).lockFile)).toBe(false);
+    expect(await readRepoState(repo)).toEqual(before);
+  });
 });
 
 // Usefulness: verifies requirement "a state file written before inheritedTmpdirNames existed still

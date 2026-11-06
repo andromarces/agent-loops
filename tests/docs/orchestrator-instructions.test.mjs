@@ -280,7 +280,8 @@ const SHARED_PARENT_RULES = [
 ];
 
 // Usefulness: verifies the child guard and the parent-session rule name the parent read (issue
-// #1559). A child never runs it, and a caller must pass the stored id.
+// #1559). A child never runs it, a caller must pass the stored id, and the read works on a
+// terminal run (issue #1575).
 test("the child guard and parent-session docs name recheck-tmpdir", async () => {
   const child = (await readFile(join(referenceSectionsDir, "child-run-guard.md"), "utf8")).replace(
     /\s+/g,
@@ -295,18 +296,21 @@ test("the child guard and parent-session docs name recheck-tmpdir", async () => 
   expectRule(child, /child role never runs/i, /recheck-tmpdir/i);
   expectRule(parent, /recheck-tmpdir/i, /required/i);
   expectRule(fields, /recheck-tmpdir/i, /parent-session/i);
-  expectRule(fields, /non-terminal/i);
+  expectRule(fields, /any lifecycle/i, /after `finish`/i);
+  expect(fields).not.toContain("non-terminal");
   expect(fields).not.toContain("role finish");
   expect(fields).not.toContain("headless finish is refused");
   const role = await readFile(join(repoRoot, "docs/reference/role.md"), "utf8");
   const recheckBullet = role.split("\n").find((line) => line.startsWith("- `recheck-tmpdir"));
   expectRule(recheckBullet, /recheck-tmpdir/i, /state file that init wrote/i);
+  expectRule(recheckBullet, /any lifecycle/i, /finished the run first/i);
   expect(recheckBullet).not.toContain("needs no init");
 });
 
 // Usefulness: verifies ADR 0076 records its partial supersession. It also verifies ADR 0081 links
-// PR #1564, and ADR 0082 supersedes the single read of ADR 0081 (issues #1559 and #1569).
-test("ADR 0076, ADR 0081, and ADR 0082 state the supersession and the links", async () => {
+// PR #1564, and ADR 0082 supersedes the single read of ADR 0081 (issues #1559 and #1569). It verifies
+// ADR 0085 supersedes ADR 0081's non-terminal requirement (issue #1575).
+test("ADR 0076, ADR 0081, ADR 0082, and ADR 0085 state the supersession and the links", async () => {
   const adr76 = await readFile(
     join(
       repoRoot,
@@ -322,14 +326,24 @@ test("ADR 0076, ADR 0081, and ADR 0082 state the supersession and the links", as
     join(repoRoot, "adr/0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md"),
     "utf8",
   );
+  const adr85 = await readFile(
+    join(repoRoot, "adr/0085-let-the-tmpdir-re-check-read-a-terminal-run.md"),
+    "utf8",
+  );
   expect(adr76).toMatch(/## Status\s+partially-superseded/);
   expect(adr76).toMatch(/Superseded by \[ADR 0081\]/);
   expect(adr81).toMatch(/## Status\s+partially-superseded/);
   expect(adr81).toContain("[PR #1564](https://github.com/andromarces/agent-loops/pull/1564)");
   expect(adr81).toContain("[ADR 0082:");
+  expect(adr81).toContain("[ADR 0085:");
   expect(adr82).toMatch(/## Status\s+accepted/);
   expect(adr82).toContain("[Issue #1569](https://github.com/andromarces/agent-loops/issues/1569)");
   expect(adr82).toContain("[PR #1570](https://github.com/andromarces/agent-loops/pull/1570)");
+  expect(adr82).toContain("[ADR 0085:");
+  expect(adr85).toMatch(/## Status\s+accepted/);
+  expect(adr85).toContain("[Issue #1575](https://github.com/andromarces/agent-loops/issues/1575)");
+  expect(adr85).toContain("[PR #1580](https://github.com/andromarces/agent-loops/pull/1580)");
+  expect(adr85).toContain("[ADR 0081:");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
