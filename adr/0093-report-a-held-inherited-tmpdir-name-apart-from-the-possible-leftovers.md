@@ -45,7 +45,7 @@ A name that a probe settles needs its own field. A name that the probe cannot se
 - A settled name stays visible in its own envelope field, so no name drops silently.
 - A macOS pair whose embedded pid is dead, malformed, or not a regular file stays reported.
 - A Windows `lstat` or `fstat` error stays reported, and only an `EBUSY` from the open settles.
-- The Windows probe denies sharing for the instant of the open, and it reads no byte.
+- The Windows probe denies sharing for the instant of the open, and it reads no byte. A concurrent open or delete of that file can fail with `EBUSY`.
 - A probe that fails or reaches its bound changes no report.
 
 ## Alternatives

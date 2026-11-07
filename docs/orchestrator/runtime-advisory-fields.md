@@ -29,6 +29,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     is settled. On macOS, a regular `-shm` and `-wal` pair is settled when its embedded pid is alive.
     A lone member, a malformed pid, and a non-regular entry stay reported. A failed or over-bound
     probe keeps its name in `inheritedTmpdirEntries` (issue #1600).
+  - On Windows, the probe briefly denies sharing while its handle is open. A concurrent open or
+    delete of that file can fail with `EBUSY`.
   - The re-read reports a name that still exists, one that another process created again included.
     A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
     redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
