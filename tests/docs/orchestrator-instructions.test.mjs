@@ -230,6 +230,8 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
   // Issue #1616: the field is a diagnostic, so an unattributed difference creates no open item.
   (text) => expectRule(text, /creates no/i, /item by itself/i),
+  // Issue #1616: a runtime cleanup warning reaches the operator, not the parent.
+  (text) => expectRule(text, /cleanup failure/i, /runtime warning/i, /adds no/i, /item for it/i),
   // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names.
   (text) =>
     expectRule(
@@ -299,6 +301,9 @@ test("the docs state the inherited temporary directory field as a diagnostic wit
   expect(fields).toMatch(/no re-read and no wait/i);
   expect(fields).toContain("registered/");
   expect(fields).toMatch(/removeTurnTmpdir[^.]*delete it by hand/i);
+  expect(role).toContain("inheritedTmpdirEntries");
+  expect(role).toMatch(/diagnostic/i);
+  expect(role).toMatch(/no `open` item/i);
 });
 
 // Usefulness: verifies acceptance #1596 — the docs name the usual macOS path and state that the report follows os.tmpdir(), including /tmp when the variables are unset.
@@ -343,6 +348,10 @@ test("ADR 0095 supersedes the temporary directory reporting rules and keeps the 
   expect(adr95).toMatch(/no automatic `open` item/i);
   expect(adr95).toMatch(/ADR 0047|ADR 0068/);
   expect(adr95).toMatch(/detection limits/i);
+  const readme = await readFile(join(repoRoot, "adr/README.md"), "utf8");
+  const adr68 = readme.split("\n").find((line) => line.startsWith("- 0068"));
+  expect(adr68).not.toContain("qualified by ADR 0076");
+  expect(adr68).toContain("ADR 0095");
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

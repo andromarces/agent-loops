@@ -318,6 +318,16 @@ test("the headless prompt creates no open item from the inherited temporary dire
   expect(prompt).not.toContain("inheritedTmpdirSettled");
 });
 
+// Usefulness: verifies ADR 0095 states only the evidence that a headless parent holds. A runtime
+// cleanup warning reaches the operator, never the parent, so the prompt must not report it under
+// open (issue #1616).
+test("the headless prompt adds no open item for a runtime cleanup failure", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).not.toMatch(/cleanup[^.]*report it under open/i);
+  expect(prompt).toMatch(/cleanup failure[^.]*runtime warning/i);
+  expect(prompt).toMatch(/parent adds no open item/i);
+});
+
 // Usefulness: verifies the headless prompt no longer refuses a finish for an inherited temporary
 // directory name. The parent rule carries only the names that still exist (issue #1559).
 test("the headless prompt refuses no finish for an inherited temporary directory name", () => {

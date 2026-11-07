@@ -330,8 +330,9 @@ Apply these parent rules:
     most likely a concurrent run. The prefix is a hint, not proof, and it needs no action by
     itself.
   - An entry that a turn explicitly reports as its own leftover stays actionable: report it under
-    `open` and name the turn report. A runtime cleanup warning that names a turn directory that it
-    did not remove stays actionable too: report it under `open` with the path from the warning.
+    `open` and name the turn report. A runtime cleanup failure appears only in the runtime warning,
+    which names the directory to delete by hand: the warning goes to the operator, and the parent
+    adds no `open` item for it.
   - Every reviewer turn that read the directory before it started carries the field, a failed,
     halted, or canceled turn too. The parent never deletes an entry that `inheritedTmpdirEntries`
     names: it leaves removal to the user, and a reviewer `Notes` line never makes an entry safe to
