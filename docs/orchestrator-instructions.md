@@ -274,6 +274,7 @@ Apply these parent rules:
     Report it under `open` in the finish summary. The user or another process can cause the change
     too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only
     access moves only the access time, so it names no path.
+  - An absent path does not prove that no in-window edit happened. ADR 0086 states both limits.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field proves nothing.
   - At the turn end the watch closes first, then drains the queue and settlement under a 1000 ms
@@ -723,8 +724,7 @@ PR does not exist at init, and when a headless run declares its PR itself.
   authorized more steps, raise the budget with
   `agent-loop role extend --cwd "<work tree>" --parent-session "<parent session id>" --max-steps <count>`, then
   dispatch again. Otherwise call `abort` and report the unresolved condition.
-  Never raise the budget on your own to avoid a stop the user set. A child
-  role never runs `extend`, `declare-pr`, `refresh-local`, `set-model`, `recheck-tmpdir`, `finish`, or `abort`. The spawn marker and its
+  Never raise the budget on your own to avoid a stop the user set. The spawn marker and its
   limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
   keeps its stored session and the run does not send the preamble again. Do not
