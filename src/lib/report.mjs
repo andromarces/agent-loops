@@ -402,10 +402,10 @@ function reportDetail(response, { boldLabels = true } = {}) {
  * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`, or null when
  * the block does not parse. Each label is matched case-insensitively at line start inside the block
  * only, and the last occurrence wins. `conclusion`, `why`, and `blockers` are required, while an
- * absent or empty optional label maps to null. A `- ` or `N. ` list directly under a label, or after
- * one blank line, joins that label's value with "; ". One nesting level folds a `- ` or `N. `
- * sub-item at the parent text column into that item with ", ". Any other list line, a Markdown table
- * pair, or a hidden or decorated label makes the whole block unparseable, so `raw` carries the text.
+ * absent or empty optional label maps to null. A `- ` or `N. ` list under a label or after one
+ * blank line joins the value with "; ". One nesting level folds a `- ` or `N. ` sub-item at the
+ * parent text column with ", ". Any other list line, table pair, or hidden or decorated label makes
+ * the block unparseable, except a plain-prose dash list, which folds.
  * @param {string} response
  * @param {{ boldLabels?: boolean }} [options]
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
@@ -474,7 +474,7 @@ const HEADING_ITEM = /^- (?=\S)/;
 // The one nesting level that folds into its parent item.
 // A sub-item line holds ASCII spaces up to the parent item text column.
 // Then come a `-` or `N. ` marker, one ASCII space, and the item.
-// A `- ` parent takes two spaces and an `N. ` parent takes three (issues #870 and #1603).
+// The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four (issues #870 and #1603).
 // Another indent width, a tab, and a second nesting level stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\. )(?=\\S)`);
 
@@ -613,7 +613,7 @@ function isBoldProseLine(line) {
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", " (issue #870).
  * A prose line with a `- ` run directly under it folds as `<prose>: <items>` after one or more blank
  * lines (issue #898). A dash or ordered run after one blank line joins the label (issue #1348).
- * Every other list shape stays for hasDroppedList, and a shadowing repeat returns null with no `raw` signal.
+ * Every other list shape stays for hasDroppedList, and a shadowing repeat returns null while dispatch keeps `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
  */

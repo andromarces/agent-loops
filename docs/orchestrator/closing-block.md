@@ -11,8 +11,7 @@ and #915). A list under `Blockers: none` therefore reads `none; <item>`, never
 stays unparseable.
 
 One nesting level folds too. A sub-item line holds spaces U+0020 up to the parent item text column,
-then a marker, one space U+0020, then the item. A `- ` parent takes two spaces and an `N. ` parent
-takes three. The sub-item directly after a `- ` or `N. ` item joins it with `, `, and several
+then a marker, one space U+0020, then the item. The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four. The sub-item directly after a `- ` or `N. ` item joins it with `, `, and several
 consecutive sub-items fold the same way. So `- a`, two spaces then `- b`, and two spaces then `- c`
 read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and
 `   - b` read `a, b`.
