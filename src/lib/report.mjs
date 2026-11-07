@@ -228,22 +228,19 @@ export function hasClosingBlockAttempt(response) {
 }
 
 /**
- * The closing block: the lines from the last `Conclusion:` line to the end of the response. It is
- * null when the response has no `Conclusion:` line at all. A lone required label line above that
- * line, with only blank lines between, joins the block, because a child can write `Blockers:` in
- * its own paragraph before `Conclusion:` (issue #1592). The label must appear once in the response
- * outside a fence, so a quoted or repeated label stays out. The whole response is normalized first,
- * so a bold label starts a block as its plain form does. With `unlabeled`, a response without a
- * `Conclusion:` label starts at the non-blank line directly before the first known report label,
- * and that line becomes `Conclusion`. When bold-lead narration sits there, the nearest plain prose
- * line above it becomes `Conclusion` (issue #1597). With `diagnose`, a response with no prose line
- * before the first known label starts at that label. A bold label inside a fenced code block stays
- * text (issue #1483).
+ * The closing block runs from the last `Conclusion:` line to the end of the response, and is null
+ * without that line. A lone required label line above it, with only blank lines between, joins the
+ * block (issue #1592). That label must appear once outside a fence, so a quoted or repeated label
+ * stays out. The whole response is normalized first, so a bold label starts a block as its plain
+ * form does. With `unlabeled`, the non-blank line before the first known label becomes
+ * `Conclusion`. A bold-lead narration paragraph above it yields the nearest plain prose line
+ * instead (issue #1597).
  * @param {string} response
  * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean }} [options]
  * @returns {string[] | null}
  */
 function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose = false } = {}) {
+  // A bold label inside a fenced code block stays text (issue #1483).
   const lines = normalizeReportLabels(response, boldLabels).split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -268,8 +265,8 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
   if (before < 0 || !isPlainProseLine(lines[before])) {
     const prose = boldNarrationProseLine(lines, before);
     if (prose === -1) {
-      // Diagnosis reads the labels from the first known label, because a block that starts at Why
-      // still shows which required labels it lacks (issue #1520).
+      // Diagnosis starts at the first known label when no prose line precedes it, so Why still
+      // names missing labels (issue #1520).
       return diagnose ? lines.slice(first) : null;
     }
     before = prose;
@@ -279,7 +276,7 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
   return block;
 }
 
-// The required labels that a child may place above `Conclusion:` (issue #1592).
+// The required labels a child can write in their own paragraph above `Conclusion:` (issue #1592).
 const REQUIRED_LABEL_LINES = REPORT_LABELS.filter(([, , optional]) => !optional).map(
   ([, label]) => [label, new RegExp(`^${label}:`, "i")],
 );
