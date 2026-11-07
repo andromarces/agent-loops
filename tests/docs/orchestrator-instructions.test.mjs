@@ -309,12 +309,19 @@ test("the child guard and parent-session docs name recheck-tmpdir", async () => 
   expect(recheckBullet).not.toContain("needs no init");
 });
 
-// Usefulness: verifies acceptance #1596 — the docs name the macOS directory under /var/folders that the report covers, not /tmp.
-test("the runtime advisory docs name the macOS path that the report covers", async () => {
+// Usefulness: verifies acceptance #1596 — the docs name the usual macOS path and state that the report follows os.tmpdir(), including /tmp when the variables are unset.
+test("the runtime advisory docs name the macOS path that the report follows", async () => {
   const text = (
     await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8")
   ).replace(/\s+/g, " ");
-  expectRule(text, /macOS/i, /\/var\/folders/i, /not[^.]{0,20}\/tmp/i, /\/private\/tmp/i);
+  expectRule(text, /macOS/i, /usual/i, /\/var\/folders/i, /`TMPDIR` is set/i);
+  expectRule(
+    text,
+    /report follows `os\.tmpdir\(\)`/i,
+    /inherited directory/i,
+    /whatever path it names/i,
+  );
+  expectRule(text, /covers `\/tmp`/i, /`TMPDIR`, `TEMP`, and `TMP` are unset/i);
 });
 
 // Usefulness: verifies ADR 0076 records its partial supersession. It also verifies ADR 0081 links
