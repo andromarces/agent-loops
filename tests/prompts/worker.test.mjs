@@ -58,6 +58,16 @@ test("first worker turn puts the reasons under Why and not another heading", () 
   );
 });
 
+// Usefulness: acceptance #1613 item 1: a Claude worker on a later turn put the reasons in prose
+// and bold-lead lists, so the block parsed to null for the missing `Why:` label. Every later turn
+// now repeats the rule that #1601 pinned for the first turn.
+test("later worker turns put the reasons under Why and not another heading", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Put the reasons under `Why:`, never under another heading such as `Verification:`.",
+  );
+});
+
 // Usefulness: verifies a worker response written to the closing block the
 // prompt renders carries a Checks value the parser reads into report.checks, so
 // a worker reports the commands it ran and their results instead of leaving the
