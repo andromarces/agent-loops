@@ -581,3 +581,76 @@ test("recheck-tmpdir keeps a Windows name whose probe throws", async () => {
     expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
   });
 });
+
+// Usefulness: verifies acceptance. A settled name is redacted and capped exactly like the possible
+// leftovers (issue #1600).
+test("recheck-tmpdir redacts and caps a settled name", async () => {
+  const repo = await newStateRun();
+  vi.stubEnv("PROBE_API_TOKEN", "s3cr3t-value-9402");
+  const names = ["a-probe-s3cr3t-value-9402"];
+  for (let i = 0; i < 24; i += 1) names.push(`p${String(i).padStart(2, "0")}`);
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = names;
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+
+  const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+    read: async () => names,
+    platform: "win32",
+    probe: async () => "held",
+  });
+
+  expect(result.payload.inheritedTmpdirEntries).toEqual([]);
+  const settled = result.payload.inheritedTmpdirSettled;
+  expect(settled).toHaveLength(20);
+  expect(settled).toContain("a-probe-[redacted:PROBE_API_TOKEN]");
+  expect(JSON.stringify(settled)).not.toContain("s3cr3t-value-9402");
+});
+
+// Usefulness: verifies a fail-closed path. A first read that fails keeps every name and settles
+// none (issue #1600).
+test("recheck-tmpdir keeps every name when the first read fails", async () => {
+  const repo = await newStateRun();
+  const names = ["a.tmp", "b.tmp"];
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = names;
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+
+  const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+    read: async () => {
+      throw new Error("EACCES");
+    },
+    platform: "win32",
+    probe: async () => "held",
+  });
+
+  expect(result.payload.inheritedTmpdirEntries).toEqual(names);
+  expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
+});
+
+// Usefulness: verifies a cancel during a probe returns the cancel result and keeps every name
+// (issue #1600).
+test("recheck-tmpdir keeps every name when a probe is canceled", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "a.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10);
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      signal: controller.signal,
+      read: async () => [name],
+      platform: "win32",
+      probe: () => new Promise(() => {}),
+      tmpdirSettle: { boundMs: 60_000, intervalMs: 60_000 },
+    });
+
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.error).toBe("Interrupted by SIGINT");
+    expect(existsSync(join(dir, name))).toBe(true);
+    expect((await readRepoState(repo)).inheritedTmpdirNames).toEqual([name]);
+  });
+});

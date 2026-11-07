@@ -147,10 +147,13 @@ async function abort(args) {
  * deletes nothing, and reports names only, redacted and capped. It requires the stored parent
  * session id, as `extend` does, and a child role is refused. A failed or over-bound read, and a name
  * it cannot re-check, stays listed. It polls until every checkable name is gone, or for the
- * settle bound. A name that a probe settles as no possible run leftover is reported apart in
- * `inheritedTmpdirSettled`.
+ * settle bound. A regular file that a probe settles as no possible run leftover is reported apart
+ * in `inheritedTmpdirSettled`.
  */
-async function recheckTmpdir(args, { signal, read, tmpdirSettle, probe, platform } = {}) {
+async function recheckTmpdir(
+  args,
+  { signal, read, tmpdirSettle, probe, platform, pidAlive, statFile, ancestors } = {},
+) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
   requireParentSessionFlag(args, "recheck-tmpdir");
   const paths = statePaths({ cwd: args.cwd });
@@ -161,6 +164,10 @@ async function recheckTmpdir(args, { signal, read, tmpdirSettle, probe, platform
     ...(read ? { read } : {}),
     ...(probe ? { probe } : {}),
     ...(platform ? { platform } : {}),
+    ...(pidAlive ? { pidAlive } : {}),
+    ...(statFile ? { statFile } : {}),
+    ...(ancestors !== undefined ? { ancestors } : {}),
+    signal,
     settle: { ...tmpdirSettle, signal },
   });
   return {

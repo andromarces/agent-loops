@@ -6,6 +6,7 @@ import { mapInBatches } from "./batches.mjs";
 import { firstErrorLine, readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { readProcessTable } from "./process-ancestry.mjs";
 import { isTurnTmpdirName } from "./turn-tmpdir.mjs";
 import { isRegisteredTurnTmpdir } from "./turn-tmpdir-registry.mjs";
 import { withTimeBound } from "./time-bound.mjs";
@@ -34,6 +35,12 @@ const WINDOWS_EXCLUSIVE_SHARE = 0x10000000;
 // A probe answers in milliseconds for a local file. The bound ends a probe that hangs, and a probe
 // that reaches the bound keeps its name reported.
 const PROBE_BOUND_MS = 5_000;
+// The observed macOS names are a canonical UUID, a pid, a hex run, and the SQLite suffix.
+const MACOS_SQLITE_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-([1-9][0-9]*)-[0-9a-f]+-(?:shm|wal)$/i;
+// The process-table read that finds the ancestors answers in about a second. The bound keeps a
+// stuck read from holding the re-check.
+const ANCESTOR_READ_TIMEOUT_SECONDS = 5;
 
 // Reads `os.tmpdir()` of this process, which is the inherited temporary directory of a turn. The
 // `AGENT_LOOP_INHERITED_TMPDIR` list is read in `inherited-tmpdir.mjs`.
@@ -104,14 +111,17 @@ const carrier = entryCarrier("inheritedTmpdirEntries");
 /**
  * Splits `names` into the names that a probe settled as no possible run leftover and the names
  * that stay listed. On Windows, a regular file that another process holds open is settled. On
- * macOS, an orphaned SQLite `-shm` and `-wal` pair whose main file is absent is settled. Every
- * other name stays listed, and a failed or over-bound probe keeps its name listed.
+ * macOS, a regular file with the observed SQLite name is settled when its embedded pid is alive.
+ * Every other name stays listed, and a failed or over-bound probe keeps its name listed.
  * @param {Iterable<string>} names
  * @param {{
  *   platform?: string,
  *   probe?: (name: string) => Promise<"held" | "free" | "unknown">,
- *   entries?: Iterable<string> | null,
+ *   pidAlive?: (pid: number) => boolean,
+ *   statFile?: (path: string) => Promise<{ isFile: () => boolean }>,
+ *   ancestors?: Iterable<number> | null,
  *   boundMs?: number,
+ *   signal?: AbortSignal,
  * }} [options]
  * @returns {Promise<{ leftovers: string[], settled: string[] }>}
  */
@@ -120,69 +130,163 @@ export async function settleInheritedTmpdirNames(
   {
     platform = process.platform,
     probe = probeHeldOpenWindows,
-    entries = null,
+    pidAlive = pidIsAlive,
+    statFile = (path) => lstat(path, { bigint: true }),
+    ancestors = null,
     boundMs = PROBE_BOUND_MS,
+    signal,
   } = {},
 ) {
   const recorded = [...new Set(names)].filter((name) => typeof name === "string" && name !== "");
   if (recorded.length === 0) return { leftovers: [], settled: [] };
   const settled = new Set();
-  const listed = entries === null ? null : new Set(entries);
+  const ancestorPids = ancestors === null || ancestors === undefined ? null : new Set(ancestors);
+  const canceled = cancelPromise(signal);
   try {
     await withTimeBound(
       Math.max(1, boundMs),
       `inherited temporary directory probe took over ${boundMs} ms`,
-      async ({ signal, stopped }) => {
+      async ({ signal: boundSignal, stopped }) => {
         for (const name of recorded) {
-          if (signal.aborted) break;
-          if (await settlesName(name, { platform, probe, listed, stopped })) settled.add(name);
+          if (boundSignal.aborted) break;
+          if (signal?.aborted) throw canceledError();
+          const settledName = await settlesName(name, {
+            platform,
+            probe,
+            pidAlive,
+            statFile,
+            ancestors: ancestorPids,
+            stopped,
+            canceled: canceled.promise,
+          });
+          if (settledName) settled.add(name);
         }
       },
     );
-  } catch {}
+  } catch (err) {
+    if (err?.isCanceled) throw err;
+  } finally {
+    canceled.cleanup();
+  }
   return {
     leftovers: recorded.filter((name) => !settled.has(name)),
     settled: recorded.filter((name) => settled.has(name)),
   };
 }
 
-async function settlesName(name, { platform, probe, listed, stopped }) {
+async function settlesName(
+  name,
+  { platform, probe, pidAlive, statFile, ancestors, stopped, canceled },
+) {
   if (!isCheckableName(name) || name.startsWith(REGISTERED_PREFIX)) return false;
   if (platform === "win32") {
-    let outcome;
-    try {
-      outcome = await Promise.race([probe(name), stopped]);
-    } catch {
-      return false;
-    }
+    const outcome = await raceProbe(
+      Promise.resolve().then(() => probe(name)),
+      stopped,
+      canceled,
+    );
     return outcome === "held";
   }
-  if (platform === "darwin" && listed !== null) return isOrphanedSqlitePair(name, listed);
+  if (platform === "darwin") {
+    return settlesMacosName(name, { pidAlive, statFile, ancestors, stopped, canceled });
+  }
   return false;
 }
 
-function isOrphanedSqlitePair(name, listed) {
-  const match = /^(.+)-(?:shm|wal)$/.exec(name);
+async function settlesMacosName(name, { pidAlive, statFile, ancestors, stopped, canceled }) {
+  const match = MACOS_SQLITE_NAME.exec(name);
   if (match === null) return false;
-  const base = match[1];
-  return listed.has(`${base}-shm`) && listed.has(`${base}-wal`) && !listed.has(base);
+  const pid = Number(match[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid || ancestors === null || ancestors.has(pid)) return false;
+  const base = name.slice(0, -4);
+  const sibling = name.endsWith("-shm") ? `${base}-wal` : `${base}-shm`;
+  if (!(await isRegularFile(name, statFile, stopped, canceled))) return false;
+  if (!(await isRegularFile(sibling, statFile, stopped, canceled))) return false;
+  let alive;
+  try {
+    alive = await Promise.race([Promise.resolve().then(() => pidAlive(pid)), stopped, canceled]);
+  } catch (err) {
+    if (err?.isCanceled) throw err;
+    return false;
+  }
+  return alive === true;
+}
+
+async function isRegularFile(name, statFile, stopped, canceled) {
+  try {
+    const info = await Promise.race([statFile(join(tmpdir(), name)), stopped, canceled]);
+    return info?.isFile?.() === true;
+  } catch (err) {
+    if (err?.isCanceled) throw err;
+    return false;
+  }
+}
+
+async function raceProbe(promise, stopped, canceled) {
+  try {
+    return await Promise.race([promise, stopped, canceled]);
+  } catch (err) {
+    if (err?.isCanceled) throw err;
+    return "unknown";
+  }
 }
 
 // A Windows open with exclusive sharing fails with EBUSY while another handle is open. The open
 // reads no byte, and the handle closes on every path.
-async function probeHeldOpenWindows(name) {
+export async function probeHeldOpenWindows(
+  name,
+  {
+    lstatFile = (path) => lstat(path, { bigint: true }),
+    openHandle = (path, flags) => openFile(path, flags),
+  } = {},
+) {
   const path = join(tmpdir(), name);
   let handle;
   try {
-    const info = await lstat(path);
-    if (!info.isFile()) return "unknown";
-    handle = await openFile(path, WINDOWS_EXCLUSIVE_SHARE);
+    const before = await lstatFile(path);
+    if (!before.isFile()) return "unknown";
+    handle = await openHandle(path, WINDOWS_EXCLUSIVE_SHARE);
+    const after = await handle.stat({ bigint: true });
+    if (after.dev !== before.dev || after.ino !== before.ino) return "unknown";
     return "free";
   } catch (err) {
     return err?.code === "EBUSY" ? "held" : "unknown";
   } finally {
     if (handle !== undefined) await handle.close().catch(() => {});
   }
+}
+
+/** Whether `pid` is alive: a signal 0 succeeds or fails with EPERM. Every other error is dead. */
+export function pidIsAlive(pid, { kill = process.kill } = {}) {
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === "EPERM";
+  }
+}
+
+// The pids of this process and its ancestors. A failed read returns null, so no macOS name is
+// settled on an ancestry that the read cannot prove.
+async function readAncestorPids({ signal, timeout = ANCESTOR_READ_TIMEOUT_SECONDS } = {}) {
+  let table;
+  try {
+    table = await readProcessTable({ signal, timeout });
+  } catch (err) {
+    if (err?.isCanceled) throw canceledError();
+    return null;
+  }
+  const parents = new Map(table.map((entry) => [entry.pid, entry.ppid]));
+  const seen = new Set([process.pid]);
+  let pid = process.pid;
+  for (let depth = 0; depth < 1000; depth += 1) {
+    const ppid = parents.get(pid);
+    if (!Number.isInteger(ppid) || ppid <= 1 || seen.has(ppid)) break;
+    seen.add(ppid);
+    pid = ppid;
+  }
+  return seen;
 }
 
 /**
@@ -211,7 +315,11 @@ export async function presentInheritedTmpdir(names, options) {
  *   settle?: object | null,
  *   probe?: (name: string) => Promise<"held" | "free" | "unknown">,
  *   platform?: string,
+ *   pidAlive?: (pid: number) => boolean,
+ *   statFile?: (path: string) => Promise<{ isFile: () => boolean }>,
+ *   ancestors?: Iterable<number> | null,
  *   probeBoundMs?: number,
+ *   signal?: AbortSignal,
  * }} [options]
  * @returns {Promise<{ present: string[], settled: string[] }>}
  */
@@ -223,32 +331,75 @@ export async function presentInheritedTmpdirReport(
     settle = null,
     probe,
     platform,
+    pidAlive,
+    statFile,
+    ancestors,
     probeBoundMs = RE_READ_BOUND_MS,
+    signal,
   } = {},
 ) {
   const recorded = [...new Set(names)].filter((name) => typeof name === "string" && name !== "");
   if (recorded.length === 0) return { present: [], settled: [] };
+  const platformName = platform ?? process.platform;
+  const needsAncestors =
+    platformName === "darwin" && recorded.some((name) => MACOS_SQLITE_NAME.test(bareName(name)));
+  let ancestorPids = ancestors;
+  let ancestorsResolved = ancestors !== undefined || !needsAncestors;
+  const resolveAncestors = async (boundMs) => {
+    if (ancestorsResolved) return ancestorPids ?? null;
+    ancestorsResolved = true;
+    try {
+      ancestorPids = await withTimeBound(
+        Math.max(1, boundMs),
+        `inherited temporary directory ancestry read took over ${boundMs} ms`,
+        ({ stopped }) => Promise.race([readAncestorPids({ signal }), stopped]),
+      );
+    } catch (err) {
+      if (err?.isCanceled) throw err;
+      ancestorPids = null;
+    }
+    return ancestorPids;
+  };
+  const settleOptions = {
+    ...(probe ? { probe } : {}),
+    platform: platformName,
+    ...(pidAlive ? { pidAlive } : {}),
+    ...(statFile ? { statFile } : {}),
+    signal,
+  };
   if (settle === null) {
-    const entries = await readNames(read, boundMs);
-    const present = entries === null ? recorded : heldNames(recorded, entries);
-    return settlePresent(present, { probe, platform, entries, boundMs: probeBoundMs });
+    const entries = await readNames(read, boundMs, { signal });
+    if (entries === null) return { present: recorded, settled: [] };
+    const present = heldNames(recorded, entries);
+    const resolved = await resolveAncestors(probeBoundMs);
+    return settlePresent(present, {
+      ...settleOptions,
+      ancestors: resolved,
+      boundMs: probeBoundMs,
+    });
   }
   return settledNames(recorded, {
     read,
     readBoundMs: boundMs,
-    probe,
-    platform,
+    ...settleOptions,
+    resolveAncestors,
     probeBoundMs,
     ...settle,
   });
 }
 
-async function settlePresent(present, { probe, platform, entries, boundMs }) {
+async function settlePresent(
+  present,
+  { probe, platform, pidAlive, statFile, ancestors, boundMs, signal },
+) {
   const { leftovers, settled } = await settleInheritedTmpdirNames(present, {
     ...(probe ? { probe } : {}),
     ...(platform ? { platform } : {}),
-    ...(entries === null || entries === undefined ? {} : { entries }),
+    ...(pidAlive ? { pidAlive } : {}),
+    ...(statFile ? { statFile } : {}),
+    ancestors,
     boundMs,
+    signal,
   });
   return { present: leftovers, settled };
 }
@@ -304,6 +455,9 @@ async function settledNames(
     signal,
     probe,
     platform,
+    pidAlive,
+    statFile,
+    resolveAncestors,
     probeBoundMs = RE_READ_BOUND_MS,
   },
 ) {
@@ -327,12 +481,22 @@ async function settledNames(
     if (toCheck.length === 0) return;
     const available = deadline - now();
     if (available < 1) return;
+    const resolved = await resolveAncestors(
+      Math.max(1, Math.min(probeBoundMs, Math.floor(available))),
+    );
+    throwIfCanceled(signal);
+    const remaining = deadline - now();
+    if (remaining < 1) return;
     const result = await settleInheritedTmpdirNames(toCheck, {
       ...(probe ? { probe } : {}),
       ...(platform ? { platform } : {}),
-      ...(last === null ? {} : { entries: last }),
-      boundMs: Math.max(1, Math.min(probeBoundMs, Math.floor(available))),
+      ...(pidAlive ? { pidAlive } : {}),
+      ...(statFile ? { statFile } : {}),
+      ancestors: resolved,
+      boundMs: Math.max(1, Math.min(probeBoundMs, Math.floor(remaining))),
+      signal,
     });
+    throwIfCanceled(signal);
     for (const name of result.settled) settled.add(name);
   };
   while (true) {
@@ -347,8 +511,11 @@ async function settledNames(
         warn: !warnedFailure,
       });
       throwIfCanceled(signal);
-      if (entries !== null) last = entries;
-      await classify();
+      // A failed read proves no name gone and settles no name.
+      if (entries !== null) {
+        last = entries;
+        await classify();
+      }
       return report();
     }
     const entries = await readNames(read, Math.max(1, Math.min(readBound, Math.floor(available))), {
@@ -362,9 +529,9 @@ async function settledNames(
       if (first) return report();
     } else {
       last = entries;
+      await classify();
     }
     first = false;
-    await classify();
     // Every read checks every recorded name. A name that one read missed stays eligible, so a
     // name that another process created again reaches the report (issue #1569).
     const current = leftovers();
@@ -394,6 +561,22 @@ function throwIfCanceled(signal) {
 }
 
 const canceledError = () => Object.assign(new Error("Interrupted by SIGINT"), { isCanceled: true });
+
+function cancelPromise(signal) {
+  if (!signal) return { promise: new Promise(() => {}), cleanup: () => {} };
+  if (signal.aborted) {
+    const promise = Promise.reject(canceledError());
+    promise.catch(() => {});
+    return { promise, cleanup: () => {} };
+  }
+  let onAbort;
+  const promise = new Promise((_, reject) => {
+    onAbort = () => reject(canceledError());
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  promise.catch(() => {});
+  return { promise, cleanup: () => signal.removeEventListener("abort", onAbort) };
+}
 
 async function readInheritedTmpdirNames() {
   return readdir(tmpdir());

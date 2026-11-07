@@ -120,8 +120,14 @@ export async function runLoop(options) {
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
-    // The bound and interval of the inherited tmpdir re-check. A test injects a short wait.
+    // The bound, interval, read, and probe of the inherited tmpdir re-check. A test injects each.
     tmpdirSettle = null,
+    tmpdirRead = null,
+    tmpdirProbe = null,
+    tmpdirPlatform = null,
+    tmpdirPidAlive = null,
+    tmpdirStatFile = null,
+    tmpdirAncestors,
     onEvent = () => {},
   } = options;
 
@@ -393,10 +399,16 @@ export async function runLoop(options) {
         typeof result.response === "string" &&
         parseVerdict(result.response) === "accept";
       const settle = accepted ? { ...tmpdirSettle, signal } : null;
-      const report = await presentInheritedTmpdirReport(
-        [...reportedTmpdirNames],
-        settle === null ? {} : { settle },
-      );
+      const report = await presentInheritedTmpdirReport([...reportedTmpdirNames], {
+        ...(tmpdirRead ? { read: tmpdirRead } : {}),
+        ...(tmpdirProbe ? { probe: tmpdirProbe } : {}),
+        ...(tmpdirPlatform ? { platform: tmpdirPlatform } : {}),
+        ...(tmpdirPidAlive ? { pidAlive: tmpdirPidAlive } : {}),
+        ...(tmpdirStatFile ? { statFile: tmpdirStatFile } : {}),
+        ...(tmpdirAncestors !== undefined ? { ancestors: tmpdirAncestors } : {}),
+        signal,
+        ...(settle === null ? {} : { settle }),
+      });
       inheritedTmpdirPresent = reportedEntryNames(report.present);
       inheritedTmpdirSettled =
         report.settled.length === 0 ? null : reportedEntryNames(report.settled);

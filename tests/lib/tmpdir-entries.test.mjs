@@ -13,7 +13,10 @@ import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
+  pidIsAlive,
   presentInheritedTmpdir,
+  presentInheritedTmpdirReport,
+  probeHeldOpenWindows,
   settleInheritedTmpdirNames,
   snapshotInheritedTmpdir,
 } from "../../src/lib/tmpdir-entries.mjs";
@@ -472,7 +475,6 @@ test("settles a Windows file that another process holds open", async () => {
   const result = await settleInheritedTmpdirNames([held, "stays.txt"], {
     platform: "win32",
     probe: async (name) => (name === held ? "held" : "free"),
-    entries: [held, "stays.txt"],
   });
   expect(result).toEqual({ leftovers: ["stays.txt"], settled: [held] });
 });
@@ -485,7 +487,6 @@ test("keeps a Windows file that no process holds open", async () => {
     await settleInheritedTmpdirNames([name], {
       platform: "win32",
       probe: async () => "free",
-      entries: [name],
     }),
   ).toEqual({ leftovers: [name], settled: [] });
 });
@@ -498,7 +499,6 @@ test("keeps a Windows name whose probe cannot settle it", async () => {
     await settleInheritedTmpdirNames([name], {
       platform: "win32",
       probe: async () => "unknown",
-      entries: [name],
     }),
   ).toEqual({ leftovers: [name], settled: [] });
 });
@@ -514,7 +514,6 @@ test("keeps a Windows name whose probe throws and settles the next", async () =>
       if (name === failing) throw new Error("EACCES");
       return "held";
     },
-    entries: [failing, held],
   });
   expect(result).toEqual({ leftovers: [failing], settled: [held] });
 });
@@ -527,7 +526,6 @@ test("keeps a Windows name when the probe reaches its bound", async () => {
     await settleInheritedTmpdirNames([name], {
       platform: "win32",
       probe: () => new Promise(() => {}),
-      entries: [name],
       boundMs: 5,
     }),
   ).toEqual({ leftovers: [name], settled: [] });
@@ -541,7 +539,6 @@ test("keeps a registered name even when the probe reports a holder", async () =>
     await settleInheritedTmpdirNames([name], {
       platform: "win32",
       probe: async () => "held",
-      entries: ["al-Ab1234"],
     }),
   ).toEqual({ leftovers: [name], settled: [] });
 });
@@ -553,57 +550,306 @@ test("settles no name on Linux", async () => {
     await settleInheritedTmpdirNames([name], {
       platform: "linux",
       probe: async () => "held",
-      entries: [name],
     }),
   ).toEqual({ leftovers: [name], settled: [] });
 });
 
-// Usefulness: verifies acceptance on macOS. An orphaned SQLite shm and wal pair whose main file is
-// absent is settled (issue #1600).
-test("settles an orphaned macOS shm and wal pair", async () => {
-  const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd";
-  const names = [`${base}-shm`, `${base}-wal`];
+// Usefulness: verifies the real Windows probe on a fake handle. The open reports EBUSY while
+// another handle holds the file (issue #1600).
+test("probes a Windows file that another handle holds", async () => {
   expect(
-    await settleInheritedTmpdirNames(names, {
-      platform: "darwin",
-      entries: names,
+    await probeHeldOpenWindows("held.tmp", {
+      lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+      openHandle: async () => {
+        throw Object.assign(new Error("busy"), { code: "EBUSY" });
+      },
     }),
-  ).toEqual({ leftovers: [], settled: names });
+  ).toBe("held");
 });
 
-// Usefulness: verifies a fail-closed path. A macOS pair whose main file is present stays reported
+// Usefulness: verifies the real Windows probe on a fake handle. A free file reports free and closes
+// its handle (issue #1600).
+test("probes a free Windows file and closes its handle", async () => {
+  let closed = false;
+  const outcome = await probeHeldOpenWindows("free.tmp", {
+    lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+    openHandle: async () => ({
+      stat: async () => ({ dev: 1n, ino: 2n }),
+      close: async () => {
+        closed = true;
+      },
+    }),
+  });
+  expect(outcome).toBe("free");
+  expect(closed).toBe(true);
+});
+
+// Usefulness: verifies a fail-closed path. A handle whose device or inode differs from the lstat
+// result is not settled, and the handle closes (issue #1600).
+test("keeps a Windows file whose opened handle differs", async () => {
+  let closed = false;
+  const outcome = await probeHeldOpenWindows("swapped.tmp", {
+    lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+    openHandle: async () => ({
+      stat: async () => ({ dev: 1n, ino: 3n }),
+      close: async () => {
+        closed = true;
+      },
+    }),
+  });
+  expect(outcome).toBe("unknown");
+  expect(closed).toBe(true);
+});
+
+// Usefulness: verifies a fail-closed path. A directory or a link is not opened (issue #1600).
+test("keeps a Windows directory and a link", async () => {
+  expect(
+    await probeHeldOpenWindows("entry", {
+      lstatFile: async () => ({ isFile: () => false, isSymbolicLink: () => true }),
+      openHandle: async () => {
+        throw new Error("must not open");
+      },
+    }),
+  ).toBe("unknown");
+});
+
+// Usefulness: verifies a fail-closed path. An open error other than EBUSY keeps the name reported
 // (issue #1600).
-test("keeps a macOS pair whose main file is present", async () => {
-  const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd";
-  const names = [`${base}-shm`, `${base}-wal`];
+test("keeps a Windows name whose open fails otherwise", async () => {
+  expect(
+    await probeHeldOpenWindows("denied.tmp", {
+      lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+      openHandle: async () => {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      },
+    }),
+  ).toBe("unknown");
+});
+
+// Usefulness: verifies the EPERM rule. A signal 0 that fails with EPERM means the process is alive
+// (issue #1600).
+test("reads a live pid from EPERM", () => {
+  expect(pidIsAlive(42, { kill: () => {} })).toBe(true);
+  expect(
+    pidIsAlive(42, {
+      kill: () => {
+        throw Object.assign(new Error("eperm"), { code: "EPERM" });
+      },
+    }),
+  ).toBe(true);
+  expect(
+    pidIsAlive(42, {
+      kill: () => {
+        throw Object.assign(new Error("esrch"), { code: "ESRCH" });
+      },
+    }),
+  ).toBe(false);
+  expect(
+    pidIsAlive(42, {
+      kill: () => {
+        throw new Error("other");
+      },
+    }),
+  ).toBe(false);
+});
+
+const macGuid = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b";
+const macPid = 4321;
+const macBase = `${macGuid}-${macPid}-ab12cd`;
+const macShm = `${macBase}-shm`;
+const macWal = `${macBase}-wal`;
+const regular = async () => ({ isFile: () => true });
+
+// Usefulness: verifies acceptance on macOS. A pair with a live embedded pid and two regular files
+// is settled (issue #1600).
+test("settles a macOS pair whose embedded pid is alive", async () => {
+  expect(
+    await settleInheritedTmpdirNames([macShm, macWal], {
+      platform: "darwin",
+      ancestors: new Set([1, 2]),
+      pidAlive: () => true,
+      statFile: regular,
+    }),
+  ).toEqual({ leftovers: [], settled: [macShm, macWal] });
+});
+
+// Usefulness: verifies a fail-closed path. A pair whose embedded pid is dead stays reported (issue
+// #1600).
+test("keeps a macOS pair whose embedded pid is dead", async () => {
+  expect(
+    await settleInheritedTmpdirNames([macShm, macWal], {
+      platform: "darwin",
+      ancestors: new Set([1, 2]),
+      pidAlive: () => false,
+      statFile: regular,
+    }),
+  ).toEqual({ leftovers: [macShm, macWal], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A lone macOS member stays reported (issue #1600).
+test("keeps a lone macOS shm name", async () => {
+  expect(
+    await settleInheritedTmpdirNames([macShm], {
+      platform: "darwin",
+      ancestors: new Set([1, 2]),
+      pidAlive: () => true,
+      statFile: async (path) => {
+        if (path.endsWith(macWal)) throw Object.assign(new Error("gone"), { code: "ENOENT" });
+        return { isFile: () => true };
+      },
+    }),
+  ).toEqual({ leftovers: [macShm], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A malformed macOS name stays reported (issue #1600).
+test("keeps a malformed macOS name", async () => {
+  const names = [
+    `not-a-guid-${macPid}-ab12cd-shm`,
+    `${macGuid}-0-ab12cd-shm`,
+    `${macGuid}-abc-ab12cd-shm`,
+    `${macGuid}-${macPid}-ab12cd-db`,
+  ];
   expect(
     await settleInheritedTmpdirNames(names, {
       platform: "darwin",
-      entries: [base, ...names],
+      ancestors: new Set([1, 2]),
+      pidAlive: () => true,
+      statFile: regular,
     }),
   ).toEqual({ leftovers: names, settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A lone macOS wal name stays reported (issue #1600).
-test("keeps a lone macOS wal name", async () => {
-  const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd-wal";
+// Usefulness: verifies a fail-closed path. A macOS name that is not a regular file stays reported
+// (issue #1600).
+test("keeps a macOS non-regular name", async () => {
   expect(
-    await settleInheritedTmpdirNames([name], {
+    await settleInheritedTmpdirNames([macShm, macWal], {
       platform: "darwin",
-      entries: [name],
+      ancestors: new Set([1, 2]),
+      pidAlive: () => true,
+      statFile: async () => ({ isFile: () => false }),
     }),
-  ).toEqual({ leftovers: [name], settled: [] });
+  ).toEqual({ leftovers: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS read that failed settles no name (issue #1600).
-test("settles no macOS name when the directory read failed", async () => {
-  const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd-wal";
+// Usefulness: verifies a fail-closed path. A macOS name whose pid is this process stays reported
+// (issue #1600).
+test("keeps a macOS name for this process", async () => {
+  const name = `${macGuid}-${process.pid}-ab12cd-shm`;
+  const sibling = `${macGuid}-${process.pid}-ab12cd-wal`;
   expect(
-    await settleInheritedTmpdirNames([name], {
+    await settleInheritedTmpdirNames([name, sibling], {
       platform: "darwin",
-      entries: null,
+      ancestors: new Set(),
+      pidAlive: () => true,
+      statFile: regular,
     }),
-  ).toEqual({ leftovers: [name], settled: [] });
+  ).toEqual({ leftovers: [name, sibling], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A macOS name for an ancestor stays reported (issue
+// #1600).
+test("keeps a macOS name for an ancestor", async () => {
+  expect(
+    await settleInheritedTmpdirNames([macShm, macWal], {
+      platform: "darwin",
+      ancestors: new Set([macPid]),
+      pidAlive: () => true,
+      statFile: regular,
+    }),
+  ).toEqual({ leftovers: [macShm, macWal], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A macOS stat error keeps the name reported (issue
+// #1600).
+test("keeps a macOS name whose stat fails", async () => {
+  expect(
+    await settleInheritedTmpdirNames([macShm, macWal], {
+      platform: "darwin",
+      ancestors: new Set([1, 2]),
+      pidAlive: () => true,
+      statFile: async () => {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      },
+    }),
+  ).toEqual({ leftovers: [macShm, macWal], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A macOS ancestry that cannot be read settles no name
+// (issue #1600).
+test("settles no macOS name without an ancestry", async () => {
+  expect(
+    await settleInheritedTmpdirNames([macShm, macWal], {
+      platform: "darwin",
+      ancestors: null,
+      pidAlive: () => true,
+      statFile: regular,
+    }),
+  ).toEqual({ leftovers: [macShm, macWal], settled: [] });
+});
+
+// Usefulness: verifies acceptance on the headless path. A failed read keeps every recorded name and
+// settles none (issue #1600).
+test("keeps every name when the headless read fails", async () => {
+  const names = ["a.tmp", "b.tmp"];
+  expect(
+    await presentInheritedTmpdirReport(names, {
+      read: async () => {
+        throw new Error("EACCES");
+      },
+      platform: "win32",
+      probe: async () => "held",
+    }),
+  ).toEqual({ present: names, settled: [] });
+});
+
+// Usefulness: verifies acceptance on the headless path. A bounded read keeps every recorded name
+// and settles none (issue #1600).
+test("keeps every name when the headless read passes its bound", async () => {
+  const names = ["a.tmp"];
+  expect(
+    await presentInheritedTmpdirReport(names, {
+      read: () => new Promise(() => {}),
+      boundMs: 10,
+      platform: "win32",
+      probe: async () => "held",
+    }),
+  ).toEqual({ present: names, settled: [] });
+});
+
+// Usefulness: verifies a cancel during a probe ends with the cancel identity and keeps the name
+// (issue #1600).
+test("a cancel during a probe ends with the cancel identity", async () => {
+  const controller = new AbortController();
+  const name = "a.tmp";
+  const pending = presentInheritedTmpdir([name], {
+    read: async () => [name],
+    platform: "win32",
+    probe: () => new Promise(() => {}),
+    signal: controller.signal,
+    settle: {
+      boundMs: 60_000,
+      intervalMs: 60_000,
+      signal: controller.signal,
+    },
+  });
+  setTimeout(() => controller.abort(), 10);
+  await expect(pending).rejects.toMatchObject({ isCanceled: true });
+});
+
+// Usefulness: verifies a cancel during a headless probe ends with the cancel identity (issue
+// #1600).
+test("a cancel during a headless probe ends with the cancel identity", async () => {
+  const controller = new AbortController();
+  const name = "a.tmp";
+  const pending = presentInheritedTmpdirReport([name], {
+    read: async () => [name],
+    platform: "win32",
+    probe: () => new Promise(() => {}),
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 10);
+  await expect(pending).rejects.toMatchObject({ isCanceled: true });
 });
 
 // Usefulness: verifies the Windows probe on a real file. A read-only exclusive-share open reports
@@ -616,16 +862,18 @@ test.skipIf(process.platform !== "win32")(
     await writeFile(path, "keep");
     const holder = await openFile(path, "r");
     try {
-      expect(
-        await settleInheritedTmpdirNames([name], { platform: "win32", entries: [name] }),
-      ).toEqual({ leftovers: [], settled: [name] });
+      expect(await settleInheritedTmpdirNames([name], { platform: "win32" })).toEqual({
+        leftovers: [],
+        settled: [name],
+      });
     } finally {
       await holder.close();
     }
     expect(await readFile(path, "utf8")).toBe("keep");
-    expect(
-      await settleInheritedTmpdirNames([name], { platform: "win32", entries: [name] }),
-    ).toEqual({ leftovers: [name], settled: [] });
+    expect(await settleInheritedTmpdirNames([name], { platform: "win32" })).toEqual({
+      leftovers: [name],
+      settled: [],
+    });
     // A leaked exclusive-share handle would refuse this removal.
     await rm(path);
   },
@@ -635,7 +883,7 @@ test.skipIf(process.platform !== "win32")(
 test.skipIf(process.platform !== "win32")("keeps a Windows directory", async () => {
   const name = "a-directory";
   await mkdir(join(root, name));
-  expect(await settleInheritedTmpdirNames([name], { platform: "win32", entries: [name] })).toEqual({
+  expect(await settleInheritedTmpdirNames([name], { platform: "win32" })).toEqual({
     leftovers: [name],
     settled: [],
   });

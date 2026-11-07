@@ -268,3 +268,99 @@ test("a worker result prompt carries no inherited temporary directory re-read", 
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies acceptance. A headless run carries a settled name apart from the names that
+// stay possible run leftovers (issue #1600).
+test("a headless run carries a settled name apart from inheritedTmpdirPresent", async () => {
+  const repo = await cleanRepo();
+  const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
+  const held = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+  try {
+    for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, temp);
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review the change" }),
+      JSON.stringify({ action: "finish", summary: summary("none") }),
+    ];
+    const orchAdapter = scripted(orchReplies);
+    const reviewerAdapter = scripted([
+      async () => {
+        await writeFile(join(temp, held), "");
+        return "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept";
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 1",
+      cwd: repo,
+      maxSteps: 5,
+      roles,
+      tmpdirSettle: { boundMs: 60_000, intervalMs: 60_000 },
+      tmpdirPlatform: "win32",
+      tmpdirProbe: async () => "held",
+      agents: {
+        orch: orchAdapter,
+        work: scripted(["worker did task"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    const reviewerPrompt = orchAdapter.recorded.at(-1).prompt;
+    expect(result.exitCode).toBe(0);
+    expect(reviewerPrompt).toContain('"inheritedTmpdirPresent": []');
+    expect(reviewerPrompt).toContain('"inheritedTmpdirSettled"');
+    expect(reviewerPrompt).toContain(held);
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies a fail-closed path. A failed headless re-read keeps every name and settles
+// none (issue #1600).
+test("a headless run keeps every name when the re-read fails", async () => {
+  const repo = await cleanRepo();
+  const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
+  const stays = "stays-probe";
+  try {
+    for (const key of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(key, temp);
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review the change" }),
+      JSON.stringify({ action: "finish", summary: summary("none") }),
+    ];
+    const orchAdapter = scripted(orchReplies);
+    const reviewerAdapter = scripted([
+      async () => {
+        await writeFile(join(temp, stays), "");
+        return "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept";
+      },
+    ]);
+
+    const result = await runLoop({
+      task: "Task 1",
+      cwd: repo,
+      maxSteps: 5,
+      roles,
+      tmpdirRead: async () => {
+        throw new Error("EACCES");
+      },
+      agents: {
+        orch: orchAdapter,
+        work: scripted(["worker did task"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    const reviewerPrompt = orchAdapter.recorded.at(-1).prompt;
+    expect(result.exitCode).toBe(0);
+    expect(reviewerPrompt).toContain('"inheritedTmpdirPresent"');
+    expect(reviewerPrompt).toContain(stays);
+    expect(reviewerPrompt).not.toContain('"inheritedTmpdirSettled"');
+  } finally {
+    vi.unstubAllEnvs();
+    await removePath(temp);
+    await removePath(repo);
+  }
+});
