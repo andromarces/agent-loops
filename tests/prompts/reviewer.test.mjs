@@ -474,8 +474,7 @@ test.each([
   expect(prompt).toContain("Put a check that needs one in Checks as unverified and in Deferred.");
 });
 
-// Usefulness: verifies the reviewer prompt sends a live-data question to repository evidence and
-// Deferred because no sandbox blocks it (issue #1604).
+// Usefulness: verifies the reviewer prompt sends a live-data question to repository evidence and Deferred because no sandbox blocks it (issue #1604).
 test.each([
   ["a PR input", () => reviewerPrompt({ prompt: "review PR 1604" })],
   ["no PR input", () => reviewerPrompt({ prompt: "review the change" })],
