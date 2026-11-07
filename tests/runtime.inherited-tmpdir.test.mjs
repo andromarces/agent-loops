@@ -112,7 +112,8 @@ test("a headless run drops a name removed during the settle wait", async () => {
         await writeFile(join(temp, stays), "");
         await writeFile(join(temp, gone), "");
         setTimeout(() => {
-          void rm(join(temp, gone));
+          // The Windows probe denies delete sharing for the instant of its open.
+          void rm(join(temp, gone), { maxRetries: 20, retryDelay: 10 }).catch(() => {});
         }, 400);
         return "Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept";
       },
