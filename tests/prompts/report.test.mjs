@@ -84,6 +84,16 @@ test("the rendered wrapper runs a suite command in the default shell", async () 
   expect(run.all).toMatch(/v\d+\.\d+\.\d+/);
 });
 
+// Usefulness: verifies the rule names the cmd.exe/POSIX shell and the Git Bash form (issue #1590); no other test pins it.
+test("the rule names the platform shell that runs the quoted suite command", () => {
+  const rule = testSlotRule();
+  expect(rule).toMatch(
+    /quoted command in cmd\.exe on Windows and \/bin\/sh on POSIX, not in your shell tool/,
+  );
+  expect(rule).toContain("bash -c '<command>'");
+  expect(rule).toMatch(/absolute paths/);
+});
+
 // Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so
 // the worker preamble and the later-turn reminder state the label whose absence makes a report null
 // (issue #1520). The parser still requires the three labels.
