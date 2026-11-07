@@ -55,6 +55,7 @@ Andro Marces
 ## Links
 
 - [Issue #1615](https://github.com/andromarces/agent-loops/issues/1615)
+- [PR #1618](https://github.com/andromarces/agent-loops/pull/1618)
 - [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md)
 - [ADR 0016: Resume the session of a failed first turn, with a fallback to a new session](0016-resume-a-failed-first-turn-with-a-fallback.md)
 - Implementation:
