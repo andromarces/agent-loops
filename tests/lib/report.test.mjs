@@ -90,6 +90,52 @@ test("missingRequiredReportLabels names Why", () => {
   expect(missingRequiredReportLabels("Conclusion: done\nWhy:\nBlockers: none")).toEqual(["Why"]);
 });
 
+// The issue #1601 first-turn shape: prose, an unlabeled `Verification:` list, then the labels
+// with no `Why:`, and a trailing bold line.
+const ISSUE_1601_SHAPE = [
+  "The worker changed the parser and the preamble.",
+  "",
+  "The new test covers the observed shape.",
+  "",
+  "The change lands on the named branch.",
+  "",
+  "Verification:",
+  "- **Local checks:** the targeted tests passed",
+  "- **#1601 edit:** the prompt and the parser test changed",
+  "",
+  "Conclusion: the parser names the missing label.",
+  "",
+  "Blockers: none.",
+  "",
+  "Checks: the targeted tests passed",
+  "Notes: none",
+  "Deferred: none",
+  "",
+  "**PR:** #1602 (https://example.test/pull/1602)",
+].join("\n");
+
+// Usefulness: acceptance #1601: the observed first-turn shape without `Why:` stays null and names `Why`.
+test("missingRequiredReportLabels names Why for the issue #1601 first-turn shape", () => {
+  expect(parseReportBlock(ISSUE_1601_SHAPE)).toBeNull();
+  expect(missingRequiredReportLabels(ISSUE_1601_SHAPE)).toEqual(["Why"]);
+});
+
+// Usefulness: acceptance #1601: the same first-turn shape parses once a `Why:` line supplies the reasons.
+test("the issue #1601 first-turn shape parses with a Why line", () => {
+  const response = ISSUE_1601_SHAPE.replace(
+    "Conclusion: the parser names the missing label.",
+    "Conclusion: the parser names the missing label.\nWhy: the reasons belong under the Why label.",
+  );
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "the parser names the missing label.",
+    why: "the reasons belong under the Why label.",
+    blockers: "none.",
+    checks: "the targeted tests passed",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
 // Usefulness: verifies the parser names Blockers when a block has Conclusion and Why
 // (issue #1520).
 test("missingRequiredReportLabels names Blockers", () => {
