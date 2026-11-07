@@ -1,15 +1,30 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`untrackedFilesGit` and `cleanRepoGit` in git-helpers.mjs), so every
+// case in this file runs the real snapshot code without starting a `git` process.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { runChild } from "../src/child-turn.mjs";
 import { acceptanceFailure } from "../src/lib/report.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { createCleanRepoDir, untrackedFilesGit } from "./git-helpers.mjs";
 
 // A response whose closing block has no Blockers label, so it parses to null.
-const INVALID = "Conclusion: done\nWhy: tests pass";
+const INVALID = "Conclusion: done\nWhy: tests pass\nChecks: npm test";
 const REPAIRED = [
   "Conclusion: done",
   "Why: tests pass",
@@ -19,12 +34,25 @@ const REPAIRED = [
   "Deferred: none",
 ].join("\n");
 const REPAIRED_REVIEW = `${REPAIRED}\nVerdict: accept`;
+// A table pair makes the block unparseable, while the labels and Verdict line stay readable.
+const TABLE = "| a | b |\n| --- | --- |";
+const REJECTED = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\n${TABLE}\nVerdict: reject`;
+const UNVERDICTED = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\n${TABLE}`;
+const ACCEPT_NO_CHECKS = `Conclusion: done\nWhy: tests pass\nBlockers: none\n${TABLE}\nVerdict: accept`;
+const CHANGED = "Conclusion: different\nWhy: changed\nBlockers: none\nChecks: npm test";
 
+// One shared setup for the whole file. The in-memory Git answer reads top-level files at call
+// time, so the reviewer mutation case still sees its write, and no test starts a Git process.
 let repo;
-beforeEach(async () => {
-  repo = await createTempRepo();
+beforeAll(async () => {
+  repo = await createCleanRepoDir();
+  gitDouble.answer = untrackedFilesGit;
 });
-afterEach(async () => {
+beforeEach(async () => {
+  await removePath(join(repo, "repair-leak.txt"));
+});
+afterAll(async () => {
+  gitDouble.answer = null;
   await removePath(repo);
 });
 
@@ -132,6 +160,30 @@ test("a failed repair keeps the original response and the session", async () => 
   expect(role.sessionId).toBe(agent.recorded[0].sessionId);
 });
 
+// Usefulness: verifies requirement "a cancel during or before the repair ends the turn as a cancel"
+// (issue #1615). A non-fatal repair failure must not swallow a cancel that landed with it.
+test("a cancel during a failed repair ends the turn as canceled", async () => {
+  const controller = new AbortController();
+  const agent = scripted([
+    INVALID,
+    () => {
+      controller.abort();
+      throw new Error("repair failed");
+    },
+  ]);
+
+  await expect(
+    runChild({
+      agents: { fake: agent },
+      role: { kind: "fake", sessionId: null },
+      roleName: "worker",
+      prompt: "go",
+      cwd: repo,
+      signal: controller.signal,
+    }),
+  ).rejects.toMatchObject({ isCanceled: true });
+});
+
 // Usefulness: verifies requirement "a lost session leaves the result not accepted, with the
 // original response in raw" (issue #1615). A repair that reports a missing session must not be
 // rerun as a first turn, because a new conversation cannot restate the original report.
@@ -183,6 +235,79 @@ test("a repair that replaces the conversation is rejected and keeps the mark", a
   expect(result.report).toBeNull();
   expect(role.sessionId).toBe("replacement-session");
   expect(role.conversationReplaced).toBe(true);
+});
+
+// Usefulness: verifies requirement "the repair output is untrusted; it must never make a turn
+// accepted that the original response did not accept" (issue #1615). An original reject cannot
+// become an accept through the repaired block.
+test("a repair cannot promote an original reject to an accept", async () => {
+  const agent = scripted([REJECTED, REPAIRED_REVIEW]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(REJECTED);
+  expect(result.report).toBeNull();
+  expect(acceptanceFailure(result.response, result.report)).toBe("verdict");
+});
+
+// Usefulness: verifies requirement "the repair must never invent a verdict that the original
+// response did not state" (issue #1615). A missing verdict stays not accepted.
+test("a repair cannot invent a missing verdict", async () => {
+  const agent = scripted([UNVERDICTED, REPAIRED_REVIEW]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(UNVERDICTED);
+  expect(result.report).toBeNull();
+  expect(acceptanceFailure(result.response, result.report)).toBe("verdict");
+});
+
+// Usefulness: verifies requirement "a repair must never make a turn accepted that the original
+// response did not accept" (issue #1615). A repaired Checks line cannot supply the acceptance input
+// that the original response left out.
+test("a repair cannot add the Checks line that an accept needs", async () => {
+  const agent = scripted([ACCEPT_NO_CHECKS, REPAIRED_REVIEW]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(ACCEPT_NO_CHECKS);
+  expect(result.report).toBeNull();
+  expect(acceptanceFailure(result.response, result.report)).toBe("checks");
+});
+
+// Usefulness: verifies requirement "the repair keeps the findings and checks of the original
+// response" (issue #1615). A repaired block that changes a field is rejected.
+test("a repair cannot change the original findings", async () => {
+  const agent = scripted([UNVERDICTED, CHANGED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(UNVERDICTED);
+  expect(result.report).toBeNull();
 });
 
 // Usefulness: verifies requirement "the policy for a parsed report without a reviewer Checks line or

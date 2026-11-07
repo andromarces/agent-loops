@@ -18,7 +18,11 @@ import {
 } from "./lib/main-work-tree-change.mjs";
 import { startMainWorkTreeWatch } from "./lib/main-work-tree-watch.mjs";
 import { diffSharedGit, readSharedGit } from "./lib/shared-git.mjs";
-import { missingRequiredReportLabels, reportForResult } from "./lib/report.mjs";
+import {
+  missingRequiredReportLabels,
+  repairedReportMatches,
+  reportForResult,
+} from "./lib/report.mjs";
 import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
 import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
@@ -655,7 +659,7 @@ export async function runChild(options) {
    * lost or replaced, or the repaired response still parses to null, so the caller keeps the
    * original response and its evidence.
    */
-  const repairClosingBlock = async () => {
+  const repairClosingBlock = async (originalResponse) => {
     const sessionId = role.sessionId;
     logWarn(`${roleName}: the closing block did not parse; taking one repair turn`);
     let repairedResponse;
@@ -670,6 +674,8 @@ export async function runChild(options) {
         : await invokeRole(closingBlockRepairPrompt());
     } catch (err) {
       if (isFatalTurnError(err)) throw err;
+      // A cancel that lands with a handled repair failure still ends the turn as a cancel.
+      throwIfCanceled(signal, roleName);
       logWarn(
         `${roleName}: the closing-block repair turn failed: ${firstErrorLine(readableErrorText(err))}`,
       );
@@ -692,6 +698,12 @@ export async function runChild(options) {
     const report = reportForResult(repairedResponse, role.multiPartUnidentified === true);
     if (report === null) {
       logWarn(`${roleName}: the closing-block repair still did not parse`);
+      return null;
+    }
+    if (
+      !repairedReportMatches(originalResponse, repairedResponse, report, { reviewer: isReviewer })
+    ) {
+      logWarn(`${roleName}: the closing-block repair does not match the original response`);
       return null;
     }
     return { response: repairedResponse, report };
@@ -819,7 +831,7 @@ export async function runChild(options) {
     // A null report gets one repair turn in the same session. A repair that succeeds replaces the
     // response and the report; a failed one leaves the original response in `raw` (issue #1615).
     if (report === null) {
-      const repaired = await repairClosingBlock();
+      const repaired = await repairClosingBlock(response);
       if (repaired !== null) {
         response = repaired.response;
         report = repaired.report;

@@ -458,6 +458,78 @@ export function reportForResult(response, multiPartUnidentified = false) {
     : parseReportBlock(response);
 }
 
+// A repaired value that carries no finding, for a label that the original response left out.
+const NO_REPAIRED_FINDING = /^none\.?$/i;
+
+/** Collapses whitespace so a repaired value matches the original text that it restates. */
+function normalizedReportValue(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * True when a repaired report restates only what the original response already held (issue #1615).
+ * The repair is untrusted: each original label that holds a value must keep it, a label that the
+ * original left out may gain only `none`, and a reviewer verdict must match an explicit original
+ * verdict. Any mismatch leaves the repair unused, so a repair can never create an acceptance that
+ * the original response did not state.
+ * @param {string} response the original child response
+ * @param {string} repairedResponse the repair turn response
+ * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
+ * @param {{ reviewer?: boolean }} [options]
+ * @returns {boolean}
+ */
+export function repairedReportMatches(
+  response,
+  repairedResponse,
+  report,
+  { reviewer = false } = {},
+) {
+  if (!report) {
+    return false;
+  }
+  const shared = foldedReportBlock(response, { diagnose: true });
+  if (!shared) {
+    return false;
+  }
+  const originals = new Map(shared.labels.map(({ key, value }) => [key, value]));
+  for (const [key] of REPORT_LABELS) {
+    const original = originals.get(key) ?? null;
+    const repaired = report[key] ?? null;
+    if (original !== null) {
+      if (
+        repaired === null ||
+        normalizedReportValue(original) !== normalizedReportValue(repaired)
+      ) {
+        return false;
+      }
+    } else if (repaired !== null && !NO_REPAIRED_FINDING.test(repaired)) {
+      return false;
+    }
+  }
+  if (reviewer) {
+    const originalVerdict = parseVerdict(response);
+    if (originalVerdict !== "accept" && originalVerdict !== "reject") {
+      return false;
+    }
+    const repairedVerdict = parseVerdict(repairedResponse);
+    if (repairedVerdict !== originalVerdict) {
+      return false;
+    }
+    // An accept needs the same evidence that the gate reads. A repair cannot supply a label or a
+    // Checks line that the original response left out.
+    if (
+      repairedVerdict === "accept" &&
+      REPORT_LABELS.some(([key, , optional]) => !optional && originals.get(key) === null)
+    ) {
+      return false;
+    }
+    if (repairedVerdict === "accept" && originals.get("checks") === null) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // A report label line, empty or with a value, for example `Notes:` or `Notes: none`. The reviewer
 // `Verdict:` line is no report label, so a list after it never folds.
 const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
