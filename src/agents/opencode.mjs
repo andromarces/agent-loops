@@ -26,11 +26,17 @@ const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no provider error event in the output";
 const UNKNOWN_ERROR = "unknown error";
 
-// opencode v0.0.0-dev-466 streams a provider overload as a `provider.internal` error whose
-// structured `status` is the provider's HTTP status. A probe against a local 529 server streamed
-// that event, and a 503 carries a generic service-unavailable message, so only 529 is marked
-// (issue #1017).
+// opencode marks a provider capacity reply on two sourced signals (issues #1017, #1614).
+// v0.0.0-dev-466 streams a provider overload as a `provider.internal` error whose structured
+// `status` is the provider's HTTP status. A probe against a local 529 server streamed that event,
+// and a 503 carries a generic service-unavailable message, so only 529 is marked.
+// v0.0.0-dev-973 streams a provider overload as a `provider.rate-limit` error with `status` 429
+// and the provider error code `overloaded` in the structured response body. A probe against a
+// local 429 server streamed that event; a plain rate limit carries another code, and a quota is a
+// `provider.quota` event, so neither is marked.
 const CAPACITY_STATUS = 529;
+const OVERLOAD_STATUS = 429;
+const OVERLOAD_CODE = "overloaded";
 
 // The built-in plan agent can launch explore and general subagents through the `subagent`
 // action. They inherit the session model, so a read-only turn spends the role model budget
@@ -148,13 +154,47 @@ function firstSessionId(events) {
  */
 function flagCapacityFailure(err, events) {
   const terminal = events.findLast((event) => event?.type === "error");
-  const error = terminal?.error;
-  if (
-    isJsonObject(error) &&
-    error.type === "provider.internal" &&
-    error.status === CAPACITY_STATUS
-  ) {
+  if (isCapacityError(terminal?.error)) {
     markCapacityFailure(err);
+  }
+}
+
+/**
+ * True when a terminal opencode error event is a sourced provider capacity reply: a
+ * `provider.internal` 529, or a `provider.rate-limit` 429 whose JSON response body carries the
+ * provider error code `overloaded`. Any other type, status, or code is a real fault or a quota,
+ * which a retry does not fix.
+ * @param {unknown} error the `error` field of the terminal event
+ */
+function isCapacityError(error) {
+  if (!isJsonObject(error)) {
+    return false;
+  }
+  if (error.type === "provider.internal" && error.status === CAPACITY_STATUS) {
+    return true;
+  }
+  return (
+    error.type === "provider.rate-limit" &&
+    error.status === OVERLOAD_STATUS &&
+    providerErrorCode(error) === OVERLOAD_CODE
+  );
+}
+
+/**
+ * Returns the provider error code from the structured response body of an opencode error event, or
+ * `undefined` when the event carries no body or the body is not the documented JSON object.
+ * @param {Record<string, unknown>} error the `error` field of the terminal event
+ */
+function providerErrorCode(error) {
+  const body = error.response?.body;
+  if (typeof body !== "string") {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(body);
+    return typeof parsed?.error?.code === "string" ? parsed.error.code : undefined;
+  } catch {
+    return undefined;
   }
 }
 

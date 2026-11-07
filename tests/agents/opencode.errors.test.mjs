@@ -733,3 +733,105 @@ test("opencode marks a capacity error event on an exit-0 turn", async () => {
 
   expect(caught.transient).toBe("capacity");
 });
+
+// The terminal event that opencode v0.0.0-dev-973 streamed for a 429 overload reply from a local
+// probe server (issue #1614). The structured provider error code is `overloaded`. The live turn
+// on v0.0.0-dev-919 printed the same type, status, and message, and no live reply confirmed the code.
+const OVERLOAD_ERROR = {
+  type: "provider.rate-limit",
+  message: "Upstream request failed: [overloaded] the server is overloaded; retry shortly",
+  status: 429,
+  response: {
+    body: '{"error":{"message":"Upstream request failed: [overloaded] the server is overloaded; retry shortly","type":"overloaded_error","code":"overloaded"}}',
+  },
+};
+
+// The plain rate limit and the quota that the same probe server answered, so a 429 with another
+// structured code or type stays unmarked (issue #1614).
+const PLAIN_RATE_LIMIT_ERROR = {
+  type: "provider.rate-limit",
+  message: "Too many requests, please slow down.",
+  status: 429,
+  response: {
+    body: '{"error":{"message":"Too many requests, please slow down.","type":"rate_limit_error","code":"rate_limit_exceeded"}}',
+  },
+};
+
+const QUOTA_ERROR = {
+  type: "provider.quota",
+  message: "You exceeded your current quota, please check your plan and billing details.",
+  status: 429,
+  response: {
+    body: '{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}',
+  },
+};
+
+// Usefulness: verifies requirement "a terminal overload provider.rate-limit event marks the turn
+// transient" (issue #1614), so a parent retries a provider overload without reading the error text.
+test("opencode marks a provider overload rate limit transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent(OVERLOAD_ERROR)));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
+
+// Usefulness: verifies requirement "a provider.quota event stays unmarked" (issue #1614), because a
+// retry does not fix an exhausted quota.
+test("opencode does not mark a provider quota failure transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent(QUOTA_ERROR)));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a 429 that is not an overload stays unmarked" (issue #1614), so
+// a plain rate limit still needs operator approval.
+test("opencode does not mark a plain rate limit transient", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent(PLAIN_RATE_LIMIT_ERROR)));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies the mark reads the structured provider code, not the message text (issue
+// #1614), so a plain rate limit whose message names an overload is not retried.
+test("opencode does not mark a rate limit whose message names an overload", async () => {
+  const wordingOnly = {
+    ...OVERLOAD_ERROR,
+    response: {
+      body: '{"error":{"message":"the server is overloaded; retry shortly","type":"rate_limit_error"}}',
+    },
+  };
+  vi.mocked(exec).mockRejectedValueOnce(failedTurn(errorEvent(wordingOnly)));
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "only the terminal failure decides" (issue #1614): a later
+// error must not make a parent retry a real fault.
+test("opencode does not mark an overload error that a later error replaces", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn([errorEvent(OVERLOAD_ERROR), errorEvent(PLAIN_RATE_LIMIT_ERROR)].join("\n")),
+  );
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a truncated final line keeps an earlier decisive event" (issue
+// #1614), so a broken tail cannot hide an overload.
+test("opencode keeps the overload mark when the final line is truncated", async () => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    failedTurn(`${errorEvent(OVERLOAD_ERROR)}\n{"type":"error","error":{"type":"provider`),
+  );
+
+  const caught = await runOpenCode(ocState(), "oc prompt", { cwd: "/dir" }).catch((e) => e);
+
+  expect(caught.transient).toBe("capacity");
+});
