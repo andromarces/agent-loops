@@ -29,7 +29,7 @@ import {
 } from "../src/lib/main-work-tree-change.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createLinkedWorkTree } from "./git-helpers.mjs";
+import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";
 
 // The main work tree resolution fails or stalls only in the tests that set these flags.
 const resolution = vi.hoisted(() => ({ fail: false, stall: false }));
@@ -49,7 +49,9 @@ vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
 
 let tree;
 beforeEach(async () => {
-  tree = await createLinkedWorkTree();
+  // The linked path is an empty directory: every read there is answered from memory, and no Git
+  // work tree is created for it. The main work tree stays real, so its snapshot stays real.
+  tree = await createLinkedWorkTree({ linkedWorkTree: false });
   tree.mainReal = await realpath(tree.main);
   gitDouble.answer = cutLinkedReads;
 });
@@ -96,10 +98,10 @@ async function seedUpstream() {
 }
 
 /**
- * Answers each work tree root, and the linked work tree's shared Git reads and lockfile list, from
- * memory. Every call not answered here runs real `git`, so the main work tree state reads stay
- * real. The empty config listing and file list read the same before and after, so neither reports
- * a change. The caller sets it in `beforeEach`.
+ * Answers each work tree root, and the linked path's shared Git reads, lockfile list, and clean
+ * snapshot, from memory. Every call not answered here runs real `git`, so the main work tree state
+ * reads stay real. The linked path reads the same clean state before and after, so it reports no
+ * change. The caller sets it in `beforeEach`.
  */
 function cutLinkedReads(command, args, options) {
   const cwd = options?.cwd;
@@ -117,6 +119,11 @@ function cutLinkedReads(command, args, options) {
     case '["config","-z","--list","--show-scope"]':
     case '["ls-files","-z","--cached","--others","--exclude-standard"]':
       return cwd === tree.linked ? answer("") : undefined;
+    case '["status","--porcelain=v1","-z","--untracked-files=all"]':
+    case '["ls-files","--stage","-z"]':
+      return cwd === tree.linked ? answer("") : undefined;
+    case '["rev-parse","--verify","-q","HEAD"]':
+      return cwd === tree.linked ? answer(`${CLEAN_REPO_HEAD}\n`) : undefined;
     default:
       return undefined;
   }
