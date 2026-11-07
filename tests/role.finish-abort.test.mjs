@@ -503,6 +503,34 @@ test("--require-accept refuses an accept with no Why label and names Why", async
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// Usefulness: verifies the interactive gate stays closed for a parsed report without Conclusion.
+test("--require-accept refuses an accept with prose and no Conclusion label", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  const noConclusion = [
+    "The state passes.",
+    "**Count.** one turn.",
+    "Why: changes match the task.",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Verdict: accept",
+  ].join("\n");
+
+  const refusedReview = await dispatchReviewer(repo, noConclusion);
+  expect(refusedReview.payload.report).not.toBeNull();
+  expect(refusedReview.payload.verdict).toBe("unknown");
+  const refused = await finishCall(repo, ["--require-accept"]);
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("Verdict: accept");
+  expect((await readRepoState(repo)).lifecycle).toBe("active");
+
+  await dispatchReviewer(repo, ACCEPT);
+  const accepted = await finishCall(repo, ["--require-accept"]);
+  expect(accepted.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
 // Usefulness: verifies --require-accept refuses a finish when the work tree
 // changed after the accepted review, including an uncommitted state at the same
 // head (issue #218).

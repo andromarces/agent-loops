@@ -1473,6 +1473,75 @@ test("parseReportBlock reads the line before the first label as Conclusion", () 
   });
 });
 
+// Usefulness: verifies the issue #1597 shape parses with its opening prose as Conclusion.
+test("parseReportBlock reads the prose opening above bold narration as Conclusion", () => {
+  const response = [
+    "The worker fixed both findings and pushed the branch.",
+    "",
+    "**Blocker.** The first dispatch had no head SHA.",
+    "",
+    "**Count.** Two findings and five labels.",
+    "",
+    "Why:",
+    "- the targeted test passed",
+    "",
+    "Blockers: none.",
+    "",
+    "Checks:",
+    "- pnpm test",
+    "",
+    "Notes:",
+    "- none",
+    "",
+    "Deferred:",
+    "- none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The worker fixed both findings and pushed the branch.",
+    why: "the targeted test passed",
+    blockers: "none.",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
+// Usefulness: verifies earlier prose stays out and bold-lead narration supplies no Conclusion.
+test("parseReportBlock keeps bold-lead narration out of the Conclusion line", () => {
+  expect(parseReportBlock("**Blocker.** pending\nWhy: ok\nBlockers: none")).toBeNull();
+  expect(
+    parseReportBlock(
+      [
+        "Earlier narration.",
+        "",
+        "The opening prose line.",
+        "",
+        "**Count.** five.",
+        "",
+        "Why: ok",
+        "Blockers: none",
+      ].join("\n"),
+    ),
+  ).toMatchObject({ conclusion: "The opening prose line." });
+});
+
+// Usefulness: verifies a reviewer report without Conclusion still fails the accept gate.
+test("acceptanceFailure keeps a reviewer report without Conclusion unaccepted", () => {
+  const response = [
+    "The state passes.",
+    "**Count.** one turn.",
+    "Why: changes match the task.",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Verdict: accept",
+  ].join("\n");
+  expect(parseReportBlock(response)).not.toBeNull();
+  expect(parseVerdict(response)).toBe("unknown");
+  expect(acceptanceFailure(response)).toBe("verdict");
+  expect(isAcceptedReview(response)).toBe(false);
+});
+
 // Usefulness: verifies the issue #1592 shape, where a lone required label sits directly above
 // Conclusion, yields all six labels instead of a null report that names Blockers as missing.
 test("parseReportBlock reads one required label written before Conclusion", () => {

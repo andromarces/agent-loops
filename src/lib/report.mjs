@@ -235,9 +235,10 @@ export function hasClosingBlockAttempt(response) {
  * outside a fence, so a quoted or repeated label stays out. The whole response is normalized first,
  * so a bold label starts a block as its plain form does. With `unlabeled`, a response without a
  * `Conclusion:` label starts at the non-blank line directly before the first known report label,
- * and that line becomes `Conclusion`. With `diagnose`, a response with no prose line before the
- * first known label starts at that label. A bold label inside a fenced code block stays text (issue
- * #1483).
+ * and that line becomes `Conclusion`. When bold-lead narration sits there, the nearest plain prose
+ * line above it becomes `Conclusion` (issue #1597). With `diagnose`, a response with no prose line
+ * before the first known label starts at that label. A bold label inside a fenced code block stays
+ * text (issue #1483).
  * @param {string} response
  * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean }} [options]
  * @returns {string[] | null}
@@ -265,9 +266,13 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     before--;
   }
   if (before < 0 || !isPlainProseLine(lines[before])) {
-    // Diagnosis reads the labels from the first known label, because a block that starts at Why
-    // still shows which required labels it lacks (issue #1520).
-    return diagnose ? lines.slice(first) : null;
+    const prose = boldNarrationProseLine(lines, before);
+    if (prose === -1) {
+      // Diagnosis reads the labels from the first known label, because a block that starts at Why
+      // still shows which required labels it lacks (issue #1520).
+      return diagnose ? lines.slice(first) : null;
+    }
+    before = prose;
   }
   const block = lines.slice(before);
   block[0] = `Conclusion: ${lines[before].trim()}`;
@@ -310,6 +315,29 @@ export function leadingRequiredLabelStart(lines, start) {
     }
     first = at;
   }
+}
+
+// A column-0 line that opens a bold mark, for example `**Blocker.** The test failed` (issue #1597).
+const BOLD_LEAD_LINE = /^\*\*/;
+
+/**
+ * The index of the plain prose line above a run of bold-lead narration paragraphs and blank lines,
+ * or -1 when there is none. A child can write the conclusion as prose, then bold-lead paragraphs,
+ * then the report labels with no `Conclusion:` line (issue #1597).
+ * @param {string[]} lines
+ * @param {number} from the non-blank line directly above the first known label
+ * @returns {number}
+ */
+function boldNarrationProseLine(lines, from) {
+  let at = from;
+  while (at >= 0) {
+    if (lines[at].trim() === "" || BOLD_LEAD_LINE.test(lines[at])) {
+      at--;
+      continue;
+    }
+    return isPlainProseLine(lines[at]) ? at : -1;
+  }
+  return -1;
 }
 
 /**

@@ -143,6 +143,53 @@ test("--require-accept names Why and refuses a reviewer report without it", asyn
   }
 });
 
+// Usefulness: verifies the headless gate keeps a parsed report without Conclusion unaccepted.
+test("--require-accept refuses a reviewer report with prose and no Conclusion label", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const noConclusion = [
+      "The state passes.",
+      "**Count.** one turn.",
+      "Why: changes match the task.",
+      "Blockers: none.",
+      "Checks: npm test",
+      "Verdict: accept",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "re-review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([noConclusion, REVIEW_ACCEPT]);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 30b",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const results = events.filter((event) => event.type === "result").map((event) => event.result);
+    expect(results[1].report).not.toBeNull();
+    expect(events.filter((event) => event.type === "refusal")).toHaveLength(1);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 // 31. Usefulness: verifies the gate maps a run with no worker turn to review-only:
 // the finish follows the report whatever the verdict (issue #234).
 test("--require-accept allows a review-only finish with no worker turn", async () => {
