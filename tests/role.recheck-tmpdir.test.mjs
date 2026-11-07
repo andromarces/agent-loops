@@ -654,3 +654,35 @@ test("recheck-tmpdir keeps every name when a probe is canceled", async () => {
     expect((await readRepoState(repo)).inheritedTmpdirNames).toEqual([name]);
   });
 });
+
+// Usefulness: verifies a cancel through settle.signal aborts the ancestry read before its bound
+// (issue #1600).
+test("recheck-tmpdir cancels through settle.signal before the ancestry bound", async () => {
+  const repo = await newStateRun();
+  const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-4321-ab12cd";
+  const names = [`${base}-shm`, `${base}-wal`];
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = names;
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+  const controller = new AbortController();
+  let release;
+  const started = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = recheck(repo, ["--parent-session", "parent-sess-1"], {
+    read: async () => names,
+    platform: "darwin",
+    readAncestors: () => {
+      release();
+      return new Promise(() => {});
+    },
+    pidAlive: () => true,
+    statFile: async () => ({ isFile: () => true }),
+    tmpdirSettle: { boundMs: 60_000, intervalMs: 60_000, signal: controller.signal },
+  });
+  await started;
+  controller.abort();
+  const result = await pending;
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.error).toBe("Interrupted by SIGINT");
+});

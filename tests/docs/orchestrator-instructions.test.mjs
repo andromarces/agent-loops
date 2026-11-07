@@ -325,9 +325,9 @@ test("the runtime advisory docs name the macOS path that the report follows", as
 });
 
 // Usefulness: verifies ADR 0076 records its partial supersession. It also verifies ADR 0081 links
-// PR #1564, ADR 0082 supersedes the single read of ADR 0081, and ADR 0093 supersedes its single
-// report (issues #1559, #1569, and #1600). It verifies ADR 0085 supersedes ADR 0081's non-terminal
-// requirement (issue #1575).
+// PR #1564. It verifies ADR 0082 supersedes the single read of ADR 0081. It verifies ADR 0093
+// supersedes its single report (issues #1559, #1569, and #1600). It verifies ADR 0085 supersedes
+// the non-terminal requirement of ADR 0081 (issue #1575).
 test("ADR 0076, ADR 0081, ADR 0082, and ADR 0085 state the supersession and the links", async () => {
   const adr76 = await readFile(
     join(

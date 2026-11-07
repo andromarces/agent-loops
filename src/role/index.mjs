@@ -152,7 +152,17 @@ async function abort(args) {
  */
 async function recheckTmpdir(
   args,
-  { signal, read, tmpdirSettle, probe, platform, pidAlive, statFile, ancestors } = {},
+  {
+    signal,
+    read,
+    tmpdirSettle,
+    probe,
+    platform,
+    pidAlive,
+    statFile,
+    ancestors,
+    readAncestors,
+  } = {},
 ) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
   requireParentSessionFlag(args, "recheck-tmpdir");
@@ -167,8 +177,9 @@ async function recheckTmpdir(
     ...(pidAlive ? { pidAlive } : {}),
     ...(statFile ? { statFile } : {}),
     ...(ancestors !== undefined ? { ancestors } : {}),
+    ...(readAncestors ? { readAncestors } : {}),
     signal,
-    settle: { ...tmpdirSettle, signal },
+    settle: { ...tmpdirSettle, ...(signal ? { signal } : {}) },
   });
   return {
     exitCode: 0,

@@ -13,6 +13,7 @@ Partially superseded by [ADR 0085: Let the inherited temporary directory re-chec
 Partially superseded by [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md). The superseded part is:
 
 - The single present list of decision 2. Superseded by [ADR 0093](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md).
+- The rule of decision 2 that the re-check follows no link, for the Windows probe. Superseded by [ADR 0093](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md).
 
 The settle read, decision 1, decisions 4 to 7, decision 3's remaining parent-only and parent-session rules, and every other consequence of ADR 0076 and ADR 0081 remain in force.
 

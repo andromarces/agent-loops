@@ -17,6 +17,7 @@ import {
   presentInheritedTmpdir,
   presentInheritedTmpdirReport,
   probeHeldOpenWindows,
+  readAncestorPids,
   settleInheritedTmpdirNames,
   snapshotInheritedTmpdir,
 } from "../../src/lib/tmpdir-entries.mjs";
@@ -874,7 +875,7 @@ test.skipIf(process.platform !== "win32")(
       leftovers: [name],
       settled: [],
     });
-    // A leaked exclusive-share handle would refuse this removal.
+    // A leaked exclusive-share handle makes this removal fail.
     await rm(path);
   },
 );
@@ -919,4 +920,162 @@ test("a cancel during the ancestry read ends with the cancel identity", async ()
       statFile: regular,
     }),
   ).rejects.toMatchObject({ isCanceled: true });
+});
+
+// Usefulness: verifies that an EBUSY from the open alone settles. An lstat EBUSY keeps the name (issue #1600).
+test("keeps a Windows name when lstat reports EBUSY", async () => {
+  expect(
+    await probeHeldOpenWindows("a.tmp", {
+      lstatFile: async () => {
+        throw Object.assign(new Error("busy"), { code: "EBUSY" });
+      },
+      openHandle: async () => {
+        throw new Error("must not open");
+      },
+    }),
+  ).toBe("unknown");
+});
+
+// Usefulness: verifies that an EBUSY from the open alone settles. An fstat EBUSY keeps the name (issue #1600).
+test("keeps a Windows name when fstat reports EBUSY", async () => {
+  let closed = false;
+  expect(
+    await probeHeldOpenWindows("a.tmp", {
+      lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+      openHandle: async () => ({
+        stat: async () => {
+          throw Object.assign(new Error("busy"), { code: "EBUSY" });
+        },
+        close: async () => {
+          closed = true;
+        },
+      }),
+    }),
+  ).toBe("unknown");
+  expect(closed).toBe(true);
+});
+
+// Usefulness: verifies the device comparison. A different device keeps the name (issue #1600).
+test("keeps a Windows file whose device differs", async () => {
+  expect(
+    await probeHeldOpenWindows("a.tmp", {
+      lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+      openHandle: async () => ({
+        stat: async () => ({ dev: 2n, ino: 2n }),
+        close: async () => {},
+      }),
+    }),
+  ).toBe("unknown");
+});
+
+// Usefulness: verifies a replacement link between lstat and open. The handle identity keeps the
+// name (issue #1600).
+test("keeps a Windows file replaced by a link between lstat and open", async () => {
+  let closed = false;
+  expect(
+    await probeHeldOpenWindows("a.tmp", {
+      lstatFile: async () => ({ isFile: () => true, dev: 1n, ino: 2n }),
+      openHandle: async () => ({
+        stat: async () => ({ dev: 3n, ino: 4n }),
+        close: async () => {
+          closed = true;
+        },
+      }),
+    }),
+  ).toBe("unknown");
+  expect(closed).toBe(true);
+});
+
+// Usefulness: verifies the ancestor collection. The set includes every ancestor up to PID 1
+// (issue #1600).
+test("collects every ancestor up to PID 1", async () => {
+  const table = [
+    { pid: process.pid, ppid: 4242 },
+    { pid: 4242, ppid: 1 },
+    { pid: 1, ppid: 0 },
+  ];
+  expect(await readAncestorPids({ readTable: async () => table })).toEqual(
+    new Set([process.pid, 4242, 1]),
+  );
+});
+
+// Usefulness: verifies a fail-closed path. A table without this process returns null (issue
+// #1600).
+test("returns null when the ancestry omits this process", async () => {
+  expect(await readAncestorPids({ readTable: async () => [{ pid: 1, ppid: 0 }] })).toBeNull();
+});
+
+// Usefulness: verifies a fail-closed path. A cycle returns null (issue #1600).
+test("returns null on an ancestry cycle", async () => {
+  const table = [
+    { pid: process.pid, ppid: 4242 },
+    { pid: 4242, ppid: process.pid },
+  ];
+  expect(await readAncestorPids({ readTable: async () => table })).toBeNull();
+});
+
+// Usefulness: verifies a fail-closed path. A failed ancestry read returns null (issue #1600).
+test("returns null when the ancestry read fails", async () => {
+  expect(
+    await readAncestorPids({
+      readTable: async () => {
+        throw new Error("EACCES");
+      },
+    }),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a cancel during the ancestry read rejects with the cancel identity (issue
+// #1600).
+test("a canceled ancestry read rejects canceled", async () => {
+  await expect(
+    readAncestorPids({
+      readTable: async () => {
+        throw Object.assign(new Error("Interrupted"), { isCanceled: true });
+      },
+    }),
+  ).rejects.toMatchObject({ isCanceled: true });
+});
+
+// Usefulness: verifies a fail-closed path. A macOS name for PID 1 stays reported (issue #1600).
+test("keeps a macOS name for PID 1", async () => {
+  const name = `${macGuid}-1-ab12cd-shm`;
+  const sibling = `${macGuid}-1-ab12cd-wal`;
+  expect(
+    await settleInheritedTmpdirNames([name, sibling], {
+      platform: "darwin",
+      ancestors: new Set([1]),
+      pidAlive: () => true,
+      statFile: regular,
+    }),
+  ).toEqual({ leftovers: [name, sibling], settled: [] });
+});
+
+// Usefulness: verifies a cancel through settle.signal aborts the ancestry read at once (issue
+// #1600).
+test("a cancel through settle.signal aborts the ancestry read at once", async () => {
+  const controller = new AbortController();
+  let release;
+  const started = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = presentInheritedTmpdir([macShm, macWal], {
+    read: async () => [macShm, macWal],
+    platform: "darwin",
+    readAncestors: () => {
+      release();
+      return new Promise(() => {});
+    },
+    pidAlive: () => true,
+    statFile: regular,
+    probeBoundMs: 60_000,
+    settle: {
+      boundMs: 60_000,
+      intervalMs: 60_000,
+      signal: controller.signal,
+    },
+  });
+  await started;
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ isCanceled: true });
 });

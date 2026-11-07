@@ -9,6 +9,7 @@ Partially supersedes [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-
 ## Supersedes
 
 - The single present list of decision 2 in [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). Replaced by the present list and the settled list.
+- The rule of decision 2 that the re-check follows no link, for the Windows probe. Replaced by the `lstat` and handle-identity rule.
 - The single last-read report of decision 2 in [ADR 0082](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md). Replaced by the present list and the settled list.
 
 ## Date
@@ -27,10 +28,10 @@ A name that a probe settles needs its own field. A name that the probe cannot se
 
 1. **Add a settled field.** The `role recheck-tmpdir` envelope carries `inheritedTmpdirSettled` when at least one name is settled. The field is redacted and capped at 20 like `inheritedTmpdirEntries`. `inheritedTmpdirEntries` keeps only the names that stay possible run leftovers.
 2. **Probe Windows files read-only.** Each remaining regular file gets a read-only open with the libuv `UV_FS_O_EXLOCK` value, `0x10000000`. `EBUSY` settles the name as held open by another process. A directory, a link, any other error, or the probe bound keeps the name reported.
-3. **Compare the opened handle.** The Windows probe reads the path with `lstat` first, opens it read-only, and then reads the handle with `fstat`. It settles only when the device and inode match the `lstat` result. A mismatch keeps the name reported, so a swapped link never settles a target.
+3. **Compare the opened handle.** The Windows probe reads the path with `lstat` first. A link, a directory, or an `lstat` error keeps the name reported. It opens a regular file read-only. Only an `EBUSY` from that open settles the name. When the open succeeds, it reads the handle with `fstat` and compares the device and inode with the `lstat` result. A mismatch, an `fstat` error, and every other open error keep the name.
 4. **Use the libuv value.** Node exposes no `fs.constants.UV_FS_O_EXLOCK` entry in the supported releases. The check covered Node 22, 24, and 26. A Windows test proves that the value reports `EBUSY` while another handle holds the file.
-5. **Settle by the embedded pid.** The name must match a canonical UUID, a pid, a hex run, and the `-shm` or `-wal` suffix. Both pair members must be regular files by `lstat`. The pid must be alive through signal 0 or `EPERM`. The recheck process and its ancestors never settle.
-6. **Keep the macOS limit.** A live process with that pid can be unrelated to the file. A lone member, a malformed pid, a non-regular entry, and an unreadable ancestry keep the name reported.
+5. **Settle by the embedded pid.** The name must match a canonical UUID, a pid, a hex run, and the `-shm` or `-wal` suffix. Both pair members must be regular files by `lstat`. The pid must be alive through signal 0 or `EPERM`. The ancestor set includes every ancestor up to PID 1. The recheck process and its ancestors never settle.
+6. **Keep the macOS limit.** A live process with that pid can be unrelated to the file. A lone member, a malformed pid, a non-regular entry, and an unreadable ancestry keep the name reported. A failed or bounded ancestry read keeps every name reported.
 7. **Keep the current behavior elsewhere.** Linux settles no name. Any name that a probe cannot settle stays in `inheritedTmpdirEntries`.
 8. **Bound and close.** The probes run inside the re-check settle bound. A failed or over-bound probe keeps its name. The probe opens no file for writing, creates nothing, deletes nothing, and closes every handle on every path.
 9. **Keep the headless path in parity.** A headless result carries the possible leftovers in `inheritedTmpdirPresent` and the settled names in `inheritedTmpdirSettled`. The parent carries only `inheritedTmpdirEntries` or `inheritedTmpdirPresent` into `open`.
@@ -41,6 +42,7 @@ A name that a probe settles needs its own field. A name that the probe cannot se
 - A file that no process holds open stays reported.
 - A settled name stays visible in its own envelope field, so no name drops silently.
 - A macOS pair whose embedded pid is dead, malformed, or not a regular file stays reported.
+- A Windows `lstat` or `fstat` error stays reported, and only an `EBUSY` from the open settles.
 - The Windows probe denies sharing for the instant of the open, and it reads no byte.
 - A probe that fails or reaches its bound changes no report.
 

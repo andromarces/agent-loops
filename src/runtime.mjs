@@ -398,7 +398,7 @@ export async function runLoop(options) {
         roleName === "reviewer" &&
         typeof result.response === "string" &&
         parseVerdict(result.response) === "accept";
-      const settle = accepted ? { ...tmpdirSettle, signal } : null;
+      const settle = accepted ? { ...tmpdirSettle, ...(signal ? { signal } : {}) } : null;
       const report = await presentInheritedTmpdirReport([...reportedTmpdirNames], {
         ...(tmpdirRead ? { read: tmpdirRead } : {}),
         ...(tmpdirProbe ? { probe: tmpdirProbe } : {}),

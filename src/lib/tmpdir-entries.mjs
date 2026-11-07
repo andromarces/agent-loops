@@ -242,18 +242,27 @@ export async function probeHeldOpenWindows(
   } = {},
 ) {
   const path = join(tmpdir(), name);
+  let before;
+  try {
+    before = await lstatFile(path);
+  } catch {
+    return "unknown";
+  }
+  if (!before.isFile()) return "unknown";
   let handle;
   try {
-    const before = await lstatFile(path);
-    if (!before.isFile()) return "unknown";
     handle = await openHandle(path, WINDOWS_EXCLUSIVE_SHARE);
+  } catch (err) {
+    return err?.code === "EBUSY" ? "held" : "unknown";
+  }
+  try {
     const after = await handle.stat({ bigint: true });
     if (after.dev !== before.dev || after.ino !== before.ino) return "unknown";
     return "free";
-  } catch (err) {
-    return err?.code === "EBUSY" ? "held" : "unknown";
+  } catch {
+    return "unknown";
   } finally {
-    if (handle !== undefined) await handle.close().catch(() => {});
+    await handle.close().catch(() => {});
   }
 }
 
@@ -267,12 +276,16 @@ export function pidIsAlive(pid, { kill = process.kill } = {}) {
   }
 }
 
-// The pids of this process and its ancestors. A failed read returns null, so no macOS name is
-// settled on an ancestry that the read cannot prove.
-async function readAncestorPids({ signal, timeout = ANCESTOR_READ_TIMEOUT_SECONDS } = {}) {
+// The pids of this process and its ancestors, PID 1 included. A failed read returns null, so no
+// macOS name is settled on an ancestry that the read cannot prove.
+export async function readAncestorPids({
+  signal,
+  timeout = ANCESTOR_READ_TIMEOUT_SECONDS,
+  readTable = readProcessTable,
+} = {}) {
   let table;
   try {
-    table = await readProcessTable({ signal, timeout });
+    table = await readTable({ signal, timeout });
   } catch (err) {
     if (err?.isCanceled) throw canceledError();
     return null;
@@ -282,10 +295,10 @@ async function readAncestorPids({ signal, timeout = ANCESTOR_READ_TIMEOUT_SECOND
   let pid = process.pid;
   for (let depth = 0; depth < 1000; depth += 1) {
     const ppid = parents.get(pid);
-    if (!Number.isInteger(ppid)) return null;
-    if (ppid <= 1) return seen;
+    if (!Number.isInteger(ppid) || ppid < 1) return null;
     if (seen.has(ppid)) return null;
     seen.add(ppid);
+    if (ppid === 1) return seen;
     pid = ppid;
   }
   return null;
@@ -345,6 +358,7 @@ export async function presentInheritedTmpdirReport(
   const recorded = [...new Set(names)].filter((name) => typeof name === "string" && name !== "");
   if (recorded.length === 0) return { present: [], settled: [] };
   const platformName = platform ?? process.platform;
+  const cancelSignal = signal ?? (settle && typeof settle === "object" ? settle.signal : undefined);
   const needsAncestors =
     platformName === "darwin" && recorded.some((name) => MACOS_SQLITE_NAME.test(bareName(name)));
   let ancestorPids = ancestors;
@@ -353,20 +367,29 @@ export async function presentInheritedTmpdirReport(
     if (ancestorsResolved) return ancestorPids ?? null;
     ancestorsResolved = true;
     let boundSignal = null;
+    const canceled = cancelPromise(cancelSignal);
     try {
       ancestorPids = await withTimeBound(
         Math.max(1, boundMs),
         `inherited temporary directory ancestry read took over ${boundMs} ms`,
         (bound) => {
           boundSignal = bound.signal;
-          const readSignal = signal ? AbortSignal.any([bound.signal, signal]) : bound.signal;
-          return Promise.race([readAncestors({ signal: readSignal }), bound.stopped]);
+          const readSignal = cancelSignal
+            ? AbortSignal.any([bound.signal, cancelSignal])
+            : bound.signal;
+          return Promise.race([
+            readAncestors({ signal: readSignal }),
+            bound.stopped,
+            canceled.promise,
+          ]);
         },
       );
     } catch (err) {
-      if (signal?.aborted) throw canceledError();
+      if (cancelSignal?.aborted) throw canceledError();
       if (err?.isCanceled && !boundSignal?.aborted) throw canceledError();
       ancestorPids = null;
+    } finally {
+      canceled.cleanup();
     }
     return ancestorPids;
   };
@@ -375,10 +398,10 @@ export async function presentInheritedTmpdirReport(
     platform: platformName,
     ...(pidAlive ? { pidAlive } : {}),
     ...(statFile ? { statFile } : {}),
-    signal,
+    signal: cancelSignal,
   };
   if (settle === null) {
-    const entries = await readNames(read, boundMs, { signal });
+    const entries = await readNames(read, boundMs, { signal: cancelSignal });
     if (entries === null) return { present: recorded, settled: [] };
     const present = heldNames(recorded, entries);
     const resolved = await resolveAncestors(probeBoundMs);
@@ -395,6 +418,7 @@ export async function presentInheritedTmpdirReport(
     resolveAncestors,
     probeBoundMs,
     ...settle,
+    signal: cancelSignal,
   });
 }
 
