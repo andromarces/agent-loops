@@ -84,9 +84,7 @@ test("the rendered wrapper runs a suite command in the default shell", async () 
   expect(run.all).toMatch(/v\d+\.\d+\.\d+/);
 });
 
-// Usefulness: verifies the rule names the shell that runs the quoted suite command and the Git Bash
-// form that reaches it (issue #1590). A child that reads only "the shell that your shell tool runs"
-// passes a Git Bash command to cmd.exe, and a relative interpreter path fails before any test runs.
+// Usefulness: verifies the rule names the cmd.exe/POSIX shell and the Git Bash form (issue #1590); no other test pins it.
 test("the rule names the platform shell that runs the quoted suite command", () => {
   const rule = testSlotRule();
   expect(rule).toMatch(
