@@ -1,5 +1,10 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
-import { REPORT_LABEL_NAMES, hasClosingBlockAttempt, parseVerdict } from "../lib/report.mjs";
+import {
+  REPORT_LABEL_NAMES,
+  hasClosingBlockAttempt,
+  leadingRequiredLabelStart,
+  parseVerdict,
+} from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
 
 /** Returns a matcher for a line that opens one of the labels `names`, plain at column 0. */
@@ -91,10 +96,10 @@ function joinMessages(messages) {
 
 /**
  * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
- * block starts at the last `Conclusion:` line, as parseReportBlock reads it. A label line touches
- * every part that holds one of its characters, so a label cut across parts counts both. A line
- * terminator or trailing space is no character of the line. Text before the block and plain prose
- * after it touch no label line.
+ * block starts at the last `Conclusion:` line, or at a lone required label line above it (issue
+ * #1592). A label line touches every part that holds one of its characters, so a label cut across
+ * parts counts both. A line terminator or trailing space is no character of the line. Text before
+ * the block and plain prose after it touch no label line.
  */
 function labelLinePartCount(parts) {
   const spans = [];
@@ -110,7 +115,14 @@ function labelLinePartCount(parts) {
     offset += line.length + 1;
     return { line, span };
   });
-  const start = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
+  const last = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
+  const start =
+    last === -1
+      ? -1
+      : leadingRequiredLabelStart(
+          lines.map(({ line }) => line),
+          last,
+        );
   const touched = new Set();
   for (const { line, span } of lines.slice(Math.max(start, 0))) {
     if (start === -1 || !BLOCK_LABEL_LINE.test(line)) continue;

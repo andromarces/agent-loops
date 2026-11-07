@@ -1,7 +1,8 @@
 // Parses the closing block that reportBlock (src/prompts/rules.mjs) requires
 // from every child turn, plus the reviewer Verdict line. Both parse only the
-// final block, which starts at the last `Conclusion:` line, so labels or
-// verdicts in earlier prose can never produce a verdict.
+// final block. It starts at the last `Conclusion:` line, or at a lone required
+// label line directly above that line (issue #1592), so labels or verdicts in
+// earlier prose can never produce a verdict.
 
 const REPORT_LABELS = [
   ["conclusion", "Conclusion", false],
@@ -228,7 +229,10 @@ export function hasClosingBlockAttempt(response) {
 
 /**
  * The closing block: the lines from the last `Conclusion:` line to the end of the response. It is
- * null when the response has no `Conclusion:` line at all. The whole response is normalized first,
+ * null when the response has no `Conclusion:` line at all. A lone required label line above that
+ * line, with only blank lines between, joins the block, because a child can write `Blockers:` in
+ * its own paragraph before `Conclusion:` (issue #1592). The label must appear once in the response
+ * outside a fence, so a quoted or repeated label stays out. The whole response is normalized first,
  * so a bold label starts a block as its plain form does. With `unlabeled`, a response without a
  * `Conclusion:` label starts at the non-blank line directly before the first known report label,
  * and that line becomes `Conclusion`. With `diagnose`, a response with no prose line before the
@@ -247,7 +251,7 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     }
   }
   if (start !== -1) {
-    return lines.slice(start);
+    return lines.slice(leadingRequiredLabelStart(lines, start));
   }
   if (!unlabeled) {
     return null;
@@ -268,6 +272,44 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
   const block = lines.slice(before);
   block[0] = `Conclusion: ${lines[before].trim()}`;
   return block;
+}
+
+// The required labels that a child may place above `Conclusion:` (issue #1592).
+const REQUIRED_LABEL_LINES = REPORT_LABELS.filter(([, , optional]) => !optional).map(
+  ([, label]) => [label, new RegExp(`^${label}:`, "i")],
+);
+
+/**
+ * The index where the closing block starts: `start`, or the first of the lone required label lines
+ * directly above it, with only blank lines between (issue #1592). A label line inside a fence, or a
+ * label that another line of the response repeats outside a fence, stays out, so a quoted label
+ * neither starts nor extends the block.
+ * @param {string[]} lines
+ * @param {number} start
+ * @returns {number}
+ */
+export function leadingRequiredLabelStart(lines, start) {
+  const fenced = fencedLines(lines);
+  let first = start;
+  for (;;) {
+    let at = first - 1;
+    while (at >= 0 && lines[at].trim() === "") {
+      at--;
+    }
+    if (at < 0 || fenced[at]) {
+      return first;
+    }
+    const entry = REQUIRED_LABEL_LINES.find(([, pattern]) => pattern.test(lines[at]));
+    if (!entry) {
+      return first;
+    }
+    const [, pattern] = entry;
+    const occurrences = lines.filter((line, index) => !fenced[index] && pattern.test(line));
+    if (occurrences.length !== 1) {
+      return first;
+    }
+    first = at;
+  }
 }
 
 /**

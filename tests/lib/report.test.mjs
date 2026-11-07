@@ -1473,6 +1473,70 @@ test("parseReportBlock reads the line before the first label as Conclusion", () 
   });
 });
 
+// Usefulness: verifies the issue #1592 shape, where a lone required label sits directly above
+// Conclusion, yields all six labels instead of a null report that names Blockers as missing.
+test("parseReportBlock reads one required label written before Conclusion", () => {
+  const response = [
+    "The worker pushed the fix and opened PR #192.",
+    "",
+    "**Blockers:** none.",
+    "",
+    "**Conclusion:** the fix is pushed.",
+    "",
+    "**Why:**",
+    "- the targeted test passed",
+    "",
+    "**Checks:** pnpm test",
+    "",
+    "**Notes:**",
+    "- none",
+    "",
+    "**Deferred:**",
+    "- none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "the fix is pushed.",
+    why: "the targeted test passed",
+    blockers: "none.",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies a label quoted in earlier prose, a blockquote, or a fenced code block does
+// not extend the closing block, the guard the issue #1592 change must keep.
+test("parseReportBlock keeps a quoted label before Conclusion out of the block", () => {
+  expect(
+    parseReportBlock(
+      'The report held "Blockers: example" in earlier prose.\n\nConclusion: done\nWhy: ok',
+    ),
+  ).toBeNull();
+  expect(parseReportBlock("> Blockers: example\n\nConclusion: done\nWhy: ok")).toBeNull();
+  expect(
+    parseReportBlock(
+      [
+        "The earlier response was:",
+        "",
+        "```",
+        "Blockers: example",
+        "```",
+        "",
+        "Conclusion: done",
+        "Why: ok",
+      ].join("\n"),
+    ),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a required label repeated in earlier prose and again in the block is not
+// pulled in from above, so the last occurrence inside the block still wins (issue #1592).
+test("parseReportBlock keeps an earlier repeated required label out of the block", () => {
+  expect(
+    parseReportBlock("Blockers: earlier\n\nConclusion: done\nWhy: ok\nBlockers: later"),
+  ).toMatchObject({ blockers: "later" });
+});
+
 // Usefulness: verifies the unlabeled Conclusion rule takes only the line directly before the first
 // label, so earlier prose stays out of the report (issue #1483).
 test("parseReportBlock leaves prose above the Conclusion line out of the report", () => {
