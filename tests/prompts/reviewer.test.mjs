@@ -474,6 +474,26 @@ test.each([
   expect(prompt).toContain("Put a check that needs one in Checks as unverified and in Deferred.");
 });
 
+// Usefulness: verifies the reviewer prompt sends a live-data question to repository evidence and
+// Deferred because no sandbox blocks it (issue #1604).
+test.each([
+  ["a PR input", () => reviewerPrompt({ prompt: "review PR 1604" })],
+  ["no PR input", () => reviewerPrompt({ prompt: "review the change" })],
+  ["a supplied status", () => reviewerPrompt({ prompt: "review PR 1604", prChecks: FAILING_READ })],
+  [
+    "a sandboxed turn",
+    () => reviewerPrompt({ prompt: "review the change", sandboxMode: "workspace-write" }),
+  ],
+])(
+  "reviewer prompt routes a live-data question to repository evidence with %s",
+  (_name, render) => {
+    const prompt = render();
+    expect(prompt).toContain(
+      "When the task asks about live data, read the repository's fixtures, schema, or documentation, and list the live question in `Deferred`.",
+    );
+  },
+);
+
 // Usefulness: verifies the reviewer prompt requires each blocker inside the Blockers line itself,
 // because the parent reads only the closing block and cannot follow a pointer such as "the defects
 // above" to body text it never receives (issue #434).

@@ -93,3 +93,13 @@ The mode table is in
   before you rely on a mode.
 - A reviewer `Checks` line that shows a local test run is the reviewer's own
   report. Compare it with `testRun` and with the required CI checks.
+
+## A task that bars live calls
+
+A task that bars live calls keeps the reviewer turn off the network with
+`--reviewer-sandbox workspace-write` or `--reviewer-sandbox read-only`, whose
+shell network is off. It keeps the copied `.env` out of the work tree with
+`--no-copy-local-files`, unless the tests need the copied files. The flag rules
+are in [Local files copied into the work tree](local-files-copy.md). Two
+documented limits stay in force: the user execpolicy exception of ADR 0019, and
+model-side tools that the sandbox does not block.

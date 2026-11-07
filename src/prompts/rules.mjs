@@ -61,6 +61,13 @@ export function unnamedHostRule({ namesHost = false } = {}) {
 }
 
 /**
+ * What a reviewer reads when the task asks about live data (issue #1604). The rule beside it bars
+ * contact with a host or service that the task does not name.
+ */
+export const liveDataRule =
+  "When the task asks about live data, read the repository's fixtures, schema, or documentation, and list the live question in `Deferred`.";
+
+/**
  * Names the one way that a Codex shell command can reach the network despite the sandbox. The
  * orchestrator and reviewer prompts share it.
  */
