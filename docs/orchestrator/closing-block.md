@@ -10,13 +10,14 @@ and #915). A list under `Blockers: none` therefore reads `none; <item>`, never
 `none`. The reviewer `Verdict:` line is no report label, so a list after it
 stays unparseable.
 
-One nesting level folds too:
-a sub-item line (spaces U+0020 up to the column where the parent item text starts, so two after `- ` and three after `1. `, then a `-` or `N. ` marker, one space U+0020, then the
-item) directly after a `- ` or `N. ` item joins into that item with `, `, and several
-consecutive sub-items under one parent all fold into it, so the lines `- a`,
-two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
+One nesting level folds too. A sub-item line holds spaces U+0020 up to the parent item text column,
+then a marker, one space U+0020, then the item. A `- ` parent takes two spaces and an `N. ` parent
+takes three. The sub-item directly after a `- ` or `N. ` item joins it with `, `, and several
+consecutive sub-items fold the same way. So `- a`, two spaces then `- b`, and two spaces then `- c`
+read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and
+`   - b` read `a, b`.
 
-An ordered sub-item at the parent text column folds the same way. So `- a`, two spaces then `1. b`, and two spaces then `2. c` read `a, b, c` (issue #1603). A sub-item marker need not match the parent item or its sibling sub-items.
+An ordered sub-item at the parent text column folds the same way. So `- a`, two spaces then `1. b`, and two spaces then `2. c` read `a, b, c` (issue #1603). A sub-item marker need not match the parent item or its sibling sub-items. An ordered sub-item that opens with a report label name or `Verdict` line stays unparseable.
 
 An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, like a Markdown lazy continuation, so `- a`, `  - b`, and `  more` read `a, b more` (issue #1082). An indented line never folds when it reads as a label line: after NFKC normalization, it skips every leading character that is no letter or digit and one optional number, then holds a report label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace. Any colon variant (`:`, `：`, `∶`), any other separator, and any count or kind of markup around the name then refuse (`**Verdict:** x`, `Verdict***: x`, `1 Verdict: x`, and `> Verdict： x` after two spaces are examples), so the items after it stay unparseable lists. A label word that a letter follows (`Notes about x`), or whitespace and then a letter (`Why this matters:`), is prose and folds. An indented list line there is no continuation and stays unparseable.
 

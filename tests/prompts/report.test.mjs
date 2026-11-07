@@ -102,9 +102,7 @@ test("the closing-block rule names the required report labels", () => {
   expect(reportBlock).toMatch(/a block that lacks one does not parse/);
 });
 
-// Usefulness: verifies the closing-block rule tells the child that one level of sub-items folds with a
-// comma at the parent text column and any other nesting blanks the block, the parser contract of
-// issues #870 and #1603, so the prompt never contradicts the parser.
+// Usefulness: verifies the closing-block rule states the one-level sub-item fold, and other nesting fails, for #870 and #1603.
 test("the closing-block rule states the one-level sub-item fold", () => {
   expect(reportBlock).toMatch(/One level of sub-items folds into its parent item with a comma/);
   expect(reportBlock).toMatch(
@@ -128,8 +126,7 @@ test("the closing-block rule states the heading and list fold", () => {
   );
 });
 
-// Usefulness: verifies the closing-block rule states the one-blank-line list fold of issue #1348 and
-// the issue #1603 ordered-list extension. The prompt and the parser then agree on the observed shape.
+// Usefulness: verifies the closing-block rule states the #1348 blank-line fold and the #1603 ordered-list extension, so prompt and parser agree.
 test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
     /dash or ordered list under a label after one blank line[^.]*joins that label's value/,

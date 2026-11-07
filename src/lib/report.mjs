@@ -110,10 +110,9 @@ const DECORATED_LABEL_LINE = new RegExp(
   "i",
 );
 
-// A dash or ordered item or sub-item whose text opens with a bold mark, for example
-// `- **Checks:** ran` or `  1. **Checks:** ran`. When it folds into a label's list run, a label name
-// in the bold lead is item text (issues #1006 and #1603).
-const BOLD_DASH_ITEM = /^\s*(?:- |\d+\. )\*\*/;
+// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`. When it
+// folds into a label's list run, a label name in the bold lead is item text (issue #1006).
+const BOLD_DASH_ITEM = /^\s*- \*\*/;
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
@@ -403,8 +402,8 @@ function reportDetail(response, { boldLabels = true } = {}) {
  * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`, or null when
  * the block does not parse. Each label is matched case-insensitively at line start inside the block
  * only, and the last occurrence wins. `conclusion`, `why`, and `blockers` are required, while an
- * absent or empty optional label maps to null. A `- ` or `N. ` list that directly follows a report
- * label line is that label's value, or joins it with "; ". One nesting level folds a `- ` or `N. `
+ * absent or empty optional label maps to null. A `- ` or `N. ` list directly under a label, or after
+ * one blank line, joins that label's value with "; ". One nesting level folds a `- ` or `N. `
  * sub-item at the parent text column into that item with ", ". Any other list line, a Markdown table
  * pair, or a hidden or decorated label makes the whole block unparseable, so `raw` carries the text.
  * @param {string} response
@@ -472,11 +471,15 @@ const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 // there stays a list that hasDroppedList rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
-// The one nesting level that folds into its parent item: ASCII spaces up to the column where the
-// parent item text starts (two after `- `, three after `1. `), a `-` or `N. ` marker, exactly one
-// ASCII space, then an item (issues #870 and #1603). Another indent width, a tab, and a second
-// nesting level stay lists that hasDroppedList rejects.
+// The one nesting level that folds into its parent item.
+// A sub-item line holds ASCII spaces up to the parent item text column.
+// Then come a `-` or `N. ` marker, one ASCII space, and the item.
+// A `- ` parent takes two spaces and an `N. ` parent takes three (issues #870 and #1603).
+// Another indent width, a tab, and a second nesting level stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\. )(?=\\S)`);
+
+// An ordered sub-item at the parent text column, with exactly one ASCII space after its marker.
+const orderedSubitem = (marker) => new RegExp(`^ {${marker.length}}\\d+\\. (?=\\S)`);
 
 // A line that reads as a report label or `Verdict` line under any markup or separator: after NFKC
 // normalization it skips every leading character that is no letter or digit (quote, heading, list,
@@ -495,10 +498,10 @@ function readsAsLabelLine(line) {
   return LABEL_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
 }
 
-// A `Verdict` line under any markup or separator: after NFKC normalization it skips every leading
-// character that is no letter or digit and one optional number, then holds `Verdict`, any case,
-// optional whitespace, and a character that is no letter, digit, or whitespace. A sub-item never
-// folds it into item text, so an indented rejection cannot hide (issue #1082).
+// A `Verdict` line under any markup or separator: after NFKC normalization it skips leading
+// non-letter, non-digit characters and one optional number.
+// It then holds `Verdict`, any case, optional whitespace, and a character that is no letter, digit,
+// or whitespace. An ordered sub-item never folds it into item text (issue #1082).
 const VERDICT_WORD_THEN_SEPARATOR = new RegExp(
   `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?Verdict\\s*[^\\p{L}\\p{N}\\s]`,
   "iu",
@@ -521,7 +524,10 @@ function isFoldableItem(line, pattern) {
 
 /** True when the line is a `- ` or `N. ` sub-item indented to the text column of its parent item `marker`. */
 function isFoldableSubitem(line, marker) {
-  return foldableSubitem(marker).test(line) && isListLine(line) && !readsAsVerdictLine(line);
+  // An ordered sub-item that reads as a Verdict line never folds, so a rejection stays visible.
+  // A dash sub-item keeps the origin/main fold.
+  const hiddenVerdict = orderedSubitem(marker).test(line) && readsAsVerdictLine(line);
+  return foldableSubitem(marker).test(line) && isListLine(line) && !hiddenVerdict;
 }
 
 /**
@@ -544,10 +550,13 @@ function isContinuationLine(line) {
  * item absorbs its sub-items, joined with ", ", then the continuation lines after them, joined with
  * a space like a Markdown lazy continuation.
  */
-function takeItems(lines, start, pattern) {
+function takeItems(lines, start, pattern, { refuseOrderedVerdict = false } = {}) {
   let i = start;
   const items = [];
   while (i + 1 < lines.length && isFoldableItem(lines[i + 1], pattern)) {
+    if (refuseOrderedVerdict && isOrderedVerdictItem(lines[i + 1])) {
+      break;
+    }
     const [marker] = lines[++i].match(pattern);
     const parts = [lines[i].slice(marker.length).trim()];
     while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], marker)) {
@@ -561,6 +570,11 @@ function takeItems(lines, start, pattern) {
     items.push([parts.join(", "), ...continuation].join(" "));
   }
   return { items, end: i };
+}
+
+/** True when the line is a column-0 ordered item that reads as a Verdict line. */
+function isOrderedVerdictItem(line) {
+  return /^\d+\. /.test(line) && readsAsVerdictLine(line);
 }
 
 /** Appends text to a label line's value, joined with "; " when the line already holds a value. */
@@ -594,16 +608,12 @@ function isBoldProseLine(line) {
 }
 
 /**
- * Folds an unbroken run of `- ` items that directly follows a report label line into that label's
- * value: markers stripped, items joined with "; ", and joined to a value the label line already
- * holds with "; " too (issues #846 and #879). Each
- * item absorbs the `- ` or `N. ` sub-items right after it, joined with ", " (issue #870).
- * A prose line with a `- ` run (never an ordered run) directly under it folds into the preceding report label as
- * `<prose>: <items>` when one or more blank lines separate that prose from the label line (issue
- * #898). A dash or ordered run that one blank line sets apart from a label line joins that label
- * (issue #1348). Every other list shape stays in the result for hasDroppedList. Returns null when a later
- * line repeats a folded label, because the repeat shadows the folded list and it would drop with
- * no `raw` signal.
+ * Folds a run of `- ` items that directly follows a report label line into that label's value.
+ * Markers drop, and items join each other and an existing value with "; " (issues #846 and #879).
+ * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", " (issue #870).
+ * A prose line with a `- ` run directly under it folds as `<prose>: <items>` after one or more blank
+ * lines (issue #898). A dash or ordered run after one blank line joins the label (issue #1348).
+ * Every other list shape stays for hasDroppedList, and a shadowing repeat returns null with no `raw` signal.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
@@ -617,7 +627,8 @@ function foldEmptyLabelLists(lines) {
       if (items.length === 0 && lines[i + 1]?.trim() === "") {
         // One blank line then a dash or ordered run under the same label folds too (issues #1348
         // and #1603). Two blank lines and every other list shape stay for hasDroppedList.
-        ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM));
+        // A blank-line ordered item that reads as a Verdict line stays unparseable.
+        ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
       }
       if (items.length > 0) {
         const label = line.trim();
