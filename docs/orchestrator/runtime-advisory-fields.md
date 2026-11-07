@@ -27,7 +27,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - `inheritedTmpdirSettled` lists each name that a probe settled as no possible run leftover,
     apart from `inheritedTmpdirEntries`. On Windows, a regular file that another process holds open
     is settled. On macOS, a regular `-shm` and `-wal` pair is settled when its embedded pid is alive.
-    A failed or over-bound probe keeps its name in `inheritedTmpdirEntries` (issue #1600).
+    A lone member, a malformed pid, and a non-regular entry stay reported. A failed or over-bound
+    probe keeps its name in `inheritedTmpdirEntries` (issue #1600).
   - The re-read reports a name that still exists, one that another process created again included.
     A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
     redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
