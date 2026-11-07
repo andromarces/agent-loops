@@ -602,8 +602,8 @@ test("reviewer dispatch carries the optional Checks, Notes, and Deferred labels"
 // seam instead of being dropped, so the next turn still sees the text (issues #229, #240, #243, #249).
 test.each([
   {
-    name: "an ordered list that a blank line separates from its empty label",
-    extra: "\nNotes:\n\n1. item one\n2. item two",
+    name: "an ordered list that two blank lines separate from its empty label",
+    extra: "\nNotes:\n\n\n1. item one\n2. item two",
     expected: "item one",
   },
   {

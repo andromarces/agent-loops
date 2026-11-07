@@ -221,9 +221,7 @@ test("parseReportBlock joins one level of indented sub-items into their parent i
   expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  - b`)).toMatchObject({ notes: "a, b" });
 });
 
-// Usefulness: verifies the nesting shapes outside the #870 rule still fail closed: a sub-item
-// with no parent item, a second nesting level, a sub-item with another indent width or marker, a
-// sub-item after a blank line, and a sub-item under a label that already holds a value.
+// Usefulness: verifies sub-list shapes outside #870 fail: no parent, second level, another indent, blank line, or filled label.
 test("parseReportBlock returns null for a sub-list shape outside one nested level", () => {
   for (const list of [
     "  - a",
@@ -233,7 +231,6 @@ test("parseReportBlock returns null for a sub-list shape outside one nested leve
     "- a\n\t- b",
     "- a\n  * b",
     "- a\n  -b",
-    "- a\n  1. b",
     "- a\n\n  - b",
   ]) {
     expect(parseReportBlock(`${REPORT}\nNotes:\n${list}`)).toBeNull();
@@ -259,13 +256,77 @@ test("parseReportBlock folds an ordered list and its aligned sub-items under a l
   expect(parseReportBlock(`${REPORT}\nNotes: a\n1. b`)).toMatchObject({ notes: "a; b" });
 });
 
-// Usefulness: verifies the ordered shapes outside the #915 rule still fail closed.
-// They are a sub-item at the wrong indent, a `)` marker, a second space after the marker, and an
-// ordered list separated from its label. So `raw` carries the text.
+// Usefulness: verifies ordered shapes outside #915 fail: wrong indent, `)`, double space, and two blank lines, so raw keeps the text.
 test("parseReportBlock returns null for an ordered-list shape outside the fold", () => {
-  for (const list of ["\n1. a\n  - b", "\n1) a", "\n1.  a", "\n\n1. a"]) {
+  for (const list of ["\n1. a\n  - b", "\n1) a", "\n1.  a", "\n\n\n1. a"]) {
     expect(parseReportBlock(`${REPORT}\nNotes:${list}`)).toBeNull();
   }
+});
+
+// Usefulness: verifies the issue #1603 ordered sub-list under a dash item folds into its parent with `, `, not null.
+test("parseReportBlock folds an ordered sub-list under a dash item", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- **Review findings:** a",
+    "  1. first finding",
+    "  2. second finding",
+    "- **Next:** b",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "**Review findings:** a, first finding, second finding; **Next:** b",
+  });
+});
+
+// Usefulness: verifies the issue #1603 blank-line ordered list joins the label value with `; ` and keeps its dash sub-items.
+test("parseReportBlock folds an ordered list after one blank line under a label value", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: Three findings.",
+    "",
+    "1. **First:** a",
+    "   - sub one",
+    "   - sub two",
+    "2. **Second:** b",
+    "3. **Third:** c",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "Three findings.; **First:** a, sub one, sub two; **Second:** b; **Third:** c",
+  });
+});
+
+// Usefulness: verifies the issue #1603 edge shapes: a wrong indent and a Verdict item refuse, while a mixed marker folds.
+test("parseReportBlock folds or refuses the ordered sub-list edge shapes", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n   1. b`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nVerdict: accept\n  1. b`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: value\n\n1. Verdict: reject`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: value\n\n1. **Verdict:** reject`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  - b\n  1. c`)).toMatchObject({
+    notes: "a, b, c",
+  });
+});
+
+// Usefulness: verifies an ordered item that opens with a bold report label stays unparseable, as origin/main did.
+test("parseReportBlock refuses an ordered item that opens with a bold report label", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n1. **Notes:** x`)).toBeNull();
+});
+
+// Usefulness: verifies a dash sub-item that holds Verdict folds as origin/main did, so no report is lost.
+test("parseReportBlock folds a dash sub-item that holds Verdict", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  - **Verdict:** reject`)).toMatchObject({
+    notes: "a, **Verdict:** reject",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  - Verdict: reject`)).toMatchObject({
+    notes: "a, Verdict: reject",
+  });
 });
 
 // Usefulness: verifies a non-list line after an empty optional label, for
@@ -1076,15 +1137,12 @@ test("parseReportBlock folds a dash list that one blank line sets apart from its
   ).toMatchObject({ why: "keep this; item one", blockers: "none" });
 });
 
-// Usefulness: verifies the list shapes that stay unparseable around the one-blank-line fold.
-// It covers two blank lines, a blank line between items, a star bullet, an ordered list, and a
-// repeated label. Each shape keeps its text, so none drops without a `raw` signal (issue #1348).
+// Usefulness: verifies two blank lines, a split item, a star bullet, and a repeated label stay unparseable (#1348).
 test("parseReportBlock returns null for a list outside the one-blank-line fold", () => {
   for (const tail of [
     "Notes: value\n\n\n- a",
     "Notes: value\n- a\n\n- b",
     "Notes: value\n\n* a",
-    "Notes: value\n\n1. a",
     "Notes: value\n\n- a\n\nNotes: later",
   ]) {
     expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
