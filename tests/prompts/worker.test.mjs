@@ -357,6 +357,23 @@ test("first worker turn reports a suite that cannot finish in the foreground as 
   );
 });
 
+// Usefulness: verifies acceptance #1612: a held test slot made two workers skip or reorder the TDD
+// red run, and neither report recorded it. The preamble keeps the red run a targeted run through
+// the wrapper and names the report when it did not run, so the parent sees the gap.
+test("first worker turn keeps the red run and reports it as not run when it did not run", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "A red run of one or a few test files that must fail before the fix is a targeted run: run it through the wrapper with `--if-held`, and do not implement the fix before it.",
+  );
+  expect(prompt).toContain("While any slot is held, the wrapper waits for a slot.");
+  expect(prompt).toContain(
+    "If the wrapper does not start the red run, report it in `Checks` as not run, with the reason, and name it in `Blockers`.",
+  );
+  expect(prompt).toContain(
+    "Never implement the fix first and restore the old source to stand in for the red run.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker starts no load generator or process that outlives the turn" (issue #934): an unguarded busy-loop script left 64 loops running after an interrupt.
 test("first worker turn bars load generators and processes that outlive the turn", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");

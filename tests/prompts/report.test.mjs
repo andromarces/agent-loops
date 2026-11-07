@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
-import { reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
+import { redRunRule, reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 
@@ -92,6 +92,18 @@ test("the rule names the platform shell that runs the quoted suite command", () 
   );
   expect(rule).toContain("bash -c '<command>'");
   expect(rule).toMatch(/absolute paths/);
+});
+
+// Usefulness: verifies the decided rule for a worker red run under a held test slot (issue #1612):
+// the run stays a targeted run, the wait is bounded below the turn, a run that did not start is
+// reported as not run with the reason, and the old source is never restored to stand in for it.
+test("the red-run rule bounds the wait and reports a run that did not start", () => {
+  expect(redRunRule).toMatch(/red run of one or a few test files[^.]*targeted run/);
+  expect(redRunRule).toContain("--if-held");
+  expect(redRunRule).toMatch(/`--wait` flag below the shell tool bound/);
+  expect(redRunRule).toMatch(/Checks` as not run, with the reason/);
+  expect(redRunRule).toMatch(/name it in `Blockers`/);
+  expect(redRunRule).toMatch(/Never implement the fix first and restore the old source/);
 });
 
 // Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so

@@ -5,6 +5,7 @@ import {
   PR_BODY_SCOPE,
   probeCopyRule,
   processRule,
+  redRunRule,
   reportBlock,
   secretFileRule,
   tempPathRule,
@@ -133,6 +134,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${redRunRule}
 - ${hookTestSlotRule()}
 - ${longSuiteRule}
 - ${ciWaitRule}

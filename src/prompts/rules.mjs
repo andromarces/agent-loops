@@ -198,6 +198,19 @@ export function testSlotRule(options) {
   return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
 }
 
+// A held test slot made two workers skip or reorder the TDD red run, and no report recorded it
+// (issue #1612). A red run of one or a few test files is a targeted run, so a held slot makes it
+// wait. The wait stays inside the turn, and a run that did not start reaches `Checks` (ADR 0096).
+
+/**
+ * The TDD red-run rule of the worker first turn (issue #1612, ADR 0096). A red run of one or a few
+ * test files is a targeted run under ADR 0044, so a held slot makes it wait. The rule bounds that
+ * wait below the shell tool bound, reports a red run that did not start as not run with the reason,
+ * and bars implementing the fix first with the old source restored to stand in for the red run.
+ */
+export const redRunRule =
+  "A red run of one or a few test files that must fail before the fix is a targeted run: run it through the wrapper with `--if-held`, and do not implement the fix before it. While any slot is held, the wrapper waits for a slot. Pass the `--wait` flag below the shell tool bound of the harness, so the wait ends inside the turn. If the wrapper does not start the red run, report it in `Checks` as not run, with the reason, and name it in `Blockers`. Never implement the fix first and restore the old source to stand in for the red run.";
+
 const HOOK_TEST_COMMAND = () => 'test-slot -- "<git command>"';
 
 /**
