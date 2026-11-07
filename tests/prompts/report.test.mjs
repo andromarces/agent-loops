@@ -69,6 +69,19 @@ test("the rule lets a targeted run add the tests that import a changed source fi
   }
 });
 
+// Usefulness: verifies requirement "a targeted run may include a test file that names a changed
+// script or config file by path" (issue #1611), on both rule forms, so a worker or reviewer catches
+// a text reader that no import edge reaches before CI does; no other test pins this tier.
+test("the rule lets a targeted run add the tests that name a changed non-module file", () => {
+  const forms = [testSlotRule(), testSlotRule({ execPath: '/opt/no"de', platform: "linux" })];
+  for (const rule of forms) {
+    expect(rule).toMatch(
+      /targeted run[^.]*then[^.]*name the path or file name of a changed file that is not an importable module[^.]*at most 10 test files in total/,
+    );
+    expect(rule).toMatch(/never a whole directory/);
+  }
+});
+
 // Usefulness: verifies the rendered wrapper runs a suite command in the default shell of the host
 // (cmd on Windows, sh elsewhere), so a child that follows the rule runs its suite, not an error.
 test("the rendered wrapper runs a suite command in the default shell", async () => {
