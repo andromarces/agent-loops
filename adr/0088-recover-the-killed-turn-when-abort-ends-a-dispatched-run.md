@@ -42,6 +42,7 @@ Andro Marces
 ## Links
 
 - [Issue #1591](https://github.com/andromarces/agent-loops/issues/1591)
+- [PR #1594](https://github.com/andromarces/agent-loops/pull/1594)
 - [ADR 0058: Remove the turn directory of a dispatch that died mid-turn](0058-remove-the-turn-directory-of-a-dispatch-that-died-mid-turn.md)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - [ADR 0063: Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md)
