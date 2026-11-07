@@ -56,7 +56,9 @@ Andro Marces
 - [PR #1084](https://github.com/andromarces/agent-loops/pull/1084) (decision 7, closes [issue #1078](https://github.com/andromarces/agent-loops/issues/1078))
 - [Issue #1492](https://github.com/andromarces/agent-loops/issues/1492) (decision 7, direct importer test files)
 - [PR #1493](https://github.com/andromarces/agent-loops/pull/1493) (decision 7, direct importer test files, closes issue #1492)
+- [PR #1619](https://github.com/andromarces/agent-loops/pull/1619) (decision 7, test files that read a changed non-module file, closes [issue #1611](https://github.com/andromarces/agent-loops/issues/1611))
 - [Issue #1611](https://github.com/andromarces/agent-loops/issues/1611) (decision 7, test files that name a changed non-module file by path)
+- [PR #1619](https://github.com/andromarces/agent-loops/pull/1619) (decision 7, text readers of a changed non-module file, closes issue #1611)
 - Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492), [#1611](https://github.com/andromarces/agent-loops/issues/1611)
 - Implementation:
   - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
