@@ -2,9 +2,15 @@
 
 ## Status
 
-accepted
+superseded
 
-Partially supersedes [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md) and [ADR 0082](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md). The `Supersedes` section names each replaced part. Every other decision remains in force.
+Partially supersedes [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md) and [ADR 0082](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md). The `Supersedes` section names each replaced part.
+
+Superseded by [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md):
+
+- Decisions 1 to 10 and every consequence. The settled field and the Windows and macOS ownership probes are removed.
+
+No decision remains in force.
 
 ## Supersedes
 

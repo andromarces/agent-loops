@@ -8,9 +8,13 @@ Partially supersedes [ADR 0068: Give the turn of every adapter a private tempora
 
 Superseded by [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md):
 
-- Decision 2, the report lists every entry that appeared: ADR 0076 leaves out an entry that a second read after a short settle no longer holds. The `registered/` mark rule, the exact-name leave-out of this process's own turn directories, and the guard that a record cannot hide a still-existing entry stay in force.
+- Decision 2, the report lists every entry that appeared: ADR 0076 left out an entry that a second read after a short settle no longer held. [ADR 0095](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md) supersedes ADR 0076 and restores this decision for the one post-turn read.
 
-Decisions 1, 3, and 4 remain in force: the registry, the hint, and the failure rule.
+Superseded by [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md):
+
+- Decision 3's sentence that the parent may report a `registered/` name under `open`. The field is a diagnostic that creates no `open` item by itself. The hint stays.
+
+Decisions 1, 2, the hint of decision 3, and decision 4 remain in force: the registry, the entry report, the hint, and the failure rule.
 
 ## Date
 

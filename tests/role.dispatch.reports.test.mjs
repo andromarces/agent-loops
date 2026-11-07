@@ -1067,7 +1067,9 @@ test("reviewer dispatch reports a directory left in the inherited temporary dire
       stdin: stdinPrompt,
     });
     expect(left.payload.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
-    expect((await readRepoState(repo)).lastResult.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+    const state = await readRepoState(repo);
+    expect(state.lastResult.inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
+    expect(state).not.toHaveProperty("inheritedTmpdirNames");
 
     const clean = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
       agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },

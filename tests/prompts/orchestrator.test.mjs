@@ -303,44 +303,19 @@ test("resultPrompt carries the inherited temporary directory entries of a review
   });
   expect(prompt).toContain('"inheritedTmpdirEntries"');
   expect(prompt).toContain("m54-3db54ca8");
+  expect(prompt).not.toContain('"inheritedTmpdirPresent"');
+  expect(prompt).not.toContain('"inheritedTmpdirSettled"');
 });
 
-// Usefulness: verifies the headless parent receives the re-read result in the result prompt. It
-// carries into open only the names that still exist (issue #1559).
-test("resultPrompt carries the re-read names of the inherited temporary directory", () => {
-  const prompt = resultPrompt({
-    result: {
-      role: "reviewer",
-      status: "ok",
-      response: "done",
-      inheritedTmpdirEntries: ["stays.txt", "gone.tmp"],
-    },
-    inheritedTmpdirPresent: ["stays.txt"],
-    stepsUsed: 1,
-    maxSteps: 3,
-  });
-  expect(prompt).toContain('"inheritedTmpdirPresent"');
-  expect(prompt).toContain("stays.txt");
-  expect(prompt).toContain("Carry into open only");
-});
-
-// Usefulness: verifies that the prompt carries a settled name apart (issue #1600).
-test("resultPrompt carries the settled names apart from the re-read names", () => {
-  const prompt = resultPrompt({
-    result: {
-      role: "reviewer",
-      status: "ok",
-      response: "done",
-      inheritedTmpdirEntries: ["stays.txt"],
-    },
-    inheritedTmpdirPresent: ["stays.txt"],
-    inheritedTmpdirSettled: ["held.tmp"],
-    stepsUsed: 1,
-    maxSteps: 3,
-  });
-  expect(prompt).toContain('"inheritedTmpdirSettled"');
-  expect(prompt).toContain("held.tmp");
-  expect(prompt).toContain("not a possible run leftover");
+// Usefulness: verifies the headless prompt states that the inherited temporary directory field is a
+// diagnostic that creates no open item (issue #1616).
+test("the headless prompt creates no open item from the inherited temporary directory entries", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expect(prompt).toContain("inheritedTmpdirEntries");
+  expect(prompt).toMatch(/It is a diagnostic/i);
+  expect(prompt).toMatch(/creates no open item/i);
+  expect(prompt).not.toContain("inheritedTmpdirPresent");
+  expect(prompt).not.toContain("inheritedTmpdirSettled");
 });
 
 // Usefulness: verifies the headless prompt no longer refuses a finish for an inherited temporary

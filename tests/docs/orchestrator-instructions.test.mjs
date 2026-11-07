@@ -228,7 +228,8 @@ const SHARED_PARENT_RULES = [
   (text) =>
     expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
-  (text) => expectRule(text, /Report it/i, /open/i),
+  // Issue #1616: the field is a diagnostic, so an unattributed difference creates no open item.
+  (text) => expectRule(text, /creates no/i, /item by itself/i),
   // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names.
   (text) =>
     expectRule(
@@ -281,32 +282,23 @@ const SHARED_PARENT_RULES = [
     expectRule(text, /verified/, /reviewed`? identifies no change/i, /what the reviewer checked/i),
 ];
 
-// Usefulness: verifies the child guard and the parent-session rule name the parent read (issue
-// #1559). A child never runs it, a caller must pass the stored id, and the read works on a
-// terminal run (issue #1575).
-test("the child guard and parent-session docs name recheck-tmpdir", async () => {
-  const child = (await readFile(join(referenceSectionsDir, "child-run-guard.md"), "utf8")).replace(
-    /\s+/g,
-    " ",
-  );
-  const parent = (
-    await readFile(join(referenceSectionsDir, "parent-session-guard.md"), "utf8")
-  ).replace(/\s+/g, " ");
-  const fields = (
-    await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8")
-  ).replace(/\s+/g, " ");
-  expectRule(child, /child role never runs/i, /recheck-tmpdir/i);
-  expectRule(parent, /recheck-tmpdir/i, /required/i);
-  expectRule(fields, /recheck-tmpdir/i, /parent-session/i);
-  expectRule(fields, /any lifecycle/i, /after `finish`/i);
-  expect(fields).not.toContain("non-terminal");
-  expect(fields).not.toContain("role finish");
-  expect(fields).not.toContain("headless finish is refused");
+// Usefulness: verifies the removed re-check leaves no documentation rule, and the field is stated
+// as a diagnostic with no open item (issue #1616, ADR 0095).
+test("the docs state the inherited temporary directory field as a diagnostic with no re-check", async () => {
+  const child = await readFile(join(referenceSectionsDir, "child-run-guard.md"), "utf8");
+  const parent = await readFile(join(referenceSectionsDir, "parent-session-guard.md"), "utf8");
+  const fields = await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8");
   const role = await readFile(join(repoRoot, "docs/reference/role.md"), "utf8");
-  const recheckBullet = role.split("\n").find((line) => line.startsWith("- `recheck-tmpdir"));
-  expectRule(recheckBullet, /recheck-tmpdir/i, /state file that init wrote/i);
-  expectRule(recheckBullet, /any lifecycle/i, /finished the run first/i);
-  expect(recheckBullet).not.toContain("needs no init");
+  for (const text of [child, parent, fields, role]) {
+    expect(text).not.toContain("recheck-tmpdir");
+    expect(text).not.toContain("inheritedTmpdirPresent");
+    expect(text).not.toContain("inheritedTmpdirSettled");
+  }
+  expect(fields).toMatch(/diagnostic/i);
+  expect(fields).toMatch(/creates no `open` item/i);
+  expect(fields).toMatch(/no re-read and no wait/i);
+  expect(fields).toContain("registered/");
+  expect(fields).toMatch(/removeTurnTmpdir[^.]*delete it by hand/i);
 });
 
 // Usefulness: verifies acceptance #1596 — the docs name the usual macOS path and state that the report follows os.tmpdir(), including /tmp when the variables are unset.
@@ -324,42 +316,33 @@ test("the runtime advisory docs name the macOS path that the report follows", as
   expectRule(text, /covers `\/tmp`/i, /`TMPDIR`, `TEMP`, and `TMP` are unset/i);
 });
 
-// Usefulness: verifies the supersession and links of ADR 0076, 0081, 0082, 0085, and 0093 (issues #1559, #1569, #1575, #1600).
-test("ADR 0076, ADR 0081, ADR 0082, and ADR 0085 state the supersession and the links", async () => {
-  const adr76 = await readFile(
-    join(
-      repoRoot,
+// Usefulness: verifies ADR 0095 supersedes each temporary directory reporting rule and keeps the
+// safety rules (issue #1616).
+test("ADR 0095 supersedes the temporary directory reporting rules and keeps the safety rules", async () => {
+  const adr95 = await readFile(
+    join(repoRoot, "adr/0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md"),
+    "utf8",
+  );
+  const superseded = [
+    [
+      "0076",
       "adr/0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md",
-    ),
-    "utf8",
-  );
-  const adr81 = await readFile(
-    join(repoRoot, "adr/0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md"),
-    "utf8",
-  );
-  const adr82 = await readFile(
-    join(repoRoot, "adr/0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md"),
-    "utf8",
-  );
-  const adr85 = await readFile(
-    join(repoRoot, "adr/0085-let-the-tmpdir-re-check-read-a-terminal-run.md"),
-    "utf8",
-  );
-  expect(adr76).toMatch(/## Status\s+partially-superseded/);
-  expect(adr76).toMatch(/Superseded by \[ADR 0081\]/);
-  expect(adr81).toMatch(/## Status\s+partially-superseded/);
-  expect(adr81).toContain("[PR #1564](https://github.com/andromarces/agent-loops/pull/1564)");
-  expect(adr81).toContain("[ADR 0082:");
-  expect(adr81).toContain("[ADR 0085:");
-  expect(adr82).toMatch(/## Status\s+partially-superseded/);
-  expect(adr82).toContain("[Issue #1569](https://github.com/andromarces/agent-loops/issues/1569)");
-  expect(adr82).toContain("[PR #1570](https://github.com/andromarces/agent-loops/pull/1570)");
-  expect(adr82).toContain("[ADR 0085:");
-  expect(adr82).toContain("[ADR 0093:");
-  expect(adr85).toMatch(/## Status\s+accepted/);
-  expect(adr85).toContain("[Issue #1575](https://github.com/andromarces/agent-loops/issues/1575)");
-  expect(adr85).toContain("[PR #1580](https://github.com/andromarces/agent-loops/pull/1580)");
-  expect(adr85).toContain("[ADR 0081:");
+    ],
+    ["0081", "adr/0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md"],
+    ["0082", "adr/0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md"],
+    ["0085", "adr/0085-let-the-tmpdir-re-check-read-a-terminal-run.md"],
+    ["0093", "adr/0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md"],
+  ];
+  for (const [number, path] of superseded) {
+    const text = await readFile(join(repoRoot, path), "utf8");
+    expect(text).toMatch(/## Status\s+superseded/);
+    expect(text).toContain("[ADR 0095:");
+    expect(adr95).toContain(`[ADR ${number}:`);
+  }
+  expect(adr95).toMatch(/## Status\s+accepted/);
+  expect(adr95).toMatch(/no automatic `open` item/i);
+  expect(adr95).toMatch(/ADR 0047|ADR 0068/);
+  expect(adr95).toMatch(/detection limits/i);
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
@@ -1748,7 +1731,6 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["reviewer-evidence.md", "Do not restate the spec as the pass condition"],
   ["reviewer-evidence.md", "That status is advisory evidence"],
   ["reviewer-evidence.md", "The --require-ci finish gate re-reads GitHub"],
-  ["runtime-advisory-fields.md", "It is advisory: the directory is shared"],
   ["runtime-advisory-fields.md", "It is advisory: the store is shared"],
   ["reviewer-sandbox.md", "A refused cleanup of a tool cache in its default location"],
   ["waiting-for-checks.md", "The --all wait holds a pass while"],

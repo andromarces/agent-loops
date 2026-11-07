@@ -1,8 +1,8 @@
 # Child run guard
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child role ran `extend`, `declare-pr`, `refresh-local`, `set-model`, `recheck-tmpdir`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child role ran `extend`, `declare-pr`, `refresh-local`, `set-model`, `finish`, or `abort`, or when a call is refused for `AGENT_LOOP_SPAWNED_RUN`.
 
-A child role never runs `extend`, `declare-pr`, `refresh-local`, `set-model`, `recheck-tmpdir`, `finish`, or `abort`. Each subcommand refuses a
+A child role never runs `extend`, `declare-pr`, `refresh-local`, `set-model`, `finish`, or `abort`. Each subcommand refuses a
 caller whose `AGENT_LOOP_SPAWNED_RUN` list holds the key of the run it acts on. The
 runtime sets the variable in the environment of every worker and reviewer process, and in
 no other spawn. The value is a comma-separated list of the keys of every enclosing run,
@@ -17,7 +17,7 @@ work tree is gone.
 A process keeps a marker it inherited. A parent session that another run's child
 started holds a different key for its own work tree and is not refused. A worker
 that a nested run starts holds the keys of the outer run and the nested run, so
-it is refused against both. `extend` and `recheck-tmpdir` also refuse a call whose `--parent-session` is missing or differs from the run's stored parent
+it is refused against both. `extend` also refuses a call whose `--parent-session` is missing or differs from the run's stored parent
 session id.
 
 The id check alone does not identify the caller, so a child that
