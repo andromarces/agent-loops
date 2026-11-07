@@ -172,16 +172,17 @@ export function cliCommandForms(
 const NO_LOAD_GENERATORS =
   "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
 
-// Related: issue #921, ADR 0044, issue #1078, issue #1492.
+// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611.
 // The rule also bars a load generator and a process that outlives the turn (issue #934).
 
 const TARGETED_RUN_BOUND =
-  "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, at most 10 test files in total, never a whole directory.";
+  "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, then the test files that name the path or file name of a changed file that is not an importable module, for example a script, a config file, or a template, at most 10 test files in total, never a whole directory.";
 
 /**
  * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
  * A targeted run covers at most 10 files. The order is the mirror files, then the test files that
- * import a changed source file directly, then the test files of direct importers. It goes through
+ * import a changed source file directly, then the test files of direct importers, then the test
+ * files that name a changed non-module file by path. It goes through
  * the `test-slot` wrapper of this process with `--if-held`, which runs directly while all slots are
  * free. While any slot is held, the wrapper waits for a slot. Any broader run is a full suite and
  * runs only through the plain wrapper, or the required CI checks stand in for it. A path that cannot
