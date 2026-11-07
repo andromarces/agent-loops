@@ -832,9 +832,7 @@ test("worker dispatch keeps every field for issue #1520 comment shape B with a b
   expect(result.payload).not.toHaveProperty("reportMissingLabels");
 });
 
-// Usefulness: verifies the issue #1585 envelope carries a report and no reportMissingLabels when a
-// worker writes Conclusion and Why as bold headings with no colon. No other envelope test covers
-// this shape.
+// Usefulness: verifies the issue #1585 envelope yields a report and no reportMissingLabels, a boundary no other test checks.
 test("worker dispatch reads the issue #1585 bold heading labels", async () => {
   const repo = await newCleanRepo();
   const reply = [

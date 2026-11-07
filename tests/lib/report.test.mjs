@@ -1532,9 +1532,7 @@ test("parseReportBlock does not read a bold non-label name as a label", () => {
   ).toBeNull();
 });
 
-// Usefulness: verifies the exact issue #1585 shape parses. A bold `**Conclusion**` and `**Why**`
-// heading with no colon supplies each value from the list under it, so the report is not null.
-// No other test covers a bold report label with no colon.
+// Usefulness: verifies the exact issue #1585 shape parses, so no other test needs the full report shape.
 test("parseReportBlock reads the issue #1585 bold heading labels", () => {
   const response = [
     "The worker pushed the fix and opened PR #56.",
@@ -1563,8 +1561,7 @@ test("parseReportBlock reads the issue #1585 bold heading labels", () => {
   });
 });
 
-// Usefulness: verifies `**Conclusion** some text` is no label, so only a whole-line heading reads
-// as one (issue #1585).
+// Usefulness: verifies `**Conclusion** some text` stays text, a shape no other test covers (issue #1585).
 test("parseReportBlock keeps a bold heading with trailing text as text", () => {
   expect(parseReportBlock("**Conclusion** some text\nWhy: ok\nBlockers: none")).toBeNull();
   expect(
@@ -1572,8 +1569,7 @@ test("parseReportBlock keeps a bold heading with trailing text as text", () => {
   ).toMatchObject({ notes: null });
 });
 
-// Usefulness: verifies an indented `**Notes**` line is no heading label. A sub-item keeps the bold
-// text in its value, and an indented heading never owns a following line (issue #1585).
+// Usefulness: verifies an indented `**Notes**` line stays text, a column-0 rule no other test covers.
 test("parseReportBlock keeps an indented bold heading label as text", () => {
   expect(
     parseReportBlock("Conclusion: done\nWhy:\n- first\n  - **Notes**\nBlockers: none"),
@@ -1586,15 +1582,13 @@ test("parseReportBlock keeps an indented bold heading label as text", () => {
   ).toBeNull();
 });
 
-// Usefulness: verifies `**Summary**`, a whole-line bold name outside the six, stays value text
-// (issue #1585). The parser does not read any bold word as a label.
+// Usefulness: verifies `**Summary**` stays value text, so only the six report labels read (issue #1585).
 test("parseReportBlock keeps a bold non-label heading as value text", () => {
   const response = "Conclusion: done\nWhy: x\n\n**Summary**\n- item\n\nBlockers: none";
   expect(parseReportBlock(response)).toMatchObject({ why: "x; **Summary**: item" });
 });
 
-// Usefulness: verifies the issue #1585 shape parses with CRLF line endings, so a Windows worker
-// report yields a report (issue #1585).
+// Usefulness: verifies the issue #1585 shape parses with CRLF, a Windows case no other test covers.
 test("parseReportBlock reads the issue #1585 shape with CRLF line endings", () => {
   const response = [
     "The worker pushed the fix.",
@@ -1620,8 +1614,7 @@ test("parseReportBlock reads the issue #1585 shape with CRLF line endings", () =
   });
 });
 
-// Usefulness: verifies a `**Conclusion**` heading inside a fenced code block stays text, so the
-// real Conclusion still starts the block (issue #1585).
+// Usefulness: verifies a fenced `**Conclusion**` stays text, a guard no other test covers (issue #1585).
 test("parseReportBlock keeps a bold heading label inside a fenced code block as text", () => {
   const response = [
     "Conclusion: done",
