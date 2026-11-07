@@ -352,14 +352,20 @@ export async function presentInheritedTmpdirReport(
   const resolveAncestors = async (boundMs) => {
     if (ancestorsResolved) return ancestorPids ?? null;
     ancestorsResolved = true;
+    let boundSignal = null;
     try {
       ancestorPids = await withTimeBound(
         Math.max(1, boundMs),
         `inherited temporary directory ancestry read took over ${boundMs} ms`,
-        ({ stopped }) => Promise.race([readAncestors({ signal }), stopped]),
+        (bound) => {
+          boundSignal = bound.signal;
+          const readSignal = signal ? AbortSignal.any([bound.signal, signal]) : bound.signal;
+          return Promise.race([readAncestors({ signal: readSignal }), bound.stopped]);
+        },
       );
     } catch (err) {
-      if (err?.isCanceled) throw err;
+      if (signal?.aborted) throw canceledError();
+      if (err?.isCanceled && !boundSignal?.aborted) throw canceledError();
       ancestorPids = null;
     }
     return ancestorPids;
