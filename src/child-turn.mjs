@@ -656,8 +656,9 @@ export async function runChild(options) {
    * Runs the one closing-block repair turn that follows a null report (issue #1615). The turn
    * stays in the same session and asks for formatting only, so it repeats no work. A reviewer
    * repair runs under its own mutation check. Returns null when the repair fails, the session is
-   * lost or replaced, or the repaired response still parses to null, so the caller keeps the
-   * original response and its evidence.
+   * lost or replaced, the repaired response still parses to null, or the repaired report does not
+   * match the original response, so the caller keeps the original response and its evidence. A
+   * cancel ends the turn on the fatal error path.
    */
   const repairClosingBlock = async (originalResponse) => {
     const sessionId = role.sessionId;

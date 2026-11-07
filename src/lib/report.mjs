@@ -461,17 +461,63 @@ export function reportForResult(response, multiPartUnidentified = false) {
 // A repaired value that carries no finding, for a label that the original response left out.
 const NO_REPAIRED_FINDING = /^none\.?$/i;
 
-/** Collapses whitespace so a repaired value matches the original text that it restates. */
-function normalizedReportValue(value) {
-  return value.replace(/\s+/g, " ").trim();
+// The label line of the closing block, after bold-label normalization.
+const REPORT_LABEL_LINE = new RegExp(`^(${LABEL_NAMES}):\\s*(.*)$`, "i");
+const LABEL_KEY_BY_NAME = new Map(REPORT_LABELS.map(([key, label]) => [label.toLowerCase(), key]));
+
+// The list markers that a repair may convert: a dash, star, or plus bullet, or an ordered marker.
+const LIST_MARKER_PREFIX = /^\s*(?:[-*+](?:\s+|(?=\S))|\d+[.)](?:\s+|(?=\S)))/;
+
+/** The word and number content of a value, so list markers, separators, and line breaks do not decide a match. */
+function reportContentTokens(value) {
+  return value.match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** The text of a list line without its marker, or the line unchanged when it is no list. */
+function withoutListMarker(line) {
+  return isListLine(line) ? line.replace(LIST_MARKER_PREFIX, "") : line;
+}
+
+/**
+ * The normalized content of each report label in `response`, from the last occurrence of the label
+ * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
+ * that the parser does not fold still counts as content (issue #1615).
+ * @param {string} response
+ * @returns {Map<string, string[]> | null}
+ */
+function originalLabelTokens(response) {
+  const block = closingBlock(response, { unlabeled: true, diagnose: true });
+  if (!block) {
+    return null;
+  }
+  const sections = new Map();
+  let current = null;
+  for (const line of block) {
+    const match = line.match(REPORT_LABEL_LINE);
+    if (match) {
+      current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
+      if (current !== null) {
+        sections.set(current, reportContentTokens(match[2]));
+      }
+      continue;
+    }
+    if (isKnownLabelLine(line)) {
+      current = null;
+      continue;
+    }
+    if (current !== null) {
+      sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
+    }
+  }
+  return sections;
 }
 
 /**
  * True when a repaired report restates only what the original response already held (issue #1615).
- * The repair is untrusted: each original label that holds a value must keep it, a label that the
- * original left out may gain only `none`, and a reviewer verdict must match an explicit original
- * verdict. Any mismatch leaves the repair unused, so a repair can never create an acceptance that
- * the original response did not state.
+ * The repair is untrusted: each label keeps the normalized content of the original, whatever list
+ * form it used, a label that the original left out may gain only `none`, and a reviewer verdict
+ * must match an explicit original verdict. Any mismatch leaves the repair unused, so a repair can
+ * never create an acceptance that the original response did not state.
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -487,22 +533,26 @@ export function repairedReportMatches(
   if (!report) {
     return false;
   }
-  const shared = foldedReportBlock(response, { diagnose: true });
-  if (!shared) {
+  const originals = originalLabelTokens(response);
+  if (originals === null) {
     return false;
   }
-  const originals = new Map(shared.labels.map(({ key, value }) => [key, value]));
   for (const [key] of REPORT_LABELS) {
-    const original = originals.get(key) ?? null;
-    const repaired = report[key] ?? null;
-    if (original !== null) {
+    const original = originals.get(key) ?? [];
+    const repaired = reportContentTokens(report[key] ?? "");
+    if (original.length === 0) {
       if (
-        repaired === null ||
-        normalizedReportValue(original) !== normalizedReportValue(repaired)
+        repaired.length > 0 &&
+        !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
       ) {
         return false;
       }
-    } else if (repaired !== null && !NO_REPAIRED_FINDING.test(repaired)) {
+      continue;
+    }
+    if (
+      original.length !== repaired.length ||
+      original.some((token, index) => token !== repaired[index])
+    ) {
       return false;
     }
   }
@@ -519,11 +569,11 @@ export function repairedReportMatches(
     // Checks line that the original response left out.
     if (
       repairedVerdict === "accept" &&
-      REPORT_LABELS.some(([key, , optional]) => !optional && originals.get(key) === null)
+      REPORT_LABELS.some(([labelKey, , optional]) => !optional && !originals.has(labelKey))
     ) {
       return false;
     }
-    if (repairedVerdict === "accept" && originals.get("checks") === null) {
+    if (repairedVerdict === "accept" && !originals.has("checks")) {
       return false;
     }
   }

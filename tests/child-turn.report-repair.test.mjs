@@ -40,6 +40,22 @@ const REJECTED = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm
 const UNVERDICTED = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\n${TABLE}`;
 const ACCEPT_NO_CHECKS = `Conclusion: done\nWhy: tests pass\nBlockers: none\n${TABLE}\nVerdict: accept`;
 const CHANGED = "Conclusion: different\nWhy: changed\nBlockers: none\nChecks: npm test";
+// A star-list finding is a list the parser rejects, but the repair must still keep its content.
+const STAR_WHY = "Conclusion: done\nWhy:\n* first\n* second\nBlockers: none\nChecks: npm test";
+const STAR_WHY_REPAIRED =
+  "Conclusion: done\nWhy:\n- first\n- second\nBlockers: none\nChecks: npm test";
+const STAR_WHY_DROPPED = "Conclusion: done\nWhy: none\nBlockers: none\nChecks: npm test";
+const STAR_CHECKS =
+  "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: npm test\n* npm run lint failed";
+const STAR_CHECKS_DROPPED = "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: npm test";
+const NUMBERED_WHY =
+  "Conclusion: done\nWhy:\n1. first\n2. second\nBlockers: none\nChecks: npm test\n* npm run lint";
+const NUMBERED_WHY_REPAIRED =
+  "Conclusion: done\nWhy:\n- first\n- second\nBlockers: none\nChecks: npm test; npm run lint";
+const WRAPPED_WHY =
+  "Conclusion: done\nWhy: first line\n  second line\nBlockers: none\nChecks: npm test\n* npm run lint";
+const WRAPPED_WHY_REPAIRED =
+  "Conclusion: done\nWhy: first line second line\nBlockers: none\nChecks: npm test; npm run lint";
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -308,6 +324,91 @@ test("a repair cannot change the original findings", async () => {
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(UNVERDICTED);
   expect(result.report).toBeNull();
+});
+
+// Usefulness: verifies requirement "every finding of the original must survive into the repaired
+// report" (issue #1615). A star-list finding that the repair drops is content loss.
+test("a repair cannot drop a star-list finding", async () => {
+  const agent = scripted([STAR_WHY, STAR_WHY_DROPPED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(STAR_WHY);
+  expect(result.report).toBeNull();
+});
+
+// Usefulness: verifies requirement "every check of the original must survive into the repaired
+// report" (issue #1615). A failed check that the repair drops is content loss.
+test("a repair cannot drop a failed check", async () => {
+  const agent = scripted([STAR_CHECKS, STAR_CHECKS_DROPPED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(STAR_CHECKS);
+  expect(result.report).toBeNull();
+});
+
+// Usefulness: verifies requirement "a faithful restatement is not rejected when the repair
+// converts a list form" (issue #1615). A `*` list becomes a `-` list with the same content.
+test("a repair accepts a star-list to dash-list conversion", async () => {
+  const agent = scripted([STAR_WHY, STAR_WHY_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(STAR_WHY_REPAIRED);
+  expect(result.report).toMatchObject({ why: "first; second" });
+});
+
+// Usefulness: verifies requirement "a faithful restatement is not rejected when the repair
+// converts a numbered list" (issue #1615). The same items in a dash list keep the content.
+test("a repair accepts a numbered-list conversion", async () => {
+  const agent = scripted([NUMBERED_WHY, NUMBERED_WHY_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(NUMBERED_WHY_REPAIRED);
+  expect(result.report).toMatchObject({ why: "first; second" });
+});
+
+// Usefulness: verifies requirement "a faithful restatement is not rejected when the repair joins
+// wrapped lines" (issue #1615). The joined line keeps every word of the original.
+test("a repair accepts joined wrapped lines", async () => {
+  const agent = scripted([WRAPPED_WHY, WRAPPED_WHY_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(WRAPPED_WHY_REPAIRED);
+  expect(result.report).toMatchObject({ why: "first line second line" });
 });
 
 // Usefulness: verifies requirement "the policy for a parsed report without a reviewer Checks line or
