@@ -1532,6 +1532,108 @@ test("parseReportBlock does not read a bold non-label name as a label", () => {
   ).toBeNull();
 });
 
+// Usefulness: verifies the exact issue #1585 shape parses, so no other test needs the full report shape.
+test("parseReportBlock reads the issue #1585 bold heading labels", () => {
+  const response = [
+    "The worker pushed the fix and opened PR #56.",
+    "",
+    "**Conclusion**",
+    "- **PR:** open",
+    "- **Script:** ran",
+    "",
+    "**Why**",
+    "- **Red first:** the test failed before the fix",
+    "- **Tests:** the targeted file passed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "**PR:** open; **Script:** ran",
+    why: "**Red first:** the test failed before the fix; **Tests:** the targeted file passed",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies `**Conclusion** some text` stays text, a shape no other test covers (issue #1585).
+test("parseReportBlock keeps a bold heading with trailing text as text", () => {
+  expect(parseReportBlock("**Conclusion** some text\nWhy: ok\nBlockers: none")).toBeNull();
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n**Notes** some text"),
+  ).toMatchObject({ notes: null });
+});
+
+// Usefulness: verifies an indented `**Notes**` line stays text, a column-0 rule no other test covers.
+test("parseReportBlock keeps an indented bold heading label as text", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- first\n  - **Notes**\nBlockers: none"),
+  ).toMatchObject({ why: "first, **Notes**" });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n  **Notes**\n  sample text"),
+  ).toMatchObject({ notes: null });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n  **Notes**\n- item"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies `**Summary**` stays value text, so only the six report labels read (issue #1585).
+test("parseReportBlock keeps a bold non-label heading as value text", () => {
+  const response = "Conclusion: done\nWhy: x\n\n**Summary**\n- item\n\nBlockers: none";
+  expect(parseReportBlock(response)).toMatchObject({ why: "x; **Summary**: item" });
+});
+
+// Usefulness: verifies the issue #1585 shape parses with CRLF, a Windows case no other test covers.
+test("parseReportBlock reads the issue #1585 shape with CRLF line endings", () => {
+  const response = [
+    "The worker pushed the fix.",
+    "",
+    "**Conclusion**",
+    "- **PR:** open",
+    "",
+    "**Why**",
+    "- **Tests:** passed",
+    "",
+    "Blockers: none",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\r\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "**PR:** open",
+    why: "**Tests:** passed",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies a fenced `**Conclusion**` stays text, a guard no other test covers (issue #1585).
+test("parseReportBlock keeps a bold heading label inside a fenced code block as text", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "```",
+    "**Conclusion**",
+    "```",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies the fail-closed helper is true only when the report needs bold labels. A
 // plain report never fails closed for a multi-part turn (issue #1483).
 test("parsesOnlyWithBoldLabels is true only for a bold-only report", () => {
