@@ -48,3 +48,7 @@ Andro Marces
 - Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`
 - Documented in the [orchestrator instructions](../docs/orchestrator-instructions.md) and the headless prompt in `src/prompts/orchestrator.mjs`
 - [ADR Index](README.md)
+
+## Live probe on macOS
+
+On 2026-11-08, a live probe ran on macOS 27.3 (build 26C5035r) with Node v27.0.0-alpha.0.0.0, opencode v0.0.0-dev-973, and agent-loop head e57daf0e2247dd67dc5e297fe6e17ad653398501. A worker turn in a linked work tree restored `file1.txt` by `git checkout` and `file2.txt` by a Vim `:w` save. It rewrote `file3.txt` at the same size, restored its original bytes, and read `file4.txt` with `cat`. The envelope field `mainWorkTreeChangedInTurn` named `file1.txt`, `file2.txt`, and `file3.txt`, and the envelope carried no `mainWorkTreeChanged` field. Every file ended equal to its start state.
