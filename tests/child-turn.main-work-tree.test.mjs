@@ -1,4 +1,5 @@
-import { mkdir, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdir, readFile, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
@@ -463,6 +464,33 @@ test("a worker turn that restores a tracked main work tree file reports it in th
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
 
+// Usefulness: acceptance #1583: a write and its restore that both land before the watch reads the
+// path must still appear in the in-turn field. The restored state is not the baseline, because the
+// write inside the window moved the modification time (issue #1583).
+test("a worker turn that restores a file before the watch reads it reports it in the turn", async () => {
+  const file = join(tree.main, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await utimes(file, old, old);
+  let watchHandle;
+  const result = await turn(
+    async () => {
+      // Synchronous writes complete before the watch callback can read the path, so its first
+      // in-window read sees the restored state.
+      writeFileSync(file, "changed\n");
+      writeFileSync(file, "hello\n");
+      await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0), {
+        timeout: 5_000,
+      });
+    },
+    tree.linked,
+    (handle) => {
+      watchHandle = handle;
+    },
+  );
+  expect(result.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+});
+
 // Usefulness: verifies that a directory-only change carries no in-turn field (issue #1556). Only
 // tracked files and untracked files that Git does not ignore are in scope.
 test("a directory-only change in the main work tree reports no path", async () => {
@@ -502,6 +530,34 @@ test("a directory-only change in the main work tree reports no path", async () =
 test("a worker turn that writes nothing carries no in-turn field", async () => {
   const result = await turn(async () => {});
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
+});
+
+// Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
+// window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read changes no state,
+// size, or modification time, so the envelope must carry no in-turn field.
+test("a worker turn that only reads a main work tree file carries no in-turn field", async () => {
+  const file = join(tree.main, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await utimes(file, old, old);
+  let watchHandle;
+  const result = await turn(
+    async () => {
+      await vi.waitFor(
+        async () => {
+          await utimes(file, old, old);
+          await readFile(file);
+          expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
+        },
+        { timeout: 5_000 },
+      );
+    },
+    tree.linked,
+    (handle) => {
+      watchHandle = handle;
+    },
+  );
+  expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
 
 // Usefulness: verifies requirement "a file that still differs at the end stays in

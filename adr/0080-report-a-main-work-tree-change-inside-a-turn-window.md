@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0086: Leave out a read-only access whose modification time predates the turn window](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md). It replaces decision 3's confirmation rule, which reports a candidate only by its equal pre-turn and post-turn state, and the consequence that a write and a restore before the event is delivered can be missed.
+
+Decisions 1, 2, and 4 to 8, decision 3's rule that a path which still differs stays in `mainWorkTreeChanged` only, and every other consequence remain in force.
 
 ## Date
 
@@ -50,6 +54,8 @@ Andro Marces
 
 - [Issue #1556](https://github.com/andromarces/agent-loops/issues/1556)
 - [Pull request #1563](https://github.com/andromarces/agent-loops/pull/1563)
+- [Issue #1583](https://github.com/andromarces/agent-loops/issues/1583)
+- [Pull request #1586](https://github.com/andromarces/agent-loops/pull/1586)
 - [Issue #1551](https://github.com/andromarces/agent-loops/issues/1551)
 - [Issue #1448](https://github.com/andromarces/agent-loops/issues/1448)
 - Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`, `diffMainWorkTreeInTurn` in `src/lib/main-work-tree-change.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`

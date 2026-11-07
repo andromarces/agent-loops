@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -122,6 +122,28 @@ test("a direct stop before take reports a failure and warns", async () => {
   expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
     true,
   );
+});
+
+// Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
+// window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read moves only the access
+// time, so the state, size, and modification time stay equal and the watch must report no path.
+test("a read-only access of a watched file reports no candidate", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await utimes(file, old, old);
+  const handle = startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
+  await vi.waitFor(
+    async () => {
+      // Windows updates an access time older than one hour, and changes it on a read.
+      await utimes(file, old, old);
+      await readFile(file);
+      expect(handle.seenFileCount()).toBeGreaterThan(0);
+    },
+    { timeout: 5_000 },
+  );
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: [], failed: false });
 });
 
 // Usefulness: verifies requirement "repeated events for one path queue one read" (issue #1556). A

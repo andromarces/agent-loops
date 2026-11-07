@@ -19,14 +19,19 @@ const MAX_READS = 500;
 const IGNORE_BATCH_SIZE = 200;
 // Candidate paths that one file check reads at a time (32).
 const FILE_BATCH_SIZE = 32;
+// Milliseconds before the window start within which a modification time still counts as a write
+// (2000). Two seconds covers a coarse file system clock and a small skew, and reports a write that
+// it cannot separate from the window.
+const MTIME_MARGIN_MS = 2_000;
 
 /**
  * Watches the main work tree of a linked run for the turn window. One `Map` holds every pending
  * path, with its merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
- * records a file, and the `.git` directory stays out. `take()` returns the candidates and then
- * stops the watch on every outcome. A failed watch, read, or bound returns `failed: true` and logs
- * a warning, so the caller reports no path. The options lower the bounds and hold the ignore input,
- * for a test.
+ * records a file, and the `.git` directory stays out. A recorded file whose end modification time
+ * is older than the window start is a read-only access, and stays out. `take()` returns the
+ * candidates and then stops the watch on every outcome. A failed watch, read, or bound returns
+ * `failed: true` and logs a warning, so the caller reports no path. The options lower the bounds
+ * and hold the ignore input, for a test.
  * @param {string} root absolute main work tree root
  * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
  * @returns {{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null}
@@ -43,6 +48,9 @@ export function startMainWorkTreeWatch(
     beforeFileKind = null,
   } = {},
 ) {
+  // The turn starts before the child call can write, so a later write moves the modification time
+  // past this instant. A read leaves it before.
+  const windowStart = Date.now();
   let failed = false;
   let watcherClosed = false;
   let stopped = false;
@@ -267,10 +275,10 @@ export function startMainWorkTreeWatch(
     if (flushing !== null) await flushing.catch(() => {});
   };
 
-  /** The candidates that an in-window read or the end read sees as a file. */
+  /** The candidates that the turn may have written: an end file with a window-time mtime, or one
+   * that an in-window read saw before the turn removed it. */
   const fileCandidates = () =>
     mapInBatches([...candidates], FILE_BATCH_SIZE, async (path) => {
-      if (seenFiles.has(path)) return path;
       if (stopped) return null;
       if (reads.size >= maxReads) {
         fail(new Error(`more than ${maxReads} reads`));
@@ -286,9 +294,14 @@ export function startMainWorkTreeWatch(
           expire();
           return null;
         }
-        return entry.isFile() || entry.isSymbolicLink() ? path : null;
+        if (!entry.isFile() && !entry.isSymbolicLink()) return null;
+        // A write moves the modification time to the write time, so a path that ends before the
+        // window start was only read, which moves no modification time on NTFS. The margin keeps a
+        // write that a coarse timestamp or a small skew places before the start reported.
+        if (entry.mtimeMs < windowStart - MTIME_MARGIN_MS) return null;
+        return path;
       } catch (err) {
-        if (err?.code === "ENOENT") return null;
+        if (err?.code === "ENOENT") return seenFiles.has(path) ? path : null;
         throw err;
       }
     });

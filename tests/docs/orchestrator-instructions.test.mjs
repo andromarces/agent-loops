@@ -118,6 +118,8 @@ const SHARED_PARENT_RULES = [
   // Issue #1556: an edit that the turn restores is reported by path under open, and an absent field
   // from a failed watch proves nothing.
   (text) => expectRule(text, /mainWorkTreeChangedInTurn/, /restores? before it ends/i),
+  // Issue #1583: a read-only access moves only the access time, so it names no path.
+  (text) => expectRule(text, /read-only access/i, /access time/i),
   (text) => expectRule(text, /under open/i, /finish summary/i),
   (text) => expectRule(text, /watch, read, or bound failure/i, /no field/i),
   (text) => expectRule(text, /created and removed before an in-window read/i, /unseen/i),
