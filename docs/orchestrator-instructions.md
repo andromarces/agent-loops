@@ -274,8 +274,7 @@ Apply these parent rules:
     Report it under `open` in the finish summary. The user or another process can cause the change
     too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only
     access moves only the access time, so it names no path.
-  - An absent path does not prove that no in-window edit happened. ADR 0086 names both limits: a
-    2000 ms false-positive margin and a restore that keeps the modification time.
+  - An absent path does not prove that no in-window edit happened. ADR 0086 states both limits.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field proves nothing.
   - At the turn end the watch closes first, then drains the queue and settlement under a 1000 ms
@@ -363,7 +362,7 @@ An `--all` pass has a second hold. It holds while a `github-actions` check suite
 
 One proof is enough to skip a workflow. The text names no `pull_request` trigger, or a `paths` list matches no PR file. A `paths-ignore` list can match every PR file, or a `branches` list can omit the base branch. A `branches-ignore` list can name the base branch.
 
-A `types` filter never skips. A trigger or filter form that the command cannot settle holds the pass. So does a workflow file that the PR changes. So does a read that fails or cannot be parsed.
+A `types` filter never skips. A trigger or filter form that the command cannot settle holds the pass. So does a workflow file that the PR changes. So does a read that fails or cannot be parsed. The hold ends at the bound with `timedOut: true`, never a pass.
 
 The suite read is pinned to the head SHA, like the check-run and status reads. Only a `github-actions` suite holds the pass, so a suite of another app never holds it. `--expect` stays needed for a check of a third-party app.
 
