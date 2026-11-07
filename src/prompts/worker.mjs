@@ -94,14 +94,21 @@ const reasonsUnderWhyRule =
 const conclusionFirstRule =
   "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 
+// A later turn resumes the same session and gets no preamble, so it never learns that TMPDIR
+// changed (issue #1610). A worker that reused a temporary path from an earlier turn wrote to a
+// directory that the runtime had already removed.
+const laterTurnTmpdirRule =
+  "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
+
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
- * body, commit-link, staging, and closing-block rules only. `task` adds the init task block.
+ * body, commit-link, staging, temporary-path, and closing-block rules only. `task` adds the init
+ * task block.
  */
 export function workerPrompt(prompt, firstTurn = false, task = null) {
   if (!firstTurn) {
     // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
-    // repeats the PR body, named push, commit-link, and staging rules. It repeats the closing block too, because a worker drifts from the block as the
+    // repeats the PR body, named push, commit-link, staging, and temporary-path rules. It repeats the closing block too, because a worker drifts from the block as the
     // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
     // (issue #1179).
     return escapeLineSeparators(`${prompt}
@@ -119,6 +126,8 @@ ${closingIssuesRule}
 ${commitLinkRule}
 
 ${stageOnlyNeededPathsRule}
+
+${laterTurnTmpdirRule}
 
 ${conclusionFirstRule}
 
