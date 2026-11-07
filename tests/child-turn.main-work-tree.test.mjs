@@ -420,6 +420,20 @@ test("the main work tree read leaves the index file unchanged", async () => {
 });
 
 /**
+ * Writes `content` to `path` until the turn watch reports the path. A late watch stream then cannot
+ * drop the only write of the turn, and the write stays inside the turn window.
+ */
+async function writeUntilSeen(handle, path, content) {
+  await vi.waitFor(
+    async () => {
+      await writeFile(path, content);
+      expect(handle.seenFileCount()).toBeGreaterThan(0);
+    },
+    { timeout: 5_000 },
+  );
+}
+
+/**
  * Starts a turn that writes `path` in the main work tree, then holds until the test releases it.
  * A `restore` value writes the first content back before the turn ends.
  */
@@ -432,15 +446,19 @@ function heldWrite({ path = "init.txt", written = "changed\n", restore = null, o
   const seen = new Promise((resolve) => {
     observed = resolve;
   });
+  let watchHandle;
   const run = turn(
     async () => {
-      await writeFile(join(tree.main, path), written);
+      await writeUntilSeen(watchHandle, join(tree.main, path), written);
       observed();
       await held;
       if (restore !== null) await writeFile(join(tree.main, path), restore);
     },
     tree.linked,
-    onMainWatch,
+    (handle) => {
+      watchHandle = handle;
+      onMainWatch?.(handle);
+    },
   );
   return { run, seen, release };
 }
@@ -475,12 +493,16 @@ test("a worker turn that restores a file before the watch reads it reports it in
   const result = await turn(
     async () => {
       // Synchronous writes complete before the watch callback can read the path, so its first
-      // in-window read sees the restored state.
-      writeFileSync(file, "changed\n");
-      writeFileSync(file, "hello\n");
-      await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0), {
-        timeout: 5_000,
-      });
+      // in-window read sees the restored state. The pair repeats until the watch reports the path,
+      // so a late watch stream cannot drop the only delivery.
+      await vi.waitFor(
+        () => {
+          writeFileSync(file, "changed\n");
+          writeFileSync(file, "hello\n");
+          expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
+        },
+        { timeout: 5_000 },
+      );
     },
     tree.linked,
     (handle) => {
@@ -506,7 +528,7 @@ test("a directory-only change in the main work tree reports no path", async () =
   const run = turn(
     async () => {
       await mkdir(join(tree.main, "made-dir"));
-      await writeFile(join(tree.main, "init.txt"), "changed\n");
+      await writeUntilSeen(watchHandle, join(tree.main, "init.txt"), "changed\n");
       observed();
       await held;
       await rm(join(tree.main, "made-dir"), { recursive: true, force: true });
@@ -585,7 +607,7 @@ test("a worker turn that restores an ignored main work tree file reports nothing
     },
   });
   await hold.seen;
-  await vi.waitFor(() => expect(watchHandle.pendingCount()).toBeGreaterThan(0), {
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0), {
     timeout: 5_000,
   });
   hold.release();
@@ -608,7 +630,7 @@ test("a failed worker turn carries the in-turn main work tree change", async () 
   let watchHandle;
   const run = turn(
     async () => {
-      await writeFile(join(tree.main, "init.txt"), "changed\n");
+      await writeUntilSeen(watchHandle, join(tree.main, "init.txt"), "changed\n");
       observed();
       await held;
       await writeFile(join(tree.main, "init.txt"), "hello\n");
@@ -643,7 +665,7 @@ test("a canceled worker turn carries the in-turn main work tree change", async (
   let watchHandle;
   const run = turn(
     async () => {
-      await writeFile(join(tree.main, "init.txt"), "changed\n");
+      await writeUntilSeen(watchHandle, join(tree.main, "init.txt"), "changed\n");
       observed();
       await held;
       await writeFile(join(tree.main, "init.txt"), "hello\n");

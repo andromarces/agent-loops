@@ -238,6 +238,20 @@ test("worker dispatch reports a main work tree change by path and omits the fiel
   }
 });
 
+/**
+ * Writes `content` to `path` until the turn watch reports the path. A late watch stream then cannot
+ * drop the only write of the turn, and the write stays inside the turn window.
+ */
+async function writeUntilSeen(handle, path, content) {
+  await vi.waitFor(
+    async () => {
+      await writeFile(path, content);
+      expect(handle.seenFileCount()).toBeGreaterThan(0);
+    },
+    { timeout: 5_000 },
+  );
+}
+
 // Usefulness: verifies that a worker dispatch reports a restored main work tree file in its
 // envelope and its state record (issue #1556). The end-of-turn read cannot see the restored file,
 // so a lost watch leaves the edit with no trace.
@@ -261,7 +275,7 @@ test("worker dispatch reports a main work tree change restored inside the turn",
     const worker = recordingAdapter([
       async () => WORKER_REPLY,
       async () => {
-        await writeFile(join(repo, "init.txt"), "changed inside the turn\n");
+        await writeUntilSeen(watchHandle, join(repo, "init.txt"), "changed inside the turn\n");
         written = true;
         await held;
         await writeFile(join(repo, "init.txt"), original);
