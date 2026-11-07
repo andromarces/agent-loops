@@ -324,8 +324,7 @@ test("resultPrompt carries the re-read names of the inherited temporary director
   expect(prompt).toContain("Carry into open only");
 });
 
-// Usefulness: verifies the headless parent sees a settled name apart from the possible run
-// leftovers, so it carries no settled name into open (issue #1600).
+// Usefulness: verifies that the prompt carries a settled name apart (issue #1600).
 test("resultPrompt carries the settled names apart from the re-read names", () => {
   const prompt = resultPrompt({
     result: {

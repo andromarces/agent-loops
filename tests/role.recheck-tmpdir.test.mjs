@@ -511,8 +511,7 @@ test("recheck-tmpdir redacts and caps its reported names", async () => {
   });
 });
 
-// Usefulness: verifies acceptance. A held-open Windows name leaves inheritedTmpdirEntries, appears
-// in inheritedTmpdirSettled, and the probe writes and deletes nothing (issue #1600).
+// Usefulness: verifies that a held Windows name moves to the settled field (issue #1600).
 test("recheck-tmpdir reports a held-open Windows name apart from the possible leftovers", async () => {
   const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
@@ -538,8 +537,7 @@ test("recheck-tmpdir reports a held-open Windows name apart from the possible le
   });
 });
 
-// Usefulness: verifies acceptance. A Windows name that no process holds open stays a possible run
-// leftover (issue #1600).
+// Usefulness: verifies that a free Windows name stays in the leftovers (issue #1600).
 test("recheck-tmpdir keeps a Windows name that no process holds open", async () => {
   const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
@@ -559,8 +557,7 @@ test("recheck-tmpdir keeps a Windows name that no process holds open", async () 
   });
 });
 
-// Usefulness: verifies a fail-closed path. A probe that throws keeps the name in the possible
-// leftovers and adds no settled field (issue #1600).
+// Usefulness: verifies that a probe error adds no settled field (issue #1600).
 test("recheck-tmpdir keeps a Windows name whose probe throws", async () => {
   const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
@@ -582,8 +579,7 @@ test("recheck-tmpdir keeps a Windows name whose probe throws", async () => {
   });
 });
 
-// Usefulness: verifies acceptance. A settled name is redacted and capped exactly like the possible
-// leftovers (issue #1600).
+// Usefulness: verifies that a settled name is redacted and capped (issue #1600).
 test("recheck-tmpdir redacts and caps a settled name", async () => {
   const repo = await newStateRun();
   vi.stubEnv("PROBE_API_TOKEN", "s3cr3t-value-9402");
@@ -606,8 +602,7 @@ test("recheck-tmpdir redacts and caps a settled name", async () => {
   expect(JSON.stringify(settled)).not.toContain("s3cr3t-value-9402");
 });
 
-// Usefulness: verifies a fail-closed path. A first read that fails keeps every name and settles
-// none (issue #1600).
+// Usefulness: verifies that a failed first read keeps every name (issue #1600).
 test("recheck-tmpdir keeps every name when the first read fails", async () => {
   const repo = await newStateRun();
   const names = ["a.tmp", "b.tmp"];
@@ -627,8 +622,7 @@ test("recheck-tmpdir keeps every name when the first read fails", async () => {
   expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
 });
 
-// Usefulness: verifies a cancel during a probe returns the cancel result and keeps every name
-// (issue #1600).
+// Usefulness: verifies that a canceled probe returns the cancel result (issue #1600).
 test("recheck-tmpdir keeps every name when a probe is canceled", async () => {
   const repo = await newStateRun();
   await withInheritedDir(async (dir) => {
@@ -655,8 +649,7 @@ test("recheck-tmpdir keeps every name when a probe is canceled", async () => {
   });
 });
 
-// Usefulness: verifies a cancel through settle.signal aborts the ancestry read before its bound
-// (issue #1600).
+// Usefulness: verifies that settle.signal cancels before the ancestry bound (issue #1600).
 test("recheck-tmpdir cancels through settle.signal before the ancestry bound", async () => {
   const repo = await newStateRun();
   const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-4321-ab12cd";

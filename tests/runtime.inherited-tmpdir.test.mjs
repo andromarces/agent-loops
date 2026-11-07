@@ -269,8 +269,7 @@ test("a worker result prompt carries no inherited temporary directory re-read", 
   }
 });
 
-// Usefulness: verifies acceptance. A headless run carries a settled name apart from the names that
-// stay possible run leftovers (issue #1600).
+// Usefulness: verifies that the headless prompt carries a settled name (issue #1600).
 test("a headless run carries a settled name apart from inheritedTmpdirPresent", async () => {
   const repo = await cleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));
@@ -317,8 +316,7 @@ test("a headless run carries a settled name apart from inheritedTmpdirPresent", 
   }
 });
 
-// Usefulness: verifies a fail-closed path. A failed headless re-read keeps every name and settles
-// none (issue #1600).
+// Usefulness: verifies that a failed headless read keeps every name (issue #1600).
 test("a headless run keeps every name when the re-read fails", async () => {
   const repo = await cleanRepo();
   const temp = await mkdtemp(join(tmpdir(), "runtime-inherited-"));

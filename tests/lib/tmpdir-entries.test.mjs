@@ -469,8 +469,7 @@ test("lists a replacement of the turn directory of another process without a mar
   expect(await appearedInInheritedTmpdir(before)).toContain(name);
 });
 
-// Usefulness: verifies acceptance. A Windows file that another process holds open is settled apart
-// from the possible run leftovers (issue #1600).
+// Usefulness: verifies that a held Windows file is settled (issue #1600).
 test("settles a Windows file that another process holds open", async () => {
   const held = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
   const result = await settleInheritedTmpdirNames([held, "stays.txt"], {
@@ -480,8 +479,7 @@ test("settles a Windows file that another process holds open", async () => {
   expect(result).toEqual({ leftovers: ["stays.txt"], settled: [held] });
 });
 
-// Usefulness: verifies acceptance. A Windows file that no process holds open stays a possible run
-// leftover (issue #1600).
+// Usefulness: verifies that a free Windows file stays reported (issue #1600).
 test("keeps a Windows file that no process holds open", async () => {
   const name = "stays.txt";
   expect(
@@ -492,8 +490,7 @@ test("keeps a Windows file that no process holds open", async () => {
   ).toEqual({ leftovers: [name], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A Windows probe result that cannot settle the name keeps
-// it reported (issue #1600).
+// Usefulness: verifies that an unsettled Windows probe keeps the name (issue #1600).
 test("keeps a Windows name whose probe cannot settle it", async () => {
   const name = "a.tmp";
   expect(
@@ -504,8 +501,7 @@ test("keeps a Windows name whose probe cannot settle it", async () => {
   ).toEqual({ leftovers: [name], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A probe error on one name keeps that name and never
-// stops the probe of another (issue #1600).
+// Usefulness: verifies that one probe error does not stop another probe (issue #1600).
 test("keeps a Windows name whose probe throws and settles the next", async () => {
   const failing = "a.tmp";
   const held = "b.tmp";
@@ -519,8 +515,7 @@ test("keeps a Windows name whose probe throws and settles the next", async () =>
   expect(result).toEqual({ leftovers: [failing], settled: [held] });
 });
 
-// Usefulness: verifies a fail-closed path. A probe that reaches its bound keeps the name reported
-// (issue #1600).
+// Usefulness: verifies that a probe bound keeps the name reported (issue #1600).
 test("keeps a Windows name when the probe reaches its bound", async () => {
   const name = "a.tmp";
   expect(
@@ -532,8 +527,7 @@ test("keeps a Windows name when the probe reaches its bound", async () => {
   ).toEqual({ leftovers: [name], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A registered turn directory stays listed even when the
-// probe reports a holder (issue #1600).
+// Usefulness: verifies that a registered name is never settled (issue #1600).
 test("keeps a registered name even when the probe reports a holder", async () => {
   const name = "registered/al-Ab1234";
   expect(
@@ -544,7 +538,7 @@ test("keeps a registered name even when the probe reports a holder", async () =>
   ).toEqual({ leftovers: [name], settled: [] });
 });
 
-// Usefulness: verifies the current behavior on Linux. No name is settled there (issue #1600).
+// Usefulness: verifies that Linux settles no name (issue #1600).
 test("settles no name on Linux", async () => {
   const name = "a.tmp";
   expect(
@@ -555,8 +549,7 @@ test("settles no name on Linux", async () => {
   ).toEqual({ leftovers: [name], settled: [] });
 });
 
-// Usefulness: verifies the real Windows probe on a fake handle. The open reports EBUSY while
-// another handle holds the file (issue #1600).
+// Usefulness: verifies that an open EBUSY settles a held Windows file (issue #1600).
 test("probes a Windows file that another handle holds", async () => {
   expect(
     await probeHeldOpenWindows("held.tmp", {
@@ -568,8 +561,7 @@ test("probes a Windows file that another handle holds", async () => {
   ).toBe("held");
 });
 
-// Usefulness: verifies the real Windows probe on a fake handle. A free file reports free and closes
-// its handle (issue #1600).
+// Usefulness: verifies that a free Windows file closes its handle (issue #1600).
 test("probes a free Windows file and closes its handle", async () => {
   let closed = false;
   const outcome = await probeHeldOpenWindows("free.tmp", {
@@ -585,8 +577,7 @@ test("probes a free Windows file and closes its handle", async () => {
   expect(closed).toBe(true);
 });
 
-// Usefulness: verifies a fail-closed path. A handle whose device or inode differs from the lstat
-// result is not settled, and the handle closes (issue #1600).
+// Usefulness: verifies that a handle identity mismatch keeps the name (issue #1600).
 test("keeps a Windows file whose opened handle differs", async () => {
   let closed = false;
   const outcome = await probeHeldOpenWindows("swapped.tmp", {
@@ -602,7 +593,7 @@ test("keeps a Windows file whose opened handle differs", async () => {
   expect(closed).toBe(true);
 });
 
-// Usefulness: verifies a fail-closed path. A directory or a link is not opened (issue #1600).
+// Usefulness: verifies that a directory or link is not opened (issue #1600).
 test("keeps a Windows directory and a link", async () => {
   expect(
     await probeHeldOpenWindows("entry", {
@@ -614,8 +605,7 @@ test("keeps a Windows directory and a link", async () => {
   ).toBe("unknown");
 });
 
-// Usefulness: verifies a fail-closed path. An open error other than EBUSY keeps the name reported
-// (issue #1600).
+// Usefulness: verifies that a non-EBUSY open error keeps the name (issue #1600).
 test("keeps a Windows name whose open fails otherwise", async () => {
   expect(
     await probeHeldOpenWindows("denied.tmp", {
@@ -627,8 +617,7 @@ test("keeps a Windows name whose open fails otherwise", async () => {
   ).toBe("unknown");
 });
 
-// Usefulness: verifies the EPERM rule. A signal 0 that fails with EPERM means the process is alive
-// (issue #1600).
+// Usefulness: verifies that EPERM means the pid is alive (issue #1600).
 test("reads a live pid from EPERM", () => {
   expect(pidIsAlive(42, { kill: () => {} })).toBe(true);
   expect(
@@ -661,8 +650,7 @@ const macShm = `${macBase}-shm`;
 const macWal = `${macBase}-wal`;
 const regular = async () => ({ isFile: () => true });
 
-// Usefulness: verifies acceptance on macOS. A pair with a live embedded pid and two regular files
-// is settled (issue #1600).
+// Usefulness: verifies that a live embedded pid settles a macOS pair (issue #1600).
 test("settles a macOS pair whose embedded pid is alive", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm, macWal], {
@@ -674,8 +662,7 @@ test("settles a macOS pair whose embedded pid is alive", async () => {
   ).toEqual({ leftovers: [], settled: [macShm, macWal] });
 });
 
-// Usefulness: verifies a fail-closed path. A pair whose embedded pid is dead stays reported (issue
-// #1600).
+// Usefulness: verifies that a dead embedded pid keeps a macOS pair (issue #1600).
 test("keeps a macOS pair whose embedded pid is dead", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm, macWal], {
@@ -687,7 +674,7 @@ test("keeps a macOS pair whose embedded pid is dead", async () => {
   ).toEqual({ leftovers: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A lone macOS member stays reported (issue #1600).
+// Usefulness: verifies that a lone macOS member stays reported (issue #1600).
 test("keeps a lone macOS shm name", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm], {
@@ -702,7 +689,7 @@ test("keeps a lone macOS shm name", async () => {
   ).toEqual({ leftovers: [macShm], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A malformed macOS name stays reported (issue #1600).
+// Usefulness: verifies that a malformed macOS name stays reported (issue #1600).
 test("keeps a malformed macOS name", async () => {
   const names = [
     `not-a-guid-${macPid}-ab12cd-shm`,
@@ -720,8 +707,7 @@ test("keeps a malformed macOS name", async () => {
   ).toEqual({ leftovers: names, settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS name that is not a regular file stays reported
-// (issue #1600).
+// Usefulness: verifies that a non-regular macOS name stays reported (issue #1600).
 test("keeps a macOS non-regular name", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm, macWal], {
@@ -733,8 +719,7 @@ test("keeps a macOS non-regular name", async () => {
   ).toEqual({ leftovers: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS name whose pid is this process stays reported
-// (issue #1600).
+// Usefulness: verifies that a macOS name for this process stays reported (issue #1600).
 test("keeps a macOS name for this process", async () => {
   const name = `${macGuid}-${process.pid}-ab12cd-shm`;
   const sibling = `${macGuid}-${process.pid}-ab12cd-wal`;
@@ -748,8 +733,7 @@ test("keeps a macOS name for this process", async () => {
   ).toEqual({ leftovers: [name, sibling], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS name for an ancestor stays reported (issue
-// #1600).
+// Usefulness: verifies that a macOS name for an ancestor stays reported (issue #1600).
 test("keeps a macOS name for an ancestor", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm, macWal], {
@@ -761,8 +745,7 @@ test("keeps a macOS name for an ancestor", async () => {
   ).toEqual({ leftovers: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS stat error keeps the name reported (issue
-// #1600).
+// Usefulness: verifies that a macOS stat error keeps the name (issue #1600).
 test("keeps a macOS name whose stat fails", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm, macWal], {
@@ -776,8 +759,7 @@ test("keeps a macOS name whose stat fails", async () => {
   ).toEqual({ leftovers: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS ancestry that cannot be read settles no name
-// (issue #1600).
+// Usefulness: verifies that an unreadable ancestry settles no macOS name (issue #1600).
 test("settles no macOS name without an ancestry", async () => {
   expect(
     await settleInheritedTmpdirNames([macShm, macWal], {
@@ -789,8 +771,7 @@ test("settles no macOS name without an ancestry", async () => {
   ).toEqual({ leftovers: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies acceptance on the headless path. A failed read keeps every recorded name and
-// settles none (issue #1600).
+// Usefulness: verifies that a failed headless read keeps every name (issue #1600).
 test("keeps every name when the headless read fails", async () => {
   const names = ["a.tmp", "b.tmp"];
   expect(
@@ -804,8 +785,7 @@ test("keeps every name when the headless read fails", async () => {
   ).toEqual({ present: names, settled: [] });
 });
 
-// Usefulness: verifies acceptance on the headless path. A bounded read keeps every recorded name
-// and settles none (issue #1600).
+// Usefulness: verifies that a bounded headless read keeps every name (issue #1600).
 test("keeps every name when the headless read passes its bound", async () => {
   const names = ["a.tmp"];
   expect(
@@ -818,8 +798,7 @@ test("keeps every name when the headless read passes its bound", async () => {
   ).toEqual({ present: names, settled: [] });
 });
 
-// Usefulness: verifies a cancel during a probe ends with the cancel identity and keeps the name
-// (issue #1600).
+// Usefulness: verifies that a canceled probe returns the cancel identity (issue #1600).
 test("a cancel during a probe ends with the cancel identity", async () => {
   const controller = new AbortController();
   const name = "a.tmp";
@@ -838,8 +817,7 @@ test("a cancel during a probe ends with the cancel identity", async () => {
   await expect(pending).rejects.toMatchObject({ isCanceled: true });
 });
 
-// Usefulness: verifies a cancel during a headless probe ends with the cancel identity (issue
-// #1600).
+// Usefulness: verifies that a canceled headless probe returns the cancel identity (issue #1600).
 test("a cancel during a headless probe ends with the cancel identity", async () => {
   const controller = new AbortController();
   const name = "a.tmp";
@@ -853,8 +831,7 @@ test("a cancel during a headless probe ends with the cancel identity", async () 
   await expect(pending).rejects.toMatchObject({ isCanceled: true });
 });
 
-// Usefulness: verifies the Windows probe on a real file. A read-only exclusive-share open reports
-// EBUSY while another handle holds the file, and the file stays unchanged (issue #1600).
+// Usefulness: verifies that a held real Windows file is settled (issue #1600).
 test.skipIf(process.platform !== "win32")(
   "probes a held Windows file read-only and closes its handle",
   async () => {
@@ -880,7 +857,7 @@ test.skipIf(process.platform !== "win32")(
   },
 );
 
-// Usefulness: verifies a fail-closed path. The Windows probe settles no directory (issue #1600).
+// Usefulness: verifies that the Windows probe settles no directory (issue #1600).
 test.skipIf(process.platform !== "win32")("keeps a Windows directory", async () => {
   const name = "a-directory";
   await mkdir(join(root, name));
@@ -890,8 +867,7 @@ test.skipIf(process.platform !== "win32")("keeps a Windows directory", async () 
   });
 });
 
-// Usefulness: verifies a fail-closed path. An ancestry read that fails settles no macOS name
-// (issue #1600).
+// Usefulness: verifies that a failed ancestry read settles no macOS name (issue #1600).
 test("settles no macOS name when the ancestry read fails", async () => {
   expect(
     await presentInheritedTmpdirReport([macShm, macWal], {
@@ -906,8 +882,7 @@ test("settles no macOS name when the ancestry read fails", async () => {
   ).toEqual({ present: [macShm, macWal], settled: [] });
 });
 
-// Usefulness: verifies a cancel during the ancestry read ends with the cancel identity (issue
-// #1600).
+// Usefulness: verifies that a canceled ancestry read returns the cancel identity (issue #1600).
 test("a cancel during the ancestry read ends with the cancel identity", async () => {
   await expect(
     presentInheritedTmpdirReport([macShm, macWal], {
@@ -922,7 +897,7 @@ test("a cancel during the ancestry read ends with the cancel identity", async ()
   ).rejects.toMatchObject({ isCanceled: true });
 });
 
-// Usefulness: verifies that an EBUSY from the open alone settles. An lstat EBUSY keeps the name (issue #1600).
+// Usefulness: verifies that only an open EBUSY settles a name (issue #1600).
 test("keeps a Windows name when lstat reports EBUSY", async () => {
   expect(
     await probeHeldOpenWindows("a.tmp", {
@@ -936,7 +911,7 @@ test("keeps a Windows name when lstat reports EBUSY", async () => {
   ).toBe("unknown");
 });
 
-// Usefulness: verifies that an EBUSY from the open alone settles. An fstat EBUSY keeps the name (issue #1600).
+// Usefulness: verifies that an fstat EBUSY keeps the name (issue #1600).
 test("keeps a Windows name when fstat reports EBUSY", async () => {
   let closed = false;
   expect(
@@ -955,7 +930,7 @@ test("keeps a Windows name when fstat reports EBUSY", async () => {
   expect(closed).toBe(true);
 });
 
-// Usefulness: verifies the device comparison. A different device keeps the name (issue #1600).
+// Usefulness: verifies that a device mismatch keeps the name (issue #1600).
 test("keeps a Windows file whose device differs", async () => {
   expect(
     await probeHeldOpenWindows("a.tmp", {
@@ -968,8 +943,7 @@ test("keeps a Windows file whose device differs", async () => {
   ).toBe("unknown");
 });
 
-// Usefulness: verifies a replacement link between lstat and open. The handle identity keeps the
-// name (issue #1600).
+// Usefulness: verifies that a replacement link keeps the name (issue #1600).
 test("keeps a Windows file replaced by a link between lstat and open", async () => {
   let closed = false;
   expect(
@@ -986,8 +960,7 @@ test("keeps a Windows file replaced by a link between lstat and open", async () 
   expect(closed).toBe(true);
 });
 
-// Usefulness: verifies the ancestor collection. The set includes every ancestor up to PID 1
-// (issue #1600).
+// Usefulness: verifies that the ancestor set includes PID 1 (issue #1600).
 test("collects every ancestor up to PID 1", async () => {
   const table = [
     { pid: process.pid, ppid: 4242 },
@@ -999,13 +972,12 @@ test("collects every ancestor up to PID 1", async () => {
   );
 });
 
-// Usefulness: verifies a fail-closed path. A table without this process returns null (issue
-// #1600).
+// Usefulness: verifies that an ancestry without this process returns null (issue #1600).
 test("returns null when the ancestry omits this process", async () => {
   expect(await readAncestorPids({ readTable: async () => [{ pid: 1, ppid: 0 }] })).toBeNull();
 });
 
-// Usefulness: verifies a fail-closed path. A cycle returns null (issue #1600).
+// Usefulness: verifies that an ancestry cycle returns null (issue #1600).
 test("returns null on an ancestry cycle", async () => {
   const table = [
     { pid: process.pid, ppid: 4242 },
@@ -1014,7 +986,7 @@ test("returns null on an ancestry cycle", async () => {
   expect(await readAncestorPids({ readTable: async () => table })).toBeNull();
 });
 
-// Usefulness: verifies a fail-closed path. A failed ancestry read returns null (issue #1600).
+// Usefulness: verifies that a failed ancestry read returns null (issue #1600).
 test("returns null when the ancestry read fails", async () => {
   expect(
     await readAncestorPids({
@@ -1025,8 +997,7 @@ test("returns null when the ancestry read fails", async () => {
   ).toBeNull();
 });
 
-// Usefulness: verifies a cancel during the ancestry read rejects with the cancel identity (issue
-// #1600).
+// Usefulness: verifies that a canceled ancestry read rejects canceled (issue #1600).
 test("a canceled ancestry read rejects canceled", async () => {
   await expect(
     readAncestorPids({
@@ -1037,7 +1008,7 @@ test("a canceled ancestry read rejects canceled", async () => {
   ).rejects.toMatchObject({ isCanceled: true });
 });
 
-// Usefulness: verifies a fail-closed path. A macOS name for PID 1 stays reported (issue #1600).
+// Usefulness: verifies that a macOS name for PID 1 stays reported (issue #1600).
 test("keeps a macOS name for PID 1", async () => {
   const name = `${macGuid}-1-ab12cd-shm`;
   const sibling = `${macGuid}-1-ab12cd-wal`;
@@ -1051,8 +1022,7 @@ test("keeps a macOS name for PID 1", async () => {
   ).toEqual({ leftovers: [name, sibling], settled: [] });
 });
 
-// Usefulness: verifies a cancel through settle.signal aborts the ancestry read at once (issue
-// #1600).
+// Usefulness: verifies that settle.signal cancels the ancestry read at once (issue #1600).
 test("a cancel through settle.signal aborts the ancestry read at once", async () => {
   const controller = new AbortController();
   let release;
@@ -1078,4 +1048,21 @@ test("a cancel through settle.signal aborts the ancestry read at once", async ()
   await started;
   controller.abort();
   await expect(pending).rejects.toMatchObject({ isCanceled: true });
+});
+
+// Usefulness: verifies that a non-regular entry never reaches the open (issue #1600).
+test("keeps a non-regular Windows entry before the open", async () => {
+  for (const info of [{ isFile: () => false }, { isFile: () => false, isFIFO: () => true }]) {
+    let opened = false;
+    expect(
+      await probeHeldOpenWindows("entry", {
+        lstatFile: async () => info,
+        openHandle: async () => {
+          opened = true;
+          throw Object.assign(new Error("busy"), { code: "EBUSY" });
+        },
+      }),
+    ).toBe("unknown");
+    expect(opened).toBe(false);
+  }
 });
