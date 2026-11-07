@@ -400,44 +400,13 @@ function reportDetail(response, { boldLabels = true } = {}) {
 }
 
 /**
- * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`.
- * Each label is matched case-insensitively at line start inside the closing
- * block only; the last occurrence in that range wins. `conclusion`, `why`, and
- * `blockers` are required, and a missing or empty one makes the whole block
- * unparseable. `checks`, `notes`, and `deferred` are optional: an absent or
- * empty label maps to null and never makes the block null, so a response in the
- * pre-#214 format stays parseable. A `- ` or `N. ` list that directly follows a report label
- * line is that label's value, or joins the value the line already holds: the markers drop
- * and the items join with "; " (issues #846, #879, and #915). The reviewer `Verdict:` line is no
- * report label, so a list after it stays dropped. One level of `- ` sub-items, indented to the
- * text column of the item above (two spaces, or three after `1. `), joins into that item with
- * ", " (issues #870 and #915). An indented non-list line directly after an item or its sub-items
- * folds into that item with a space, unless it reads as a label line: after NFKC normalization, leading non-letter, non-digit characters and one optional number are skipped, then a label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow (issue #1082). A prose line with a `- ` list directly under it also folds into the label above
- * it as `<prose>: <items>`, when a blank line separates the prose from that label (issue #898).
- *
- * One blank line between a report label line and a `- ` list folds too.
- * The list joins the label value with "; " (issue #1348).
- *
- * Two blank lines there keep the list unparseable.
- * Any other list line in the block, for example bullets, instead makes the whole block unparseable.
- * The dispatch layer surfaces the dropped list through `raw` (issues #229, #240, and #249).
- * This covers a list outside any label.
- * It covers a list that a non-list line or two blank lines separate from its label.
- *
- * It covers a bullet with no space after its marker, even under an empty label (issue #243).
- * It covers a `*` or `+` bullet, an ordered item, and an indented bullet that is not one nested level.
- * It covers a list under an earlier occurrence when a later repeat shadows it, or after the reviewer `Verdict:` line (issue #249).
- * The reason is that the scan covers every line, not only the winning last occurrence of each label.
- * A label that indentation or markdown decoration hides also makes the block
- * unparseable, so `raw` carries its value (issue #243).
- *
- * A Markdown table pair makes the block unparseable, so its text reaches `raw` (issue #1366).
- * A pair is a line with a `|` and a delimiter row directly below it.
- *
- * A `- ` item or sub-item that opens with a bold label name is item text inside a folded list run (issue #1006).
- * One example is `- **Checks:** ran`.
- * The same line outside a run still blanks the block, because the decorated-label
- * check runs again on the folded lines. Any other decorated form blanks the block, folded or not.
+ * Extracts the closing block as `{ conclusion, why, blockers, checks, notes, deferred }`, or null when
+ * the block does not parse. Each label is matched case-insensitively at line start inside the block
+ * only, and the last occurrence wins. `conclusion`, `why`, and `blockers` are required, while an
+ * absent or empty optional label maps to null. A `- ` or `N. ` list that directly follows a report
+ * label line is that label's value, or joins it with "; ". One nesting level folds a `- ` or `N. `
+ * sub-item at the parent text column into that item with ", ". Any other list line, a Markdown table
+ * pair, or a hidden or decorated label makes the whole block unparseable, so `raw` carries the text.
  * @param {string} response
  * @param {{ boldLabels?: boolean }} [options]
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
