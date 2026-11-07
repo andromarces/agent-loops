@@ -203,7 +203,7 @@ the flag is unchanged.
     in an error still carries it, in the envelope, `lastResult`, and the transcript. Compare it with the
     reviewer `Checks` line and act on a disagreement. A turn with no command
     carries no `testRun`.
-- Every worker and reviewer turn states the test-run rule (ADR 0044): run a
+- Every worker and reviewer turn states the test-run rule (ADR 0044, ADR 0099): run a
   targeted test file through the test slot wrapper with `--if-held`, and run a full
   suite only through the plain wrapper, or rely on the required CI checks. With
   `--if-held`, the run stays direct while all slots are free and waits for a slot
