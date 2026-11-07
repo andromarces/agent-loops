@@ -1563,8 +1563,8 @@ test("parseReportBlock reads the issue #1585 bold heading labels", () => {
   });
 });
 
-// Usefulness: verifies `**Conclusion** some text` on one line is no label, so a bold heading reads
-// only when the whole line holds the name (issue #1585).
+// Usefulness: verifies `**Conclusion** some text` is no label, so only a whole-line heading reads
+// as one (issue #1585).
 test("parseReportBlock keeps a bold heading with trailing text as text", () => {
   expect(parseReportBlock("**Conclusion** some text\nWhy: ok\nBlockers: none")).toBeNull();
   expect(
@@ -1586,8 +1586,8 @@ test("parseReportBlock keeps an indented bold heading label as text", () => {
   ).toBeNull();
 });
 
-// Usefulness: verifies a whole-line bold name outside the six, `**Summary**`, stays value text, so
-// the parser does not read any bold word as a label (issue #1585).
+// Usefulness: verifies `**Summary**`, a whole-line bold name outside the six, stays value text
+// (issue #1585). The parser does not read any bold word as a label.
 test("parseReportBlock keeps a bold non-label heading as value text", () => {
   const response = "Conclusion: done\nWhy: x\n\n**Summary**\n- item\n\nBlockers: none";
   expect(parseReportBlock(response)).toMatchObject({ why: "x; **Summary**: item" });
