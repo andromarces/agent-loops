@@ -11,20 +11,22 @@ and #915). A list under `Blockers: none` therefore reads `none; <item>`, never
 stays unparseable.
 
 One nesting level folds too:
-a sub-item line (spaces U+0020 up to the column where the parent item text starts, so two after `- ` and three after `1. `, then a `-`, one space U+0020, then the
+a sub-item line (spaces U+0020 up to the column where the parent item text starts, so two after `- ` and three after `1. `, then a `-` or `N. ` marker, one space U+0020, then the
 item) directly after a `- ` or `N. ` item joins into that item with `, `, and several
 consecutive sub-items under one parent all fold into it, so the lines `- a`,
 two spaces then `- b`, and two spaces then `- c` read `a, b, c` (issues #870 and #915). A sub-item under `1. a` takes three spaces, so `1. a` and `   - b` read `a, b`.
+
+An ordered sub-item at the parent text column folds the same way. So `- a`, two spaces then `1. b`, and two spaces then `2. c` read `a, b, c` (issue #1603). A sub-item marker need not match the parent item or its sibling sub-items.
 
 An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, like a Markdown lazy continuation, so `- a`, `  - b`, and `  more` read `a, b more` (issue #1082). An indented line never folds when it reads as a label line: after NFKC normalization, it skips every leading character that is no letter or digit and one optional number, then holds a report label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace. Any colon variant (`:`, `：`, `∶`), any other separator, and any count or kind of markup around the name then refuse (`**Verdict:** x`, `Verdict***: x`, `1 Verdict: x`, and `> Verdict： x` after two spaces are examples), so the items after it stay unparseable lists. A label word that a letter follows (`Notes about x`), or whitespace and then a letter (`Why this matters:`), is prose and folds. An indented list line there is no continuation and stays unparseable.
 
 The run ends at the first line that is not a `- ` or `N. ` item, a sub-item of the item above it, or an indented continuation line of that item, so a blank line or unindented prose between
 the label and the list breaks it. Two shapes with a blank line fold anyway.
 
-The first shape is one blank line after the label line, then a `- ` list directly under that blank
+The first shape is one blank line after the label line, then a `- ` or `N. ` list directly under that blank
 line. The items join the label value with `; `, so `Why: x`, a blank line, and `- a` read `x; a`. An
-empty `Notes:` reads `a` (issue #1348). The list takes dash items only. Two blank lines under the
-label before the list, and an ordered list there, stay unparseable.
+empty `Notes:` reads `a` (issue #1348). The list takes dash or ordered items. Two blank lines under the
+label before the list stay unparseable.
 
 The second shape has prose. A blank line follows the label line (or its folded list). One prose line
 comes next, and a `- ` list directly under it folds too. The list takes dash items only, because an
@@ -88,9 +90,9 @@ Any other list in the closing block makes the block unparseable, so the list sur
 through `raw` instead of being dropped. Examples are bullets after the reviewer `Verdict:` line,
 a list outside any label, and a bullet with no space after the marker (`-item`, `*item`). A
 separator other than one space (a tab, a nonbreaking space, two spaces) also fails, even under
-an empty label. A `*` or `+` bullet, an `N)` item, and an ordered item under a blank line or
-prose fail too. An indented bullet that is not one nested level (no parent item, a second level,
-another indent width or marker) fails as well. A bold heading line that groups a `- ` list
+an empty label. A `*` or `+` bullet, an `N)` item, and an ordered item under a plain prose line
+fail too. An indented bullet that is not one nested level (no parent item, a second level,
+another indent width) fails as well. A bold heading line that groups a `- ` list
 outside the fold rule above fails too.
 
 The parent prompt can format its own blockers as an ordered list. A child that mirrors that shape

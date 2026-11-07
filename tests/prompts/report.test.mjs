@@ -102,12 +102,13 @@ test("the closing-block rule names the required report labels", () => {
   expect(reportBlock).toMatch(/a block that lacks one does not parse/);
 });
 
-// Usefulness: verifies the closing-block rule tells the child that one level of two-space sub-items
-// folds with a comma and any other nesting blanks the block, the parser contract of issue #870, so
-// the prompt never contradicts the parser.
+// Usefulness: verifies the closing-block rule tells the child that one level of sub-items folds with a
+// comma at the parent text column and any other nesting blanks the block, the parser contract of
+// issues #870 and #1603, so the prompt never contradicts the parser.
 test("the closing-block rule states the one-level sub-item fold", () => {
+  expect(reportBlock).toMatch(/One level of sub-items folds into its parent item with a comma/);
   expect(reportBlock).toMatch(
-    /sub-items[^.]*two spaces, a hyphen, one space[^.]*folds into that item with a comma/,
+    /spaces to the parent text column, a dash or `N\. ` marker, one space/,
   );
   expect(reportBlock).toMatch(/Any other list or nesting[^.]*unparseable/);
 });
@@ -115,7 +116,7 @@ test("the closing-block rule states the one-level sub-item fold", () => {
 // Usefulness: verifies the closing-block rule states the ordered-list fold and names the bold
 // heading shape as unparseable (issue #915), so the prompt matches the parser contract.
 test("the closing-block rule states the ordered list fold and forbids bold heading lines", () => {
-  expect(reportBlock).toMatch(/ordered list[^.]*\(`1\. item`\)[^.]*joins into that label's value/);
+  expect(reportBlock).toMatch(/ordered list[^.]*\(`1\. item`\)[^.]*joins that label's value/);
   expect(reportBlock).toMatch(/bold heading line[^.]*unparseable/);
 });
 
@@ -127,14 +128,16 @@ test("the closing-block rule states the heading and list fold", () => {
   );
 });
 
-// Usefulness: verifies the closing-block rule states the one-blank-line list fold of issue #1348.
-// The prompt and the parser then agree on the shape a Claude worker wrote. No other test pins it.
+// Usefulness: verifies the closing-block rule states the one-blank-line list fold of issue #1348 and
+// the issue #1603 ordered-list extension. The prompt and the parser then agree on the observed shape.
 test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
-    /dash list under a label after one blank line[^.]*joins that label's value/,
+    /dash or ordered list under a label after one blank line[^.]*joins that label's value/,
   );
-  expect(reportBlock).toMatch(/ordered list after a blank line stays unparseable/);
-  expect(reportBlock).toMatch(/Two blank lines under a label before a dash list[^.]*unparseable/);
+  expect(reportBlock).toMatch(/ordered list under that plain prose line stays unparseable/);
+  expect(reportBlock).toMatch(
+    /two blank lines under a label before a list make the block unparseable/,
+  );
 });
 
 // Usefulness: verifies the closing-block rule states that a bold label name opening a list item
@@ -238,9 +241,9 @@ test("the closing-block rule forbids only the two observed shapes", () => {
   expect(reportBlock).not.toMatch(/label[^.]{0,60}\bon (?:its|one|the same) line\b/i);
   for (const fold of [
     /dash-plus-one-space items[^.]*directly under a label[^.]*joins into that label's value/,
-    /sub-items[^.]*folds into that item with a comma/,
+    /sub-items[^.]*folds into its parent item with a comma/,
     /indented prose line directly after an item or its sub-items folds/,
-    /dash list under a label after one blank line[^.]*joins/,
+    /dash or ordered list under a label after one blank line[^.]*joins/,
     /blank line[^.]*one plain prose line[^.]*list directly under it joins/,
   ]) {
     expect(reportBlock, fold.source).toMatch(fold);

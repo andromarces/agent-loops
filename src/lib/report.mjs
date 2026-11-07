@@ -110,9 +110,10 @@ const DECORATED_LABEL_LINE = new RegExp(
   "i",
 );
 
-// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`. When it
-// folds into a label's list run, a label name in the bold lead is item text (issue #1006).
-const BOLD_DASH_ITEM = /^\s*- \*\*/;
+// A dash or ordered item or sub-item whose text opens with a bold mark, for example
+// `- **Checks:** ran` or `  1. **Checks:** ran`. When it folds into a label's list run, a label name
+// in the bold lead is item text (issues #1006 and #1603).
+const BOLD_DASH_ITEM = /^\s*(?:- |\d+\. )\*\*/;
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
@@ -498,16 +499,15 @@ const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
 // `+` bullet, and an `N)` item stay lists that hasDroppedList rejects.
 const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 
-// The item shape that folds under a prose heading (issue #898) and after one blank line under a
-// label (issue #1348): a dash item only. An ordered item there stays a list that hasDroppedList
-// rejects.
+// The item shape that folds under a prose heading (issue #898): a dash item only. An ordered item
+// there stays a list that hasDroppedList rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
 // The one nesting level that folds into its parent item: ASCII spaces up to the column where the
-// parent item text starts (two after `- `, three after `1. `), a `-`, exactly one ASCII space, then
-// an item (issue #870). Another indent width, a tab, another marker, and a second nesting level
-// stay lists that hasDroppedList rejects.
-const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}- (?=\\S)`);
+// parent item text starts (two after `- `, three after `1. `), a `-` or `N. ` marker, exactly one
+// ASCII space, then an item (issues #870 and #1603). Another indent width, a tab, and a second
+// nesting level stay lists that hasDroppedList rejects.
+const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\. )(?=\\S)`);
 
 // A line that reads as a report label or `Verdict` line under any markup or separator: after NFKC
 // normalization it skips every leading character that is no letter or digit (quote, heading, list,
@@ -526,6 +526,20 @@ function readsAsLabelLine(line) {
   return LABEL_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
 }
 
+// A `Verdict` line under any markup or separator: after NFKC normalization it skips every leading
+// character that is no letter or digit and one optional number, then holds `Verdict`, any case,
+// optional whitespace, and a character that is no letter, digit, or whitespace. A sub-item never
+// folds it into item text, so an indented rejection cannot hide (issue #1082).
+const VERDICT_WORD_THEN_SEPARATOR = new RegExp(
+  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?Verdict\\s*[^\\p{L}\\p{N}\\s]`,
+  "iu",
+);
+
+/** True when the line reads as a `Verdict` line under any markup or separator. */
+function readsAsVerdictLine(line) {
+  return VERDICT_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
+}
+
 /** True when the line is a list item. A thematic break and an emphasis run are not lists. */
 function isListLine(line) {
   return LIST_LINE.test(line) && !THEMATIC_BREAK.test(line) && !EMPHASIS_LINE.test(line);
@@ -536,9 +550,9 @@ function isFoldableItem(line, pattern) {
   return pattern.test(line) && isListLine(line);
 }
 
-/** True when the line is a `- ` item indented to the text column of its parent item `marker`. */
+/** True when the line is a `- ` or `N. ` sub-item indented to the text column of its parent item `marker`. */
 function isFoldableSubitem(line, marker) {
-  return foldableSubitem(marker).test(line) && isListLine(line);
+  return foldableSubitem(marker).test(line) && isListLine(line) && !readsAsVerdictLine(line);
 }
 
 /**
@@ -568,7 +582,8 @@ function takeItems(lines, start, pattern) {
     const [marker] = lines[++i].match(pattern);
     const parts = [lines[i].slice(marker.length).trim()];
     while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], marker)) {
-      parts.push(lines[++i].trim().slice(2).trim());
+      const [subMarker] = lines[++i].match(foldableSubitem(marker));
+      parts.push(lines[i].slice(subMarker.length).trim());
     }
     const continuation = [];
     while (i + 1 < lines.length && isContinuationLine(lines[i + 1])) {
@@ -613,11 +628,11 @@ function isBoldProseLine(line) {
  * Folds an unbroken run of `- ` items that directly follows a report label line into that label's
  * value: markers stripped, items joined with "; ", and joined to a value the label line already
  * holds with "; " too (issues #846 and #879). Each
- * item absorbs the run of `  - ` sub-items right after it, joined to it with ", " (issue #870).
+ * item absorbs the `- ` or `N. ` sub-items right after it, joined with ", " (issue #870).
  * A prose line with a `- ` run (never an ordered run) directly under it folds into the preceding report label as
  * `<prose>: <items>` when one or more blank lines separate that prose from the label line (issue
- * #898). A `- ` run that one blank line sets apart from a label line joins that label (issue
- * #1348). Every other list shape stays in the result for hasDroppedList. Returns null when a later
+ * #898). A dash or ordered run that one blank line sets apart from a label line joins that label
+ * (issue #1348). Every other list shape stays in the result for hasDroppedList. Returns null when a later
  * line repeats a folded label, because the repeat shadows the folded list and it would drop with
  * no `raw` signal.
  * @param {string[]} lines
@@ -631,9 +646,9 @@ function foldEmptyLabelLists(lines) {
     if (LABEL_LINE.test(line)) {
       let { items, end } = takeItems(lines, i, FOLDABLE_ITEM);
       if (items.length === 0 && lines[i + 1]?.trim() === "") {
-        // One blank line then a dash run under the same label folds too (issue #1348). Two blank
-        // lines, an ordered run here, and every other list shape stay for hasDroppedList.
-        ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
+        // One blank line then a dash or ordered run under the same label folds too (issues #1348
+        // and #1603). Two blank lines and every other list shape stay for hasDroppedList.
+        ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM));
       }
       if (items.length > 0) {
         const label = line.trim();
