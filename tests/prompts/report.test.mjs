@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
-import { reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
+import { redRunRule, reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 
@@ -69,6 +69,19 @@ test("the rule lets a targeted run add the tests that import a changed source fi
   }
 });
 
+// Usefulness: verifies requirement "a targeted run may include a test file that names a changed
+// script or config file by path" (issue #1611), on both rule forms, so a worker or reviewer catches
+// a text reader that no import edge reaches before CI does; no other test pins this tier.
+test("the rule lets a targeted run add the tests that name a changed non-module file", () => {
+  const forms = [testSlotRule(), testSlotRule({ execPath: '/opt/no"de', platform: "linux" })];
+  for (const rule of forms) {
+    expect(rule).toMatch(
+      /targeted run[^.]*then[^.]*name the path or file name of a changed file that is not an importable module[^.]*at most 10 test files in total/,
+    );
+    expect(rule).toMatch(/never a whole directory/);
+  }
+});
+
 // Usefulness: verifies the rendered wrapper runs a suite command in the default shell of the host
 // (cmd on Windows, sh elsewhere), so a child that follows the rule runs its suite, not an error.
 test("the rendered wrapper runs a suite command in the default shell", async () => {
@@ -92,6 +105,19 @@ test("the rule names the platform shell that runs the quoted suite command", () 
   );
   expect(rule).toContain("bash -c '<command>'");
   expect(rule).toMatch(/absolute paths/);
+});
+
+// Usefulness: verifies the decided rule for a worker red run under a held test slot (issue #1612):
+// the run stays a targeted run, the wait is bounded below the turn, a run that did not start is
+// reported as not run with the reason, and the old source is never restored to stand in for it.
+test("the red-run rule bounds the wait and reports a run that did not start", () => {
+  const rule = redRunRule();
+  expect(rule).toMatch(/red run of one or a few test files[^.]*targeted run/);
+  expect(rule).toContain("--if-held");
+  expect(rule).toMatch(/`--wait` flag below the shell tool bound/);
+  expect(rule).toMatch(/Checks` as not run, with the reason/);
+  expect(rule).toMatch(/name it in `Blockers`/);
+  expect(rule).toMatch(/Never implement the fix first and restore the old source/);
 });
 
 // Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so

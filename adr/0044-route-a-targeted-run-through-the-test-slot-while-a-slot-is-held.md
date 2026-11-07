@@ -2,9 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md). ADR 0040 decision 6 tells a child turn to run a targeted test file directly. This ADR tells it to run the file through the wrapper with `--if-held`, which stays direct while all slots are free. Every other decision of ADR 0040 holds.
+
+Superseded by [ADR 0099: Let a targeted run include tests that read a changed non-module file by path](0099-let-a-targeted-run-include-tests-that-read-a-changed-non-module-file-by-path.md). ADR 0099 replaces decision 7: it adds the test files that name the path or file name of a changed file that is not an importable module. Decision 7's earlier tiers (the mirror test files, the test files that import a changed source file directly, and the test files of its direct importers), its 10-file bound, and every other decision remain in force.
 
 ## Date
 
@@ -56,7 +58,9 @@ Andro Marces
 - [PR #1084](https://github.com/andromarces/agent-loops/pull/1084) (decision 7, closes [issue #1078](https://github.com/andromarces/agent-loops/issues/1078))
 - [Issue #1492](https://github.com/andromarces/agent-loops/issues/1492) (decision 7, direct importer test files)
 - [PR #1493](https://github.com/andromarces/agent-loops/pull/1493) (decision 7, direct importer test files, closes issue #1492)
-- Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492)
+- [PR #1619](https://github.com/andromarces/agent-loops/pull/1619) (decision 7, text readers of a changed non-module file, closes issue #1611)
+- [Issue #1611](https://github.com/andromarces/agent-loops/issues/1611) (decision 7, test files that name a changed non-module file by path)
+- Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492), [#1611](https://github.com/andromarces/agent-loops/issues/1611)
 - Implementation:
   - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`

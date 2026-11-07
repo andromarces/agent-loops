@@ -5,6 +5,7 @@ import {
   PR_BODY_SCOPE,
   probeCopyRule,
   processRule,
+  redRunRule,
   reportBlock,
   secretFileRule,
   tempPathRule,
@@ -85,7 +86,8 @@ const ciWaitRule =
   "Never wait for CI with an unbounded command, such as `gh pr checks --watch`. The run waits for the required checks outside the worker turn with `role wait-checks`, where the run permits it. A worker that must read CI, for example for a flaky check, uses a bounded read.";
 
 // A Claude worker put the reasons under an unlabeled `Verification:` heading on a first turn.
-// The block parsed to null for the missing `Why:` label (issue #1601).
+// The block parsed to null for the missing `Why:` label (issue #1601). Later turns repeated the
+// omission in prose and bold-lead lists, so every turn carries the rule (issue #1613).
 const reasonsUnderWhyRule =
   "Put the reasons under `Why:`, never under another heading such as `Verification:`.";
 
@@ -94,14 +96,22 @@ const reasonsUnderWhyRule =
 const conclusionFirstRule =
   "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 
+// A later turn resumes the same session and gets no preamble, so it never learns that TMPDIR
+// changed (issue #1610). A worker that reused a temporary path from an earlier turn wrote to a
+// directory that the runtime had already removed.
+const laterTurnTmpdirRule =
+  "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
+
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
- * body, commit-link, staging, and closing-block rules only. `task` adds the init task block.
+ * body, commit-link, staging, temporary-path, and closing-block rules only. `task` adds the init
+ * task block. `slotOptions` overrides the Node and CLI paths of the slot rules, as `testSlotRule`
+ * accepts.
  */
-export function workerPrompt(prompt, firstTurn = false, task = null) {
+export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
     // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
-    // repeats the PR body, named push, commit-link, and staging rules. It repeats the closing block too, because a worker drifts from the block as the
+    // repeats the PR body, named push, commit-link, staging, and temporary-path rules. It repeats the closing block too, because a worker drifts from the block as the
     // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
     // (issue #1179).
     return escapeLineSeparators(`${prompt}
@@ -120,7 +130,11 @@ ${commitLinkRule}
 
 ${stageOnlyNeededPathsRule}
 
+${laterTurnTmpdirRule}
+
 ${conclusionFirstRule}
+
+${reasonsUnderWhyRule}
 
 ${reportBlock}`);
   }
@@ -132,7 +146,8 @@ Your role:
 - Implement the requested changes.
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
-- ${testSlotRule()}
+- ${testSlotRule(slotOptions)}
+- ${redRunRule(slotOptions)}
 - ${hookTestSlotRule()}
 - ${longSuiteRule}
 - ${ciWaitRule}

@@ -58,6 +58,16 @@ test("first worker turn puts the reasons under Why and not another heading", () 
   );
 });
 
+// Usefulness: acceptance #1613 item 1: a Claude worker on a later turn put the reasons in prose
+// and bold-lead lists, so the block parsed to null for the missing `Why:` label. Every later turn
+// now repeats the rule that #1601 pinned for the first turn.
+test("later worker turns put the reasons under Why and not another heading", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Put the reasons under `Why:`, never under another heading such as `Verification:`.",
+  );
+});
+
 // Usefulness: verifies a worker response written to the closing block the
 // prompt renders carries a Checks value the parser reads into report.checks, so
 // a worker reports the commands it ran and their results instead of leaving the
@@ -251,6 +261,17 @@ test("first worker turn reconciles quoted text with the inside-the-block rule", 
   expect(prompt).not.toContain("Never refer to text outside the block");
 });
 
+// Usefulness: acceptance #1610: a later worker turn resumes the same session and gets no preamble,
+// so it does not learn that TMPDIR changed. A worker that reused a temporary path from an earlier
+// turn wrote to a directory that no longer existed. The later turn states that TMPDIR names a new
+// private directory on every turn and that no earlier path is reused.
+test("later worker turns state that TMPDIR changes every turn", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.",
+  );
+});
+
 // Usefulness: verifies later worker turns carry the task text and no preamble; the session already
 // holds the instructions. The one rule they repeat is covered by the PR body test.
 test("later worker turns pass the prompt without the preamble", () => {
@@ -354,6 +375,42 @@ test("first worker turn reports a suite that cannot finish in the foreground as 
   expect(prompt).toContain("Never end the turn while a command that you started is still running.");
   expect(prompt).toContain(
     "When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.",
+  );
+});
+
+// Usefulness: verifies acceptance #1612: a held test slot made two workers skip or reorder the TDD
+// red run, and neither report recorded it. The preamble keeps the red run a targeted run through
+// the wrapper and names the report when it did not run, so the parent sees the gap.
+test("first worker turn keeps the red run and reports it as not run when it did not run", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "A red run of one or a few test files that must fail before the fix is a targeted run: run it through the wrapper with `--if-held`, and do not implement the fix before it.",
+  );
+  expect(prompt).toContain("While any slot is held, the wrapper waits for a slot.");
+  expect(prompt).toContain(
+    "If the wrapper does not start the red run, report it in `Checks` as not run, with the reason, and name it in `Blockers`.",
+  );
+  expect(prompt).toContain(
+    "Never implement the fix first and restore the old source to stand in for the red run.",
+  );
+});
+
+// Usefulness: reviewer finding on #1612: ADR 0044 keeps a direct targeted run when the wrapper
+// command cannot be quoted, so the red-run rule must follow the same fallback. Otherwise the
+// preamble requires a wrapper that this run cannot render.
+test("first worker turn keeps a direct red run when the wrapper command cannot be quoted", () => {
+  const prompt = workerPrompt("do the task", true, null, {
+    execPath: '/opt/no"de',
+    platform: "linux",
+  }).replace(/\s+/g, " ");
+  expect(prompt).toContain("Run a targeted test file directly.");
+  expect(prompt).toContain(
+    "A red run of one or a few test files that must fail before the fix is a targeted run: run it directly, holding no slot, and do not implement the fix before it.",
+  );
+  expect(prompt).not.toContain("--if-held");
+  expect(prompt).toMatch(/red run covers at most 10 test files, never a whole directory/);
+  expect(prompt).toContain(
+    "Report a red run that did not happen in `Checks` as not run, with the reason, and name it in `Blockers`.",
   );
 });
 

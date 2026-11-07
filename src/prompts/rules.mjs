@@ -172,16 +172,22 @@ export function cliCommandForms(
 const NO_LOAD_GENERATORS =
   "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
 
-// Related: issue #921, ADR 0044, issue #1078, issue #1492.
+// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611.
 // The rule also bars a load generator and a process that outlives the turn (issue #934).
 
 const TARGETED_RUN_BOUND =
-  "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, at most 10 test files in total, never a whole directory.";
+  "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, then the test files that name the path or file name of a changed file that is not an importable module, for example a script, a config file, or a template, at most 10 test files in total, never a whole directory.";
+
+// The wrapper command of a full suite. Both slot rules branch on whether it can be quoted, so the
+// direct fallback of ADR 0044 covers the red run too (ADR 0096).
+const slotCommandForms = (options) =>
+  cliCommandForms(() => 'test-slot -- "<full suite command>"', options);
 
 /**
  * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
  * A targeted run covers at most 10 files. The order is the mirror files, then the test files that
- * import a changed source file directly, then the test files of direct importers. It goes through
+ * import a changed source file directly, then the test files of direct importers, then the test
+ * files that name a changed non-module file by path. It goes through
  * the `test-slot` wrapper of this process with `--if-held`, which runs directly while all slots are
  * free. While any slot is held, the wrapper waits for a slot. Any broader run is a full suite and
  * runs only through the plain wrapper, or the required CI checks stand in for it. A path that cannot
@@ -190,12 +196,36 @@ const TARGETED_RUN_BOUND =
  * uses absolute paths.
  */
 export function testSlotRule(options) {
-  const forms = cliCommandForms(() => 'test-slot -- "<full suite command>"', options);
+  const forms = slotCommandForms(options);
   if (forms === null) {
     return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths. ${NO_LOAD_GENERATORS}`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
   return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
+}
+
+// A held test slot made two workers skip or reorder the TDD red run, and no report recorded it
+// (issue #1612). A red run of one or a few test files is a targeted run, so a held slot makes it
+// wait. The wait stays inside the turn, and a run that did not start reaches `Checks` (ADR 0096).
+// A path that cannot be quoted keeps the direct targeted run of ADR 0044's fallback.
+
+/**
+ * The TDD red-run rule of the worker first turn (issue #1612, ADR 0096). A red run of one or a few
+ * test files is a targeted run under ADR 0044, so a held slot makes it wait. The rule bounds that
+ * wait below the shell tool bound, reports a red run that did not start as not run with the reason,
+ * and bars implementing the fix first with the old source restored to stand in for the red run.
+ * When the wrapper command cannot be quoted, the red run follows the same direct fallback as
+ * `testSlotRule`: it runs directly, keeps the 10-file bound, and reports the same way.
+ */
+export function redRunRule(options) {
+  const noWrapper = slotCommandForms(options) === null;
+  const run = noWrapper
+    ? "run it directly, holding no slot, and do not implement the fix before it. A red run covers at most 10 test files, never a whole directory."
+    : "run it through the wrapper with `--if-held`, and do not implement the fix before it. While any slot is held, the wrapper waits for a slot. Pass the `--wait` flag below the shell tool bound of the harness, so the wait ends inside the turn.";
+  const report = noWrapper
+    ? "Report a red run that did not happen in `Checks` as not run, with the reason, and name it in `Blockers`."
+    : "If the wrapper does not start the red run, report it in `Checks` as not run, with the reason, and name it in `Blockers`.";
+  return `A red run of one or a few test files that must fail before the fix is a targeted run: ${run} ${report} Never implement the fix first and restore the old source to stand in for the red run.`;
 }
 
 const HOOK_TEST_COMMAND = () => 'test-slot -- "<git command>"';
