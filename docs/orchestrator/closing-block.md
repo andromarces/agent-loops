@@ -63,6 +63,10 @@ report label becomes `Conclusion`. Earlier prose stays out of the report. A bloc
 label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
 last-occurrence-wins rule.
 
+A bold-lead narration paragraph directly above the first label supplies no conclusion line. The
+nearest plain prose line above that narration becomes `Conclusion` instead (issue #1597). All
+narration lines above the block stay out of the report.
+
 A lone required label line directly above `Conclusion:`, with only blank lines between, also joins
 the block, so `**Blockers:** none` in its own paragraph before `Conclusion:` still parses (issue
 #1592). The label must appear once in the response outside a fence. A label in earlier prose, in a
