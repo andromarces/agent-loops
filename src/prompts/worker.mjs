@@ -98,8 +98,9 @@ const conclusionFirstRule =
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
  * body, commit-link, staging, and closing-block rules only. `task` adds the init task block.
+ * `slotOptions` overrides the Node and CLI paths of the slot rules, as `testSlotRule` accepts.
  */
-export function workerPrompt(prompt, firstTurn = false, task = null) {
+export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
     // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
     // repeats the PR body, named push, commit-link, and staging rules. It repeats the closing block too, because a worker drifts from the block as the
@@ -133,8 +134,8 @@ Your role:
 - Implement the requested changes.
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
-- ${testSlotRule()}
-- ${redRunRule}
+- ${testSlotRule(slotOptions)}
+- ${redRunRule(slotOptions)}
 - ${hookTestSlotRule()}
 - ${longSuiteRule}
 - ${ciWaitRule}

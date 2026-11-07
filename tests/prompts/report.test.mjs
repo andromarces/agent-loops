@@ -98,12 +98,13 @@ test("the rule names the platform shell that runs the quoted suite command", () 
 // the run stays a targeted run, the wait is bounded below the turn, a run that did not start is
 // reported as not run with the reason, and the old source is never restored to stand in for it.
 test("the red-run rule bounds the wait and reports a run that did not start", () => {
-  expect(redRunRule).toMatch(/red run of one or a few test files[^.]*targeted run/);
-  expect(redRunRule).toContain("--if-held");
-  expect(redRunRule).toMatch(/`--wait` flag below the shell tool bound/);
-  expect(redRunRule).toMatch(/Checks` as not run, with the reason/);
-  expect(redRunRule).toMatch(/name it in `Blockers`/);
-  expect(redRunRule).toMatch(/Never implement the fix first and restore the old source/);
+  const rule = redRunRule();
+  expect(rule).toMatch(/red run of one or a few test files[^.]*targeted run/);
+  expect(rule).toContain("--if-held");
+  expect(rule).toMatch(/`--wait` flag below the shell tool bound/);
+  expect(rule).toMatch(/Checks` as not run, with the reason/);
+  expect(rule).toMatch(/name it in `Blockers`/);
+  expect(rule).toMatch(/Never implement the fix first and restore the old source/);
 });
 
 // Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so

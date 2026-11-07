@@ -374,6 +374,25 @@ test("first worker turn keeps the red run and reports it as not run when it did 
   );
 });
 
+// Usefulness: reviewer finding on #1612: ADR 0044 keeps a direct targeted run when the wrapper
+// command cannot be quoted, so the red-run rule must follow the same fallback. Otherwise the
+// preamble requires a wrapper that this run cannot render.
+test("first worker turn keeps a direct red run when the wrapper command cannot be quoted", () => {
+  const prompt = workerPrompt("do the task", true, null, {
+    execPath: '/opt/no"de',
+    platform: "linux",
+  }).replace(/\s+/g, " ");
+  expect(prompt).toContain("Run a targeted test file directly.");
+  expect(prompt).toContain(
+    "A red run of one or a few test files that must fail before the fix is a targeted run: run it directly, holding no slot, and do not implement the fix before it.",
+  );
+  expect(prompt).not.toContain("--if-held");
+  expect(prompt).toMatch(/red run covers at most 10 test files, never a whole directory/);
+  expect(prompt).toContain(
+    "Report a red run that did not happen in `Checks` as not run, with the reason, and name it in `Blockers`.",
+  );
+});
+
 // Usefulness: verifies requirement "a worker starts no load generator or process that outlives the turn" (issue #934): an unguarded busy-loop script left 64 loops running after an interrupt.
 test("first worker turn bars load generators and processes that outlive the turn", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
