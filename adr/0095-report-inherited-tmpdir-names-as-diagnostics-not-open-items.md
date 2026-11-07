@@ -70,6 +70,7 @@ Andro Marces
 ## Links
 
 - [Issue #1616](https://github.com/andromarces/agent-loops/issues/1616)
+- [PR #1617](https://github.com/andromarces/agent-loops/pull/1617)
 - Related issues: #1542, #1559, #1569, #1575, #1600
 - [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md)
 - [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md)
