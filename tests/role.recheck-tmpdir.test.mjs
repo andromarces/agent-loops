@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -508,5 +508,76 @@ test("recheck-tmpdir redacts and caps its reported names", async () => {
     expect(reported).toHaveLength(20);
     expect(reported).toContain("a-probe-[redacted:PROBE_API_TOKEN]");
     expect(JSON.stringify(reported)).not.toContain("s3cr3t-value-9402");
+  });
+});
+
+// Usefulness: verifies acceptance. A held-open Windows name leaves inheritedTmpdirEntries, appears
+// in inheritedTmpdirSettled, and the probe writes and deletes nothing (issue #1600).
+test("recheck-tmpdir reports a held-open Windows name apart from the possible leftovers", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "keep");
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      platform: "win32",
+      probe: async () => "held",
+      tmpdirSettle: { boundMs: 60_000, intervalMs: 5_000 },
+    });
+
+    expect(result.payload).toEqual({
+      status: "ok",
+      lifecycle: "active",
+      inheritedTmpdirEntries: [],
+      inheritedTmpdirSettled: [name],
+    });
+    expect(await readFile(join(dir, name), "utf8")).toBe("keep");
+  });
+});
+
+// Usefulness: verifies acceptance. A Windows name that no process holds open stays a possible run
+// leftover (issue #1600).
+test("recheck-tmpdir keeps a Windows name that no process holds open", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "stays.txt";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      platform: "win32",
+      probe: async () => "free",
+    });
+
+    expect(result.payload.inheritedTmpdirEntries).toEqual([name]);
+    expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
+  });
+});
+
+// Usefulness: verifies a fail-closed path. A probe that throws keeps the name in the possible
+// leftovers and adds no settled field (issue #1600).
+test("recheck-tmpdir keeps a Windows name whose probe throws", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "a.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      platform: "win32",
+      probe: async () => {
+        throw new Error("EACCES");
+      },
+    });
+
+    expect(result.payload.inheritedTmpdirEntries).toEqual([name]);
+    expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
   });
 });

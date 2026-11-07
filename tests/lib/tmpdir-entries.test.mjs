@@ -1,10 +1,20 @@
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  open as openFile,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import {
   appearedInInheritedTmpdir,
   presentInheritedTmpdir,
+  settleInheritedTmpdirNames,
   snapshotInheritedTmpdir,
 } from "../../src/lib/tmpdir-entries.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
@@ -453,4 +463,180 @@ test("lists a replacement of the turn directory of another process without a mar
     expect(await appearedInInheritedTmpdir(before)).toContain(name);
   });
   expect(await appearedInInheritedTmpdir(before)).toContain(name);
+});
+
+// Usefulness: verifies acceptance. A Windows file that another process holds open is settled apart
+// from the possible run leftovers (issue #1600).
+test("settles a Windows file that another process holds open", async () => {
+  const held = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+  const result = await settleInheritedTmpdirNames([held, "stays.txt"], {
+    platform: "win32",
+    probe: async (name) => (name === held ? "held" : "free"),
+    entries: [held, "stays.txt"],
+  });
+  expect(result).toEqual({ leftovers: ["stays.txt"], settled: [held] });
+});
+
+// Usefulness: verifies acceptance. A Windows file that no process holds open stays a possible run
+// leftover (issue #1600).
+test("keeps a Windows file that no process holds open", async () => {
+  const name = "stays.txt";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "win32",
+      probe: async () => "free",
+      entries: [name],
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A Windows probe result that cannot settle the name keeps
+// it reported (issue #1600).
+test("keeps a Windows name whose probe cannot settle it", async () => {
+  const name = "a.tmp";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "win32",
+      probe: async () => "unknown",
+      entries: [name],
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A probe error on one name keeps that name and never
+// stops the probe of another (issue #1600).
+test("keeps a Windows name whose probe throws and settles the next", async () => {
+  const failing = "a.tmp";
+  const held = "b.tmp";
+  const result = await settleInheritedTmpdirNames([failing, held], {
+    platform: "win32",
+    probe: async (name) => {
+      if (name === failing) throw new Error("EACCES");
+      return "held";
+    },
+    entries: [failing, held],
+  });
+  expect(result).toEqual({ leftovers: [failing], settled: [held] });
+});
+
+// Usefulness: verifies a fail-closed path. A probe that reaches its bound keeps the name reported
+// (issue #1600).
+test("keeps a Windows name when the probe reaches its bound", async () => {
+  const name = "a.tmp";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "win32",
+      probe: () => new Promise(() => {}),
+      entries: [name],
+      boundMs: 5,
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A registered turn directory stays listed even when the
+// probe reports a holder (issue #1600).
+test("keeps a registered name even when the probe reports a holder", async () => {
+  const name = "registered/al-Ab1234";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "win32",
+      probe: async () => "held",
+      entries: ["al-Ab1234"],
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies the current behavior on Linux. No name is settled there (issue #1600).
+test("settles no name on Linux", async () => {
+  const name = "a.tmp";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "linux",
+      probe: async () => "held",
+      entries: [name],
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies acceptance on macOS. An orphaned SQLite shm and wal pair whose main file is
+// absent is settled (issue #1600).
+test("settles an orphaned macOS shm and wal pair", async () => {
+  const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd";
+  const names = [`${base}-shm`, `${base}-wal`];
+  expect(
+    await settleInheritedTmpdirNames(names, {
+      platform: "darwin",
+      entries: names,
+    }),
+  ).toEqual({ leftovers: [], settled: names });
+});
+
+// Usefulness: verifies a fail-closed path. A macOS pair whose main file is present stays reported
+// (issue #1600).
+test("keeps a macOS pair whose main file is present", async () => {
+  const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd";
+  const names = [`${base}-shm`, `${base}-wal`];
+  expect(
+    await settleInheritedTmpdirNames(names, {
+      platform: "darwin",
+      entries: [base, ...names],
+    }),
+  ).toEqual({ leftovers: names, settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A lone macOS wal name stays reported (issue #1600).
+test("keeps a lone macOS wal name", async () => {
+  const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd-wal";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "darwin",
+      entries: [name],
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies a fail-closed path. A macOS read that failed settles no name (issue #1600).
+test("settles no macOS name when the directory read failed", async () => {
+  const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-1234-ab12cd-wal";
+  expect(
+    await settleInheritedTmpdirNames([name], {
+      platform: "darwin",
+      entries: null,
+    }),
+  ).toEqual({ leftovers: [name], settled: [] });
+});
+
+// Usefulness: verifies the Windows probe on a real file. A read-only exclusive-share open reports
+// EBUSY while another handle holds the file, and the file stays unchanged (issue #1600).
+test.skipIf(process.platform !== "win32")(
+  "probes a held Windows file read-only and closes its handle",
+  async () => {
+    const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+    const path = join(root, name);
+    await writeFile(path, "keep");
+    const holder = await openFile(path, "r");
+    try {
+      expect(
+        await settleInheritedTmpdirNames([name], { platform: "win32", entries: [name] }),
+      ).toEqual({ leftovers: [], settled: [name] });
+    } finally {
+      await holder.close();
+    }
+    expect(await readFile(path, "utf8")).toBe("keep");
+    expect(
+      await settleInheritedTmpdirNames([name], { platform: "win32", entries: [name] }),
+    ).toEqual({ leftovers: [name], settled: [] });
+    // A leaked exclusive-share handle would refuse this removal.
+    await rm(path);
+  },
+);
+
+// Usefulness: verifies a fail-closed path. The Windows probe settles no directory (issue #1600).
+test.skipIf(process.platform !== "win32")("keeps a Windows directory", async () => {
+  const name = "a-directory";
+  await mkdir(join(root, name));
+  expect(await settleInheritedTmpdirNames([name], { platform: "win32", entries: [name] })).toEqual({
+    leftovers: [name],
+    settled: [],
+  });
 });

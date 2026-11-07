@@ -2,9 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). It replaces decision 2's single read and decision 8's single re-read after a reviewer turn. It also replaces the consequence that the re-check makes no claim about a later state.
+
+Partially superseded by [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md). It replaces decision 2's single report with the present list and the settled list.
 
 Decisions 1 and 4 to 7, decision 3's parent-only and parent-session rules, and every other consequence of ADR 0081 remain in force. [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md) replaces decision 3's non-terminal requirement.
 

@@ -325,8 +325,9 @@ test("the runtime advisory docs name the macOS path that the report follows", as
 });
 
 // Usefulness: verifies ADR 0076 records its partial supersession. It also verifies ADR 0081 links
-// PR #1564, and ADR 0082 supersedes the single read of ADR 0081 (issues #1559 and #1569). It verifies
-// ADR 0085 supersedes ADR 0081's non-terminal requirement (issue #1575).
+// PR #1564, ADR 0082 supersedes the single read of ADR 0081, and ADR 0093 supersedes its single
+// report (issues #1559, #1569, and #1600). It verifies ADR 0085 supersedes ADR 0081's non-terminal
+// requirement (issue #1575).
 test("ADR 0076, ADR 0081, ADR 0082, and ADR 0085 state the supersession and the links", async () => {
   const adr76 = await readFile(
     join(
@@ -353,10 +354,11 @@ test("ADR 0076, ADR 0081, ADR 0082, and ADR 0085 state the supersession and the 
   expect(adr81).toContain("[PR #1564](https://github.com/andromarces/agent-loops/pull/1564)");
   expect(adr81).toContain("[ADR 0082:");
   expect(adr81).toContain("[ADR 0085:");
-  expect(adr82).toMatch(/## Status\s+accepted/);
+  expect(adr82).toMatch(/## Status\s+partially-superseded/);
   expect(adr82).toContain("[Issue #1569](https://github.com/andromarces/agent-loops/issues/1569)");
   expect(adr82).toContain("[PR #1570](https://github.com/andromarces/agent-loops/pull/1570)");
   expect(adr82).toContain("[ADR 0085:");
+  expect(adr82).toContain("[ADR 0093:");
   expect(adr85).toMatch(/## Status\s+accepted/);
   expect(adr85).toContain("[Issue #1575](https://github.com/andromarces/agent-loops/issues/1575)");
   expect(adr85).toContain("[PR #1580](https://github.com/andromarces/agent-loops/pull/1580)");

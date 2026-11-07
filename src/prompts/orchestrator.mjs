@@ -437,7 +437,7 @@ const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote: ${REMOTE_
 
 // Closes a result prompt that follows a reviewer turn. The runtime read the directory again, so
 // the parent reports only the names that the read still holds (issue #1559).
-const INHERITED_TMPDIR_PRESENT_RULE = `The runtime re-read the inherited temporary directory after the reviewer turns. Carry into open only the names in inheritedTmpdirPresent, and report no other inherited temporary directory name.`;
+const INHERITED_TMPDIR_PRESENT_RULE = `The runtime re-read the inherited temporary directory after the reviewer turns. Carry into open only the names in inheritedTmpdirPresent. A name in inheritedTmpdirSettled is not a possible run leftover, and it goes into no open item.`;
 
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
 const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}
@@ -562,7 +562,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
   - Turn directories that this process created are left out, and every other name that the settle re-read still holds is listed, an al- name too.
   - A name with the prefix registered/ is the turn directory of another agent-loop process, most likely a concurrent run. The prefix is a hint, not proof: report the entry as such.
   - Every reviewer turn that read the directory before it started carries the field, a failed, halted, or canceled turn too. Report it in the finish summary under open, and do not treat it as a reason to reject.
-  - The parent re-checks the names that the reviewer turns reported before the finish summary. It reports under open only a name that the re-read still holds. The result prompt carries inheritedTmpdirPresent with the names that the re-read still holds. A failed or over-bound re-read keeps every name.
+  - The parent re-checks the names that the reviewer turns reported before the finish summary. It reports under open only a name in inheritedTmpdirPresent. The result prompt carries inheritedTmpdirPresent with the names that the re-read still holds, and inheritedTmpdirSettled with the names that a probe settled. A failed or over-bound re-read keeps every name.
   - The parent never deletes an entry that inheritedTmpdirEntries names: it reports each such entry under open and leaves removal to the user. A reviewer Notes line never makes an entry safe to delete, because another process can hold a matching name (issue #1529).
 - A reviewer envelope carries packageStoreEntries only when entries changed in the pnpm package store during the turn, such as an install that wrote to it. The field names the entries, relative to the store root, redacted like the test command output, and never their content, at most 20. It is advisory: the store is shared with other processes, so the runtime cannot attribute a change to the turn, and it does not revert one. Every reviewer turn that read the store before it started carries the field, a failed, halted, or canceled turn too. Report packageStoreEntries in the finish summary under open, and do not treat it as a reason to reject.
 - Treat an accept without a Checks line as not accepted.
@@ -623,6 +623,7 @@ export function resultPrompt({
   declaredPr = null,
   undeclaredPr = null,
   inheritedTmpdirPresent = null,
+  inheritedTmpdirSettled = null,
 }) {
   const stepsRemaining = Math.max(0, maxSteps - stepsUsed);
   const payload = {
@@ -647,6 +648,7 @@ export function resultPrompt({
     ...(declaredPr === null ? {} : { declaredPr }),
     ...(undeclaredPr === null ? {} : { undeclaredPr }),
     ...(inheritedTmpdirPresent === null ? {} : { inheritedTmpdirPresent }),
+    ...(inheritedTmpdirSettled === null ? {} : { inheritedTmpdirSettled }),
     stepsUsed,
     stepsRemaining,
   };

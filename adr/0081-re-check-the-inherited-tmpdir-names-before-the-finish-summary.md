@@ -10,6 +10,8 @@ Partially supersedes [ADR 0076: Leave out an inherited temporary directory entry
 
 Partially superseded by [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md). It replaces decision 3's requirement that the run is non-terminal.
 
+Partially superseded by [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md). It replaces decision 2's single present list with a present list and a settled list.
+
 The settle read, decision 1, decisions 4 to 7, decision 3's remaining parent-only and parent-session rules, and every other consequence of ADR 0076 and ADR 0081 remain in force.
 
 ## Date
