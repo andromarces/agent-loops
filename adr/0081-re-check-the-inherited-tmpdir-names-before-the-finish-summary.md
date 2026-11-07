@@ -10,7 +10,13 @@ Partially supersedes [ADR 0076: Leave out an inherited temporary directory entry
 
 Partially superseded by [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md). It replaces decision 3's requirement that the run is non-terminal.
 
-The settle read, decision 1, decisions 4 to 7, decision 3's remaining parent-only and parent-session rules, and every other consequence of ADR 0076 and ADR 0081 remain in force.
+Partially superseded by [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md). The superseded parts are:
+
+- The single present list of decision 2. Superseded by [ADR 0093](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md).
+- The rule of decision 2 that the re-check follows no link, for the Windows probe. Superseded by [ADR 0093](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md).
+- The rule of decision 6 that a recorded name never resolves a path. Superseded in part by [ADR 0093](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md), which resolves the path for the regular-file check and handle identity.
+
+The settle read, decision 1, and decisions 4 to 7 remain in force, except the no-path-resolution rule of decision 6. The remaining parent-only and parent-session rules of decision 3 remain in force. Every other consequence of ADR 0076 and ADR 0081 remains in force. The cap and redaction of decision 6 remain in force.
 
 ## Date
 

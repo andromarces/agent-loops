@@ -20,7 +20,7 @@ import {
   resetGate,
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
-import { presentInheritedTmpdir } from "./lib/tmpdir-entries.mjs";
+import { presentInheritedTmpdirReport } from "./lib/tmpdir-entries.mjs";
 import { parseVerdict } from "./lib/report.mjs";
 import { reportedEntryNames } from "./lib/entry-report.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
@@ -120,8 +120,14 @@ export async function runLoop(options) {
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
-    // The bound and interval of the inherited tmpdir re-check. A test injects a short wait.
+    // The bound, interval, read, and probe of the inherited tmpdir re-check. A test injects each.
     tmpdirSettle = null,
+    tmpdirRead = null,
+    tmpdirProbe = null,
+    tmpdirPlatform = null,
+    tmpdirPidAlive = null,
+    tmpdirStatFile = null,
+    tmpdirAncestors,
     onEvent = () => {},
   } = options;
 
@@ -216,6 +222,7 @@ export async function runLoop(options) {
   // continued run restores none, because its earlier turns are outside this loop.
   const reportedTmpdirNames = new Set();
   let inheritedTmpdirPresent = null;
+  let inheritedTmpdirSettled = null;
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
   // from null to a number, and only the runtime sets it. A continued run with neither flag takes
@@ -391,10 +398,20 @@ export async function runLoop(options) {
         roleName === "reviewer" &&
         typeof result.response === "string" &&
         parseVerdict(result.response) === "accept";
-      const settle = accepted ? { ...tmpdirSettle, signal } : null;
-      inheritedTmpdirPresent = reportedEntryNames(
-        await presentInheritedTmpdir([...reportedTmpdirNames], settle === null ? {} : { settle }),
-      );
+      const settle = accepted ? { ...tmpdirSettle, ...(signal ? { signal } : {}) } : null;
+      const report = await presentInheritedTmpdirReport([...reportedTmpdirNames], {
+        ...(tmpdirRead ? { read: tmpdirRead } : {}),
+        ...(tmpdirProbe ? { probe: tmpdirProbe } : {}),
+        ...(tmpdirPlatform ? { platform: tmpdirPlatform } : {}),
+        ...(tmpdirPidAlive ? { pidAlive: tmpdirPidAlive } : {}),
+        ...(tmpdirStatFile ? { statFile: tmpdirStatFile } : {}),
+        ...(tmpdirAncestors !== undefined ? { ancestors: tmpdirAncestors } : {}),
+        signal,
+        ...(settle === null ? {} : { settle }),
+      });
+      inheritedTmpdirPresent = reportedEntryNames(report.present);
+      inheritedTmpdirSettled =
+        report.settled.length === 0 ? null : reportedEntryNames(report.settled);
     }
 
     // Set whatever the turn returned: a reviewer turn that ended in a handled error
@@ -429,6 +446,7 @@ export async function runLoop(options) {
       declaredPr: newlyDeclared,
       undeclaredPr: newlyUndeclared,
       inheritedTmpdirPresent,
+      inheritedTmpdirSettled,
     });
   }
 }

@@ -21,8 +21,16 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     reads the run from the state file that init wrote, at any lifecycle, so the parent can run it
     after `finish`, and requires the stored id, as
     `extend` does. It takes no lock and writes nothing. Its envelope is
-    `{status, lifecycle, inheritedTmpdirEntries}`. A state file written before the field existed
-    contributes the names in `lastResult`, and a dispatch carries them forward.
+    `{status, lifecycle, inheritedTmpdirEntries, inheritedTmpdirSettled?}`. A state file written
+    before the field existed contributes the names in `lastResult`, and a dispatch carries them
+    forward.
+  - `inheritedTmpdirSettled` lists each name that a probe settled as no possible run leftover,
+    apart from `inheritedTmpdirEntries`. On Windows, a regular file that another process holds open
+    is settled. On macOS, a regular `-shm` and `-wal` pair is settled when its embedded pid is alive.
+    A lone member, a malformed pid, and a non-regular entry stay reported. A failed or over-bound
+    probe keeps its name in `inheritedTmpdirEntries` (issue #1600).
+  - On Windows, the probe briefly denies sharing while its handle is open. A concurrent open or
+    delete of that file can fail with `EBUSY`.
   - The re-read reports a name that still exists, one that another process created again included.
     A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
     redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
@@ -36,9 +44,10 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   - The read compares names, so such a name never resolves a path. The read lists names only,
     deletes nothing, and follows no link. Its report is redacted and capped at 20 like the envelope
     field. A child role is refused.
-  - A headless run carries the same re-read result in `inheritedTmpdirPresent` in the result prompt.
-    The runtime waits only after a reviewer accept. The parent carries into `open` only those names,
-    and a finish is never refused for a name (issue #1559).
+  - A headless run carries the same re-read result in `inheritedTmpdirPresent` in the result prompt,
+    and the settled names in `inheritedTmpdirSettled`. The runtime waits only after a reviewer
+    accept. The parent carries into `open` only the names in `inheritedTmpdirPresent`, and a finish
+    is never refused for a name (issue #1559).
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
     #1240, ADR 0069). A process registers each turn directory in the runs root with its device and

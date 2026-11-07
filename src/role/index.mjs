@@ -23,7 +23,7 @@ import { withStateLock } from "../lib/state-lock.mjs";
 import { withTimeBound } from "../lib/time-bound.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
-import { presentInheritedTmpdir } from "../lib/tmpdir-entries.mjs";
+import { presentInheritedTmpdirReport } from "../lib/tmpdir-entries.mjs";
 import { reportedEntryNames } from "../lib/entry-report.mjs";
 import {
   parseRoleArgsWithOperations,
@@ -147,18 +147,39 @@ async function abort(args) {
  * deletes nothing, and reports names only, redacted and capped. It requires the stored parent
  * session id, as `extend` does, and a child role is refused. A failed or over-bound read, and a name
  * it cannot re-check, stays listed. It polls until every checkable name is gone, or for the
- * settle bound.
+ * settle bound. A regular file that a probe settles as no possible run leftover is reported apart
+ * in `inheritedTmpdirSettled`.
  */
-async function recheckTmpdir(args, { signal, read, tmpdirSettle } = {}) {
+async function recheckTmpdir(
+  args,
+  {
+    signal,
+    read,
+    tmpdirSettle,
+    probe,
+    platform,
+    pidAlive,
+    statFile,
+    ancestors,
+    readAncestors,
+  } = {},
+) {
   rejectMisplacedFlags(args, "recheck-tmpdir");
   requireParentSessionFlag(args, "recheck-tmpdir");
   const paths = statePaths({ cwd: args.cwd });
   const state = requireState(await readState(paths.stateFile), args.cwd);
   requireStoredParentSession(args, state);
   rejectInitFlagChanges(args, state, []);
-  const present = await presentInheritedTmpdir(inheritedTmpdirNames(state), {
+  const { present, settled } = await presentInheritedTmpdirReport(inheritedTmpdirNames(state), {
     ...(read ? { read } : {}),
-    settle: { ...tmpdirSettle, signal },
+    ...(probe ? { probe } : {}),
+    ...(platform ? { platform } : {}),
+    ...(pidAlive ? { pidAlive } : {}),
+    ...(statFile ? { statFile } : {}),
+    ...(ancestors !== undefined ? { ancestors } : {}),
+    ...(readAncestors ? { readAncestors } : {}),
+    signal,
+    settle: { ...tmpdirSettle, ...(signal ? { signal } : {}) },
   });
   return {
     exitCode: 0,
@@ -166,6 +187,7 @@ async function recheckTmpdir(args, { signal, read, tmpdirSettle } = {}) {
       status: "ok",
       lifecycle: state.lifecycle,
       inheritedTmpdirEntries: reportedEntryNames(present),
+      ...(settled.length === 0 ? {} : { inheritedTmpdirSettled: reportedEntryNames(settled) }),
     },
   };
 }

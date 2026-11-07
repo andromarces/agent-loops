@@ -324,6 +324,25 @@ test("resultPrompt carries the re-read names of the inherited temporary director
   expect(prompt).toContain("Carry into open only");
 });
 
+// Usefulness: verifies that the prompt carries a settled name apart (issue #1600).
+test("resultPrompt carries the settled names apart from the re-read names", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "ok",
+      response: "done",
+      inheritedTmpdirEntries: ["stays.txt"],
+    },
+    inheritedTmpdirPresent: ["stays.txt"],
+    inheritedTmpdirSettled: ["held.tmp"],
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"inheritedTmpdirSettled"');
+  expect(prompt).toContain("held.tmp");
+  expect(prompt).toContain("not a possible run leftover");
+});
+
 // Usefulness: verifies the headless prompt no longer refuses a finish for an inherited temporary
 // directory name. The parent rule carries only the names that still exist (issue #1559).
 test("the headless prompt refuses no finish for an inherited temporary directory name", () => {

@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
@@ -509,4 +509,173 @@ test("recheck-tmpdir redacts and caps its reported names", async () => {
     expect(reported).toContain("a-probe-[redacted:PROBE_API_TOKEN]");
     expect(JSON.stringify(reported)).not.toContain("s3cr3t-value-9402");
   });
+});
+
+// Usefulness: verifies that a held Windows name moves to the settled field (issue #1600).
+test("recheck-tmpdir reports a held-open Windows name apart from the possible leftovers", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "keep");
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      platform: "win32",
+      probe: async () => "held",
+      tmpdirSettle: { boundMs: 60_000, intervalMs: 5_000 },
+    });
+
+    expect(result.payload).toEqual({
+      status: "ok",
+      lifecycle: "active",
+      inheritedTmpdirEntries: [],
+      inheritedTmpdirSettled: [name],
+    });
+    expect(await readFile(join(dir, name), "utf8")).toBe("keep");
+  });
+});
+
+// Usefulness: verifies that a free Windows name stays in the leftovers (issue #1600).
+test("recheck-tmpdir keeps a Windows name that no process holds open", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "stays.txt";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      platform: "win32",
+      probe: async () => "free",
+    });
+
+    expect(result.payload.inheritedTmpdirEntries).toEqual([name]);
+    expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
+  });
+});
+
+// Usefulness: verifies that a probe error adds no settled field (issue #1600).
+test("recheck-tmpdir keeps a Windows name whose probe throws", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "a.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      platform: "win32",
+      probe: async () => {
+        throw new Error("EACCES");
+      },
+    });
+
+    expect(result.payload.inheritedTmpdirEntries).toEqual([name]);
+    expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
+  });
+});
+
+// Usefulness: verifies that a settled name is redacted and capped (issue #1600).
+test("recheck-tmpdir redacts and caps a settled name", async () => {
+  const repo = await newStateRun();
+  vi.stubEnv("PROBE_API_TOKEN", "s3cr3t-value-9402");
+  const names = ["a-probe-s3cr3t-value-9402"];
+  for (let i = 0; i < 24; i += 1) names.push(`p${String(i).padStart(2, "0")}`);
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = names;
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+
+  const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+    read: async () => names,
+    platform: "win32",
+    probe: async () => "held",
+  });
+
+  expect(result.payload.inheritedTmpdirEntries).toEqual([]);
+  const settled = result.payload.inheritedTmpdirSettled;
+  expect(settled).toHaveLength(20);
+  expect(settled).toContain("a-probe-[redacted:PROBE_API_TOKEN]");
+  expect(JSON.stringify(settled)).not.toContain("s3cr3t-value-9402");
+});
+
+// Usefulness: verifies that a failed first read keeps every name (issue #1600).
+test("recheck-tmpdir keeps every name when the first read fails", async () => {
+  const repo = await newStateRun();
+  const names = ["a.tmp", "b.tmp"];
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = names;
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+
+  const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+    read: async () => {
+      throw new Error("EACCES");
+    },
+    platform: "win32",
+    probe: async () => "held",
+  });
+
+  expect(result.payload.inheritedTmpdirEntries).toEqual(names);
+  expect(result.payload).not.toHaveProperty("inheritedTmpdirSettled");
+});
+
+// Usefulness: verifies that a canceled probe returns the cancel result (issue #1600).
+test("recheck-tmpdir keeps every name when a probe is canceled", async () => {
+  const repo = await newStateRun();
+  await withInheritedDir(async (dir) => {
+    const name = "a.tmp";
+    const state = await readRepoState(repo);
+    state.inheritedTmpdirNames = [name];
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+    await writeFile(join(dir, name), "");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10);
+
+    const result = await recheck(repo, ["--parent-session", "parent-sess-1"], {
+      signal: controller.signal,
+      read: async () => [name],
+      platform: "win32",
+      probe: () => new Promise(() => {}),
+      tmpdirSettle: { boundMs: 60_000, intervalMs: 60_000 },
+    });
+
+    expect(result.exitCode).toBe(130);
+    expect(result.payload.error).toBe("Interrupted by SIGINT");
+    expect(existsSync(join(dir, name))).toBe(true);
+    expect((await readRepoState(repo)).inheritedTmpdirNames).toEqual([name]);
+  });
+});
+
+// Usefulness: verifies that settle.signal cancels before the ancestry bound (issue #1600).
+test("recheck-tmpdir cancels through settle.signal before the ancestry bound", async () => {
+  const repo = await newStateRun();
+  const base = "e8c59ef2-eccc-4f6d-9bc3-81f2f0ef163b-4321-ab12cd";
+  const names = [`${base}-shm`, `${base}-wal`];
+  const state = await readRepoState(repo);
+  state.inheritedTmpdirNames = names;
+  await writeState(statePaths({ cwd: repo }).stateFile, state);
+  const controller = new AbortController();
+  let release;
+  const started = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = recheck(repo, ["--parent-session", "parent-sess-1"], {
+    read: async () => names,
+    platform: "darwin",
+    readAncestors: () => {
+      release();
+      return new Promise(() => {});
+    },
+    pidAlive: () => true,
+    statFile: async () => ({ isFile: () => true }),
+    tmpdirSettle: { boundMs: 60_000, intervalMs: 60_000, signal: controller.signal },
+  });
+  await started;
+  controller.abort();
+  const result = await pending;
+  expect(result.exitCode).toBe(130);
+  expect(result.payload.error).toBe("Interrupted by SIGINT");
 });
