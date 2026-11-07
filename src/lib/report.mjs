@@ -403,9 +403,10 @@ function reportDetail(response, { boldLabels = true } = {}) {
  * the block does not parse. Each label is matched case-insensitively at line start inside the block
  * only, and the last occurrence wins. `conclusion`, `why`, and `blockers` are required, while an
  * absent or empty optional label maps to null. A `- ` or `N. ` list under a label or after one
- * blank line joins the value with "; ". One nesting level folds a `- ` or `N. ` sub-item at the
- * parent text column with ", ". Any other list line, table pair, or hidden or decorated label makes
- * the block unparseable, except a plain-prose dash list, which folds.
+ * blank line joins the value with "; ", except a blank-line ordered Verdict line. One nesting level
+ * folds a `- ` or `N. ` sub-item at the parent text column with ", ". Any other list line, table
+ * pair, or hidden or decorated label is unparseable, except a dash list under plain prose or a
+ * whole-line bold heading.
  * @param {string} response
  * @param {{ boldLabels?: boolean }} [options]
  * @returns {{ conclusion: string, why: string, blockers: string, checks: string | null, notes: string | null, deferred: string | null } | null}
@@ -522,7 +523,7 @@ function isFoldableItem(line, pattern) {
   return pattern.test(line) && isListLine(line);
 }
 
-/** True when the line is a `- ` or `N. ` sub-item indented to the text column of its parent item `marker`. */
+/** True when the line is a `- ` or `N. ` sub-item at the parent text column, unless an ordered item reads as a Verdict line. */
 function isFoldableSubitem(line, marker) {
   // An ordered sub-item that reads as a Verdict line never folds, so a rejection stays visible.
   // A dash sub-item keeps the origin/main fold.
@@ -612,7 +613,7 @@ function isBoldProseLine(line) {
  * Markers drop, and items join each other and an existing value with "; " (issues #846 and #879).
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", " (issue #870).
  * A prose line with a `- ` run directly under it folds as `<prose>: <items>` after one or more blank
- * lines (issue #898). A dash or ordered run after one blank line joins the label (issue #1348).
+ * lines (issue #898). A dash or ordered run after one blank line joins the label, unless an ordered item reads as a Verdict line (issue #1348).
  * Every other list shape stays for hasDroppedList, and a shadowing repeat returns null while dispatch keeps `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
