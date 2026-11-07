@@ -39,6 +39,14 @@ const TABLE = "| a | b |\n| --- | --- |";
 const REJECTED = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\n${TABLE}\nVerdict: reject`;
 const UNVERDICTED = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test\n${TABLE}`;
 const ACCEPT_NO_CHECKS = `Conclusion: done\nWhy: tests pass\nBlockers: none\n${TABLE}\nVerdict: accept`;
+// A table after the Verdict line still makes the report null, without adding label content.
+const AFTER_VERDICT_TABLE = `Verdict: accept\n${TABLE}`;
+const EMPTY_REQUIRED = `Conclusion: done\nWhy:\nBlockers: none\nChecks: npm test\n${AFTER_VERDICT_TABLE}`;
+const EMPTY_REQUIRED_REPAIRED =
+  "Conclusion: done\nWhy: none\nBlockers: none\nChecks: npm test\nVerdict: accept";
+const EMPTY_CHECKS = `Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks:\n${AFTER_VERDICT_TABLE}`;
+const EMPTY_CHECKS_REPAIRED =
+  "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: none\nVerdict: accept";
 const CHANGED = "Conclusion: different\nWhy: changed\nBlockers: none\nChecks: npm test";
 // A star-list finding is a list the parser rejects, but the repair must still keep its content.
 const STAR_WHY = "Conclusion: done\nWhy:\n* first\n* second\nBlockers: none\nChecks: npm test";
@@ -305,6 +313,43 @@ test("a repair cannot add the Checks line that an accept needs", async () => {
 
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(ACCEPT_NO_CHECKS);
+  expect(result.report).toBeNull();
+  expect(acceptanceFailure(result.response, result.report)).toBe("checks");
+});
+
+// Usefulness: verifies requirement "an accept after repair needs the original response to hold a
+// non-empty value for every required label" (issue #1615). An empty Why cannot become `none` and an
+// accept.
+test("a repair cannot make an accept from an empty required label", async () => {
+  const agent = scripted([EMPTY_REQUIRED, EMPTY_REQUIRED_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(EMPTY_REQUIRED);
+  expect(result.report).toBeNull();
+  expect(acceptanceFailure(result.response, result.report)).toBe("checks");
+});
+
+// Usefulness: verifies requirement "an accept after repair needs the original response to hold a
+// non-empty Checks value" (issue #1615). An empty Checks cannot become `none` and an accept.
+test("a repair cannot make an accept from an empty Checks label", async () => {
+  const agent = scripted([EMPTY_CHECKS, EMPTY_CHECKS_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(EMPTY_CHECKS);
   expect(result.report).toBeNull();
   expect(acceptanceFailure(result.response, result.report)).toBe("checks");
 });

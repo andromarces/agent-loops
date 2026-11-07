@@ -566,14 +566,16 @@ export function repairedReportMatches(
       return false;
     }
     // An accept needs the same evidence that the gate reads. A repair cannot supply a label or a
-    // Checks line that the original response left out.
+    // Checks line that the original response left out or left empty.
     if (
       repairedVerdict === "accept" &&
-      REPORT_LABELS.some(([labelKey, , optional]) => !optional && !originals.has(labelKey))
+      REPORT_LABELS.some(
+        ([labelKey, , optional]) => !optional && (originals.get(labelKey)?.length ?? 0) === 0,
+      )
     ) {
       return false;
     }
-    if (repairedVerdict === "accept" && !originals.has("checks")) {
+    if (repairedVerdict === "accept" && (originals.get("checks")?.length ?? 0) === 0) {
       return false;
     }
   }
