@@ -8,8 +8,8 @@ Partially supersedes [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-
 
 ## Supersedes
 
-- [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md) the single present list of decision 2. Replaced by the present list and the settled list.
-- [ADR 0082](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md) the single last-read report of decision 2. Replaced by the present list and the settled list.
+- The single present list of decision 2 in [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). Replaced by the present list and the settled list.
+- The single last-read report of decision 2 in [ADR 0082](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md). Replaced by the present list and the settled list.
 
 ## Date
 
