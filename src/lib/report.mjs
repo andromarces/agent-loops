@@ -230,11 +230,12 @@ export function hasClosingBlockAttempt(response) {
 /**
  * The closing block runs from the last `Conclusion:` line to the end of the response, and is null
  * without that line. A lone required label line above it, with only blank lines between, joins the
- * block (issue #1592). That label must appear once outside a fence, so a quoted or repeated label
- * stays out. The whole response is normalized first, so a bold label starts a block as its plain
- * form does. With `unlabeled`, the non-blank line before the first known label becomes
- * `Conclusion`. A bold-lead narration paragraph above it yields the nearest plain prose line
- * instead (issue #1597).
+ * block (issue #1592). That label must appear once in the response outside a fence, so a quoted or
+ * repeated label stays out. The whole response is normalized first, so a bold label starts a block
+ * as its plain form does. With `unlabeled`, a response without a `Conclusion:` label takes the
+ * non-blank line directly before the first known report label as `Conclusion`. When a bold-lead
+ * narration paragraph sits there, the nearest plain prose line above becomes `Conclusion` (issue
+ * #1597).
  * @param {string} response
  * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean }} [options]
  * @returns {string[] | null}
@@ -276,7 +277,8 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
   return block;
 }
 
-// The required labels a child can write in their own paragraph above `Conclusion:` (issue #1592).
+// The required labels a child can write in their own paragraph above `Conclusion:`, for example
+// `Blockers:` (issue #1592).
 const REQUIRED_LABEL_LINES = REPORT_LABELS.filter(([, , optional]) => !optional).map(
   ([, label]) => [label, new RegExp(`^${label}:`, "i")],
 );
