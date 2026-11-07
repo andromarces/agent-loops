@@ -83,6 +83,11 @@ const longSuiteRule =
 const ciWaitRule =
   "Never wait for CI with an unbounded command, such as `gh pr checks --watch`. The run waits for the required checks outside the worker turn with `role wait-checks`, where the run permits it. A worker that must read CI, for example for a flaky check, uses a bounded read.";
 
+// A Claude worker put the reasons under an unlabeled `Verification:` heading on a first turn, so
+// the block parsed to null for the missing `Why:` label (issue #1601).
+const reasonsUnderWhyRule =
+  "Put the reasons under `Why:`, never under another heading such as `Verification:`.";
+
 // A Claude worker opened later turns with a prose sentence and put requested values on lines of
 // their own, so the response had no `Conclusion:` line and the report parsed to null (issue #1179).
 const conclusionFirstRule =
@@ -158,6 +163,7 @@ Your role:
 - ${processRule}
 - ${secretFileRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
+- ${reasonsUnderWhyRule}
 - You do NOT decide when the loop ends.
 
 ${reportBlock}

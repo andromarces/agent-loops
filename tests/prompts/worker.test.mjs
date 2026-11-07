@@ -49,6 +49,14 @@ test("first worker turn requires the closing report block", () => {
   expect(prompt).toContain("Deferred:");
 });
 
+// Usefulness: acceptance #1601: a Claude worker put the reasons under an unlabeled `Verification:` heading, so the first-turn preamble names `Why:` as their place.
+test("first worker turn puts the reasons under Why and not another heading", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Put the reasons under `Why:`, never under another heading such as `Verification:`.",
+  );
+});
+
 // Usefulness: verifies a worker response written to the closing block the
 // prompt renders carries a Checks value the parser reads into report.checks, so
 // a worker reports the commands it ran and their results instead of leaving the
