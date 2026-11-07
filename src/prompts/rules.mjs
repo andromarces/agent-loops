@@ -173,17 +173,18 @@ const HOOK_TEST_COMMAND = () => 'test-slot -- "<git command>"';
 
 /**
  * The push and commit rule of a worker turn (issue #1602). A `pre-push` or `pre-commit` hook under
- * `core.hooksPath` or `.git/hooks` that starts a test command runs outside the test slot, so the
- * push or commit goes through the plain wrapper of this process. The wrapper names the Node binary
- * and the CLI script of this process. A path that cannot be quoted leaves a direct push.
+ * `core.hooksPath` or `.git/hooks` that starts a test command runs outside the test slot. The push
+ * or commit goes through the plain wrapper of this process. The wrapper names the Node binary and
+ * the CLI script of this process.
  */
 export function hookTestSlotRule(options) {
   const forms = cliCommandForms(HOOK_TEST_COMMAND, options);
   if (forms === null) {
+    // known-limit: a path that cannot be quoted leaves a direct push, which keeps the origin/main behavior.
     return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` directly, because this run cannot render a test slot command for its paths.`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
-  return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` through the plain test slot wrapper, so it holds a slot. Use the command for the shell that your shell tool runs, with the \`git push\` or \`git commit\` command as one quoted argument: ${commands}.`;
+  return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` through the plain test slot wrapper, so it holds a slot. Pass that \`git\` command for the shell that your shell tool runs as one quoted argument: ${commands}.`;
 }
 
 /**
