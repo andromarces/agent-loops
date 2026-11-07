@@ -342,6 +342,66 @@ test("a live child of the killed dispatch keeps the turn directory", async () =>
   expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
 }, 60_000);
 
+// Usefulness: verifies issue #1591 acceptance 1 and 2, that `abort` on a run whose dispatch was
+// killed removes the turn directory when no process of the dead child runs, and records the killed
+// turn as `interrupted` in `turns`. Not redundant with the interrupted-run test below, which needs
+// a dispatch call first and never exercises the direct `dispatched` abort.
+test("abort after a killed dispatch removes its turn directory and records the interrupted turn", async () => {
+  const { repo, turnDir, tmpRoot } = await killedDispatch();
+  expect(existsSync(turnDir)).toBe(true);
+  const before = await readRepoState(repo);
+  expect(before.lifecycle).toBe("dispatched");
+  expect(before.turns).toEqual([]);
+
+  const aborted = await laterCall(repo, tmpRoot, ["abort", "--cwd", "<repo>", "--reason", "stop"]);
+
+  expect(aborted.exitCode).toBe(0);
+  expect(aborted.payload).toMatchObject({ status: "ok", lifecycle: "aborted" });
+  expect(existsSync(turnDir)).toBe(false);
+  expect(readdirSync(tmpRoot)).toEqual([]);
+  const state = await readRepoState(repo);
+  expect(state.lifecycle).toBe("aborted");
+  expect(state.turns).toHaveLength(1);
+  expect(state.turns[0]).toMatchObject({
+    role: "worker",
+    status: "interrupted",
+    verdict: null,
+    head: null,
+  });
+}, 60_000);
+
+// Usefulness: verifies issue #1591 acceptance 1, that `abort` keeps the turn directory and warns
+// while a process of the dead child still runs, and still records the killed turn as `interrupted`.
+// Not redundant with the removal test above, which has no live child to keep the directory.
+test("abort after a killed dispatch keeps the turn directory while the dead child runs", async () => {
+  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
+  expect(processExists(childPid)).toBe(true);
+
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const aborted = await laterCall(repo, tmpRoot, [
+      "abort",
+      "--cwd",
+      "<repo>",
+      "--reason",
+      "stop",
+    ]);
+
+    expect(aborted.exitCode).toBe(0);
+    expect(aborted.payload).toMatchObject({ status: "ok", lifecycle: "aborted" });
+    const warnings = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(warnings.some((line) => line.includes("kept") && line.includes(turnDir))).toBe(true);
+    expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+    const state = await readRepoState(repo);
+    expect(state.lifecycle).toBe("aborted");
+    expect(state.turns).toHaveLength(1);
+    expect(state.turns[0]).toMatchObject({ role: "worker", status: "interrupted" });
+    expect(processExists(childPid)).toBe(true);
+  } finally {
+    errorSpy.mockRestore();
+  }
+}, 60_000);
+
 // Usefulness: verifies issue #1329 acceptance 1, that a later call on an interrupted run
 // re-checks the kept turn directory and removes it once no process of the dead child group runs.
 test("a later abort removes the turn directory kept for a dead child group", async () => {

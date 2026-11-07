@@ -509,14 +509,7 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
     // child ran, so there is no verdict and no reviewed head to record. Role
     // and time come from that turn's `lastDispatch`, because this call's
     // `--role` need not be the role that ended uncertainly (#312).
-    // The lock owner is dead, so no child of that turn writes into its turn directory (#1207).
-    await removeAbandonedTurnTmpdir(state.lastDispatch?.turnTmpdir);
-    recordTurn(
-      state,
-      state.lastDispatch?.role ?? roleName,
-      { status: "interrupted" },
-      state.lastDispatch?.at ?? new Date().toISOString(),
-    );
+    await recordUncertainTurn(state, roleName);
     await writeState(paths.stateFile, state);
     throw new RoleError(
       "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",
@@ -674,6 +667,23 @@ function withSparseCheckout(payload, sparseCheckout) {
       skipWorktree: reportedPathNames(sparseCheckout.skipWorktree),
     },
   };
+}
+
+/**
+ * Records the charged turn that a dead dispatch left unrecorded and removes the turn directory that
+ * it kept. `fallbackRole` names the role when the record holds none. The lock owner is dead, so no
+ * child of that turn writes into its turn directory (#1207). The removal keeps the directory while
+ * a process of the dead child may still run, and warns instead of throwing (ADR 0058, ADR 0063).
+ * The caller writes the state.
+ */
+export async function recordUncertainTurn(state, fallbackRole = "worker") {
+  await removeAbandonedTurnTmpdir(state.lastDispatch?.turnTmpdir);
+  recordTurn(
+    state,
+    state.lastDispatch?.role ?? fallbackRole,
+    { status: "interrupted" },
+    state.lastDispatch?.at ?? new Date().toISOString(),
+  );
 }
 
 /**

@@ -30,7 +30,7 @@ import {
   rejectInitFlagChanges,
   rejectMisplacedFlags,
 } from "./args.mjs";
-import { dispatch } from "./dispatch.mjs";
+import { dispatch, recordUncertainTurn } from "./dispatch.mjs";
 import { RoleError, printEnvelope, errorResult, writeAllSync } from "./envelope.mjs";
 import { finishRun } from "./finish.mjs";
 import { readStdin, refuseUnreadableGate, releaseWorkTreeLock, requireState } from "./state.mjs";
@@ -125,6 +125,10 @@ async function abort(args) {
     args,
     { releaseTerminalLock: true },
     async (state, paths) => {
+      // A dispatch process that died mid-turn left its charged turn unrecorded and its turn
+      // directory with no owner. The lock acquisition proved the owner is dead, so do the recovery
+      // steps of the interrupted transition before the run ends (issue #1591).
+      if (state.lifecycle === "dispatched") await recordUncertainTurn(state);
       state.lifecycle = "aborted";
       state.reason = args.reason;
       await writeState(paths.stateFile, state);
