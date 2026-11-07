@@ -84,6 +84,18 @@ test("the rendered wrapper runs a suite command in the default shell", async () 
   expect(run.all).toMatch(/v\d+\.\d+\.\d+/);
 });
 
+// Usefulness: verifies the rule names the shell that runs the quoted suite command and the Git Bash
+// form that reaches it (issue #1590). A child that reads only "the shell that your shell tool runs"
+// passes a Git Bash command to cmd.exe, and a relative interpreter path fails before any test runs.
+test("the rule names the platform shell that runs the quoted suite command", () => {
+  const rule = testSlotRule();
+  expect(rule).toMatch(
+    /quoted command in cmd\.exe on Windows and \/bin\/sh on POSIX, not in your shell tool/,
+  );
+  expect(rule).toContain("bash -c '<command>'");
+  expect(rule).toMatch(/absolute paths/);
+});
+
 // Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so
 // the worker preamble and the later-turn reminder state the label whose absence makes a report null
 // (issue #1520). The parser still requires the three labels.
