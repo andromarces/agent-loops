@@ -772,6 +772,19 @@ test("opencode refuses a plain label that spans unidentified parts", async () =>
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
 });
 
+// Usefulness: verifies a required label above Conclusion counts as a block label line, so a
+// leading `Blockers:` cut across unidentified parts still refuses the accept (issue #1592 keeps the
+// #509 guard over the wider block).
+test("opencode refuses a label above Conclusion that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent("Block"),
+    textEvent("ers: none\n\nConclusion: done\nWhy: ok\nChecks: pnpm test\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
 // Usefulness: verifies a bold label in a later unidentified part marks the turn for the fail-closed
 // rule. Origin/main returns raw text for the same stream (issue #1483).
 test("opencode marks a bold label that spans unidentified parts", async () => {

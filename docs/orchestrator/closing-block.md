@@ -63,6 +63,12 @@ report label becomes `Conclusion`. Earlier prose stays out of the report. A bloc
 label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
 last-occurrence-wins rule.
 
+A lone required label line directly above `Conclusion:`, with only blank lines between, also joins
+the block, so `**Blockers:** none` in its own paragraph before `Conclusion:` still parses (issue
+#1592). The label must appear once in the response outside a fence. A label in earlier prose, in a
+blockquote, or in a fenced code block stays out and neither starts nor extends the block, and a
+required label repeated inside the block keeps its last occurrence.
+
 A report that parses only because bold labels were normalized fails closed into `raw` when its
 OpenCode response has more than one unidentified part. The report is null in that case. A
 single-part response, and every response with only plain labels, keeps its result.
