@@ -45,6 +45,7 @@ Andro Marces
 ## Links
 
 - [Issue #1612](https://github.com/andromarces/agent-loops/issues/1612)
+- [PR #1622](https://github.com/andromarces/agent-loops/pull/1622)
 - [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)
 - [ADR 0046: Default the test slot count to one](0046-default-the-test-slot-count-to-one.md)
 - Related issues: #848, #921, #934
