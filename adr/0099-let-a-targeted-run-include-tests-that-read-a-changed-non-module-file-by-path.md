@@ -23,7 +23,7 @@ The change is material. A test that reads a changed non-module file now qualifie
 ## Decision
 
 1. **Fourth tier inside the bound.** A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, then the test files that name the path or file name of a changed file that is not an importable module, for example a script, a config file, or a template, at most 10 test files in total, never a whole directory. The first three tiers keep their order and the 10-file bound of ADR 0044 decision 3 stays.
-2. **Tracked-file content search.** A worker or reviewer finds the fourth tier with a tracked-file content search, for example `git grep -l <file name> -- <test globs>`. The search reads tracked files only. An untracked or generated test file is out of scope, as before.
+2. **Tracked-file content search.** A worker or reviewer finds the fourth tier with a tracked-file content search, for example `git grep -l <file name> -- <test globs>`. The search reads tracked files only. An untracked or generated test file is out of scope.
 3. **Prompts and docs.** `TARGETED_RUN_BOUND` in `src/prompts/rules.mjs` states the order in both `testSlotRule` forms, so every worker and reviewer prompt carries it. `docs/reference/usage.md`, `docs/orchestrator/reviewer-evidence.md`, and `adr/README.md` restate it.
 4. **Unchanged.** A broader run is a full suite and goes only through the plain test slot wrapper, or the required CI checks stand in for it. Exit code 75 stays unresolved. A run whose paths cannot be quoted keeps a direct targeted run of at most 10 files, and a broader run relies on the required CI checks.
 
