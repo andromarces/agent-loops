@@ -68,6 +68,7 @@ export async function createLinkedWorkTree({
   seed = async () => {},
   mainName = "main",
   linkedName = "linked",
+  linkedWorkTree = true,
 } = {}) {
   const template = await templateRepo();
   const base = await mkdtemp(join(tmpdir(), "linked-test-"));
@@ -76,7 +77,12 @@ export async function createLinkedWorkTree({
   await cp(template, main, { recursive: true });
   await writeFile(join(main, ".git", "info", "exclude"), `${ignore.join("\n")}\n`);
   await seed(main);
-  await execa("git", ["worktree", "add", linked, "-b", "run"], { cwd: main });
+  // A case that answers every linked read from memory needs no Git work tree there.
+  if (linkedWorkTree) {
+    await execa("git", ["worktree", "add", linked, "-b", "run"], { cwd: main });
+  } else {
+    await mkdir(linked);
+  }
   return { base, main, linked };
 }
 
