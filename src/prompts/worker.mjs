@@ -1,5 +1,6 @@
 import { escapeLineSeparators } from "./escape.mjs";
 import {
+  hookTestSlotRule,
   initTaskBlock,
   PR_BODY_SCOPE,
   probeCopyRule,
@@ -127,6 +128,7 @@ Your role:
 - Run tests, checks, and verifications to confirm correctness.
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule()}
+- ${hookTestSlotRule()}
 - ${longSuiteRule}
 - ${ciWaitRule}
 - ${unnamedHostRule({ namesHost: true })}

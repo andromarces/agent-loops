@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
+import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
 import { NAMED_TARGET, commitTargets } from "./orchestrator-helpers.mjs";
 
@@ -318,6 +319,22 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   expect(match).not.toBeNull();
   expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
   await access(match[2]);
+});
+
+// Usefulness: verifies acceptance #1602: a test suite that a repository hook starts on a worker push holds a test slot.
+test("first worker turn routes a test-running hook on a push or commit through the test slot wrapper", async () => {
+  const prompt = workerPrompt("do the task", true);
+  expect(prompt).toContain(
+    "A `pre-push` or `pre-commit` hook under `core.hooksPath` or `.git/hooks` that starts a test command runs outside the test slot.",
+  );
+  expect(prompt).toContain(
+    "Run that `git push` or `git commit` through the plain test slot wrapper, so it holds a slot.",
+  );
+  const match = prompt.match(/"([^"]+)" "([^"]+)" test-slot -- "<git command>"/);
+  expect(match).not.toBeNull();
+  expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
+  await access(match[2]);
+  expect(reviewerPrompt({ prompt: "check the fix" })).not.toContain("pre-push");
 });
 
 // Usefulness: verifies acceptance #1530: a Claude worker moved its suite to a background shell task

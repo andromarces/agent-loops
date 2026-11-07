@@ -169,6 +169,23 @@ export function testSlotRule(options) {
   return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
 }
 
+const HOOK_TEST_COMMAND = () => 'test-slot -- "<git command>"';
+
+/**
+ * The push and commit rule of a worker turn (issue #1602). A `pre-push` or `pre-commit` hook under
+ * `core.hooksPath` or `.git/hooks` that starts a test command runs outside the test slot, so the
+ * push or commit goes through the plain wrapper of this process. The wrapper names the Node binary
+ * and the CLI script of this process. A path that cannot be quoted leaves a direct push.
+ */
+export function hookTestSlotRule(options) {
+  const forms = cliCommandForms(HOOK_TEST_COMMAND, options);
+  if (forms === null) {
+    return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` directly, because this run cannot render a test slot command for its paths.`;
+  }
+  const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
+  return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` through the plain test slot wrapper, so it holds a slot. Use the command for the shell that your shell tool runs, with the \`git push\` or \`git commit\` command as one quoted argument: ${commands}.`;
+}
+
 /**
  * The init task as its own block of a first-turn preamble, with the blank line that separates it
  * from the next block. A null task gives no block, so a later turn never repeats the task.
