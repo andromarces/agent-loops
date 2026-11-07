@@ -282,11 +282,13 @@ async function readAncestorPids({ signal, timeout = ANCESTOR_READ_TIMEOUT_SECOND
   let pid = process.pid;
   for (let depth = 0; depth < 1000; depth += 1) {
     const ppid = parents.get(pid);
-    if (!Number.isInteger(ppid) || ppid <= 1 || seen.has(ppid)) break;
+    if (!Number.isInteger(ppid)) return null;
+    if (ppid <= 1) return seen;
+    if (seen.has(ppid)) return null;
     seen.add(ppid);
     pid = ppid;
   }
-  return seen;
+  return null;
 }
 
 /**
@@ -318,6 +320,7 @@ export async function presentInheritedTmpdir(names, options) {
  *   pidAlive?: (pid: number) => boolean,
  *   statFile?: (path: string) => Promise<{ isFile: () => boolean }>,
  *   ancestors?: Iterable<number> | null,
+ *   readAncestors?: (options: object) => Promise<Set<number> | null>,
  *   probeBoundMs?: number,
  *   signal?: AbortSignal,
  * }} [options]
@@ -334,6 +337,7 @@ export async function presentInheritedTmpdirReport(
     pidAlive,
     statFile,
     ancestors,
+    readAncestors = readAncestorPids,
     probeBoundMs = RE_READ_BOUND_MS,
     signal,
   } = {},
@@ -352,7 +356,7 @@ export async function presentInheritedTmpdirReport(
       ancestorPids = await withTimeBound(
         Math.max(1, boundMs),
         `inherited temporary directory ancestry read took over ${boundMs} ms`,
-        ({ stopped }) => Promise.race([readAncestorPids({ signal }), stopped]),
+        ({ stopped }) => Promise.race([readAncestors({ signal }), stopped]),
       );
     } catch (err) {
       if (err?.isCanceled) throw err;

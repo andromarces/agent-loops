@@ -888,3 +888,35 @@ test.skipIf(process.platform !== "win32")("keeps a Windows directory", async () 
     settled: [],
   });
 });
+
+// Usefulness: verifies a fail-closed path. An ancestry read that fails settles no macOS name
+// (issue #1600).
+test("settles no macOS name when the ancestry read fails", async () => {
+  expect(
+    await presentInheritedTmpdirReport([macShm, macWal], {
+      read: async () => [macShm, macWal],
+      platform: "darwin",
+      readAncestors: async () => {
+        throw new Error("EACCES");
+      },
+      pidAlive: () => true,
+      statFile: regular,
+    }),
+  ).toEqual({ present: [macShm, macWal], settled: [] });
+});
+
+// Usefulness: verifies a cancel during the ancestry read ends with the cancel identity (issue
+// #1600).
+test("a cancel during the ancestry read ends with the cancel identity", async () => {
+  await expect(
+    presentInheritedTmpdirReport([macShm, macWal], {
+      read: async () => [macShm, macWal],
+      platform: "darwin",
+      readAncestors: async () => {
+        throw Object.assign(new Error("Interrupted"), { isCanceled: true });
+      },
+      pidAlive: () => true,
+      statFile: regular,
+    }),
+  ).rejects.toMatchObject({ isCanceled: true });
+});
