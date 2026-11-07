@@ -22,8 +22,16 @@ const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
 const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
 const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 
+// A column-0 line that holds only `**Label**`, for example `**Conclusion**`, with optional trailing
+// whitespace. Only the six report labels gain this form (issue #1585).
+const BOLD_HEADING_LABEL = `\\*\\*(?:${LABEL_NAMES})\\*\\*\\s*$`;
+const BOLD_HEADING_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES})\\*\\*\\s*$`, "i");
+
 // A line that opens a known report label or a plain `Verdict` line at column 0, plain or bold.
-const KNOWN_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL})`, "i");
+const KNOWN_LABEL_LINE = new RegExp(
+  `^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL}|${BOLD_HEADING_LABEL})`,
+  "i",
+);
 
 // A line that opens a plain report label at column 0.
 const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
@@ -60,9 +68,10 @@ function fencedLines(lines) {
 }
 
 /**
- * Returns `text` with each column-0 bold report label normalized to its plain form. A bold label
- * inside a fenced code block stays text (issue #1483). With `boldLabels` false, the text is
- * unchanged, which reads a bold label as origin/main did.
+ * Returns `text` with each column-0 bold report label normalized to its plain form. The forms are
+ * `**Label:**` (issue #1483) and a line that holds only `**Label**` (issue #1585). A bold label
+ * inside a fenced code block stays text. With `boldLabels` false, the text is unchanged, which
+ * reads a bold label as origin/main did.
  * @param {string} text
  * @param {boolean} [boldLabels]
  * @returns {string}
@@ -75,12 +84,16 @@ function normalizeReportLabels(text, boldLabels = true) {
   const fenced = fencedLines(lines);
   return lines
     .map((line, index) => {
-      if (!BOLD_LABEL_LINE.test(line)) {
+      const boldHeading = BOLD_HEADING_LABEL_LINE.test(line);
+      if (!BOLD_LABEL_LINE.test(line) && !boldHeading) {
         return line;
       }
-      return isKnownLabelLine(line, fenced[index])
-        ? line.replace(BOLD_LABEL_LINE, "$1:$2")
-        : `x${line}`;
+      if (!isKnownLabelLine(line, fenced[index])) {
+        return `x${line}`;
+      }
+      return boldHeading
+        ? line.replace(BOLD_HEADING_LABEL_LINE, "$1:")
+        : line.replace(BOLD_LABEL_LINE, "$1:$2");
     })
     .join("\n");
 }

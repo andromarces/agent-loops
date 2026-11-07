@@ -832,6 +832,44 @@ test("worker dispatch keeps every field for issue #1520 comment shape B with a b
   expect(result.payload).not.toHaveProperty("reportMissingLabels");
 });
 
+// Usefulness: verifies the issue #1585 envelope carries a report and no reportMissingLabels when a
+// worker writes Conclusion and Why as bold headings with no colon. No other envelope test covers
+// this shape.
+test("worker dispatch reads the issue #1585 bold heading labels", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The worker pushed the fix and opened PR #56.",
+    "",
+    "**Conclusion**",
+    "- **PR:** open",
+    "- **Script:** ran",
+    "",
+    "**Why**",
+    "- **Red first:** the test failed before the fix",
+    "- **Tests:** the targeted file passed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "**PR:** open; **Script:** ran",
+    why: "**Red first:** the test failed before the fix; **Tests:** the targeted file passed",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
 // Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so
 // the fail-closed rule needs a bold-only parse (issue #1483).
 test("worker dispatch keeps a plain report across unidentified parts", async () => {

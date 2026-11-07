@@ -1532,6 +1532,115 @@ test("parseReportBlock does not read a bold non-label name as a label", () => {
   ).toBeNull();
 });
 
+// Usefulness: verifies the exact issue #1585 shape parses. A bold `**Conclusion**` and `**Why**`
+// heading with no colon supplies each value from the list under it, so the report is not null.
+// No other test covers a bold report label with no colon.
+test("parseReportBlock reads the issue #1585 bold heading labels", () => {
+  const response = [
+    "The worker pushed the fix and opened PR #56.",
+    "",
+    "**Conclusion**",
+    "- **PR:** open",
+    "- **Script:** ran",
+    "",
+    "**Why**",
+    "- **Red first:** the test failed before the fix",
+    "- **Tests:** the targeted file passed",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "**PR:** open; **Script:** ran",
+    why: "**Red first:** the test failed before the fix; **Tests:** the targeted file passed",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies `**Conclusion** some text` on one line is no label, so a bold heading reads
+// only when the whole line holds the name (issue #1585).
+test("parseReportBlock keeps a bold heading with trailing text as text", () => {
+  expect(parseReportBlock("**Conclusion** some text\nWhy: ok\nBlockers: none")).toBeNull();
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n**Notes** some text"),
+  ).toMatchObject({ notes: null });
+});
+
+// Usefulness: verifies an indented `**Notes**` line is no heading label. A sub-item keeps the bold
+// text in its value, and an indented heading never owns a following line (issue #1585).
+test("parseReportBlock keeps an indented bold heading label as text", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- first\n  - **Notes**\nBlockers: none"),
+  ).toMatchObject({ why: "first, **Notes**" });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n  **Notes**\n  sample text"),
+  ).toMatchObject({ notes: null });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n  **Notes**\n- item"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a whole-line bold name outside the six, `**Summary**`, stays value text, so
+// the parser does not read any bold word as a label (issue #1585).
+test("parseReportBlock keeps a bold non-label heading as value text", () => {
+  const response = "Conclusion: done\nWhy: x\n\n**Summary**\n- item\n\nBlockers: none";
+  expect(parseReportBlock(response)).toMatchObject({ why: "x; **Summary**: item" });
+});
+
+// Usefulness: verifies the issue #1585 shape parses with CRLF line endings, so a Windows worker
+// report yields a report (issue #1585).
+test("parseReportBlock reads the issue #1585 shape with CRLF line endings", () => {
+  const response = [
+    "The worker pushed the fix.",
+    "",
+    "**Conclusion**",
+    "- **PR:** open",
+    "",
+    "**Why**",
+    "- **Tests:** passed",
+    "",
+    "Blockers: none",
+    "Checks: pnpm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\r\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "**PR:** open",
+    why: "**Tests:** passed",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies a `**Conclusion**` heading inside a fenced code block stays text, so the
+// real Conclusion still starts the block (issue #1585).
+test("parseReportBlock keeps a bold heading label inside a fenced code block as text", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "```",
+    "**Conclusion**",
+    "```",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies the fail-closed helper is true only when the report needs bold labels. A
 // plain report never fails closed for a multi-part turn (issue #1483).
 test("parsesOnlyWithBoldLabels is true only for a bold-only report", () => {

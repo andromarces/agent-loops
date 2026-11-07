@@ -55,6 +55,9 @@ A column-0 label line whose name and colon sit inside `**...**` is that label, f
 stays text. `**Blockers**:` with the colon outside the bold still makes the block unparseable.
 A bold label inside a fenced code block stays text.
 
+A column-0 line that holds only `**Label**`, with no colon and no other text, is that label too
+(issue #1585). The lines under it supply its value as they do for the plain form.
+
 When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
 report label becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
 label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
