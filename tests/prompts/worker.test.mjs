@@ -360,14 +360,12 @@ test("first worker turn tells the worker to remove temporary files it created ou
   );
 });
 
-// Usefulness: verifies acceptance #1249 — the worker is told to build a temporary path from
-// TMPDIR, TEMP, or TMP and never write a literal system temporary path, because a literal `/tmp`
-// path lands in the inherited directory that the runtime does not remove. workerPrompt takes no
-// adapter argument and every adapter receives its output unchanged, so one build covers them all.
+// Usefulness: verifies acceptance #1596, where the worker preamble forbids a literal `/tmp` path even when TMPDIR points elsewhere, because another run can hold the name.
+// workerPrompt takes no adapter argument and every adapter receives its output unchanged, so one build covers them all.
 test("first worker turn bars a literal path to the system temporary directory", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory, because another run can hold the same name. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
 });
 
