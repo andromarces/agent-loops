@@ -12,6 +12,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   replacement of the turn directory, is listed. Every other entry that the settle re-read still
   holds is listed, an `al-` name too; an entry that the re-read no longer holds is left out, and
   the reads establish no owner (issue #1542).
+  - On macOS the report covers the inherited directory under `/var/folders`, not `/tmp` or
+    `/private/tmp`.
   - The runtime keeps the names that the reviewer turns of the run reported, one entry per name.
     Before the finish summary, run
     `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
