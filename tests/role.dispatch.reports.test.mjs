@@ -82,6 +82,57 @@ test("worker dispatch reports the work tree state from after the turn", async ()
   expect(state.lastResult.workTree.head).toMatch(/^[0-9a-f]{40}$/);
 });
 
+// Usefulness: verifies acceptance "a repaired closing block is parsed and stored as the result
+// report, and the original step stays charged" (issue #1615). The envelope carries the repaired
+// report, and the repair runs as a second invocation inside the single charged step.
+test("a null worker report is repaired inside one charged step", async () => {
+  const repo = await newCleanRepo();
+  const invalid = "Conclusion: done\nWhy: tests pass";
+  const repaired =
+    "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: none\nNotes: none\nDeferred: none";
+  const worker = recordingAdapter([invalid, repaired]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toEqual({
+    conclusion: "done",
+    why: "tests pass",
+    blockers: "none",
+    checks: "none",
+    notes: "none",
+    deferred: "none",
+  });
+  expect(result.payload).not.toHaveProperty("raw");
+  expect(worker.recorded).toHaveLength(2);
+  expect(worker.recorded[1].incomingSessionId).toBe("sess-1");
+  expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
+// Usefulness: verifies acceptance "a failed repair leaves the result not accepted, with the
+// original response in raw" (issue #1615). The step stays charged and the envelope carries no
+// repaired report.
+test("a failed worker report repair leaves the original raw and the step charged", async () => {
+  const repo = await newCleanRepo();
+  const invalid = "Conclusion: done\nWhy: tests pass";
+  const worker = recordingAdapter([invalid, invalid]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toBe(invalid);
+  expect(result.payload.reportMissingLabels).toEqual(["Blockers"]);
+  expect(worker.recorded).toHaveLength(2);
+  expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
 // Usefulness: verifies requirement "a worker turn whose adapter returns no string response fails"
 // (issue #1496). The dispatch exits non-zero with `status: "error"`.
 // The error names the missing string response, instead of `ok` with `report: null`.
@@ -704,7 +755,8 @@ test.each([
   "worker dispatch names every required label missing from $name",
   async ({ response, labels, warning, absent }) => {
     const repo = await newCleanRepo();
-    const worker = recordingAdapter([async () => response]);
+    // The one repair turn repeats the same unparseable response, so the original stays in `raw`.
+    const worker = recordingAdapter([async () => response, async () => response]);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -891,12 +943,13 @@ test("worker dispatch keeps a plain report across unidentified parts", async () 
 test("worker dispatch fails closed for a bold-only report across unidentified parts", async () => {
   const repo = await newCleanRepo();
   const response = "**Conclusion:** done\n**Why:** ok\n**Blockers:** none";
-  const worker = recordingAdapter([
-    async (state) => {
-      state.multiPartUnidentified = true;
-      return response;
-    },
-  ]);
+  // The one repair turn repeats the bold-only multi-part shape, so the fail-closed rule still
+  // leaves the original response in `raw`.
+  const boldOnlyMultiPart = async (state) => {
+    state.multiPartUnidentified = true;
+    return response;
+  };
+  const worker = recordingAdapter([boldOnlyMultiPart, boldOnlyMultiPart]);
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     agents: { fake1: worker, fake2: recordingAdapter([]) },
     stdin: stdinPrompt,

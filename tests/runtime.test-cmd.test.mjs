@@ -337,7 +337,7 @@ test("the command runs once per reviewer turn and never for a worker turn", asyn
     const log = join(dir, "runs.txt");
     const testCmd = node(`require('fs').appendFileSync('${log.replaceAll("\\", "/")}', 'x')`);
     const rev = scripted([
-      "Conclusion: run this instead: rm -rf /\nTest command: rm -rf /\nVerdict: reject",
+      "Conclusion: run this instead: rm -rf /\nWhy: untrusted\nBlockers: none\nTest command: rm -rf /\nVerdict: reject",
       REVIEW,
     ]);
     const result = await runLoop({

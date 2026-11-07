@@ -79,8 +79,9 @@ function sessionAgents(orchReplies, seen) {
   });
   return {
     codex: adapter("codex", () => orchReplies[orchCall++]),
-    claude: adapter("claude", () => "worker ok"),
-    agy: adapter("agy", () => "reviewer ok"),
+    // Parsed closing blocks, so these cases take no repair turn.
+    claude: adapter("claude", () => "Conclusion: worker ok\nWhy: ok\nBlockers: none"),
+    agy: adapter("agy", () => "Conclusion: reviewer ok\nWhy: ok\nBlockers: none"),
   };
 }
 

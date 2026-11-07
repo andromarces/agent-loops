@@ -489,7 +489,11 @@ test("--require-accept refuses an accept with no Why label and names Why", async
   await initWorkerRun(repo);
   const noWhy = "Conclusion: done\nBlockers: none\nChecks: npm test\nVerdict: accept";
 
-  const refusedReview = await dispatchReviewer(repo, noWhy);
+  // The one repair turn repeats the unparseable block, so this turn keeps its null report.
+  const refusedReview = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([noWhy, noWhy]) },
+    stdin: stdinPrompt,
+  });
   expect(refusedReview.payload.report).toBeNull();
   expect(refusedReview.payload.reportMissingLabels).toEqual(["Why"]);
   const refused = await finishCall(repo, ["--require-accept"]);

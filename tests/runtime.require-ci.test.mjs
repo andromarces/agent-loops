@@ -629,7 +629,11 @@ test("following a --require-ci refusal prompt reaches exit 0", async () => {
     // The gate refusal: the prompt names a worker turn, and the reviewer turn
     // after it re-establishes the reviewed state the gate reads.
     const head = CLEAN_REPO_HEAD;
-    const gateWork = scripted(["worker changed", "worker pushed the change"]);
+    // A parsed closing block, so each reply is one worker turn and `recorded.length` counts turns.
+    const gateWork = scripted([
+      "Conclusion: worker changed\nWhy: ok\nBlockers: none",
+      "Conclusion: worker pushed the change\nWhy: ok\nBlockers: none",
+    ]);
     const gateOrch = scripted([
       JSON.stringify({ action: "run_worker", prompt: "work" }),
       JSON.stringify({ action: "run_reviewer", prompt: "review" }),
