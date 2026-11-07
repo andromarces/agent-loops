@@ -22,8 +22,6 @@ Reference sections list below names each file and when to read it.
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
-- `agent-loop role recheck-tmpdir` reads this run's state and the inherited temporary
-  directory. It changes nothing, so it is a status read that the role rule allows.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
@@ -322,26 +320,24 @@ Apply these parent rules:
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn. One example is a probe directory that the
   reviewer created there. The field names the entries, redacted like the test command output, and
-  never their content, at most 20. It is advisory: the directory is shared with other processes.
-- The runtime cannot attribute an entry to the turn, and it does not delete one. Turn directories
-  that this process created are left out, and every other name that the settle re-read still holds
-  is listed, an `al-` name too. Every reviewer turn that read the directory before it started
-  carries the field, a failed, halted, or canceled turn too. Report it in the finish summary under
-  `open`, and do not treat it as a reason to reject (issue #1024). Field rules:
+  never their content, at most 20. It is a diagnostic: the directory is shared with other
+  processes, the runtime cannot attribute an entry to the turn, and it does not delete one. The
+  runtime reads the directory once after the turn, with no re-read and no wait. The field creates
+  no `open` item by itself, and it never refuses a finish (issue #1616, ADR 0095). Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
+  - Turn directories that this process created are left out, and every other name of that one
+    read is listed, an `al-` name too.
   - A name with the prefix `registered/` is the turn directory of another agent-loop process,
-    most likely a concurrent run. The prefix is a hint, not proof. The parent never deletes an
-    entry that `inheritedTmpdirEntries` names: it reports each such entry under `open` and leaves
-    removal to the user. A reviewer `Notes` line never makes an entry safe to delete, because
-    another process can hold a matching name (issue #1529). The runtime cannot attribute an entry
-    to a turn, so the parent cannot prove ownership.
-  - The parent re-checks the names that the reviewer turns reported before the finish summary. It
-    reports under `open` only a name in `inheritedTmpdirEntries`. Run
-    `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. A
-    wait of up to 3 minutes ends the re-check.
-  - A failed or over-bound read keeps every name. So does a name that the read cannot check. The
-    re-read deletes nothing. A headless run carries the same names in `inheritedTmpdirPresent` in
-    the result prompt.
+    most likely a concurrent run. The prefix is a hint, not proof, and it needs no action by
+    itself.
+  - An entry that a turn explicitly reports as its own leftover stays actionable: report it under
+    `open` and name the turn report. A runtime cleanup failure appears only in the runtime warning,
+    which names the directory to delete by hand: the warning goes to the operator, and the parent
+    adds no `open` item for it.
+  - Every reviewer turn that read the directory before it started carries the field, a failed,
+    halted, or canceled turn too. The parent never deletes an entry that `inheritedTmpdirEntries`
+    names: it leaves removal to the user, and a reviewer `Notes` line never makes an entry safe to
+    delete, because another process can hold a matching name (issue #1529).
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish

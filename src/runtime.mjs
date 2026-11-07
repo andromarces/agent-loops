@@ -20,9 +20,6 @@ import {
   resetGate,
 } from "./lib/gate.mjs";
 import { withMutationCheck } from "./lib/snapshot.mjs";
-import { presentInheritedTmpdirReport } from "./lib/tmpdir-entries.mjs";
-import { parseVerdict } from "./lib/report.mjs";
-import { reportedEntryNames } from "./lib/entry-report.mjs";
 import { resolveWorkerPr } from "./lib/worker-pr.mjs";
 import { invoke, runChild } from "./child-turn.mjs";
 import {
@@ -120,14 +117,6 @@ export async function runLoop(options) {
     onSessionAssigned,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
-    // The bound, interval, read, and probe of the inherited tmpdir re-check. A test injects each.
-    tmpdirSettle = null,
-    tmpdirRead = null,
-    tmpdirProbe = null,
-    tmpdirPlatform = null,
-    tmpdirPidAlive = null,
-    tmpdirStatFile = null,
-    tmpdirAncestors,
     onEvent = () => {},
   } = options;
 
@@ -217,12 +206,6 @@ export async function runLoop(options) {
   // against the older head (#293).
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
-  // The inherited temporary directory names that reviewer turns of this loop reported. A later read
-  // filters them, and the result prompt carries only the names that still exist (issue #1559). A
-  // continued run restores none, because its earlier turns are outside this loop.
-  const reportedTmpdirNames = new Set();
-  let inheritedTmpdirPresent = null;
-  let inheritedTmpdirSettled = null;
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
   // from null to a number, and only the runtime sets it. A continued run with neither flag takes
@@ -388,32 +371,6 @@ export async function runLoop(options) {
     }
     onEvent({ type: "result", role: roleName, result, stepsUsed });
 
-    if (roleName === "reviewer" && Array.isArray(result.inheritedTmpdirEntries)) {
-      for (const name of result.inheritedTmpdirEntries) reportedTmpdirNames.add(name);
-    }
-    if (reportedTmpdirNames.size > 0) {
-      // Only an accept can lead to a finish, so only that reviewer turn waits for a transient name
-      // before the result prompt (issue #1569). Every other turn keeps the single read.
-      const accepted =
-        roleName === "reviewer" &&
-        typeof result.response === "string" &&
-        parseVerdict(result.response) === "accept";
-      const settle = accepted ? { ...tmpdirSettle, ...(signal ? { signal } : {}) } : null;
-      const report = await presentInheritedTmpdirReport([...reportedTmpdirNames], {
-        ...(tmpdirRead ? { read: tmpdirRead } : {}),
-        ...(tmpdirProbe ? { probe: tmpdirProbe } : {}),
-        ...(tmpdirPlatform ? { platform: tmpdirPlatform } : {}),
-        ...(tmpdirPidAlive ? { pidAlive: tmpdirPidAlive } : {}),
-        ...(tmpdirStatFile ? { statFile: tmpdirStatFile } : {}),
-        ...(tmpdirAncestors !== undefined ? { ancestors: tmpdirAncestors } : {}),
-        signal,
-        ...(settle === null ? {} : { settle }),
-      });
-      inheritedTmpdirPresent = reportedEntryNames(report.present);
-      inheritedTmpdirSettled =
-        report.settled.length === 0 ? null : reportedEntryNames(report.settled);
-    }
-
     // Set whatever the turn returned: a reviewer turn that ended in a handled error
     // is still the report a `review-only` finish records (#337). The replay of a
     // continued run applies the same transition (#393).
@@ -445,8 +402,6 @@ export async function runLoop(options) {
       maxSteps,
       declaredPr: newlyDeclared,
       undeclaredPr: newlyUndeclared,
-      inheritedTmpdirPresent,
-      inheritedTmpdirSettled,
     });
   }
 }

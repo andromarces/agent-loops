@@ -2,15 +2,21 @@
 
 ## Status
 
-partially-superseded
+superseded
 
-Partially supersedes [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). It replaces decision 2's single read and decision 8's single re-read after a reviewer turn. It also replaces the consequence that the re-check makes no claim about a later state.
+Partially supersedes [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). It replaced decision 2's single read and decision 8's single re-read after a reviewer turn. It also replaced the consequence that the re-check makes no claim about a later state.
 
-Partially superseded by [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md). The superseded part is:
+Partially superseded by [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md). The superseded part was:
 
-- The single last-read report of decision 2. Superseded by [ADR 0093](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md).
+- The single last-read report of decision 2.
 
-Decisions 1 and 4 to 7, decision 3's parent-only and parent-session rules, and every other consequence of ADR 0081 remain in force. [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md) replaces decision 3's non-terminal requirement.
+[ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md) replaced decision 3's non-terminal requirement.
+
+Superseded by [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md):
+
+- Decisions 1 to 9 and every consequence. The poll, the 3-minute wait, the fail-closed rules, and the headless wait are removed.
+
+No decision remains in force.
 
 ## Date
 
