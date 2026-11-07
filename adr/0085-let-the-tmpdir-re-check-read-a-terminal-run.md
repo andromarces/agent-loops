@@ -2,11 +2,17 @@
 
 ## Status
 
-accepted
+superseded
 
-Partially supersedes [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). It replaces decision 3's requirement that the command reads a non-terminal run. The parent-only rule, the stored parent session id requirement, and the refusal of a child role remain in force.
+Partially supersedes [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). It replaced decision 3's requirement that the command reads a non-terminal run.
 
-It restates the part of [ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md) that named that decision in force. Every decision of ADR 0082 remains in force.
+It restated the part of [ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md) that named that decision in force.
+
+Superseded by [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md):
+
+- Decisions 1 to 3 and every consequence. The command that this ADR adjusts is removed.
+
+No decision remains in force.
 
 ## Date
 

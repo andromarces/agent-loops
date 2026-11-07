@@ -5,76 +5,43 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory during the turn, such as a probe directory that the reviewer
   created there. The field names the entries, redacted like the test command output (ADR 0017),
-  and never their content, at most 20. It is advisory: the directory is shared with other
-  processes, so the runtime cannot attribute an entry to the turn, and it does not delete one.
+  and never their content, at most 20. It is a diagnostic: the directory is shared with other
+  processes, the runtime cannot attribute an entry to the turn, and it does not delete one.
   Only the turn directories that this process created, matched by exact name, are left out, and
   only until the removal ends: a directory that the removal refused or failed on, such as a
-  replacement of the turn directory, is listed. Every other entry that the settle re-read still
-  holds is listed, an `al-` name too; an entry that the re-read no longer holds is left out, and
-  the reads establish no owner (issue #1542).
+  replacement of the turn directory, is listed. Every other entry of the one post-turn read is
+  listed, an `al-` name too. The runtime reads the directory once after the last child call of the
+  dispatch, with no re-read and no wait. The field creates no `open` item by itself, and it never
+  refuses a finish (issue #1616, ADR 0095).
   - On macOS the usual inherited directory is under `/var/folders` when `TMPDIR` is set.
     The report follows `os.tmpdir()`, the inherited directory, whatever path it names. It
     covers `/tmp` when `TMPDIR`, `TEMP`, and `TMP` are unset.
-  - The runtime keeps the names that the reviewer turns of the run reported, one entry per name.
-    Before the finish summary, run
-    `agent-loop role recheck-tmpdir --cwd "<work tree>" --parent-session "<parent session id>"`. It
-    reads the run from the state file that init wrote, at any lifecycle, so the parent can run it
-    after `finish`, and requires the stored id, as
-    `extend` does. It takes no lock and writes nothing. Its envelope is
-    `{status, lifecycle, inheritedTmpdirEntries, inheritedTmpdirSettled?}`. A state file written
-    before the field existed contributes the names in `lastResult`, and a dispatch carries them
-    forward.
-  - `inheritedTmpdirSettled` lists each name that a probe settled as no possible run leftover,
-    apart from `inheritedTmpdirEntries`. On Windows, a regular file that another process holds open
-    is settled. On macOS, a regular `-shm` and `-wal` pair is settled when its embedded pid is alive.
-    A lone member, a malformed pid, and a non-regular entry stay reported. A failed or over-bound
-    probe keeps its name in `inheritedTmpdirEntries` (issue #1600).
-  - On Windows, the probe briefly denies sharing while its handle is open. A concurrent open or
-    delete of that file can fail with `EBUSY`.
-  - The re-read reports a name that still exists, one that another process created again included.
-    A failed or over-bound read keeps every recorded name. So does a name that it cannot re-check: a
-    redacted name, one with a path separator, `..`, and a Windows drive, backslash, or UNC form.
-  - The re-check polls every 2 seconds for up to 3 minutes, starting the bound after the run state
-    read. The final read starts one read bound
-    early, so every read ends by the bound. It returns at once when every checkable name is gone,
-    and reports the final read otherwise. A failed first read keeps every name and ends the wait,
-    and a later failed poll keeps the last successful read. Every read checks every recorded name,
-    including a name created again, and the report is the last read. A cancel ends the sleep or an
-    in-flight read at once.
-  - The read compares names, so such a name never resolves a path. The read lists names only,
-    deletes nothing, and follows no link. Its report is redacted and capped at 20 like the envelope
-    field. A child role is refused.
-  - A headless run carries the same re-read result in `inheritedTmpdirPresent` in the result prompt,
-    and the settled names in `inheritedTmpdirSettled`. The runtime waits only after a reviewer
-    accept. The parent carries into `open` only the names in `inheritedTmpdirPresent`, and a finish
-    is never refused for a name (issue #1559).
+  - An entry that a turn explicitly reports as its own leftover stays actionable: report it under
+    `open` and name the turn report. A runtime cleanup failure stays actionable: `removeTurnTmpdir`
+    warns with the directory that it did not remove and says to delete it by hand. The warning
+    names the only action, and the user handles it. The runtime adds no envelope field for it.
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234` (issue
     #1240, ADR 0069). A process registers each turn directory in the runs root with its device and
     inode, and the entry is marked only while it is still that directory. No entry name can hold
     `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
-    own, so the prefix is a hint and never proof: the entry stays listed, and the parent reports it
-    under `open` as such.
+    own, so the prefix is a hint and never proof: the entry stays listed, and the parent creates no
+    item for it by itself.
   - The runtime cannot attribute an entry to a turn, so the parent cannot prove ownership. The
-    parent never deletes an entry that `inheritedTmpdirEntries` names: it reports each such entry
-    under `open` and leaves removal to the user. A reviewer `Notes` line never makes an entry safe
-    to delete, because another process can hold a matching name (issue #1529). The directory is
-    shared with the user and with other processes.
-  - The runtime reads the directory after the last
-    child call of the dispatch, a task-only turn in a replacement conversation included. It reads
-    the directory again after a short settle and keeps only the names that the second read still
-    holds. A name that is gone by then needs no `open` item (issue #1542, ADR 0076).
-    - Every reviewer turn that read the directory before it started carries the field. The turns
-      are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
-      canceled turn.
-    - The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
-      interrupted dispatch. A headless run also emits an `inherited-tmpdir` event with `fatal: true`
-      for a fatal error. The transcript keeps that event.
+    parent deletes no entry that `inheritedTmpdirEntries` names, and removal stays with the user. A
+    `Notes` line from a reviewer never makes an entry safe to delete, because another process can
+    hold a matching name (issue #1529). The directory is shared with the user and with other
+    processes.
+  - Every reviewer turn that read the directory before it started carries the field. The turns
+    are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
+    canceled turn.
+  - The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
+    interrupted dispatch. A headless run also emits an `inherited-tmpdir` event with `fatal: true`
+    for a fatal error. The transcript keeps that event.
   - A turn that cannot carry it is one whose process ended
     without a throw, for example a crash or a kill, because the before-read lives in memory, and
     one whose before-read failed. A run that the next call marks `interrupted` after such an end
-    has none. Report it in the finish summary under `open`, and do not treat it as a reason to
-    reject (issue #1024).
+    has none.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that `node_modules/.modules.yaml` of the work tree records as `storeDir`.
   The field means that store changed, whoever changed it. It never claims that the reviewer's

@@ -96,7 +96,6 @@ function initialState(args) {
     // Marks a history that this version recorded from the run's first turn. A state written before
     // `turns` existed lacks the mark, so it never refunds a refusal (issue #1565).
     turnsComplete: true,
-    inheritedTmpdirNames: [],
   };
 }
 
@@ -438,36 +437,11 @@ function refundModelRefusalStep(state, roleName) {
 async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
   state.lifecycle = lifecycle;
   const at = new Date().toISOString();
-  carryLegacyInheritedTmpdirNames(state);
   state.lastResult = { ...result, at };
   recordTurn(state, roleName, result, at);
-  recordInheritedTmpdirNames(state, roleName, result);
   recordRoleSession(state.roles[roleName], role);
   await writeState(stateFile, state);
   onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
-}
-
-/**
- * Moves the names that a legacy `lastResult` holds into `inheritedTmpdirNames` before a new result
- * replaces that field. A state file written before the field existed otherwise loses them.
- */
-function carryLegacyInheritedTmpdirNames(state) {
-  const legacy = state.lastResult?.inheritedTmpdirEntries;
-  if (!Array.isArray(legacy) || legacy.length === 0) return;
-  const held = Array.isArray(state.inheritedTmpdirNames) ? state.inheritedTmpdirNames : [];
-  state.inheritedTmpdirNames = [...new Set([...held, ...legacy])];
-}
-
-/**
- * Keeps the inherited temporary directory names that reviewer turns reported, so the parent can
- * re-check them before the finish summary. A name is kept once, and the re-check caps its report.
- */
-function recordInheritedTmpdirNames(state, roleName, result) {
-  if (roleName !== "reviewer") return;
-  const names = result.inheritedTmpdirEntries;
-  if (!Array.isArray(names) || names.length === 0) return;
-  const held = Array.isArray(state.inheritedTmpdirNames) ? state.inheritedTmpdirNames : [];
-  state.inheritedTmpdirNames = [...new Set([...held, ...names])];
 }
 
 /**

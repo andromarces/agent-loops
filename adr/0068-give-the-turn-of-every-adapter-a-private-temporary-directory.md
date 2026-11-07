@@ -14,6 +14,8 @@ Superseded by [ADR 0076: Leave out an inherited temporary directory entry that t
 
 - The all-entries rule, as restated by ADR 0069 decision 2: ADR 0076 leaves out an entry that a second read after a short settle no longer holds. A still-existing entry stays listed, and a record cannot hide it.
 
+[ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md) supersedes ADR 0076 and removes the settle re-read. The one post-turn read lists every entry that appeared, except the turn directories of this process, as a diagnostic.
+
 Decisions 1 to 3 remain in force: every adapter, one place, and recovery.
 
 ## Date

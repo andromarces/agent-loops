@@ -2,18 +2,20 @@
 
 ## Status
 
-partially-superseded
+superseded
 
-Partially superseded by [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md). The superseded parts are:
+Superseded by [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md):
 
-- Decision 1's rule that the settle re-read is the last filter. Superseded by [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md).
-- The consequence that a longer-lived file still needs an `open` item. Superseded by [ADR 0081](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md).
+- Decision 1's rule that the settle re-read is the last filter.
+- The consequence that a longer-lived file still needs an `open` item.
 
-The settle read, decisions 2 to 6, and the guard stay in force.
+Superseded by [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md):
 
-Partially supersedes [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md). This ADR replaces decision 2's rule that the report lists every entry that appeared, and the matching consequence. It also qualifies the all-entries rule that ADR 0069 restated from ADR 0068 decision 4.
+- Decisions 2 to 6 and every consequence. The field lists the entries of the one post-turn read, with no settle re-read and no wait, and creates no automatic `open` item.
 
-The mark rule, the exact-name leave-out of this process's own turn directories, and the guard that a record cannot hide a still-existing entry all remain in force.
+No decision remains in force.
+
+Partially supersedes [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md). This ADR replaced decision 2's rule that the report lists every entry that appeared, and the matching consequence. ADR 0095 restores that rule for the one post-turn read.
 
 ## Date
 
