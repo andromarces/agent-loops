@@ -5,6 +5,8 @@ import { workerPrompt } from "../src/prompts/worker.mjs";
 
 // The prompt of a later worker turn: the task text and the repeated rules, with no preamble.
 const LATER_TURN_PROMPT = workerPrompt("do the work", false);
+// A parsed closing block, so these cases assert the turn itself and take no repair turn.
+const WORKER_REPORT = "Conclusion: worker done\nWhy: ok\nBlockers: none";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `cleanRepoGit` in git-helpers.mjs); every other test reaches the real `execa`.
@@ -55,7 +57,7 @@ test("a replaced worker conversation receives the preamble without a task rerun"
         } else {
           delete state.conversationReplaced;
         }
-        return "worker done";
+        return WORKER_REPORT;
       },
     };
 
@@ -112,7 +114,7 @@ test("a failed preamble turn keeps the worker result", async () => {
         }
         state.sessionId = "replacement";
         state.conversationReplaced = true;
-        return "worker done";
+        return WORKER_REPORT;
       },
     };
 
@@ -313,7 +315,7 @@ test("a missing worker session reruns the turn as a first turn in the same step"
           throw Object.assign(new Error("No conversation found"), { sessionMissing: true });
         }
         state.sessionId = "fresh";
-        return "worker done";
+        return WORKER_REPORT;
       },
     };
 
@@ -402,7 +404,7 @@ test.each([
               throw thrown;
             }
             state.sessionId = "fresh";
-            return "worker done";
+            return WORKER_REPORT;
           },
         },
         rev: scripted([]),

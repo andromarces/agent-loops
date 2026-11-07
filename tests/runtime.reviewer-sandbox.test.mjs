@@ -36,6 +36,8 @@ const READ_ONLY = 'sandbox_mode="read-only"';
 const NO_SANDBOX = 'sandbox_mode="danger-full-access"';
 const WORKSPACE_WRITE = 'sandbox_mode="workspace-write"';
 const NETWORK_OFF = "sandbox_workspace_write.network_access=false";
+// A parsed closing block, so these cases assert the turn itself and take no repair turn.
+const CHILD_REPORT = "Conclusion: done\nWhy: ok\nBlockers: none";
 
 const roles = {
   orchestrator: { kind: "codex", sessionId: null },
@@ -95,7 +97,7 @@ async function reviewerRun(options = {}, onReviewer = async () => {}, realGit = 
     calls.push({ role: isReviewer ? "reviewer" : "orchestrator", args, prompt: opts.input });
     if (isReviewer) {
       await onReviewer(repo);
-      return reply("reviewed", "th-rev");
+      return reply(CHILD_REPORT, "th-rev");
     }
     return reply(orchestratorTurns.shift(), "th-orch");
   });
@@ -232,7 +234,7 @@ test("a reviewer that is not Codex gets no sandbox input and no mode line", asyn
     rev: {
       run: async (_state, prompt, options) => {
         seen.push({ prompt, options });
-        return "reviewed";
+        return CHILD_REPORT;
       },
     },
   };
@@ -267,7 +269,7 @@ test.each(["none", "read-only", "workspace-write"])(
     vi.mocked(exec).mockImplementation(async (_cmd, args, opts) => {
       if (opts.input.includes("Instructions:\nwork")) {
         workerArgs.push(args.join(" "));
-        return reply("worker done", "th-work");
+        return reply(CHILD_REPORT, "th-work");
       }
       return reply(turns.shift(), "th-orch");
     });

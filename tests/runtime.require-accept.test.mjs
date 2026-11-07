@@ -112,7 +112,8 @@ test("--require-accept names Why and refuses a reviewer report without it", asyn
       JSON.stringify({ action: "run_reviewer", prompt: "re-review" }),
       JSON.stringify({ action: "finish", summary: SUMMARY }),
     ];
-    const reviewerAdapter = scripted([noWhy, REVIEW_ACCEPT]);
+    // The one repair turn repeats the unparseable block, so this turn keeps its null report.
+    const reviewerAdapter = scripted([noWhy, noWhy, REVIEW_ACCEPT]);
     const events = [];
 
     const result = await runLoop({

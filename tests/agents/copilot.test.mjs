@@ -1037,7 +1037,7 @@ test("a worker turn reruns as a first turn when the unconfirmed copilot session 
     vi.mocked(exec).mockReset();
     vi.mocked(exec).mockImplementationOnce(async (_command, args) => ({
       stdout: [
-        '{"type":"assistant.message","data":{"content":"done"}}',
+        `{"type":"assistant.message","data":{"content":${JSON.stringify("Conclusion: done\nWhy: ok\nBlockers: none")}}}`,
         `{"type":"result","sessionId":${JSON.stringify(String(args[1]))},"exitCode":0}`,
       ].join("\n"),
       stderr: "",
@@ -1211,14 +1211,14 @@ test("copilot worker result carries no denial flag after a turn with no denial",
   vi.mocked(exec)
     .mockResolvedValueOnce({
       stdout: [
-        `{"type":"assistant.message","data":{"content":${JSON.stringify(DENIAL_TEXT)}}}`,
+        `{"type":"assistant.message","data":{"content":${JSON.stringify(`${DENIAL_TEXT}\nConclusion: done\nWhy: ok\nBlockers: none`)}}}`,
         '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
       ].join("\n"),
       stderr: "",
     })
     .mockResolvedValueOnce({
       stdout: [
-        '{"type":"assistant.message","data":{"content":"all tests pass"}}',
+        `{"type":"assistant.message","data":{"content":${JSON.stringify("Conclusion: all tests pass\nWhy: ok\nBlockers: none")}}}`,
         '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
       ].join("\n"),
       stderr: "",

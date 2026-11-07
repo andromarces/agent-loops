@@ -33,6 +33,28 @@ Deferred: items found but left out of scope, or "none".
 `.trim();
 
 /**
+ * Prompt of the one closing-block repair turn that follows a null report (issue #1615). The turn
+ * asks for formatting only, so it repeats no work and changes no work product. The same session
+ * holds the original response, so the prompt never quotes it.
+ */
+export function closingBlockRepairPrompt({ reviewer = false } = {}) {
+  const kept = reviewer ? "findings, checks, and verdict" : "findings and checks";
+  const verdict = reviewer
+    ? "\nVerdict: accept or reject. One word, nothing else on the line."
+    : "";
+  return `Your previous response did not end with a closing block that the runtime can parse. Do not do any more work, run any command, or change any file. Restate only the closing block of that response in this short canonical format, and keep the same ${kept}:
+
+Conclusion: one or two sentences.
+Why: the decisive evidence behind the conclusion.
+Blockers: anything unresolved, or "none".
+Checks: the commands that ran and their results, or "none".
+Notes: non-blocking findings, or "none".
+Deferred: items left out of scope, or "none".${verdict}
+
+Do not refer to text outside the block. Reply with the block alone and nothing else.`;
+}
+
+/**
  * Process rule for every worker and reviewer turn (issue #762). The dispatcher and the CLI of the
  * run carry the work tree path in their command lines. A kill by name or by match can end the
  * run itself.

@@ -2,6 +2,14 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a child report holds a list, or when `report` is null and `raw` carries the response. A block that lacks a required label is null, and `reportMissingLabels` names each missing label.
 
+A child turn whose successful string response parses to a null report takes one repair turn in the same session. The repair asks for the closing block alone in a short canonical format and keeps the original findings, checks, and verdict. It runs inside the charged step, under the reviewer mutation check, and changes no work product. A lost or replaced session, a failed repair, and a repair that still parses to null leave the original response in `raw` (issue #1615, [ADR 0094](https://github.com/andromarces/agent-loops/blob/main/adr/0094-repair-a-null-child-closing-block.md)). The per-adapter resume behavior is unverified until the live item in issue #710 records a result.
+
+A report that parses but lacks the reviewer `Checks` line or the `Verdict` line takes no repair. `acceptanceFailure` rejects that report as before: a missing `Verdict` yields `verdict`, and an accept without a `Checks` line yields `checks`. The repair handles only a null report, so a model cannot restate its way past a failed acceptance condition.
+
+## Triage a parser report
+
+Keep a parser fix for a regression on the documented format, a dropped finding, or an incorrect acceptance. A report of an unsupported format is covered only after the repair ships and handles that case; close it as covered when it does. A repeated repair failure stays actionable.
+
 Each value of `report.notes` and `report.deferred` is one line, the label plain at column 0. A `- `
 list or an ordered `N. ` list (a `-` or a number and a period at column 0, exactly one space U+0020, then the item) that directly follows a report
 label line is that label's value, or joins the value that line already holds:

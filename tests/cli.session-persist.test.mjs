@@ -225,7 +225,13 @@ test.each([
   vi.mocked(exec).mockReset();
   vi.mocked(exec).mockImplementation(async (_command, args) => {
     const id = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : assignedIn(args);
-    return { stdout: JSON.stringify({ session_id: id, result: "worker ok" }), stderr: "" };
+    return {
+      stdout: JSON.stringify({
+        session_id: id,
+        result: "Conclusion: worker ok\nWhy: ok\nBlockers: none",
+      }),
+      stderr: "",
+    };
   });
   await main(
     [

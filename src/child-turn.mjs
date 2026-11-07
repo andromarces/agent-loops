@@ -23,6 +23,7 @@ import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
 import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
+import { closingBlockRepairPrompt } from "./prompts/rules.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
 
 // Default time bound of the whole post-turn shared Git read, which takes no turn signal.
@@ -413,6 +414,11 @@ async function readFailedTurnEvidence(state) {
  * mid-turn (issue #1207). A failed `onTurnTmpdir` fails the turn before the CLI starts.
  * `onTurnChild(pid)` is called once the CLI has started, so the dispatcher can
  * record which process the directory belongs to. A rejection warns and never changes the turn.
+ * A successful string response whose report parses to null takes one repair turn in the same
+ * session, which asks for the closing block alone and runs inside the charged step (issue #1615).
+ * A reviewer repair takes its own mutation check. A lost or replaced session, a failed repair, and
+ * a repair that still parses to null leave the original response and its evidence, with a null
+ * report.
  * @param {object} options
  * @returns {Promise<
  *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
@@ -642,6 +648,55 @@ export async function runChild(options) {
     return status;
   };
 
+  /**
+   * Runs the one closing-block repair turn that follows a null report (issue #1615). The turn
+   * stays in the same session and asks for formatting only, so it repeats no work. A reviewer
+   * repair runs under its own mutation check. Returns null when the repair fails, the session is
+   * lost or replaced, or the repaired response still parses to null, so the caller keeps the
+   * original response and its evidence.
+   */
+  const repairClosingBlock = async () => {
+    const sessionId = role.sessionId;
+    logWarn(`${roleName}: the closing block did not parse; taking one repair turn`);
+    let repairedResponse;
+    try {
+      repairedResponse = isReviewer
+        ? await withMutationCheck(
+            cwd,
+            roleName,
+            () => invokeRole(closingBlockRepairPrompt({ reviewer: true })),
+            { signal },
+          )
+        : await invokeRole(closingBlockRepairPrompt());
+    } catch (err) {
+      if (isFatalTurnError(err)) throw err;
+      logWarn(
+        `${roleName}: the closing-block repair turn failed: ${firstErrorLine(readableErrorText(err))}`,
+      );
+      return null;
+    }
+    throwIfCanceled(signal, roleName);
+    if (
+      role.conversationReplaced === true ||
+      (sessionId !== null && role.sessionId !== sessionId)
+    ) {
+      logWarn(`${roleName}: the closing-block repair ran in a lost or replaced conversation`);
+      role.conversationReplaced = true;
+      keepReplacedMark = true;
+      return null;
+    }
+    if (typeof repairedResponse !== "string") {
+      logWarn(`${roleName}: the closing-block repair returned no string response`);
+      return null;
+    }
+    const report = reportForResult(repairedResponse, role.multiPartUnidentified === true);
+    if (report === null) {
+      logWarn(`${roleName}: the closing-block repair still did not parse`);
+      return null;
+    }
+    return { response: repairedResponse, report };
+  };
+
   // Declared outside the try so a turn that fails after the command ran still
   // reports what the runtime read and the work tree change it saw (ADR 0017), and so a failed
   // worker turn still compares the shared Git state it may have changed (issue #984).
@@ -760,7 +815,16 @@ export async function runChild(options) {
         })`,
       );
     }
-    const report = reportForResult(response, multiPartUnidentified);
+    let report = reportForResult(response, multiPartUnidentified);
+    // A null report gets one repair turn in the same session. A repair that succeeds replaces the
+    // response and the report; a failed one leaves the original response in `raw` (issue #1615).
+    if (report === null) {
+      const repaired = await repairClosingBlock();
+      if (repaired !== null) {
+        response = repaired.response;
+        report = repaired.report;
+      }
+    }
     // A null report names every required label it lacks, so the parent and the log carry no response
     // text beyond `raw` (issue #1520).
     const reportMissingLabels = report === null ? missingRequiredReportLabels(response) : [];

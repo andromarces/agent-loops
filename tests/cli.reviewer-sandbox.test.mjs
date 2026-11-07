@@ -57,14 +57,14 @@ function agents(orchReplies, seen = []) {
     agy: {
       async run(state) {
         state.sessionId ??= "agy-session";
-        return "worker ok";
+        return "Conclusion: worker ok\nWhy: ok\nBlockers: none";
       },
     },
     codex: {
       async run(state, prompt, options) {
         state.sessionId ??= "codex-session";
         seen.push({ prompt, sandbox: options.sandbox, readOnly: options.readOnly });
-        return "reviewer ok";
+        return "Conclusion: reviewer ok\nWhy: ok\nBlockers: none";
       },
     },
   };

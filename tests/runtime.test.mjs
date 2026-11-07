@@ -36,6 +36,9 @@ afterEach(() => {
   gitDouble.answer = null;
 });
 
+// A parsed closing block, so a case that asserts its own turns takes no repair turn.
+const CHILD_REPORT = "Conclusion: done\nWhy: ok\nBlockers: none";
+
 // A directory with a `.git` directory, with `git` answered from memory. A case that does not
 // assert a Git result starts no `git` process. The caller removes the directory with `removePath`.
 async function cleanRepo() {
@@ -54,7 +57,7 @@ test("orchestrator dispatches worker first", async () => {
         summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
       }),
     ];
-    const workerReplies = ["worker did task"];
+    const workerReplies = [CHILD_REPORT];
     const orchAdapter = scripted(orchReplies);
     const workerAdapter = scripted(workerReplies);
     const reviewerAdapter = scripted([]);
@@ -210,7 +213,7 @@ test("a refused run_worker charges no step and the repaired action runs", async 
         summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
       }),
     ]);
-    const workerAdapter = scripted(["worker did task"]);
+    const workerAdapter = scripted([CHILD_REPORT]);
 
     const result = await runLoop({
       task: "Task 1034",
@@ -244,7 +247,7 @@ test("orchestrator dispatches reviewer first", async () => {
         summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
       }),
     ];
-    const reviewerReplies = ["reviewer inspected"];
+    const reviewerReplies = [CHILD_REPORT];
     const orchAdapter = scripted(orchReplies);
     const workerAdapter = scripted([]);
     const reviewerAdapter = scripted(reviewerReplies);
@@ -361,7 +364,7 @@ test("reviewer reassesses without worker turn", async () => {
         summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
       }),
     ];
-    const reviewerReplies = ["ok 1", "ok 2"];
+    const reviewerReplies = [CHILD_REPORT, CHILD_REPORT];
     const orchAdapter = scripted(orchReplies);
     const workerAdapter = scripted([]);
     const reviewerAdapter = scripted(reviewerReplies);
@@ -403,7 +406,7 @@ test("two consecutive worker turns", async () => {
         summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
       }),
     ];
-    const workerReplies = ["part 1 done", "part 2 done"];
+    const workerReplies = [CHILD_REPORT, CHILD_REPORT];
     const orchAdapter = scripted(orchReplies);
     const workerAdapter = scripted(workerReplies);
     const reviewerAdapter = scripted([]);
@@ -626,7 +629,7 @@ test("a run with no mode still dispatches the worker", async () => {
         summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
       }),
     ]);
-    const workerAdapter = scripted(["worker did task"]);
+    const workerAdapter = scripted([CHILD_REPORT]);
 
     const result = await runLoop({
       task: "Implement.",
@@ -833,7 +836,7 @@ test("step limit reached refuses further child dispatch and returns exit 2", asy
       JSON.stringify({ action: "run_worker", prompt: "step 2" }),
       JSON.stringify({ action: "run_worker", prompt: "step 3" }),
     ];
-    const workerAdapter = scripted(["r1", "r2", "r3"]);
+    const workerAdapter = scripted([CHILD_REPORT, CHILD_REPORT, CHILD_REPORT]);
 
     const result = await runLoop({
       task: "Task 9",

@@ -1153,7 +1153,7 @@ test("claude record follows the rerun after a missing session", async () => {
     .mockResolvedValueOnce({
       stdout: JSON.stringify({
         session_id: "s2",
-        result: "ok",
+        result: "Conclusion: done\nWhy: ok\nBlockers: none",
         modelUsage: { "claude-opus-5-6": {} },
       }),
       stderr: "",

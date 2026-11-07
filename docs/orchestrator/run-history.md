@@ -22,6 +22,11 @@ needed: the subcommand records each dispatched turn itself.
   whose step was charged but whose outcome is unknown: no child result was ever
   recorded for it, so its verdict and head are `null`. The call that marks the
   run `interrupted` records it, so the history stays complete across recovery.
+- The one closing-block repair turn after a null child report runs inside the
+  step that the original turn already charged, so it adds no entry and no charge
+  (issue #1615, [ADR 0094](https://github.com/andromarces/agent-loops/blob/main/adr/0094-repair-a-null-child-closing-block.md)).
+  No refund path exists, and ADR 0084 keeps its narrow first-turn model-refusal
+  scope.
 - Size bound: exactly one entry per dispatched turn, and a dispatch past `maxSteps`
   is refused before it runs, so `turns` holds at most `maxSteps` entries plus one
   refunded first-turn refusal for each role. The recovery call runs no child,

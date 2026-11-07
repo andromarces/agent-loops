@@ -38,7 +38,8 @@ test("runtime emits an invocation event per CLI call with adapter usage", async 
       withUsage("not json at all", 0.2),
       withUsage(finish, 0.3),
     ]);
-    const workerAdapter = scripted(["worker done"]);
+    // A parsed closing block, so this case takes no repair turn.
+    const workerAdapter = scripted(["Conclusion: worker done\nWhy: ok\nBlockers: none"]);
     const events = [];
 
     const result = await runLoop({
