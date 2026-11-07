@@ -86,7 +86,7 @@ test("worker dispatch reports the work tree state from after the turn", async ()
 // report, and the original step stays charged" (issue #1615). The envelope carries the repaired
 // report, and the repair runs as a second invocation inside the single charged step.
 test("a null worker report is repaired inside one charged step", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const invalid = "Conclusion: done\nWhy: tests pass";
   const repaired =
     "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: none\nNotes: none\nDeferred: none";
@@ -116,7 +116,7 @@ test("a null worker report is repaired inside one charged step", async () => {
 // original response in raw" (issue #1615). The step stays charged and the envelope carries no
 // repaired report.
 test("a failed worker report repair leaves the original raw and the step charged", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRepo();
   const invalid = "Conclusion: done\nWhy: tests pass";
   const worker = recordingAdapter([invalid, invalid]);
 
