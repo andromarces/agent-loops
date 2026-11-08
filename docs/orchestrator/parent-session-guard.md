@@ -19,7 +19,7 @@ each subcommand treats `--parent-session` as follows:
 A run that a new session resumes is therefore unguarded for that session (issue #435). No
 call moves the stored id to the new session. The new session can run `dispatch`,
 `finish`, and `abort` by omitting `--parent-session`. It can run `extend`,
-`declare-pr`, and `refresh-local` only by passing the stored id. All three compare the id only, so that call succeeds for
+`declare-pr`, `refresh-local`, and `set-model` only by passing the stored id. All four compare the id only, so that call succeeds for
 any parent-side caller that holds the id, and it gives no guard coverage.
 
 A child
