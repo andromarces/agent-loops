@@ -528,7 +528,7 @@ of this file.
   after compaction or restart, or when a stored `maxSteps` or sandbox mode is out of range.
 - [Local files copied into the work tree](orchestrator/local-files-copy.md): read it before init
   when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work
-  tree, and when an envelope carries `localFilesDiffer`.
+  tree, and when an envelope carries `localFilesDiffer` or `localSourceChangedInTurn`.
 - [A target outside any Git repository](orchestrator/target-outside-git.md): read it when the task
   target is outside a Git work tree and must never become one. Read it again before the copy-back
   after `finish`.
@@ -551,7 +551,7 @@ of this file.
 - [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
-  `declare-pr`, `refresh-local`, `finish`, or `abort`, or when a call is refused for
+  `declare-pr`, `refresh-local`, `set-model`, `finish`, or `abort`, or when a call is refused for
   `AGENT_LOOP_SPAWNED_RUN`.
 
 ## Selecting issues for a batch
