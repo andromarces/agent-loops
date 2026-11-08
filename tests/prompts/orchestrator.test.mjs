@@ -965,8 +965,8 @@ test("the result prompt carries no check status without one on the result", () =
 describe("continued run prompt", () => {
   const base = { task: "t", maxSteps: 3 };
 
-  // Usefulness: verifies a continued run's prompt states the budget reset and that no reviewer
-  // accept carries over, while a fresh run states neither.
+  // Usefulness: verifies a continued run's prompt states that no reviewer accept carries over,
+  // while a fresh run states no continuation.
   test("states the reset only when the run is continued", () => {
     expect(initialPrompt({ ...base, continued: true })).toContain(
       "The runtime carries over no reviewer accept",
@@ -1298,8 +1298,8 @@ test("the result prompt carries transient only when the error result has it", ()
 describe("compare-head run prompt", () => {
   const base = { task: "t", maxSteps: 3 };
 
-  // Usefulness: verifies a continued compare-head run is told the flag must be passed again, and a
-  // fresh run is told it disables the runtime compare.
+  // Usefulness: verifies the compare-head prompt states the flag, that a continuation does not
+  // restore it, and that omitting it runs no runtime compare, for a fresh and a continued run.
   test("states that a continuation selects the flag again", () => {
     for (const continued of [false, true]) {
       const prompt = initialPrompt({ ...base, compareHead: 42, continued });

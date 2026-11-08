@@ -260,7 +260,8 @@ describe("the store that the work tree recorded", () => {
   };
 
   // Usefulness: verifies the field names changes in the store that the work tree records, so the
-  // parent knows which store the turn wrote to.
+  // parent knows the recorded store changed during the turn. The runtime cannot attribute the
+  // change to the turn.
   test("is read when the file names it", async () => {
     await recordStore(join(store, "v11"));
     const result = await turn("reviewer", installed);

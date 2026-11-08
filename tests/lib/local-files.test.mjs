@@ -1125,16 +1125,15 @@ test("does not copy a tracked file through a different spelling of its path", as
   expect(await exists(join(linked, ".claude"))).toBe(false);
 });
 
-// Usefulness: verifies a `--cwd` that ends in a control character is refused, not
-// redirected: the copy writes nothing, reports it, and does not write into the
-// directory with the same name without that character, which is a real work tree here.
-// Not redundant: each spelling is a different character that Git or the process
-// runner can drop from the end of a printed path.
 for (const [label, character] of [
   ["a line feed", "\n"],
   ["a carriage return", "\r"],
   ["a tab", "\t"],
 ]) {
+  // Usefulness: verifies a `--cwd` that ends in a control character is refused, not redirected:
+  // the copy writes nothing, reports it, and does not write into the directory with the same name
+  // without that character, which is a real work tree here. Not redundant: each spelling is a
+  // different character that Git or the process runner can drop from the end of a printed path.
   test.skipIf(process.platform === "win32")(
     `copies nothing and reports it for a --cwd ending in ${label} (not run on Windows, which cannot hold it)`,
     async () => {

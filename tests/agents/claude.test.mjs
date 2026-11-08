@@ -109,8 +109,8 @@ test("claude runs a worker probe with the origin/main plan-mode arguments", asyn
   );
 });
 
-// Usefulness: verifies a read-only reviewer turn selects plan mode, so a probe cannot edit the
-// tree, and adds no tool allowlist. The worker test above never runs a reviewer turn.
+// Usefulness: verifies a read-only reviewer turn selects plan mode and passes no tool allowlist,
+// so the probe runs in the CLI's plan mode. The worker test above never runs a reviewer turn.
 test("claude runs a reviewer probe with plan mode", async () => {
   vi.mocked(exec).mockResolvedValueOnce({
     stdout: JSON.stringify({ session_id: "s1", result: "ok" }),
@@ -975,8 +975,8 @@ test.each([
   expect(await resolved(result, state)).toBeNull();
 });
 
-// Usefulness: verifies a single new model replaces the earlier one, so a later --continue-from
-// compares against the model that actually ran. The table above covers only unresolved evidence.
+// Usefulness: verifies a single new model replaces the earlier one, so the record describes the
+// model the turn named. The table above covers only unresolved evidence.
 test("claude replaces the earlier resolvedModel when a turn names another single model", async () => {
   const state = { kind: "claude", sessionId: null, model: null, resolvedModel: "claude-opus-5-5" };
   expect(await resolved({ modelUsage: { "claude-opus-5-6": {} } }, state)).toBe("claude-opus-5-6");
@@ -1036,7 +1036,7 @@ test.each([
 });
 
 // Usefulness: verifies an exit 0 with unparseable output clears the model, so a malformed reply
-// cannot leave a stale model that a continuation trusts.
+// leaves no stale model behind.
 test("claude marks the record unresolved after an exit 0 whose output does not parse", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: "not json", stderr: "" });
   const state = failedState();
@@ -1126,7 +1126,7 @@ test.each([
 });
 
 // Usefulness: verifies a failed first turn records the model only when it adopts the reported
-// session, so a model from an unadopted session never reaches a continuation.
+// session, so a model from an unadopted session is not recorded.
 test("claude failed first turn records the model only with the session it adopts", async () => {
   vi.mocked(exec).mockRejectedValueOnce(execFailure({ stdout: JSON.stringify(namingB("s-new")) }));
   const adopted = failedState();
@@ -1300,8 +1300,8 @@ test.each([
   expect(state.resolvedModelSource).toBe("init");
 });
 
-// Usefulness: verifies the init event wins over ambiguous modelUsage keys on a failed turn, so the
-// model that ran is recorded even when the result is unreadable.
+// Usefulness: verifies the init event wins over several modelUsage keys on a failed turn, so the
+// model that ran is recorded even when the result names several models.
 test("claude takes the init model over several modelUsage keys, on a failed turn too", async () => {
   vi.mocked(exec).mockRejectedValueOnce(
     execFailure({

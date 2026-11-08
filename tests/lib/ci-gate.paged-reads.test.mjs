@@ -293,8 +293,7 @@ ${headers}
     assert.match(err.message, /failed: HTTP 403$/);
   });
 
-  // Usefulness: verifies the ruleset read applies the foreign-host rule to a 503, so it cannot
-  // follow a reply-supplied target.
+  // Usefulness: verifies the ruleset read ends in an error for a 503 with a Link on another host.
   it("ends the ruleset read in an error for a 503 with a Link on another host", async () => {
     const gh = source([], { [page(RULES, 1)]: failure503(LINK) });
     await expect(

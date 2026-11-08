@@ -520,7 +520,7 @@ test("--require-ci still runs the gate after the unresolvedCompare refusal", asy
 });
 
 // Usefulness: verifies the gate still runs after a review-only finish is refused for a missing
-// reviewer turn, so the next finish reports the gate reason too.
+// reviewer turn, so the second finish reports the gate's no-reviewed-state reason.
 test("--require-ci still runs the gate after the review-only reviewer-turn refusal", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();

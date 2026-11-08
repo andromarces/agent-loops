@@ -146,8 +146,8 @@ describe("validateAction rejections", () => {
     expect(result.error).toBe("finish requires a summary object.");
   });
 
-  // Usefulness: verifies each required summary key is refused when missing or blank, so a finish
-  // cannot record an empty field as done.
+  // Usefulness: verifies each required summary key is refused when blank, so a finish cannot record
+  // an empty field as done.
   test.each(["changed", "verified", "deferred", "notDone", "open"])(
     "rejects finish when %s summary field is missing or empty",
     (key) => {
