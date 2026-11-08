@@ -133,7 +133,9 @@ Role flags:
   --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout
   --no-copy-local-files
                                 ${wrapHelp(`First (init) call only. Later calls read these from the state file and reject any attempt to change them. Only extend takes --max-steps after init, and only set-model takes a role model.`)}
-  --copy-local-path <path>      ${wrapHelp(`Role init only. Repeatable. Add one ignored path of the main work tree to the local-file copy, for example a downloaded specification directory. The path is relative to the main work tree. An absolute path, or a path that leaves the tree or passes through a symlink or junction, is refused. A path that holds a tracked file or a file that is not ignored is refused. So is use with --no-copy-local-files. The refusal happens before any state is written. Every copy rule applies. The init envelope lists the copied files in localFiles.`)}
+  --copy-local-path <path>      ${wrapHelp(`Role init only. Repeatable. Add one ignored path of the main work tree to the local-file copy, for example a downloaded specification directory. The path is relative to the main work tree. An absolute path, or a path that leaves the tree or passes through a symlink or junction, is refused. A path that holds a tracked file or a file that is not ignored is refused.`)}
+
+                                ${wrapHelp(`So is use with --no-copy-local-files. The refusal happens before any state is written. Every copy rule applies. The init envelope lists the copied files in localFiles.`)}
   --reason <text>               abort only: the reason recorded on the run. Required for abort.
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
