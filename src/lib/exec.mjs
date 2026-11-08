@@ -91,20 +91,24 @@ const STDIO_DRAIN_GRACE_MS = 3000;
 // one stuck in a kernel I/O request, never emits `exit` (issue #1302).
 export const KILL_GRACE_MS = 10_000;
 
+// The idle pipe bound. Absent keeps the default. Any other value must be a finite number of 0 or more.
+function drainGraceOf(value) {
+  if (value === undefined) return STDIO_DRAIN_GRACE_MS;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError(`drainGraceMs must be a finite number of 0 or more, got ${String(value)}.`);
+  }
+  return value;
+}
+
 /**
- * Waits for `subprocess` like `await subprocess`, with two added bounds that never change a run
- * that ends on its own.
- * - `drainGraceMs` after the child exits, and after each later read, the call checks the
- *   pipes of the child. An open, idle pipe that no slow consumer holds back is held by another
- *   process. The call then sends SIGKILL to the process group it owns (POSIX) and ends the read
- *   of that pipe. The descendant no longer holds the call. Output that the child wrote stays in
- *   the result. A transform or reader downstream of the pipe still receives every byte read.
- * - `KILL_GRACE_MS` after `timeoutMs` passes or `signal` aborts, a child that did not exit gives
- *   its result up. The call settles as timed out or canceled with empty output. The parent ends
- *   its own pipe ends.
- *
- * A descendant that left the process group survives both bounds. A Windows descendant of an
- * exited child survives them too. Neither Node nor execa can reach them (ADR 0017).
+ * Waits for `subprocess` like `await subprocess`, with two bounds that never change a run that ends
+ * on its own.
+ * - `drainGraceMs` bounds an idle pipe that another process holds open after the child exits.
+ *   The call then signals the process group it owns (POSIX) and ends that pipe.
+ * - `KILL_GRACE_MS` bounds a child that no exit follows after `timeoutMs` or `signal`. The call
+ *   settles as timed out or canceled with empty output, and the parent ends its pipe ends.
+ * A descendant that left the process group survives both bounds, and so does a Windows descendant
+ * of an exited child (ADR 0017).
  */
 function settleWithin(
   subprocess,
@@ -132,7 +136,9 @@ function settleWithin(
     clearTimeout(drainTimer);
     drainTimer = setTimeout(onDrainIdle, drainGraceMs);
   };
+  // Each later read restarts the idle bound, as the child exit does.
   const onRead = () => exited && armDrain();
+  // Output already read stays in the result, and a downstream transform or reader still gets every byte.
   const endPipes = () => {
     for (const stream of pipes) stream.push(null);
   };
@@ -152,7 +158,7 @@ function settleWithin(
     });
   };
   // A pipe that ended is not held. One that is paused or holds unread bytes waits for the consumer
-  // of this process, which ends on its own.
+  // of this process, which ends on its own. Any other idle pipe is held by another process.
   function onDrainIdle() {
     const held = pipes.filter((stream) => !stream.readableEnded && !stream.destroyed);
     if (held.length === 0) return;
@@ -162,6 +168,7 @@ function settleWithin(
     );
     // Reaches the process group on POSIX. Nothing reaches a descendant of an exited child on Windows.
     subprocess.kill?.("SIGKILL");
+    // The descendant no longer holds the call.
     endPipes();
   }
   const onExit = () => {
@@ -183,6 +190,7 @@ function settleWithin(
     typeof subprocess.then === "function"
       ? new Promise((resolve, reject) => subprocess.then(resolve, reject))
       : Promise.resolve(subprocess);
+  // Neither Node nor execa can reach a descendant that survives both bounds (ADR 0017).
   return Promise.race([finished, gaveUp]).finally(() => {
     timers.forEach(clearTimeout);
     clearTimeout(drainTimer);
@@ -251,22 +259,16 @@ export function execFailureCause(command, failure, timeout) {
 }
 
 /**
- * Runs `command` and returns `{ stdout, stderr, durationMs }` after an exit with code 0. Throws
- * `ExecError` for a non-zero exit, a timeout, a cancel, a signal kill, a spawn failure, or output
- * past `maxBuffer`. An overflow leaves no output on the error.
- *
- * `options.role` labels the log lines. The roles `worker` and `reviewer` also rebuild the child
- * environment with `extendEnv: false`. It holds `env` over the process environment, the run marker
- * `SPAWNED_RUN_ENV`, the root pins from `rootPins`, and the npm log settings from
- * `withNpmLogSettings`. A worker and a reviewer also get the pnpm deps check set to `warn`. Any
- * other role keeps the inherited environment, with `env` over it.
- *
- * `options.onSpawn(pid)` is called once, right after the child starts and only when it has a pid.
- * It runs beside the child and is awaited before `exec` returns or throws. A rejection warns and
- * never changes the outcome of the child.
+ * Runs `command` and returns `{ stdout, stderr, durationMs }` after an exit with code 0.
+ * Throws `ExecError` for a non-zero exit, a timeout, a cancel, a signal kill, a spawn failure, or
+ * output past `maxBuffer`.
+ * `options.role` labels the log lines, and the roles `worker` and `reviewer` rebuild the child
+ * environment with `extendEnv: false`.
+ * `options.onSpawn(pid)` runs once after the child starts and is awaited before `exec` returns or
+ * throws.
  * `options.treeEnd` ends the child and its descendants at a parent SIGTERM or SIGINT (POSIX only,
- * ADR 0071). It reaches a descendant that left the child's process group.
- * `options.drainGraceMs` overrides the idle pipe bound; production keeps the 3000 ms default.
+ * ADR 0071).
+ * `options.drainGraceMs` overrides the idle pipe bound, while production keeps the 3000 ms default.
  */
 export async function exec(command, args = [], options = {}) {
   const {
@@ -282,6 +284,7 @@ export async function exec(command, args = [], options = {}) {
     forceKillAfterDelay,
     drainGraceMs,
   } = options;
+  const drainGrace = drainGraceOf(drainGraceMs);
 
   const label = role ? `${role}: ${command}` : command;
   const startedAt = Date.now();
@@ -302,6 +305,9 @@ export async function exec(command, args = [], options = {}) {
 
   // execa merges env with process.env; the child still inherits the launcher environment. A marked
   // role passes the whole environment, because `withNpmLogSettings` must drop inherited spellings.
+  // The child environment holds `env` over the process environment, the run marker
+  // `SPAWNED_RUN_ENV`, the root pins from `rootPins`, and the npm log settings from
+  // `withNpmLogSettings`.
   const marked = MARKED_ROLES.has(role);
   if (env || marked) {
     const childEnv = {
@@ -313,7 +319,9 @@ export async function exec(command, args = [], options = {}) {
       const markedEnv = withNpmLogSettings({ ...process.env, ...childEnv }, env);
       execaOptions.env = withPnpmDepsCheckWarn(markedEnv);
       execaOptions.extendEnv = false;
+      // A worker and a reviewer also get the pnpm deps check set to `warn`.
     } else {
+      // Any other role keeps the inherited environment, with `env` over it.
       execaOptions.env = childEnv;
     }
   }
@@ -331,9 +339,12 @@ export async function exec(command, args = [], options = {}) {
     execaOptions.cancelSignal = signal;
   }
 
+  // `treeEnd` reaches a descendant that left the child's process group.
   const subprocess = killTreeOnExit(execa(command, args, execaOptions), { treeEnd });
   const { pid } = subprocess;
-  // Settled at once, so a rejection before the child ends is never unhandled.
+  // Settled at once, so a rejection before the child ends is never unhandled. Called once beside
+  // the child, only when it has a pid, and awaited before `exec` returns or throws. A rejection
+  // warns and never changes the outcome.
   const hook =
     Number.isInteger(pid) && onSpawn
       ? Promise.resolve()
@@ -344,7 +355,7 @@ export async function exec(command, args = [], options = {}) {
     timeoutMs: execaOptions.timeout,
     signal,
     label,
-    drainGraceMs,
+    drainGraceMs: drainGrace,
   });
   await hook;
 
@@ -424,6 +435,7 @@ export function execBounded(
     ...execaOptions
   } = {},
 ) {
+  const drainGrace = drainGraceOf(drainGraceMs);
   const options = { cwd, reject: false, cleanup: true, killDescendants: true, ...execaOptions };
   if (timeoutMs > 0) {
     options.timeout = timeoutMs;
@@ -440,7 +452,7 @@ export function execBounded(
     signal: killBound?.signal ?? signal,
     label: `${command} (bounded)`,
     killGraceMs,
-    drainGraceMs,
+    drainGraceMs: drainGrace,
   });
   for (const method of ["then", "catch", "finally"]) {
     subprocess[method] = (...callbacks) => settled[method](...callbacks);
