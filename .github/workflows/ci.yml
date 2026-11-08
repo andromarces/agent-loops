@@ -83,6 +83,26 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  # Node 24 is the Maintenance LTS line, `engines.node` accepts it
+  # (`^24.11.0`), and `release.yml` publishes on Node 24, but no CI job tests
+  # it (issue #1676). This job stays separate so the required ci (<os>)
+  # contexts keep their names, and it inherits the workflow-level concurrency
+  # group.
+  node-24:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      # No setup-node cache: pnpm. See the note in the ci job (#38).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
   # Windows test work is the long pole on every PR, so it is split across
   # shards. The fan-in job below publishes the required ci (windows-latest)
   # context, so main protection needs no edit (issue #1552).
