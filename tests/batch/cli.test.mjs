@@ -54,7 +54,30 @@ test("batch help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["--help"]);
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch start");
+  expect(out).toContain("agent-loop batch answer");
   expect(out).toContain("130");
+});
+
+// Usefulness: answer requires its three flags and does not reach the store without them.
+test("answer without its flags exits 2", async () => {
+  expect((await runQuiet(["answer"])).code).toBe(2);
+  expect((await runQuiet(["answer", "--batch", "b1"])).code).toBe(2);
+  expect((await runQuiet(["answer", "--batch", "b1", "--decision", "d1"])).code).toBe(2);
+});
+
+// Usefulness: answering an unknown decision writes nothing and exits nonzero.
+test("answer of an unknown decision exits 2", async () => {
+  const { code, out } = await runQuiet([
+    "answer",
+    "--batch",
+    "no-such-batch",
+    "--decision",
+    "no-such-decision",
+    "--option",
+    "resume",
+  ]);
+  expect(code).toBe(2);
+  expect(out).toBe("");
 });
 
 // Usefulness: decision 8 keeps checkpoints outside any repository, so a runs root inside the

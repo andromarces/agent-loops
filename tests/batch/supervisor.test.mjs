@@ -9,6 +9,7 @@ import { tryStateLock } from "../../src/lib/state-lock.mjs";
 import { endSubprocessTree } from "../../src/lib/exec-tree.mjs";
 import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/store.mjs";
+import { answerDecision, readDecision } from "../../src/batch/decisions.mjs";
 import {
   childArguments,
   newBatchId,
@@ -24,7 +25,7 @@ const BODY = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", 
 function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
   return async (args) => {
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("blockedBy")) {
+      if (args.some((arg) => arg.includes("blockedBy"))) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: blocked } }), stderr: "" };
       }
       if (args.includes("body")) {
@@ -74,6 +75,9 @@ function valueAfter(args, flag) {
   const index = args.indexOf(flag);
   return index === -1 ? null : args[index + 1];
 }
+
+// A test never shows a desktop notification. A case that reads notifications passes its own.
+const noNotify = async () => ({ spawned: false, ok: true });
 
 /**
  * A child double that records its arguments and writes a transcript. `hold` keeps each run live
@@ -219,7 +223,7 @@ test("three selected issues create three work trees and one child each", async (
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(exitCode).toBe(0);
     expect(summary.loops).toHaveLength(3);
@@ -259,7 +263,7 @@ test("the loop limit bounds live children and a freed slot starts the next issue
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn, installSignal: false },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(child.calls.length).toBe(2);
@@ -289,7 +293,7 @@ test("two batches for one issue produce one launch and one claimed skip", async 
       prepared: first,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(child.calls).toHaveLength(1);
@@ -298,7 +302,7 @@ test("two batches for one issue produce one launch and one claimed skip", async 
       prepared: second,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: childB.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: childB.spawn, installSignal: false },
     });
     expect(childB.calls).toHaveLength(0);
     expect(runB.summary.loops[0]).toMatchObject({ status: "skipped", skipReason: "claimed" });
@@ -326,7 +330,7 @@ test("a failed loop does not stop or retry another loop", async () => {
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn, installSignal: false },
     });
     expect(exitCode).toBe(1);
     expect(summary.status).toBe("failed");
@@ -353,7 +357,12 @@ test("SIGINT marks unfinished loops interrupted and exits 130", async () => {
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(child.calls).toHaveLength(1);
@@ -382,7 +391,12 @@ test("a resume with 3 of 10 steps spent passes --max-steps 7 and the same transc
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -396,7 +410,7 @@ test("a resume with 3 of 10 steps spent passes --max-steps 7 and the same transc
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: childResume.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: childResume.spawn, installSignal: false },
     });
     expect(childResume.calls).toHaveLength(1);
     expect(childResume.calls[0].transcript).toBe(first.transcript);
@@ -420,7 +434,12 @@ test("a status read writes nothing and reports a dead owner as stale", async () 
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -447,7 +466,7 @@ test("the selected set is frozen at start", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(2);
     const manifest = await readManifest(runsRoot, prepared.id);
@@ -469,7 +488,7 @@ test("a closed issue is skipped with its reason and no child", async () => {
       prepared,
       runsRoot,
       gh: fakeGh({ closed: new Set([1]) }),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(0);
     expect(summary.loops[0]).toMatchObject({ status: "skipped", skipReason: "closed" });
@@ -496,7 +515,7 @@ test("a resume with no pending work writes nothing", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     const checkpoint = batchPaths(runsRoot).loop(prepared.id, 1);
     const manifestFile = batchPaths(runsRoot).manifest(prepared.id);
@@ -506,7 +525,7 @@ test("a resume with no pending work writes nothing", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(1);
     expect(resumed.exitCode).toBe(0);
@@ -541,8 +560,8 @@ test("a zero timeout is passed to the child", async () => {
   }
 });
 
-// Usefulness: a needs-owner loop is not terminal for recovery, so a resolved state resumes it.
-test("a needs-owner loop resumes after the owner resolves the state", async () => {
+// Usefulness: an answered decision resumes the loop after the owner resolves the state.
+test("an answered decision resumes the loop after the owner resolves the state", async () => {
   const repo = await batchRepo();
   const prepared = await preparedFor(repo, [1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
@@ -553,7 +572,12 @@ test("a needs-owner loop resumes after the owner resolves the state", async () =
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -566,12 +590,35 @@ test("a needs-owner loop resumes after the owner resolves the state", async () =
       pid: null,
       startTime: null,
     }));
+
+    const pendingChild = childDouble();
+    const pending = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: pendingChild.spawn, installSignal: false },
+    });
+    expect(pendingChild.calls).toHaveLength(0);
+    expect(pending.exitCode).toBe(1);
+    expect(pending.summary.status).toBe("waiting");
+    const pendingLoop = await readLoop(runsRoot, prepared.id, 1);
+    expect(pendingLoop.status).toBe("needs-owner");
+    expect((await readDecision(runsRoot, prepared.id, pendingLoop.decision)).ok).toBe(true);
+
+    const answered = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: pendingLoop.decision,
+      option: "resume",
+    });
+    expect(answered.ok).toBe(true);
+
     const resumeChild = childDouble();
     const resumed = await runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(1);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
@@ -592,7 +639,12 @@ test("a transcript that exited 0 is not restarted on recovery", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -605,7 +657,7 @@ test("a transcript that exited 0 is not restarted on recovery", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
@@ -626,7 +678,12 @@ test("a transcript that exited 2 is not retried on recovery", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -639,7 +696,7 @@ test("a transcript that exited 2 is not retried on recovery", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-2" });
@@ -660,7 +717,12 @@ test("two simultaneous resumes launch a loop once", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -671,13 +733,13 @@ test("two simultaneous resumes launch a loop once", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     const b = runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     expect(resumeChild.calls).toHaveLength(1);
@@ -702,7 +764,12 @@ test("a live recorded process with no start stamp is not restarted", async () =>
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -720,6 +787,7 @@ test("a live recorded process with no start stamp is not restarted", async () =>
       runsRoot,
       gh: fakeGh(),
       deps: {
+        notifier: noNotify,
         spawn: resumeChild.spawn,
         installSignal: false,
         signal: resumeController.signal,
@@ -736,7 +804,7 @@ test("a live recorded process with no start stamp is not restarted", async () =>
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: secondChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: secondChild.spawn, installSignal: false },
     });
     expect(secondChild.calls).toHaveLength(0);
     expect(second.summary.loops[0].status).toBe("needs-owner");
@@ -756,6 +824,7 @@ test("an aborted setup returns without waiting for the timeout", async () => {
     timeoutSeconds: 60,
     signal: controller.signal,
     deps: {
+      notifier: noNotify,
       execBounded: async (file, args, options) => {
         await new Promise((resolve) => {
           options.signal.addEventListener("abort", resolve, { once: true });
@@ -783,7 +852,12 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -834,7 +908,7 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh,
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(1);
     const args = resumeChild.calls[0].args;
@@ -885,7 +959,7 @@ test("a queued checkpoint does not restart a proven transcript", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
@@ -897,7 +971,7 @@ test("a queued checkpoint does not restart a proven transcript", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
@@ -918,7 +992,12 @@ test("a fatal exit without a gate event is not retried", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -939,7 +1018,7 @@ test("a fatal exit without a gate event is not retried", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1" });
@@ -948,8 +1027,8 @@ test("a fatal exit without a gate event is not retried", async () => {
   }
 });
 
-// Usefulness: a needs-owner loop holds its slot, so --loops 1 does not launch the next issue.
-test("a needs-owner loop holds its only slot", async () => {
+// Usefulness: a pending decision frees its only slot, so the next issue launches behind it.
+test("a pending decision frees its only slot and the next issue launches", async () => {
   const repo = await batchRepo();
   const prepared = await preparedFor(repo, [1, 2], { loops: 1 });
   const runsRoot = join(prepared.workTreeRoot, "runs");
@@ -960,7 +1039,12 @@ test("a needs-owner loop holds its only slot", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -972,22 +1056,18 @@ test("a needs-owner loop holds its only slot", async () => {
       pid: null,
       startTime: null,
     }));
-    const failing = (args) => {
-      if (args[0] === "issue" && args[1] === "view") {
-        return { status: 1, stdout: "", stderr: "the read failed" };
-      }
-      return { status: 1, stdout: "", stderr: "unexpected" };
-    };
     const resumeChild = childDouble();
     const resumed = await runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
-      gh: failing,
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
-    expect(resumeChild.calls).toHaveLength(0);
-    expect(resumed.exitCode).toBe(1);
-    expect(resumed.summary.loops[1].status).toBe("queued");
+    expect(resumeChild.calls).toHaveLength(1);
+    expect(resumeChild.calls[0].cwd).toContain("issue-2");
+    expect(resumed.summary.loops[0].status).toBe("needs-owner");
+    expect(resumed.summary.loops[0].decision).toBeTruthy();
+    expect(resumed.summary.loops[1].status).toBe("succeeded");
   } finally {
     await cleanupRepo(repo);
   }
@@ -1006,7 +1086,12 @@ test("a loop owned by another resume is not reported complete", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -1019,7 +1104,7 @@ test("a loop owned by another resume is not reported complete", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.exitCode).toBe(1);
@@ -1042,7 +1127,12 @@ test("a queued checkpoint with a replaced work tree stops before launch", async 
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
@@ -1064,10 +1154,567 @@ test("a queued checkpoint with a replaced work tree stops before launch", async 
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("needs-owner");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a blocked issue waits on the monotonic poll and launches after its blockers close.
+test("a blocked issue waits on the poll and launches after its blockers close", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  let blockedReads = 0;
+  let polls = 0;
+  const gh = (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        blockedReads += 1;
+        const open = blockedReads <= 2 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy")) {
+          polls += 1;
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open } }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      if (args.includes("title")) {
+        return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  let now = 0;
+  const child = childDouble();
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 1000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    });
+    expect(polls).toBeGreaterThanOrEqual(2);
+    expect(child.calls).toHaveLength(1);
+    expect(exitCode).toBe(0);
+    expect(summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a failed poll read warns, launches nothing, and retries on the next poll.
+test("a failed poll read retries on the next poll", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  let waitReads = 0;
+  let blockedReads = 0;
+  const gh = (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy")) {
+        waitReads += 1;
+        if (waitReads === 1) return { status: 1, stdout: "", stderr: "the read failed" };
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] } }),
+          stderr: "",
+        };
+      }
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        blockedReads += 1;
+        const open = blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      if (args.includes("title")) {
+        return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  let now = 0;
+  const child = childDouble();
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 1000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    });
+    expect(waitReads).toBeGreaterThanOrEqual(2);
+    expect(child.calls).toHaveLength(1);
+    expect(summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: an issue closed while it waits is reported as skipped and launches no child.
+test("a closed issue while waiting is skipped and not launched", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  let blockedReads = 0;
+  const gh = (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "CLOSED", blockedBy: { nodes: [] } }),
+          stderr: "",
+        };
+      }
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        blockedReads += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
+          stderr: "",
+        };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  let now = 0;
+  const child = childDouble();
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 1000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    });
+    expect(child.calls).toHaveLength(0);
+    expect(exitCode).toBe(0);
+    expect(summary.loops[0]).toMatchObject({ status: "skipped", skipReason: "closed" });
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: an abort during a poll wait ends the batch as interrupted with no child.
+test("an abort during a poll wait exits 130", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] } }),
+          stderr: "",
+        };
+      }
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
+          stderr: "",
+        };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  const child = childDouble();
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 60_000,
+        sleep: (ms, signal) =>
+          new Promise((resolve) => {
+            signal?.addEventListener("abort", resolve, { once: true });
+          }),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    controller.abort();
+    const { exitCode, summary } = await run;
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(child.calls).toHaveLength(0);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: the notifier receives one event for a decision, one for a merge, one for completion.
+test("the notifier receives decision, merge, and completion events", async () => {
+  const repo = await batchRepo();
+
+  const decisionEvents = [];
+  const first = await preparedFor(repo, [1]);
+  const firstRoot = join(first.workTreeRoot, "runs");
+  const firstChild = childDouble();
+  try {
+    await runBatch({
+      prepared: first,
+      runsRoot: firstRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: async (event) => {
+          decisionEvents.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: firstChild.spawn,
+        installSignal: false,
+      },
+    });
+    await updateLoop(firstRoot, first.id, 1, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "the owner must resolve the state",
+      pid: null,
+      startTime: null,
+    }));
+    await runBatch({
+      prepared: { ...first, resume: true },
+      runsRoot: firstRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: async (event) => {
+          decisionEvents.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(decisionEvents.some((event) => event.kind === "decision")).toBe(true);
+
+    const completionEvents = [];
+    const second = await preparedFor(repo, [1]);
+    await runBatch({
+      prepared: second,
+      runsRoot: join(second.workTreeRoot, "runs"),
+      gh: fakeGh(),
+      deps: {
+        notifier: async (event) => {
+          completionEvents.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(completionEvents.some((event) => event.kind === "batch-completed")).toBe(true);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: batch status carries the decision options, the recommendation, and completion.
+test("batch status shows decision details and completion", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "the owner must resolve the state",
+      pid: null,
+      startTime: null,
+    }));
+    await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.completion).toEqual({ status: "waiting", complete: false });
+    expect(status.loops[0].decision.options).toEqual(["resume", "abandon"]);
+    expect(status.loops[0].decision.recommended).toBe("resume");
+    expect(status.loops[0].decision.state).toBe("pending");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a waiting issue sends one merge-required notification when the blockers first appear.
+test("a waiting issue sends a merge-required notification", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const events = [];
+  const gh = (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] } }),
+          stderr: "",
+        };
+      }
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
+          stderr: "",
+        };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      if (args.includes("title")) {
+        return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  const child = childDouble();
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: async (event) => {
+          events.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 60_000,
+        sleep: (ms, signal) =>
+          new Promise((resolve) => {
+            signal?.addEventListener("abort", resolve, { once: true });
+          }),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    controller.abort();
+    await run;
+    const merge = events.filter((event) => event.kind === "merge-required");
+    expect(merge).toHaveLength(1);
+    expect(merge[0].text).toContain("9");
+    expect(child.calls).toHaveLength(0);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0].requiredMerges).toEqual([9]);
+    expect(status.completion).toEqual({ status: "interrupted", complete: false });
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a malformed decision file fails closed and never restarts the loop.
+test("a malformed decision keeps the loop needs-owner on resume", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "a damaged state",
+      decision: "bad-decision",
+      pid: null,
+      startTime: null,
+    }));
+    await mkdir(batchPaths(runsRoot).decisions(prepared.id), { recursive: true });
+    await writeFile(batchPaths(runsRoot).decision(prepared.id, "bad-decision"), "{");
+    const child = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(child.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0].status).toBe("needs-owner");
+    expect(resumed.exitCode).toBe(1);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a pending decision and a merge wait both survive, and only the unblocked loop runs.
+test("a pending decision and a merge wait survive a resume", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1, 2], { loops: 2 });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const ghWith = (openIssue1) => (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      const issue = Number(args[2]);
+      if (args.includes("state,blockedBy")) {
+        const open = openIssue1 && issue === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open } }),
+          stderr: "",
+        };
+      }
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        const open = openIssue1 && issue === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      if (args.includes("title")) {
+        return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  try {
+    const firstController = new AbortController();
+    const first = runBatch({
+      prepared,
+      runsRoot,
+      gh: ghWith(true),
+      deps: {
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        signal: firstController.signal,
+        pollIntervalMs: 60_000,
+        sleep: (ms, signal) =>
+          new Promise((resolve) => {
+            signal?.addEventListener("abort", resolve, { once: true });
+          }),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    firstController.abort();
+    await first;
+    expect((await readLoop(runsRoot, prepared.id, 1)).status).toBe("waiting");
+    expect((await readLoop(runsRoot, prepared.id, 2)).status).toBe("succeeded");
+    await updateLoop(runsRoot, prepared.id, 2, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "the owner must resolve the state",
+      decision: null,
+      pid: null,
+      startTime: null,
+    }));
+    let now = 0;
+    const child = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: ghWith(false),
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 1000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    });
+    expect(child.calls).toHaveLength(1);
+    expect(child.calls[0].cwd).toContain("issue-1");
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+    expect(resumed.summary.loops[1].status).toBe("needs-owner");
+    expect(resumed.summary.loops[1].decision).toBeTruthy();
+    expect(resumed.summary.status).toBe("waiting");
   } finally {
     await cleanupRepo(repo);
   }

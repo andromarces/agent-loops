@@ -12,9 +12,20 @@ import { endSubprocessTree, killTreeOnExit } from "../lib/exec-tree.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
 import { execBounded } from "../lib/exec.mjs";
+import { logError, logInfo, logWarn } from "../lib/log.mjs";
 import { renderTask } from "./args.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
+import {
+  ABANDON_REASON,
+  DECISION_OPTIONS,
+  RECOMMENDED_OPTION,
+  createDecision,
+  newDecisionId,
+  readAnswer,
+  readDecision,
+} from "./decisions.mjs";
 import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
+import { notify as defaultNotify } from "./notifier.mjs";
 import { createLoopWorkTree, git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
@@ -31,10 +42,42 @@ import {
   updateManifest,
 } from "./store.mjs";
 
-// A needs-owner loop is not terminal: it stays resumable after the owner resolves its state and
-// keeps its slot in the batch that reported it (ADR 0106 decision 16).
+// A needs-owner loop becomes a pending decision and releases its slot (ADR 0109 decision 1).
+// A waiting loop keeps its checkpoint and is re-checked on the poll (ADR 0109 decision 5).
 const TERMINAL = new Set(["succeeded", "skipped", "failed"]);
 const INTERRUPT_WAIT_MS = 30_000;
+/** The wait between two re-checks of a blocked issue (ADR 0109 decision 5). */
+export const POLL_INTERVAL_MS = 15_000;
+
+function defaultSleep(ms, signal) {
+  return new Promise((resolve) => {
+    let timer;
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * Waits one poll interval on the monotonic clock. An abort ends the wait at once without an error,
+ * so the caller keeps its own cancel identity. Tests inject `now` and `sleep`.
+ */
+export async function pollWait(
+  ms,
+  signal,
+  { now = () => performance.now(), sleep = defaultSleep } = {},
+) {
+  const deadline = now() + ms;
+  while (!signal?.aborted) {
+    const remaining = deadline - now();
+    if (remaining <= 0) return;
+    await sleep(Math.min(remaining, 1000), signal);
+  }
+}
 
 let ownStamp;
 function ownStartTimeOnce() {
@@ -71,6 +114,9 @@ function queuedLoop(paths, id, issue, maxSteps) {
     remainingSteps: maxSteps,
     pr: null,
     cleanup: null,
+    decision: null,
+    decisionAnswer: null,
+    blockingIssues: [],
   };
 }
 
@@ -190,6 +236,8 @@ function loopEntry(loop) {
     log: loop.log,
     transcript: loop.transcript,
     cleanup: loop.cleanup,
+    decision: loop.decision ?? null,
+    blockingIssues: loop.blockingIssues ?? [],
   };
 }
 
@@ -204,7 +252,9 @@ function summaryOf(manifest, loops) {
 function exitCodeOf(manifest, loops) {
   if (manifest.status === "interrupted") return 130;
   if (manifest.status === "paused") return 1;
-  return [...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))
+  return [...loops.values()].some((loop) =>
+    ["failed", "needs-owner", "waiting"].includes(loop.status),
+  )
     ? 1
     : 0;
 }
@@ -242,11 +292,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
     }
     if (manifest.status !== "running") {
-      manifest = await updateManifestReturning(runsRoot, id, (value) => ({
-        ...value,
-        status: "running",
-        pauseReason: null,
-      }));
+      manifest = (
+        await updateManifestReturning(runsRoot, id, (value) => ({
+          ...value,
+          status: "running",
+          pauseReason: null,
+        }))
+      ).manifest;
     }
   } else {
     manifest = {
@@ -258,6 +310,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       workTreeRoot: prepared.workTreeRoot,
       issues: prepared.issues,
       status: "running",
+      completionNotified: false,
       settings: {
         loops: prepared.loops,
         maxSteps: prepared.maxSteps,
@@ -288,7 +341,19 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   const active = new Map();
   const children = new Map();
   const lockSkipped = new Set();
+  const waiting = new Set();
   let pausedReason = null;
+  const notifier = deps.notifier ?? defaultNotify;
+  const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const clock = { now: deps.now ?? (() => performance.now()), sleep: deps.sleep ?? defaultSleep };
+
+  const sendNotification = async (event) => {
+    try {
+      await notifier(event);
+    } catch (err) {
+      logWarn(`the notification failed: ${err?.message ?? err}`);
+    }
+  };
 
   const forward = (signal) => {
     for (const child of children.values()) {
@@ -320,6 +385,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     deps.signal.addEventListener("abort", () => {
       if (!interrupted) {
         interrupted = true;
+        controller.abort();
         forward("SIGINT");
       }
     });
@@ -357,6 +423,99 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       : "the recorded branch is not checked out";
   };
 
+  const optionKeysOf = (decision) =>
+    (decision?.options ?? DECISION_OPTIONS).map((option) => option.key).join(", ");
+
+  const markNeedsOwner = async (issue, reason, { evidence = null, extra = {} } = {}) => {
+    const current = await readLoop(runsRoot, id, issue);
+    const attempt = Number.isInteger(current?.attempts) ? current.attempts : 0;
+    let decisionId = null;
+    let created = false;
+    if (typeof current?.decision === "string") {
+      const existing = await readDecision(runsRoot, id, current.decision);
+      if (
+        existing !== null &&
+        existing.ok &&
+        existing.decision.reason === reason &&
+        existing.decision.attempt === attempt
+      ) {
+        decisionId = current.decision;
+      }
+    }
+    if (decisionId === null) {
+      const idForState = newDecisionId(id, issue, attempt, reason);
+      const result = await createDecision({
+        runsRoot,
+        batchId: id,
+        id: idForState,
+        issue,
+        attempt,
+        reason,
+        evidence,
+      });
+      decisionId = result.decision.id;
+      created = result.created;
+    }
+    // A recorded live process keeps its pid and stamp, so a later resume re-checks it first.
+    await changeLoop(issue, {
+      status: "needs-owner",
+      reason,
+      skipReason: null,
+      decision: decisionId,
+      ...(created ? { decisionAnswer: null } : {}),
+      ...extra,
+    });
+    if (created) {
+      logInfo(`issue ${issue}: decision ${decisionId} created (${reason})`);
+      const read = await readDecision(runsRoot, id, decisionId);
+      const decision = read?.ok ? read.decision : null;
+      await sendNotification({
+        kind: "decision",
+        title: "Batch decision needed",
+        text: `Batch ${id} issue ${issue} needs a decision: ${reason}. Options: ${optionKeysOf(decision)}. Recommended: ${decision?.recommended ?? RECOMMENDED_OPTION}. Answer: agent-loop batch answer --batch ${id} --decision ${decisionId} --option <key>`,
+      });
+    }
+    return created;
+  };
+
+  const applyDecisionAnswer = async (issue, current) => {
+    if (typeof current.decision !== "string") {
+      await markNeedsOwner(issue, current.reason ?? "needs-owner", {
+        evidence: current.reason ?? null,
+      });
+      return { kind: "pending" };
+    }
+    const decision = await readDecision(runsRoot, id, current.decision);
+    if (decision === null || !decision.ok) {
+      logWarn(
+        `issue ${issue}: decision ${current.decision} is unreadable; the loop stays needs-owner`,
+      );
+      return { kind: "malformed" };
+    }
+    const answer = await readAnswer(runsRoot, id, current.decision);
+    if (answer !== null && !answer.ok) {
+      logWarn(
+        `issue ${issue}: answer ${current.decision} is unreadable; the loop stays needs-owner`,
+      );
+      return { kind: "malformed" };
+    }
+    if (answer === null) return { kind: "pending" };
+    const abandon = answer.answer.option === "abandon";
+    await changeLoop(issue, {
+      status: abandon ? "failed" : "queued",
+      reason: abandon ? ABANDON_REASON : null,
+      skipReason: null,
+      decisionAnswer: answer.answer.option,
+      pid: null,
+      startTime: null,
+    });
+    if (abandon) {
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      return { kind: "abandoned" };
+    }
+    return { kind: "resume", loop: await readLoop(runsRoot, id, issue) };
+  };
+
   const launchIssue = async (issue, { recovery = null } = {}) => {
     let loop = loops.get(issue);
     if (recovery === null) {
@@ -391,6 +550,27 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         openPrClosures: closures,
       });
       if (!eligibility.ok) {
+        if (eligibility.reason === "blocked") {
+          waiting.add(issue);
+          const changed = await changeLoop(issue, {
+            status: "waiting",
+            skipReason: "blocked",
+            reason: eligibility.evidence,
+            blockingIssues: eligibility.blocking ?? [],
+            remainingSteps: loop.remainingSteps,
+            pid: null,
+            startTime: null,
+          });
+          progress(`issue ${issue}: waiting (${eligibility.evidence})`);
+          if (changed) {
+            await sendNotification({
+              kind: "merge-required",
+              title: "Batch merge required",
+              text: `Batch ${id} issue ${issue} waits for the merge of blocking issue(s) ${(eligibility.blocking ?? []).join(", ")}.`,
+            });
+          }
+          return;
+        }
         await changeLoop(issue, {
           status: "skipped",
           skipReason: eligibility.reason,
@@ -466,6 +646,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           workTree: null,
         });
         await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+        logError(`issue ${issue}: failed (work-tree-failed: ${err.message})`);
         return;
       }
       loop = { ...loop, task, workTree };
@@ -473,7 +654,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
         const refused = await verifyRecordedWorkTree(loop);
         if (refused !== null) {
-          await changeLoop(issue, { status: "needs-owner", reason: refused });
+          await markNeedsOwner(issue, refused, { evidence: refused });
           return;
         }
         const decision = await reconcileLoop({
@@ -492,7 +673,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           return;
         }
         if (decision.status === "needs-owner") {
-          await changeLoop(issue, { status: "needs-owner", reason: decision.reason });
+          await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
           return;
         }
         if (decision.pr !== null) freshRecovery = { continueFrom: null, pr: decision.pr };
@@ -516,6 +697,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         if (!ok) {
           await changeLoop(issue, { status: "failed", reason: "setup-failed" });
           await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+          logError(`issue ${issue}: failed (setup-failed)`);
           progress(`issue ${issue}: failed (setup-failed)`);
           return;
         }
@@ -567,6 +749,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         reason: `child-error: ${err.message}`,
       });
       await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      logError(`issue ${issue}: failed (child-error: ${err.message})`);
       return;
     }
     children.set(issue, child);
@@ -620,6 +803,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       reason: `exit-${exitCode ?? "unknown"}`,
     });
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+    logError(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
     progress(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
   };
 
@@ -652,6 +836,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   const finishFailure = async (issue, loop, reason, { stepsUsed, remainingSteps }) => {
+    logError(`issue ${issue}: failed (${reason})`);
     await changeLoop(issue, {
       status: "failed",
       reason,
@@ -680,15 +865,19 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   const recover = async (issue, initial) => {
     let loop = initial;
+    if (loop.status === "needs-owner") {
+      const applied = await applyDecisionAnswer(issue, loop);
+      if (applied.kind !== "resume") return;
+      loop = applied.loop;
+    }
     if (isLive(loop)) {
       // A recorded live PID is never restarted. Without a readable identity the loop needs its
       // owner instead of waiting forever (ADR 0106 decision 10).
       const current = await processStartTime(loop.pid);
       if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
         // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
-        await changeLoop(issue, {
-          status: "needs-owner",
-          reason: "unverified-process-identity",
+        await markNeedsOwner(issue, "unverified-process-identity", {
+          evidence: "the process start stamp cannot be read",
         });
         return;
       }
@@ -699,11 +888,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     const transcript = await readTranscript(loop.transcript);
     if (transcript === null && loop.attempts > 0) {
-      await changeLoop(issue, {
-        status: "needs-owner",
-        reason: "unverified-steps",
-        pid: null,
-        startTime: null,
+      await markNeedsOwner(issue, "unverified-steps", {
+        evidence: "the transcript is missing",
       });
       return;
     }
@@ -711,12 +897,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     try {
       declaredPr = declaredPrFromTranscript(transcript) ?? loop.pr;
     } catch (err) {
-      await changeLoop(issue, {
-        status: "needs-owner",
-        reason: `the transcript declares an unreadable pull request: ${err.message}`,
-        pid: null,
-        startTime: null,
-      });
+      await markNeedsOwner(
+        issue,
+        `the transcript declares an unreadable pull request: ${err.message}`,
+        {
+          evidence: err.message,
+        },
+      );
       return;
     }
     loop = { ...loop, pr: declaredPr };
@@ -740,11 +927,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return;
     }
     if (!steps.ok) {
-      await changeLoop(issue, {
-        status: "needs-owner",
-        reason: "unverified-steps",
-        pid: null,
-        startTime: null,
+      await markNeedsOwner(issue, "unverified-steps", {
+        evidence: steps.reason ?? "the step count is unreadable",
+        extra: { stepsUsed, remainingSteps },
       });
       return;
     }
@@ -771,13 +956,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return;
     }
     if (decision.status === "needs-owner") {
-      await changeLoop(issue, {
-        status: "needs-owner",
-        reason: decision.reason,
-        stepsUsed,
-        remainingSteps,
-        pid: null,
-        startTime: null,
+      await markNeedsOwner(issue, decision.reason, {
+        evidence: decision.reason,
+        extra: { stepsUsed, remainingSteps },
       });
       return;
     }
@@ -793,25 +974,95 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     });
   };
 
-  // Fill the loop slots from the frozen set, in order.
-  const queue = manifest.issues.filter((issue) => {
+  // Fill the loop slots from the frozen set in order. A waiting issue is polled outside the queue.
+  const remaining = new Set();
+  for (const issue of manifest.issues) {
     const loop = loops.get(issue);
-    return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
-  });
-  const needsOwnerCount = () =>
-    [...loops.values()].filter((loop) => loop.status === "needs-owner").length;
-  const canFill = () => {
-    if (active.size + needsOwnerCount() < prepared.loops) return true;
-    // A needs-owner loop is re-examined in the slot it already holds; a queued loop behind it is
-    // not launched while that slot stays held.
-    if (start || cursor >= queue.length || active.size >= prepared.loops) return false;
-    const candidate = loops.get(queue[cursor]);
-    return ["needs-owner", "running", "interrupted"].includes(candidate?.status);
+    if (loop.status === "waiting") waiting.add(issue);
+    else if (!terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null)) {
+      remaining.add(issue);
+    }
+  }
+  const nextIssue = () => {
+    for (const issue of manifest.issues) if (remaining.has(issue)) return issue;
+    return null;
   };
-  let cursor = 0;
+  const readWaitState = async (issue) => {
+    const reply = await gh(
+      ["issue", "view", String(issue), "--json", "state,blockedBy"],
+      prepared.repo,
+      { signal: controller.signal },
+    );
+    if (reply?.status !== 0) {
+      throw new Error((reply?.stderr ?? "").trim() || `exit ${reply?.status ?? "unknown"}`);
+    }
+    const value = JSON.parse(reply.stdout);
+    const nodes = Array.isArray(value?.blockedBy)
+      ? value.blockedBy
+      : Array.isArray(value?.blockedBy?.nodes)
+        ? value.blockedBy.nodes
+        : null;
+    if (typeof value?.state !== "string" || nodes === null) {
+      throw new Error("the wait read returned an unreadable value");
+    }
+    const open = nodes
+      .filter((node) => String(node?.state ?? "").toUpperCase() === "OPEN")
+      .map((node) => node?.number)
+      .filter(Number.isInteger);
+    return { state: value.state, open };
+  };
+  const recheckWaiting = async (issue) => {
+    let read;
+    try {
+      read = await readWaitState(issue);
+    } catch (err) {
+      if (interrupted || hard) return "wait";
+      logWarn(`issue ${issue}: the wait read failed: ${err.message}; retrying on the next poll`);
+      return "wait";
+    }
+    if (String(read.state).toUpperCase() !== "OPEN") {
+      await changeLoop(issue, {
+        status: "skipped",
+        skipReason: "closed",
+        reason: `the issue state is ${read.state}`,
+        blockingIssues: [],
+        pid: null,
+        startTime: null,
+      });
+      progress(`issue ${issue}: skipped (closed: the issue state is ${read.state})`);
+      return "done";
+    }
+    if (read.open.length > 0) {
+      const changed = await changeLoop(issue, {
+        blockingIssues: read.open,
+        reason: `open blocking issues: ${read.open.join(", ")}`,
+      });
+      if (changed) {
+        await sendNotification({
+          kind: "merge-required",
+          title: "Batch merge required",
+          text: `Batch ${id} issue ${issue} waits for the merge of blocking issue(s) ${read.open.join(", ")}.`,
+        });
+      }
+      return "wait";
+    }
+    await changeLoop(issue, {
+      status: "queued",
+      skipReason: null,
+      reason: null,
+      blockingIssues: [],
+      pid: null,
+      startTime: null,
+    });
+    logInfo(`issue ${issue}: blockers closed; queued for launch`);
+    return "ready";
+  };
+  const canFill = () => active.size < prepared.loops;
+  let pollLogged = false;
   for (;;) {
-    while (!interrupted && !hard && pausedReason === null && canFill() && cursor < queue.length) {
-      const issue = queue[cursor++];
+    while (!interrupted && !hard && pausedReason === null && canFill() && remaining.size > 0) {
+      const issue = nextIssue();
+      remaining.delete(issue);
       const runOne = async () => {
         const current = await readLoop(runsRoot, id, issue);
         if (!start && current.status === "succeeded" && current.cleanup === null) {
@@ -824,7 +1075,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         }
         if (terminal(current.status)) return;
         if (!start) {
-          // A queued checkpoint that already has a transcript is a lost record, not a fresh launch.
+          // A resume reconciles one recovered loop before it launches, so it never restarts
+          // blindly. A recorded transcript is a lost record, not a fresh launch.
           const hasTranscript =
             current.status !== "queued" ||
             (await stat(current.transcript).then(
@@ -832,8 +1084,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
               () => false,
             ));
           if (hasTranscript) {
-            // A resume reconciles one recovered loop before it launches, so it never restarts
-            // blindly.
             await recover(issue, current);
             return;
           }
@@ -848,10 +1098,33 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       else await withLoopOwnership(issue, runOne);
       await new Promise((resolve) => setImmediate(resolve));
     }
-    if (active.size === 0) break;
-    if (hard) break;
-    await Promise.race(active.values());
+    if (hard || interrupted) break;
+    if (active.size > 0) {
+      await Promise.race(active.values());
+      continue;
+    }
+    if (pausedReason !== null) break;
+    if (waiting.size === 0) break;
+    if (!pollLogged) {
+      pollLogged = true;
+      logInfo(`waiting poll started for issue(s) ${[...waiting].join(", ")}`);
+    }
+    await pollWait(pollIntervalMs, controller.signal, clock);
+    if (interrupted || hard) break;
+    for (const issue of waiting) {
+      const result = await recheckWaiting(issue);
+      if (result === "done") waiting.delete(issue);
+      else if (result === "ready") {
+        waiting.delete(issue);
+        remaining.add(issue);
+      }
+    }
+    if (waiting.size === 0 && pollLogged) {
+      pollLogged = false;
+      logInfo("waiting poll stopped");
+    }
   }
+  if (pollLogged) logInfo("waiting poll stopped");
   // A resume runs its recovered loops one at a time; this drains any that the pass left live.
   while (active.size > 0 && !hard) await Promise.race(active.values());
 
@@ -860,7 +1133,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   let status;
   if (interrupted) status = "interrupted";
   else if (pausedReason !== null) status = "paused";
-  else if ([...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))) {
+  else if ([...loops.values()].some((loop) => ["waiting", "needs-owner"].includes(loop.status))) {
+    status = "waiting";
+  } else if ([...loops.values()].some((loop) => loop.status === "failed")) {
     status = "failed";
   } else if (
     lockSkipped.size > 0 ||
@@ -869,17 +1144,65 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     status = "paused";
     pausedReason ??= "a loop is owned by another resume";
   } else status = "completed";
-  manifest = await updateManifestReturning(runsRoot, id, (value) => ({
+  const updated = await updateManifestReturning(runsRoot, id, (value) => ({
     ...value,
     status,
     ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
   }));
+  manifest = updated.manifest;
+  const complete = status === "completed" || status === "failed";
+  if (complete && manifest.completionNotified !== true) {
+    const counts = { succeeded: 0, failed: 0, skipped: 0 };
+    for (const loop of loops.values()) {
+      if (loop.status in counts) counts[loop.status] += 1;
+    }
+    await sendNotification({
+      kind: "batch-completed",
+      title: "Batch complete",
+      text: `Batch ${id} finished with status ${status}. Succeeded: ${counts.succeeded}. Failed: ${counts.failed}. Skipped: ${counts.skipped}.`,
+    });
+    manifest = (
+      await updateManifestReturning(runsRoot, id, (value) => ({
+        ...value,
+        completionNotified: true,
+      }))
+    ).manifest;
+  }
   return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
 }
 
 async function updateManifestReturning(runsRoot, id, updater) {
-  await updateManifest(runsRoot, id, updater);
-  return readManifest(runsRoot, id);
+  const changed = await updateManifest(runsRoot, id, updater);
+  return { manifest: await readManifest(runsRoot, id), changed };
+}
+
+async function decisionView(runsRoot, batchId, loop) {
+  if (typeof loop.decision !== "string") return null;
+  const read = await readDecision(runsRoot, batchId, loop.decision);
+  if (read === null) {
+    return { id: loop.decision, state: "malformed", error: "the decision file is missing" };
+  }
+  if (!read.ok) {
+    return { id: loop.decision, state: "malformed", error: read.reason };
+  }
+  const { decision } = read;
+  const view = {
+    id: decision.id,
+    state: "pending",
+    reason: decision.reason,
+    evidence: decision.evidence,
+    options: decision.options.map((option) => option.key),
+    recommended: decision.recommended,
+    answer: null,
+  };
+  const answer = await readAnswer(runsRoot, batchId, loop.decision);
+  if (answer !== null && !answer.ok) {
+    return { ...view, state: "malformed", error: answer.reason };
+  }
+  if (answer !== null) {
+    return { ...view, state: "answered", answer: { option: answer.answer.option } };
+  }
+  return view;
 }
 
 /** Reads one batch for `batch status`; a live-owner checkpoint that is gone reads `stale`. */
@@ -890,16 +1213,29 @@ export async function readBatchStatus({ runsRoot, id }) {
   for (const issue of manifest.issues) {
     const loop = await readLoop(runsRoot, id, issue);
     if (loop === null) continue;
+    const waitDetails = {
+      decision: await decisionView(runsRoot, id, loop),
+      blockingIssues: Array.isArray(loop.blockingIssues) ? loop.blockingIssues : [],
+      requiredMerges: loop.status === "waiting" ? (loop.blockingIssues ?? []) : [],
+    };
     if (loop.status === "running" && loop.pid != null) {
       const live = await ownerAlive({ pid: loop.pid, startTime: loop.startTime });
       loops.push({
         ...loopEntry(loop),
+        ...waitDetails,
         status: live ? "running" : "stale",
         nextAction: live ? null : "batch resume",
       });
-    } else loops.push({ ...loopEntry(loop), nextAction: null });
+    } else loops.push({ ...loopEntry(loop), ...waitDetails, nextAction: null });
   }
-  return { ...manifest, loops };
+  return {
+    ...manifest,
+    completion: {
+      status: manifest.status,
+      complete: ["completed", "failed"].includes(manifest.status),
+    },
+    loops,
+  };
 }
 
 /** The local batches, newest first, for `batch status` with no id. */

@@ -53,12 +53,17 @@ export function batchPaths(runsRoot) {
     transcript: (id, issue) => join(batchDir(id), "transcripts", `issue-${issue}.json`),
     log: (id, issue, attempt) => join(batchDir(id), "logs", `issue-${issue}.${attempt}.log`),
     lock: (id) => join(batchDir(id), "batch.lock"),
+    decisions: (id) => join(batchDir(id), "decisions"),
+    answers: (id) => join(batchDir(id), "answers"),
+    decision: (id, decisionId) => join(batchDir(id), "decisions", `${decisionId}.json`),
+    answer: (id, decisionId) => join(batchDir(id), "answers", `${decisionId}.json`),
     claim: (repoKey, issue) => join(root, "claims", repoKey, `${issue}.json`),
     claimDir: (repoKey) => join(root, "claims", repoKey),
   };
 }
 
-async function readText(file) {
+/** Reads a store file as text, or null when it is missing. */
+export async function readStoreText(file) {
   try {
     return await readFile(file, "utf8");
   } catch (err) {
@@ -84,13 +89,13 @@ function parseObject(text, file) {
 /** Reads and validates one batch manifest, or null when it is missing. */
 export async function readManifest(runsRoot, id) {
   const file = batchPaths(runsRoot).manifest(id);
-  return parseObject(await readText(file), file);
+  return parseObject(await readStoreText(file), file);
 }
 
 /** Reads and validates one loop checkpoint, or null when it is missing. */
 export async function readLoop(runsRoot, id, issue) {
   const file = batchPaths(runsRoot).loop(id, issue);
-  return parseObject(await readText(file), file);
+  return parseObject(await readStoreText(file), file);
 }
 
 /** The local batches, newest first. A missing store has none. */
@@ -149,7 +154,7 @@ export async function updateLoop(runsRoot, id, issue, updater) {
       paths.lock(id),
       async () => {
         const file = paths.loop(id, issue);
-        const current = parseObject(await readText(file), file);
+        const current = parseObject(await readStoreText(file), file);
         if (current === null) throw new Error(`No loop checkpoint for issue ${issue}.`);
         const next = await updater(current);
         if (next === undefined || next === null || same(next, current)) return false;
@@ -169,7 +174,7 @@ export async function updateManifest(runsRoot, id, updater) {
       paths.lock(id),
       async () => {
         const file = paths.manifest(id);
-        const current = parseObject(await readText(file), file);
+        const current = parseObject(await readStoreText(file), file);
         if (current === null) throw new Error(`No batch manifest for ${id}.`);
         const next = await updater(current);
         if (next === undefined || next === null || same(next, current)) return false;
@@ -187,7 +192,7 @@ export async function updateManifest(runsRoot, id, updater) {
  */
 export async function readClaim(runsRoot, repoKey, issue) {
   const file = batchPaths(runsRoot).claim(repoKey, issue);
-  const text = await readText(file);
+  const text = await readStoreText(file);
   if (text === null) return { exists: false, held: false, parsed: false };
   let record;
   try {
@@ -213,7 +218,8 @@ export async function readClaim(runsRoot, repoKey, issue) {
   };
 }
 
-async function createExclusive(file, text) {
+/** Writes `text` to `file` only when the file does not exist. Returns false when it exists. */
+export async function createExclusive(file, text) {
   await mkdir(join(file, ".."), { recursive: true });
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
@@ -242,7 +248,7 @@ async function removeClaimText(file, text) {
     withStateLock(
       `${file}.lock`,
       async () => {
-        if ((await readText(file)) !== text) return false;
+        if ((await readStoreText(file)) !== text) return false;
         await rm(file, { force: true });
         return true;
       },
@@ -291,7 +297,7 @@ export async function acquireClaim(runsRoot, repoKey, issue, record, { onStale =
 /** Releases a claim that this batch owns. A missing, unparseable, or foreign claim is kept. */
 export async function releaseClaim(runsRoot, repoKey, issue, { batchId }) {
   const file = batchPaths(runsRoot).claim(repoKey, issue);
-  const text = await readText(file);
+  const text = await readStoreText(file);
   if (text === null) return false;
   let record;
   try {

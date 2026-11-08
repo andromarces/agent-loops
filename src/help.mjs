@@ -77,11 +77,18 @@ Subcommands:
                                 before any claim, work tree, checkpoint, or child exists.
   agent-loop batch status       Read a batch and write nothing. --batch <id> names one
                                 batch; with no id it lists the local batches, newest first.
+                                A loop entry names a pending decision, its options, its
+                                recommendation, and a required merge.
   agent-loop batch resume       Continue an interrupted batch with the remaining step
                                 budget. Requires --batch <id>. A live owner is never
-                                restarted. Exits 0 when every issue succeeded or was
-                                skipped, 1 when a loop failed or needs an owner or the queue
-                                paused, 2 for a refused setting, and 130 on SIGINT.
+                                restarted. A pending decision stays pending until answered.
+                                Exits 0 when every issue succeeded or was skipped, 1 when a
+                                loop failed or the batch waits on an owner decision or
+                                merge, 2 for a refused setting, and 130 on SIGINT.
+  agent-loop batch answer       Answer one pending decision with one listed option.
+                                Requires --batch <id>, --decision <id>, and --option <key>.
+                                An unknown, answered, or foreign decision exits 2 and
+                                writes nothing.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no

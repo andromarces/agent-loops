@@ -4,6 +4,7 @@ import { setLogsToStderr, logError } from "../lib/log.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
 import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree } from "./args.mjs";
 import { runGh } from "../lib/gh-api.mjs";
+import { answerDecision } from "./decisions.mjs";
 import { listBatchStatus, newBatchId, readBatchStatus, runBatch } from "./supervisor.mjs";
 import { readManifest } from "./store.mjs";
 
@@ -16,14 +17,18 @@ Usage:
 
   agent-loop batch status [--batch <id>]
   agent-loop batch resume --batch <id>
+  agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 
 The batch runs one headless loop per issue in its own work tree, at most --loops at once.
 Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
 --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
 --<role>-model and --<role>-effort flags.
 
-Exit codes: 0 every issue succeeded or was skipped, 1 a loop failed or needs an owner or
-the queue paused, 2 a refused setting or a refusal before any state write, 130 SIGINT.
+A needs-owner loop becomes a pending decision and releases its slot. \`batch status\` shows
+the options and the recommendation. \`batch answer\` binds one listed option to one decision.
+
+Exit codes: 0 every issue succeeded or was skipped, 1 a loop failed or a batch waits on an
+owner decision or merge, 2 a refused setting or answer, 130 SIGINT.
 `.trim();
 
 function readBatchFlag(argv) {
@@ -42,6 +47,27 @@ function readBatchFlag(argv) {
     throw Object.assign(new Error(`Unknown argument: ${raw}`), { usage: true });
   }
   return { help: false, id };
+}
+
+function readAnswerArgs(argv) {
+  const values = { batch: null, decision: null, option: null, help: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const raw = argv[i];
+    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+    const flag = eq === -1 ? raw : raw.slice(0, eq);
+    if (flag === "--help" || flag === "-h") {
+      values.help = true;
+      continue;
+    }
+    const key = { "--batch": "batch", "--decision": "decision", "--option": "option" }[flag];
+    if (key === undefined) {
+      throw Object.assign(new Error(`Unknown argument: ${raw}`), { usage: true });
+    }
+    const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
+    if (!value) throw Object.assign(new Error(`Missing value for ${flag}.`), { usage: true });
+    values[key] = value;
+  }
+  return values;
 }
 
 async function preparedForResume(manifest) {
@@ -112,6 +138,46 @@ export async function runBatchMain(argv) {
         return 0;
       }
       console.log(JSON.stringify(await readBatchStatus({ runsRoot, id }), null, 2));
+      return 0;
+    }
+    if (command === "answer") {
+      const values = readAnswerArgs(argv.slice(1));
+      if (values.help) {
+        console.log(BATCH_USAGE);
+        return 0;
+      }
+      if (values.batch === null)
+        throw Object.assign(new Error("Missing required --batch."), {
+          usage: true,
+        });
+      if (values.decision === null) {
+        throw Object.assign(new Error("Missing required --decision."), { usage: true });
+      }
+      if (values.option === null) {
+        throw Object.assign(new Error("Missing required --option."), { usage: true });
+      }
+      const result = await answerDecision({
+        runsRoot,
+        batchId: values.batch,
+        decisionId: values.decision,
+        option: values.option,
+      });
+      if (!result.ok) {
+        logError(result.reason);
+        return result.usage ? 2 : 1;
+      }
+      console.log(
+        JSON.stringify(
+          {
+            batchId: values.batch,
+            decisionId: values.decision,
+            option: values.option,
+            status: "answered",
+          },
+          null,
+          2,
+        ),
+      );
       return 0;
     }
     if (command === "resume") {
