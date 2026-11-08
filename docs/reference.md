@@ -50,7 +50,7 @@ version.
   - [Codex read-only network limit](reference/reviewer-safety.md#codex-read-only-network-limit)
   - [Codex reviewer sandbox mode](reference/reviewer-safety.md#codex-reviewer-sandbox-mode)
   - [Safety trade-off of the no-sandbox mode](reference/reviewer-safety.md#safety-trade-off-of-the-no-sandbox-mode)
-  - [Reviewer shell commands can lose `GH_TOKEN` and `GITHUB_TOKEN`](reference/reviewer-safety.md#reviewer-shell-commands-can-lose-ghtoken-and-githubtoken)
+  - [Reviewer shell commands can lose `GH_TOKEN` and `GITHUB_TOKEN`](reference/reviewer-safety.md#reviewer-shell-commands-can-lose-gh_token-and-github_token)
   - [Codex read-only child-spawn limit](reference/reviewer-safety.md#codex-read-only-child-spawn-limit)
   - [Read-only subagent fan-out](reference/reviewer-safety.md#read-only-subagent-fan-out)
   - [Mutation detection](reference/reviewer-safety.md#mutation-detection)

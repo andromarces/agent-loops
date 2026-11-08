@@ -19,7 +19,7 @@ The modes, their Codex settings, the app-connector setting, and the ADRs are in
   every mode.
 - In the two sandboxed modes, shell network stays off, and a user Codex execpolicy
   rule is an exception. The limit covers shell commands only. Choose a sandboxed
-  mode when the turn must not reach the network; the facts and the exception are
+  mode when the turn must not reach the network. The facts and the exception are
   in [Codex read-only network limit](../reference/reviewer-safety.md#codex-read-only-network-limit).
 - The reviewer prompt gains one note that states the actual mode. The reviewer
   still must not change a tracked file or an untracked file that Git does not
