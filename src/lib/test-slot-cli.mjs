@@ -1,6 +1,6 @@
 // The `agent-loop test-slot` command (#847, ADR 0039). It parses its arguments, then runs one
 // command only while it holds a machine-wide slot through `test-slot.mjs`.
-import { accessSync, constants as fsConstants } from "node:fs";
+import { statSync } from "node:fs";
 import { constants } from "node:os";
 import { delimiter, extname, join } from "node:path";
 import { killLiveTrees } from "./exec-tree.mjs";
@@ -149,21 +149,24 @@ function resolveWindowsCommand(command) {
   }
   const extension = extname(command).toLowerCase();
   const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
-  const directories =
-    command.includes("/") || command.includes("\\")
-      ? [""]
-      : [process.cwd(), ...(process.env.PATH ?? "").split(delimiter).filter(Boolean)];
+  const hasSeparator = command.includes("/") || command.includes("\\");
+  const bases = hasSeparator
+    ? [command]
+    : [process.cwd(), ...(process.env.PATH ?? "").split(delimiter).filter(Boolean)].map((dir) =>
+        join(dir, command),
+      );
   const candidates =
     extension !== ""
-      ? [command]
-      : directories.flatMap((directory) => {
-          const base = directory === "" ? command : join(directory, command);
-          return [base, ...extensions.map((ext) => `${base}${ext.toLowerCase()}`)];
-        });
+      ? bases
+      : bases.flatMap((base) => [base, ...extensions.map((ext) => `${base}${ext.toLowerCase()}`)]);
   for (const candidate of candidates) {
+    let stats;
     try {
-      accessSync(candidate, fsConstants.F_OK);
+      stats = statSync(candidate);
     } catch {
+      continue;
+    }
+    if (!stats.isFile()) {
       continue;
     }
     return /\.(?:com|exe)$/i.test(candidate) ? candidate : null;

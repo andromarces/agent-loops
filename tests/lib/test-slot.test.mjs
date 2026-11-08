@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -238,6 +238,37 @@ test.skipIf(process.platform !== "win32")(
     expect((await done).code).toBe(1);
     expect(existsSync(join(ctx.cwd, "shim-ran.txt"))).toBe(false);
     expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+  },
+);
+
+// Usefulness: issue #1673 review — a vector that names the real executable with its extension
+// must resolve through PATH, not only the current directory, so `node.exe --version` runs.
+test.skipIf(process.platform !== "win32")(
+  "an explicit node.exe resolves through PATH",
+  async () => {
+    const ctx = await setup();
+    const path = `${dirname(process.execPath)}${delimiter}${process.env.PATH}`;
+    const { done } = wrapper(["--slots", "1", "--wait", "10", "--", "node.exe", "--version"], {
+      ...ctx,
+      env: { PATH: path },
+    });
+    expect((await done).code).toBe(0);
+  },
+);
+
+// Usefulness: issue #1673 review — a local directory named like the executable must not stop the
+// PATH lookup, so a vector that names `node` still finds `node.exe`.
+test.skipIf(process.platform !== "win32")(
+  "a local node directory does not stop the PATH lookup",
+  async () => {
+    const ctx = await setup();
+    await mkdir(join(ctx.cwd, "node"));
+    const path = `${dirname(process.execPath)}${delimiter}${process.env.PATH}`;
+    const { done } = wrapper(["--slots", "1", "--wait", "10", "--", "node", "--version"], {
+      ...ctx,
+      env: { PATH: path },
+    });
+    expect((await done).code).toBe(0);
   },
 );
 
