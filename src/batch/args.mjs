@@ -222,20 +222,30 @@ function setReviewerSandbox(options, value, viaAlias) {
   options.reviewerSandbox = value;
 }
 
+/** The refusal for one configured role's model or effort, or null. */
+export function roleOptionRefusalFor(role, kind, model, effort) {
+  const normalized = kind === null ? null : normalizeAgent(kind);
+  if (normalized === null) return null;
+  if (model !== null && !(MODEL_PATTERNS[normalized]?.test(model) ?? true)) {
+    return `Unsupported ${role} model: ${model}`;
+  }
+  const allowed = EFFORTS[normalized];
+  if (effort !== null && allowed !== undefined && !allowed.has(effort)) {
+    return `Unsupported ${role} effort: ${effort}`;
+  }
+  return null;
+}
+
 /** The first unsupported model or effort of a configured role, or null. */
 function roleOptionRefusal(options) {
   for (const role of ROLE_KINDS) {
-    const kind = options[role] === null ? null : normalizeAgent(options[role]);
-    if (kind === null) continue;
-    const model = options[`${role}Model`];
-    if (model !== null && !(MODEL_PATTERNS[kind]?.test(model) ?? true)) {
-      return `Unsupported ${role} model: ${model}`;
-    }
-    const effort = options[`${role}Effort`];
-    const allowed = EFFORTS[kind];
-    if (effort !== null && allowed !== undefined && !allowed.has(effort)) {
-      return `Unsupported ${role} effort: ${effort}`;
-    }
+    const refusal = roleOptionRefusalFor(
+      role,
+      options[role],
+      options[`${role}Model`],
+      options[`${role}Effort`],
+    );
+    if (refusal) return refusal;
   }
   return null;
 }

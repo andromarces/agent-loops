@@ -476,3 +476,38 @@ A loop that ends on a nonzero headless exit, a failed setup (`setup-failed`), a 
 Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes: the path is the recorded path under the batch root and not the main work tree, `git worktree list` names it, the recorded branch is checked out, the device and inode still match, the tree is clean, every local commit is pushed or merged, no other live process holds the claim, and no live run lock names the tree. A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed; the branch, pull request, transcript, log, and checkpoint stay.
 
 The batch never removes the main work tree or any path outside its own root. General system temporary directory cleanup stays out of scope. A hard-killed session leaves a checkpoint that the next session resumes, but a transcript that never recorded a step count cannot prove the remainder, so that loop stops as `needs-owner`.
+
+### Reviewer audits
+
+`agent-loop batch audit start` coordinates two or more read-only reviewers on one project revision and turns their findings into issues without duplicates. It runs in the foreground and returns one JSON summary. [ADR 0109](https://github.com/andromarces/agent-loops/blob/main/adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) is the design.
+
+```bash
+agent-loop batch audit start --repo <main work tree> \
+  --reviewer claude --reviewer agy --worker codex
+agent-loop batch audit status --audit <id>
+agent-loop batch audit resume --audit <id>
+agent-loop batch audit approve --audit <id>
+```
+
+`start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, and `--reviewer-sandbox`. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
+
+The command resolves `origin/<base>` once to a commit SHA and creates one detached work tree at that SHA. Every reviewer reads the same work tree and revision, in its own session and in the requested order. A reviewer never sees another reviewer's findings. A `--setup-cmd` runs once in the work tree before the first reviewer.
+
+Each reviewer returns a fenced JSON document with a `findings` array of `title`, `body`, and `evidence` entries. A turn that fails, returns no string, or returns no valid document is a failed audit. No consolidation and no issue starts until every requested audit succeeds.
+
+After every audit succeeds, one consolidation worker merges the findings and compares them with the open and closed issues read once with `gh issue list --state all --limit 1000`. It returns one consolidated `findings` array whose entries hold `title`, `body`, `evidence`, and `existingIssue`. The runtime validates the document: every title and body is non-empty, no two titles are equal, and every named issue is in the stored list.
+
+The runtime then creates one issue per finding that no issue covers. A finding with a named existing issue links that issue. A finding whose title exactly equals an open or closed issue also links that issue, even when the worker named none. Otherwise the runtime creates the issue with `gh issue create`, and the body carries the audit id and revision. The worker never writes to GitHub.
+
+A failed audit pauses the run and creates no issue. `batch audit resume` retries only the reviewers that failed, then continues. `batch audit approve` records the owner's approval of the partial results, consolidates only the audits that succeeded, and continues. An approval never covers a failed consolidation.
+
+The audit store is `<runs root>/batches/audits/<audit id>.json`. It holds the revision, work tree identity, every reviewer result, the consolidation, the stored issue list, each created issue, and the frozen issue set. It is written atomically and only on a change; `batch audit status` writes nothing. After creation the issue set is frozen: a later `resume`, `approve`, or `status` changes no entry and creates no issue.
+
+Exit codes:
+
+- `0`: the audit created its issue set.
+- `1`: the audit paused at a failed audit, a failed consolidation, a failed read, or a failed creation.
+- `2`: a refused setting, or a refusal before any state write.
+- `130`: SIGINT ended the audit.
+
+The audit keeps its work tree for inspection. It removes no work tree, creates no label, comments on no issue, and edits no issue. Removal stays with the owner.

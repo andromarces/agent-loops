@@ -1,0 +1,1076 @@
+// Reviewer audits and consolidated issue creation (ADR 0109). One foreground command runs two or
+// more read-only reviewer turns on one frozen revision, one consolidation turn after every requested
+// audit succeeds, and one runtime-owned issue write per consolidated finding. No child creates,
+// edits, comments on, or labels an issue.
+import { access, constants, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join, resolve } from "node:path";
+import { defaultAgents, supportedAgents } from "../agents/index.mjs";
+import { invoke } from "../child-turn.mjs";
+import { DEFAULT_TIMEOUT, openCodeOptionsError } from "../lib/args.mjs";
+import { normalizeAgent } from "../lib/agent-kinds.mjs";
+import { writeFileAtomic } from "../lib/atomic-write.mjs";
+import { canonicalPath } from "../lib/canonical-path.mjs";
+import { sha256 } from "../lib/hash.mjs";
+import { parseWorkTreeList } from "../lib/git-read.mjs";
+import { withMutationCheck } from "../lib/snapshot.mjs";
+import { tryStateLock } from "../lib/state-lock.mjs";
+import { escapeLineSeparators } from "../prompts/escape.mjs";
+import {
+  canonicalWritePath,
+  refuseWorkTreeRootInGitWorkTree,
+  roleOptionRefusalFor,
+} from "./args.mjs";
+import { git, gitOrThrow, identityEqual, pathIdentity } from "./git.mjs";
+import { progress, runSetup } from "./supervisor.mjs";
+
+const MAX_REVIEWERS = 16;
+const ISSUE_PAGE_LIMIT = 1000;
+const DEFAULT_SETUP_TIMEOUT = 600;
+const MAX_TITLE_LENGTH = 256;
+const MAX_FINDINGS = 100;
+
+const usage = (message) => Object.assign(new Error(message), { usage: true });
+
+/** A pause that names its reason code, so the checkpoint keeps a short value and a detail. */
+class Pause extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.pauseReason = reason;
+  }
+}
+
+function positiveInt(flag, value) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw usage(`${flag} must be a positive integer.`);
+  }
+  return number;
+}
+
+/**
+ * Parses `agent-loop batch audit start` arguments. Throws an error with `usage: true` for a missing
+ * or invalid value. Performs no filesystem read and writes nothing.
+ * @param {string[]} argv arguments after `batch audit start`
+ */
+export function parseAuditArgs(argv) {
+  const options = {
+    repo: null,
+    reviewers: [],
+    worker: null,
+    workerModel: null,
+    workerEffort: null,
+    base: null,
+    workTreeRoot: null,
+    setupCmd: null,
+    setupTimeout: DEFAULT_SETUP_TIMEOUT,
+    timeout: DEFAULT_TIMEOUT,
+    reviewerSandbox: null,
+  };
+  let current = null;
+  let sandboxAlias = false;
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const raw = argv[i];
+    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+    const flag = eq === -1 ? raw : raw.slice(0, eq);
+    const inline = eq === -1 ? null : raw.slice(eq + 1);
+    const read = (name) => {
+      if (inline !== null) {
+        if (inline === "") throw usage(`Missing value for ${name}.`);
+        return inline;
+      }
+      const value = argv[++i];
+      if (!value || value.startsWith("-")) throw usage(`Missing value for ${name}.`);
+      return value;
+    };
+
+    switch (flag) {
+      case "--repo":
+        options.repo = resolve(read(flag));
+        break;
+      case "--reviewer":
+        if (options.reviewers.length >= MAX_REVIEWERS) {
+          throw usage(`--reviewer accepts at most ${MAX_REVIEWERS} entries.`);
+        }
+        current = { kind: read(flag), model: null, effort: null };
+        options.reviewers.push(current);
+        break;
+      case "--reviewer-model":
+        if (current === null) throw usage("--reviewer-model requires a preceding --reviewer.");
+        current.model = read(flag);
+        break;
+      case "--reviewer-effort":
+        if (current === null) throw usage("--reviewer-effort requires a preceding --reviewer.");
+        current.effort = read(flag);
+        break;
+      case "--worker":
+        options.worker = read(flag);
+        break;
+      case "--worker-model":
+        options.workerModel = read(flag);
+        break;
+      case "--worker-effort":
+        options.workerEffort = read(flag);
+        break;
+      case "--base":
+        options.base = read(flag);
+        break;
+      case "--work-tree-root":
+        options.workTreeRoot = resolve(read(flag));
+        break;
+      case "--setup-cmd":
+        options.setupCmd = read(flag);
+        break;
+      case "--setup-timeout":
+        options.setupTimeout = positiveInt(flag, read(flag));
+        break;
+      case "--timeout": {
+        const seconds = Number(read(flag));
+        if (!Number.isSafeInteger(seconds) || seconds < 0) {
+          throw usage("--timeout must be a non-negative integer.");
+        }
+        options.timeout = seconds === 0 ? null : seconds;
+        break;
+      }
+      case "--reviewer-sandbox": {
+        const value = read(flag);
+        if (!["read-only", "workspace-write"].includes(value)) {
+          throw usage(
+            `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
+          );
+        }
+        setSandbox(options, value, false, sandboxAlias);
+        sandboxAlias = false;
+        break;
+      }
+      case "--reviewer-workspace-write":
+        if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
+        setSandbox(options, "workspace-write", true, sandboxAlias);
+        sandboxAlias = true;
+        break;
+      default:
+        throw usage(`Unknown argument: ${raw}`);
+    }
+  }
+
+  if (options.repo === null) throw usage("Missing required --repo.");
+  if (options.reviewers.length < 2) throw usage("At least two --reviewer entries are required.");
+  if (options.worker === null) throw usage("Missing required --worker.");
+  const seen = new Set();
+  for (const reviewer of options.reviewers) {
+    const key = `${reviewer.kind}\0${reviewer.model}\0${reviewer.effort}`;
+    if (seen.has(key)) throw usage(`Duplicate reviewer settings: ${reviewer.kind}.`);
+    seen.add(key);
+  }
+  for (const reviewer of options.reviewers) {
+    if (!supportedAgents.has(reviewer.kind)) {
+      throw usage(`Unsupported reviewer: ${reviewer.kind}`);
+    }
+    const openCode = openCodeOptionsError(
+      "reviewer",
+      reviewer.kind,
+      reviewer.model,
+      reviewer.effort,
+    );
+    if (openCode) throw usage(openCode);
+    const roleRefusal = roleOptionRefusalFor(
+      "reviewer",
+      reviewer.kind,
+      reviewer.model,
+      reviewer.effort,
+    );
+    if (roleRefusal) throw usage(roleRefusal);
+  }
+  if (!supportedAgents.has(options.worker)) {
+    throw usage(`Unsupported worker: ${options.worker}`);
+  }
+  const workerOpenCode = openCodeOptionsError(
+    "worker",
+    options.worker,
+    options.workerModel,
+    options.workerEffort,
+  );
+  if (workerOpenCode) throw usage(workerOpenCode);
+  const workerRefusal = roleOptionRefusalFor(
+    "worker",
+    options.worker,
+    options.workerModel,
+    options.workerEffort,
+  );
+  if (workerRefusal) throw usage(workerRefusal);
+  if (
+    options.reviewerSandbox !== null &&
+    !options.reviewers.every((reviewer) => normalizeAgent(reviewer.kind) === "codex")
+  ) {
+    throw usage("--reviewer-sandbox requires every --reviewer to be codex.");
+  }
+  return options;
+}
+
+function setSandbox(options, value, viaAlias, aliasSeen) {
+  const earlier = options.reviewerSandbox;
+  if (earlier !== null && earlier !== value) {
+    if (viaAlias || aliasSeen) {
+      throw usage(`--reviewer-workspace-write conflicts with --reviewer-sandbox ${earlier}.`);
+    }
+    throw usage(`--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`);
+  }
+  options.reviewerSandbox = value;
+}
+
+async function assertWritableDirectory(path) {
+  let current = path;
+  for (;;) {
+    try {
+      const found = await stat(current);
+      if (!found.isDirectory()) {
+        throw usage("The work-tree root is not a directory the audit can write.");
+      }
+      await access(current, constants.W_OK);
+      return;
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        if (err?.usage) throw err;
+        throw usage("The work-tree root is not a directory the audit can write.");
+      }
+      const parent = dirname(current);
+      if (parent === current) {
+        throw usage("The work-tree root is not a directory the audit can write.");
+      }
+      current = parent;
+    }
+  }
+}
+
+/**
+ * Resolves the repository, base branch, revision, and work-tree root of an audit, refusing before
+ * any state write or child process exists.
+ * @param {object} options parsed options
+ * @param {{ gitRun?: (args: string[], cwd: string) => Promise<object> }} [deps]
+ */
+export async function prepareAudit(options, { gitRun = git } = {}) {
+  const repo = await canonicalPath(options.repo);
+  const listed = await gitRun(["worktree", "list", "--porcelain", "-z"], repo);
+  if (listed.exitCode !== 0) throw usage(`--repo is not a Git work tree: ${listed.stderr}`);
+  const entries = parseWorkTreeList(listed.stdout);
+  const first = entries[0];
+  if (first === undefined || first.bare) {
+    throw usage("--repo must name a Git main work tree.");
+  }
+  const main = await canonicalPath(first.path);
+  if (main !== repo) throw usage(`--repo must name the main work tree (${main}).`);
+
+  let base = options.base ?? null;
+  if (base === null) {
+    const remote = await gitRun(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo);
+    if (remote.exitCode === 0 && remote.stdout !== "") {
+      base = remote.stdout.startsWith("origin/")
+        ? remote.stdout.slice("origin/".length)
+        : remote.stdout;
+    } else {
+      base = "main";
+    }
+  }
+  const revision = await gitRun(
+    ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`],
+    repo,
+  );
+  if (revision.exitCode !== 0 || revision.stdout === "") {
+    throw usage(`--base ${base} has no refs/remotes/origin/${base}.`);
+  }
+
+  const workTreeRoot =
+    options.workTreeRoot ??
+    join(dirname(repo), `${basename(repo)}-audit-${options.id ?? "preview"}`);
+  const rootCanonical = await canonicalWritePath(workTreeRoot);
+  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
+  await assertWritableDirectory(rootCanonical);
+
+  const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
+  return {
+    ...options,
+    repo,
+    base,
+    revision: revision.stdout,
+    workTreeRoot: rootCanonical,
+    repoKey,
+    reviewers: options.reviewers.map((reviewer) => ({
+      kind: normalizeAgent(reviewer.kind) ?? reviewer.kind,
+      model: reviewer.model,
+      effort: reviewer.effort,
+    })),
+    worker: {
+      kind: normalizeAgent(options.worker) ?? options.worker,
+      model: options.workerModel,
+      effort: options.workerEffort,
+    },
+  };
+}
+
+/** Generates an audit id that is safe as a directory and a file name. */
+export function newAuditId(now = new Date()) {
+  const iso = now.toISOString();
+  const stamp = `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}-${iso.slice(11, 13)}${iso.slice(14, 16)}${iso.slice(17, 19)}`;
+  return `${stamp}-${randomUUID().slice(0, 8)}`;
+}
+
+/** The paths of the audit store under one runs root. */
+export function auditPaths(runsRoot) {
+  const root = join(runsRoot, "batches", "audits");
+  return {
+    root,
+    file: (id) => join(root, `${id}.json`),
+    lock: (id) => join(root, `${id}.lock`),
+  };
+}
+
+async function readText(file) {
+  try {
+    return await readFile(file, "utf8");
+  } catch (err) {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function parseAudit(text, file) {
+  if (text === null) return null;
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error(`Audit record is not valid JSON: ${file}`);
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Audit record is not a JSON object: ${file}`);
+  }
+  return value;
+}
+
+/** Reads one audit record, or null when it is missing. */
+export async function readAudit(runsRoot, id) {
+  const file = auditPaths(runsRoot).file(id);
+  return parseAudit(await readText(file), file);
+}
+
+/** Writes an audit record only when its stored text changes. Returns true on a write. */
+export async function writeAudit(runsRoot, state) {
+  const file = auditPaths(runsRoot).file(state.id);
+  const text = `${JSON.stringify(state, null, 2)}\n`;
+  const current = await readText(file);
+  if (current === text) return false;
+  await mkdir(dirname(file), { recursive: true });
+  await writeFileAtomic(file, text);
+  return true;
+}
+
+/** The local audits, newest first. A missing store has none. */
+export async function listAuditStatus(runsRoot) {
+  const { root } = auditPaths(runsRoot);
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (err) {
+    if (err?.code === "ENOENT") return [];
+    throw err;
+  }
+  const audits = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    try {
+      const state = await readAudit(runsRoot, entry.name.slice(0, -".json".length));
+      if (state !== null) audits.push(auditSummary(state));
+    } catch {
+      // A malformed record is not an audit this reader reports.
+    }
+  }
+  return audits.sort((a, b) => {
+    const left = String(a.createdAt ?? "");
+    const right = String(b.createdAt ?? "");
+    return left === right
+      ? String(b.auditId).localeCompare(String(a.auditId))
+      : right.localeCompare(left);
+  });
+}
+
+/** Reads one audit for `batch audit status`. */
+export async function readAuditStatus({ runsRoot, id }) {
+  const state = await readAudit(runsRoot, id);
+  if (state === null) throw usage(`No audit ${id}.`);
+  return auditSummary(state);
+}
+
+function auditSummary(state) {
+  const issues = Array.isArray(state.issues) ? state.issues : [];
+  return {
+    auditId: state.id,
+    status: state.status,
+    revision: state.revision,
+    base: state.base,
+    workTree: state.workTree?.path ?? null,
+    pauseReason: state.pauseReason ?? null,
+    reason: state.reason ?? null,
+    approvedPartial: state.approvedPartial === true,
+    reviewers: (state.reviewers ?? []).map((reviewer) => ({
+      kind: reviewer.kind,
+      model: reviewer.model,
+      effort: reviewer.effort,
+      status: reviewer.status,
+      error: reviewer.error ?? null,
+      findings: Array.isArray(reviewer.findings) ? reviewer.findings.length : 0,
+    })),
+    existingIssueCount: Array.isArray(state.existingIssues) ? state.existingIssues.length : 0,
+    created: Array.isArray(state.created) ? state.created : [],
+    linked: issues.filter((issue) => issue.existing === true),
+    issues,
+  };
+}
+
+function initialState(prepared) {
+  return {
+    id: prepared.id,
+    repo: prepared.repo,
+    repoKey: prepared.repoKey,
+    createdAt: new Date().toISOString(),
+    base: prepared.base,
+    revision: prepared.revision,
+    workTreeRoot: prepared.workTreeRoot,
+    workTree: null,
+    settings: {
+      reviewers: prepared.reviewers,
+      worker: prepared.worker,
+      timeout: prepared.timeout,
+      reviewerSandbox: prepared.reviewerSandbox,
+      setupCmd: prepared.setupCmd,
+      setupTimeout: prepared.setupTimeout,
+    },
+    status: "running",
+    pauseReason: null,
+    reason: null,
+    approvedPartial: false,
+    approvedAt: null,
+    reviewers: prepared.reviewers.map((reviewer, index) => ({
+      index,
+      kind: reviewer.kind,
+      model: reviewer.model,
+      effort: reviewer.effort,
+      status: "pending",
+      error: null,
+      findings: [],
+    })),
+    existingIssues: null,
+    consolidation: { status: "pending", error: null, findings: [] },
+    pendingCreate: null,
+    created: [],
+    issues: null,
+  };
+}
+
+/** Creates the one linked work tree of an audit at its frozen revision. */
+export async function createAuditWorkTree({ repo, revision, workTree }) {
+  await mkdir(dirname(workTree), { recursive: true });
+  await gitOrThrow(["worktree", "add", "--detach", workTree, revision], repo);
+  const identity = await pathIdentity(workTree);
+  if (identity === null) throw new Error("The audit work tree is missing after git worktree add.");
+  return {
+    path: resolve(workTree),
+    canonicalPath: await canonicalPath(workTree),
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    revision,
+  };
+}
+
+/** Extracts the findings document from a reviewer or consolidation response, or null. */
+export function parseFindings(response) {
+  if (typeof response !== "string") return null;
+  const candidates = [];
+  for (const match of response.matchAll(/```(?:json)?[ \t]*\r?\n([\s\S]*?)```/gi)) {
+    candidates.push(match[1]);
+  }
+  const trimmed = response.trim();
+  if (trimmed.startsWith("{")) candidates.push(trimmed);
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    let value;
+    try {
+      value = JSON.parse(candidates[index]);
+    } catch {
+      continue;
+    }
+    if (value !== null && typeof value === "object" && Array.isArray(value.findings)) {
+      const findings = normalizeFindings(value.findings);
+      if (findings !== null) return findings;
+    }
+  }
+  return null;
+}
+
+function normalizeFindings(raw) {
+  if (raw.length > MAX_FINDINGS) return null;
+  const findings = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+    if (typeof entry.title !== "string" || typeof entry.body !== "string") return null;
+    const title = entry.title.trim();
+    const body = entry.body.trim();
+    if (title === "" || body === "" || title.length > MAX_TITLE_LENGTH) return null;
+    const evidence = typeof entry.evidence === "string" ? entry.evidence.trim() : "";
+    let existingIssue = null;
+    if (entry.existingIssue !== undefined && entry.existingIssue !== null) {
+      if (!Number.isSafeInteger(entry.existingIssue) || entry.existingIssue < 1) return null;
+      existingIssue = entry.existingIssue;
+    }
+    findings.push({ title, body, evidence, existingIssue });
+  }
+  return findings;
+}
+
+/** Validates a consolidation against the frozen issue list, or null when it is not usable. */
+export function validateConsolidation(findings, issues) {
+  if (findings === null) return null;
+  const numbers = new Set(issues.map((issue) => issue.number));
+  const titles = new Set();
+  const out = [];
+  for (const finding of findings) {
+    const key = finding.title.trim().toLowerCase();
+    if (titles.has(key)) return null;
+    titles.add(key);
+    if (finding.existingIssue !== null && !numbers.has(finding.existingIssue)) return null;
+    out.push({ ...finding, title: finding.title.trim() });
+  }
+  return out;
+}
+
+function auditPrompt({ revision, base, kind }) {
+  return escapeLineSeparators(`You are reviewer ${kind} of one read-only project audit. Audit revision ${revision} of the base branch ${base} in this work tree.
+
+Do not change a tracked file or an untracked file that Git does not ignore, and do not change Git state. Do not write to GitHub or any remote: do not create, edit, comment on, label, or close an issue or a pull request, and do not push. Read-only queries are allowed. Report only defects that a reader can act on, not praise or general observations.
+
+Return exactly one fenced json code block with this document:
+{"findings":[{"title":"...","body":"...","evidence":"..."}]}
+
+Rules for the document:
+- One finding per actionable defect. Do not repeat a finding under two titles.
+- The title is a concise issue title of at most 256 characters.
+- The body states the problem, where it occurs, and the failure scenario.
+- The evidence names the files, symbols, inputs, or commands that support the finding.
+- If the revision has no actionable defect, return an empty findings array.
+- Put the document before any other closing text, and include no other fenced json block.`);
+}
+
+function consolidationPrompt({ auditId, revision, findings, issues }) {
+  const supplied = findings.map(({ reviewer, finding }) => ({
+    reviewer,
+    title: finding.title,
+    body: finding.body,
+    evidence: finding.evidence,
+  }));
+  const issueList = issues.map(({ number, title, state }) => ({ number, title, state }));
+  return escapeLineSeparators(`You are the consolidation worker of audit run ${auditId} on revision ${revision}. Merge the reviewer findings into one issue set.
+
+Reviewer findings, supplied by the runtime as JSON:
+${JSON.stringify(supplied, null, 2)}
+
+Open and closed issues of the repository, supplied by the runtime as JSON:
+${JSON.stringify(issueList, null, 2)}
+
+Rules:
+- Merge findings that describe the same defect. One defect becomes one finding.
+- Drop a finding that is not an actionable defect against this revision.
+- Compare every finding with every supplied issue, open or closed. When an issue already covers it, set existingIssue to that number. Otherwise set existingIssue to null.
+- Never create, edit, comment on, label, or close an issue yourself. The runtime makes every remote write.
+- Keep an issue title at most 256 characters, and state a concrete problem, its location, and its failure scenario in the body.
+
+Return exactly one fenced json code block with this document:
+{"findings":[{"title":"...","body":"...","evidence":"...","existingIssue":12}]}
+
+Use null for existingIssue when no supplied issue covers the finding, and include no other fenced json block.`);
+}
+
+async function defaultRunTurn({
+  kind,
+  model,
+  effort,
+  roleName,
+  prompt,
+  cwd,
+  timeout,
+  signal,
+  reviewerSandbox,
+}) {
+  const state = { kind, model, effort, sessionId: null };
+  return withMutationCheck(
+    cwd,
+    roleName,
+    () =>
+      invoke({
+        agents: defaultAgents,
+        state,
+        roleName,
+        prompt,
+        opts: {
+          cwd,
+          readOnly: true,
+          ...(roleName === "reviewer" && kind === "codex" && reviewerSandbox
+            ? { sandbox: reviewerSandbox }
+            : {}),
+          timeout,
+          signal,
+        },
+        onEvent: () => {},
+        stepsUsed: 0,
+      }),
+    { signal },
+  );
+}
+
+async function readIssueList({ gh, repo }) {
+  let reply;
+  try {
+    reply = await gh(
+      [
+        "issue",
+        "list",
+        "--state",
+        "all",
+        "--limit",
+        String(ISSUE_PAGE_LIMIT),
+        "--json",
+        "number,title,state,url",
+      ],
+      repo,
+    );
+  } catch (err) {
+    throw new Pause("issue-read-failed", `the issue read failed: ${err.message}`);
+  }
+  if (reply?.status !== 0) {
+    throw new Pause("issue-read-failed", "the issue read failed");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(reply.stdout);
+  } catch {
+    throw new Pause("issue-read-failed", "the issue read returned an unreadable value");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Pause("issue-read-failed", "the issue read returned an unreadable value");
+  }
+  if (parsed.length >= ISSUE_PAGE_LIMIT) {
+    throw new Pause(
+      "issue-read-incomplete",
+      `the issue list returned ${ISSUE_PAGE_LIMIT} entries, which is the page limit`,
+    );
+  }
+  const issues = [];
+  for (const entry of parsed) {
+    if (
+      entry === null ||
+      typeof entry !== "object" ||
+      !Number.isSafeInteger(entry.number) ||
+      typeof entry.title !== "string" ||
+      typeof entry.state !== "string"
+    ) {
+      throw new Pause("issue-read-failed", "the issue read returned an unreadable value");
+    }
+    issues.push({
+      number: entry.number,
+      title: entry.title,
+      state: entry.state,
+      url: typeof entry.url === "string" ? entry.url : null,
+    });
+  }
+  return issues;
+}
+
+function issueNumberFromUrl(stdout) {
+  const match = /\/issues\/(\d+)\s*$/.exec(String(stdout ?? "").trim());
+  return match ? Number(match[1]) : null;
+}
+
+function createdBody({ finding, auditId, revision }) {
+  const evidence = finding.evidence === "" ? "" : `\n\nEvidence: ${finding.evidence}`;
+  return `${finding.body}${evidence}\n\nAudit-Run: ${auditId}\nAudit-Revision: ${revision}`;
+}
+
+function sameTitle(left, right) {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+async function writeState(runsRoot, state) {
+  await writeAudit(runsRoot, state);
+  return state;
+}
+
+/**
+ * Starts, resumes, or approves one audit run. Returns `{ exitCode, summary }`. Every store write is
+ * a change; a status read and a run with nothing to do write nothing.
+ * @param {{ prepared: object, runsRoot: string, gh: Function, signal?: AbortSignal, deps?: object }} options
+ */
+export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {} }) {
+  const paths = auditPaths(runsRoot);
+  const mode = prepared.mode ?? "start";
+  const release = await tryStateLock(paths.lock(prepared.id), { label: "Audit", noun: "audit" });
+  if (release === null) {
+    const state = await readAudit(runsRoot, prepared.id);
+    if (state === null) throw usage(`No audit ${prepared.id}.`);
+    const paused = {
+      ...state,
+      status: "paused",
+      pauseReason: "audit-locked",
+      reason: "another command owns the audit",
+    };
+    return { exitCode: 1, summary: auditSummary(paused) };
+  }
+
+  try {
+    let state = await readAudit(runsRoot, prepared.id);
+    if (state !== null && state.status === "created") {
+      return { exitCode: 0, summary: auditSummary(state) };
+    }
+    if (mode === "start") {
+      if (state !== null) throw usage(`Audit ${prepared.id} already exists.`);
+      state = initialState(prepared);
+      await writeState(runsRoot, state);
+      progress(
+        `audit ${state.id} started (${state.reviewers.length} reviewer(s), revision ${state.revision.slice(0, 12)})`,
+      );
+    } else if (state === null) {
+      throw usage(`No audit ${prepared.id}.`);
+    }
+
+    if (mode === "approve" && state.approvedPartial !== true) {
+      const failed = state.reviewers.some((reviewer) => reviewer.status === "failed");
+      if (failed) {
+        state = {
+          ...state,
+          approvedPartial: true,
+          approvedAt: new Date().toISOString(),
+        };
+        await writeState(runsRoot, state);
+      }
+    }
+
+    if (state.workTree === null) {
+      let workTree;
+      try {
+        workTree = await (deps.createWorkTree ?? createAuditWorkTree)({
+          repo: prepared.repo,
+          revision: state.revision,
+          workTree: join(prepared.workTreeRoot, "revision"),
+        });
+      } catch (err) {
+        throw new Pause("work-tree-failed", `the audit work tree was not created: ${err.message}`);
+      }
+      state = { ...state, workTree };
+      await writeState(runsRoot, state);
+      progress(`audit ${state.id}: revision ${state.revision.slice(0, 12)} checked out`);
+    } else {
+      const identity = await pathIdentity(state.workTree.path);
+      if (identity === null) {
+        throw new Pause("work-tree-missing", "the recorded audit work tree is missing");
+      }
+      if (!identityEqual(identity, state.workTree)) {
+        throw new Pause("work-tree-changed", "the recorded audit work tree identity changed");
+      }
+    }
+
+    if (state.setupDone !== true && state.settings.setupCmd) {
+      const ok = await runSetup({
+        command: state.settings.setupCmd,
+        workTree: state.workTree.path,
+        timeoutSeconds: state.settings.setupTimeout,
+        signal,
+        deps,
+      });
+      if (signal?.aborted) throw Object.assign(new Error("interrupted"), { isCanceled: true });
+      if (!ok) throw new Pause("setup-failed", "the setup command failed");
+      state = { ...state, setupDone: true };
+      await writeState(runsRoot, state);
+    }
+
+    const runTurn = deps.runTurn ?? defaultRunTurn;
+    for (const reviewer of state.reviewers) {
+      if (reviewer.status === "succeeded") continue;
+      if (state.approvedPartial && reviewer.status === "failed") continue;
+      if (signal?.aborted) throw Object.assign(new Error("interrupted"), { isCanceled: true });
+      state = {
+        ...state,
+        status: "running",
+        pauseReason: null,
+        reason: null,
+        reviewers: state.reviewers.map((entry) =>
+          entry.index === reviewer.index ? { ...entry, status: "running", error: null } : entry,
+        ),
+      };
+      await writeState(runsRoot, state);
+      try {
+        const response = await runTurn({
+          kind: reviewer.kind,
+          model: reviewer.model,
+          effort: reviewer.effort,
+          roleName: "reviewer",
+          prompt: auditPrompt({
+            revision: state.revision,
+            base: state.base,
+            kind: reviewer.kind,
+          }),
+          cwd: state.workTree.path,
+          timeout: state.settings.timeout,
+          signal,
+          reviewerSandbox: state.settings.reviewerSandbox,
+        });
+        const findings = parseFindings(response);
+        if (findings === null) {
+          throw new Error("the reviewer returned no valid findings document");
+        }
+        state = {
+          ...state,
+          reviewers: state.reviewers.map((entry) =>
+            entry.index === reviewer.index
+              ? { ...entry, status: "succeeded", error: null, findings }
+              : entry,
+          ),
+        };
+        progress(
+          `audit ${state.id}: reviewer ${reviewer.kind} succeeded (${findings.length} finding(s))`,
+        );
+      } catch (err) {
+        if (err?.isCanceled || signal?.aborted) throw err;
+        state = {
+          ...state,
+          reviewers: state.reviewers.map((entry) =>
+            entry.index === reviewer.index
+              ? { ...entry, status: "failed", error: errorText(err) }
+              : entry,
+          ),
+        };
+        progress(`audit ${state.id}: reviewer ${reviewer.kind} failed`);
+      }
+      await writeState(runsRoot, state);
+    }
+
+    const unsuccessful = state.reviewers.filter((reviewer) => reviewer.status !== "succeeded");
+    const approvedFailures =
+      state.approvedPartial && unsuccessful.every((reviewer) => reviewer.status === "failed");
+    if (unsuccessful.length > 0 && !approvedFailures) {
+      const names = unsuccessful.map((reviewer) => reviewer.kind).join(", ");
+      state = {
+        ...state,
+        status: "paused",
+        pauseReason: "audit-failed",
+        reason: `the audit did not succeed for: ${names}`,
+      };
+      await writeState(runsRoot, state);
+      progress(`audit ${state.id}: paused (${state.pauseReason})`);
+      return { exitCode: 1, summary: auditSummary(state) };
+    }
+
+    if (state.existingIssues === null) {
+      const issues = await readIssueList({ gh, repo: prepared.repo });
+      state = { ...state, existingIssues: issues };
+      await writeState(runsRoot, state);
+    }
+
+    if (state.consolidation.status !== "succeeded") {
+      state = {
+        ...state,
+        status: "running",
+        pauseReason: null,
+        reason: null,
+        consolidation: { ...state.consolidation, status: "running", error: null },
+      };
+      await writeState(runsRoot, state);
+      const successes = state.reviewers.filter((reviewer) => reviewer.status === "succeeded");
+      try {
+        const response = await runTurn({
+          kind: state.settings.worker.kind,
+          model: state.settings.worker.model,
+          effort: state.settings.worker.effort,
+          roleName: "worker",
+          prompt: consolidationPrompt({
+            auditId: state.id,
+            revision: state.revision,
+            findings: successes.flatMap((reviewer) =>
+              reviewer.findings.map((finding) => ({ reviewer: reviewer.kind, finding })),
+            ),
+            issues: state.existingIssues,
+          }),
+          cwd: state.workTree.path,
+          timeout: state.settings.timeout,
+          signal,
+        });
+        const parsed = parseFindings(response);
+        const consolidated = validateConsolidation(parsed, state.existingIssues);
+        if (consolidated === null) {
+          throw new Pause(
+            "consolidation-invalid",
+            "the consolidation returned an invalid issue set",
+          );
+        }
+        state = {
+          ...state,
+          consolidation: { status: "succeeded", error: null, findings: consolidated },
+        };
+      } catch (err) {
+        if (err?.isCanceled || signal?.aborted) throw err;
+        const reason = err?.pauseReason ?? "consolidation-failed";
+        state = {
+          ...state,
+          status: "paused",
+          pauseReason: reason,
+          reason: errorText(err),
+          consolidation: {
+            ...state.consolidation,
+            status: "failed",
+            error: errorText(err),
+          },
+        };
+        await writeState(runsRoot, state);
+        return { exitCode: 1, summary: auditSummary(state) };
+      }
+      await writeState(runsRoot, state);
+    }
+
+    state = await createIssues({ state, runsRoot, gh, signal });
+    progress(
+      `audit ${state.id}: created ${state.issues.length} issue(s), ${state.issues.filter((issue) => issue.existing).length} linked`,
+    );
+    return { exitCode: state.status === "created" ? 0 : 1, summary: auditSummary(state) };
+  } catch (err) {
+    const state = await readAudit(runsRoot, prepared.id);
+    if (state === null) throw err;
+    if (err?.isCanceled || signal?.aborted) {
+      const interrupted = {
+        ...state,
+        status: "interrupted",
+        pauseReason: "interrupted",
+        reason: "interrupted by SIGINT",
+      };
+      await writeState(runsRoot, interrupted);
+      return { exitCode: 130, summary: auditSummary(interrupted) };
+    }
+    if (err?.usage) throw err;
+    const paused = {
+      ...state,
+      status: "paused",
+      pauseReason: err?.pauseReason ?? "audit-failed",
+      reason: errorText(err),
+    };
+    await writeState(runsRoot, paused);
+    return { exitCode: 1, summary: auditSummary(paused) };
+  } finally {
+    await release();
+  }
+}
+
+function errorText(err) {
+  const message = typeof err?.message === "string" ? err.message : String(err);
+  return message === "" ? "the step failed with an empty error message" : message;
+}
+
+async function createIssues({ state, runsRoot, gh, signal }) {
+  const frozen = state.consolidation.findings;
+  const created = [...(state.created ?? [])];
+  const issues = Array.isArray(state.issues) ? [...state.issues] : [];
+
+  for (const finding of frozen) {
+    if (issues.some((issue) => sameTitle(issue.title, finding.title))) continue;
+    const named =
+      finding.existingIssue === null
+        ? null
+        : state.existingIssues.find((issue) => issue.number === finding.existingIssue);
+    const existing =
+      named ?? state.existingIssues.find((issue) => sameTitle(issue.title, finding.title));
+    if (existing) {
+      issues.push({
+        title: finding.title,
+        number: existing.number,
+        url: existing.url,
+        existing: true,
+        reviewers: state.reviewers
+          .filter((reviewer) => reviewer.status === "succeeded")
+          .map((reviewer) => reviewer.kind),
+      });
+      state = { ...state, issues: [...issues] };
+      await writeState(runsRoot, state);
+      continue;
+    }
+
+    const alreadyCreated = created.find((entry) => sameTitle(entry.title, finding.title));
+    if (alreadyCreated) {
+      issues.push({ ...alreadyCreated, existing: false });
+      state = { ...state, issues: [...issues] };
+      await writeState(runsRoot, state);
+      continue;
+    }
+
+    if (state.pendingCreate !== null && sameTitle(state.pendingCreate.title, finding.title)) {
+      const fresh = await readIssueList({ gh, repo: state.repo });
+      const adopted = fresh.find((issue) => sameTitle(issue.title, finding.title));
+      if (adopted) {
+        const entry = {
+          title: finding.title,
+          number: adopted.number,
+          url: adopted.url,
+          createdAt: new Date().toISOString(),
+        };
+        created.push(entry);
+        issues.push({ ...entry, existing: false });
+        state = { ...state, pendingCreate: null, created: [...created], issues: [...issues] };
+        await writeState(runsRoot, state);
+        continue;
+      }
+      state = { ...state, pendingCreate: null };
+      await writeState(runsRoot, state);
+    }
+
+    if (signal?.aborted) throw Object.assign(new Error("interrupted"), { isCanceled: true });
+    state = { ...state, pendingCreate: { title: finding.title } };
+    await writeState(runsRoot, state);
+    let reply;
+    try {
+      reply = await gh(
+        [
+          "issue",
+          "create",
+          "--title",
+          finding.title,
+          "--body",
+          createdBody({ finding, auditId: state.id, revision: state.revision }),
+        ],
+        state.repo,
+      );
+    } catch (err) {
+      throw new Pause("issue-create-failed", `the issue creation failed: ${err.message}`);
+    }
+    if (reply?.status !== 0) {
+      throw new Pause("issue-create-failed", "the issue creation failed");
+    }
+    const number = issueNumberFromUrl(reply.stdout);
+    if (number === null) {
+      throw new Pause("issue-create-failed", "the created issue returned no number");
+    }
+    const entry = {
+      title: finding.title,
+      number,
+      url: String(reply.stdout).trim(),
+      createdAt: new Date().toISOString(),
+    };
+    created.push(entry);
+    issues.push({ ...entry, existing: false });
+    state = { ...state, pendingCreate: null, created: [...created], issues: [...issues] };
+    await writeState(runsRoot, state);
+  }
+
+  state = {
+    ...state,
+    status: "created",
+    pauseReason: null,
+    reason: null,
+    pendingCreate: null,
+    issues,
+  };
+  await writeState(runsRoot, state);
+  return state;
+}
