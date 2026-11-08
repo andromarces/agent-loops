@@ -93,11 +93,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   tree, so a later prompt never goes through a file. A piped `cat <file>` of a
   file that was never written gives an empty stdin, and `dispatch` refuses it:
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
-- The init task (`--task` or `--task-file`) reaches each child conversation once. The first turn of a
-  conversation shows the task under its own `Init task:` label, before `Instructions:`. This holds in the worker
-  preamble and in the reviewer prompt. A later turn of the same conversation does not repeat it.
-  - The delivery rules cover `taskSentTo`, a replacement conversation, the task-only turn, and
-    a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
+- The init task (`--task` or `--task-file`) reaches each child conversation once, as
+  [Init task delivery](orchestrator/task-delivery.md) states.
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
@@ -125,8 +122,6 @@ printf '%s' "<prompt>" | agent-loop role dispatch --role worker --cwd "<work tre
 printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work tree>"
 ```
 
-A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
-every reviewer dispatch, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 A run that set `--reviewer-sandbox` at init needs no flag on a later
 dispatch: the state file holds the mode. A later dispatch that names another
 mode is refused.
@@ -579,11 +574,6 @@ Exclude every issue that a commit message closes. The commits endpoint returns a
 
 ## Several runs at once
 
-One parent session can drive several runs, one per work tree. Each run registers
-its own session entry keyed by the work tree, so a second run in a different
-work tree does not replace the first, and the parent-edit guard stays engaged
-while any of the session's runs is non-terminal.
-
 - Interleave: dispatch one turn per run in turn, and read each envelope before
   the next dispatch. This works in every harness.
 - Background: run each dispatch as a background shell command where the harness
@@ -600,10 +590,6 @@ required CI checks are then its only test evidence, as
 [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 A parent that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the
 first dispatch, but 2 slots overloaded both measured hosts (ADR 0046).
-
-Workers of runs in one repository can each create the same shared tracking issue, or take the same
-sequential identifier, such as the next ADR number. Rules:
-[Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md).
 
 Workers of runs in one repository can also edit the body of the same issue at once, which drops an
 item when two writes overlap. Put the read-write-read rule of
@@ -627,8 +613,7 @@ Both paths name the mode with `--mode <mode>`, with the same three values: on th
 `role` init call and on the headless `agent-loop` command. The headless `--mode`
 is off by default, so a run without the flag keeps the current behavior. A
 `review-only` run dispatches no worker, so it takes none of `--pr`,
-`--require-accept`, and `--require-ci`. The Completion section states the finish
-rule.
+`--require-accept`, and `--require-ci`.
 
 The headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
@@ -650,9 +635,7 @@ the state file instead of a transcript event (#281).
 
 A headless run on a repository whose required-check sources are unreadable passes
 `--compare-head <pr>` for a PR that exists at start (#1104), and a run without the flag
-resolves a worker-opened PR itself (#1111, ADR 0053). The rules, the refusals, and the
-exit codes are in
-[Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md).
+resolves a worker-opened PR itself (#1111, ADR 0053).
 
 A headless orchestrator action allows only these keys. The `run_worker` and
 `run_reviewer` actions allow only `action` and `prompt`. The `abort` action
@@ -664,7 +647,7 @@ with an error (#1034).
 
 ## Completion
 
-Completion is completion of the requested work, not code acceptance.
+The rule is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
 
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
@@ -674,9 +657,7 @@ Completion is completion of the requested work, not code acceptance.
   `--require-accept` in this mode.
 
 `finish` reads a five-key summary as JSON on stdin and is accepted only from the
-`active` lifecycle. Before you call `finish`, read
-[Finish output](orchestrator/finish-output.md) when you need the exact summary
-shape or the `unresolvedCompare` marker, or when a `finish` is refused. A pending
+`active` lifecycle. A pending
 or failing check goes into `notDone` or blocks the finish.
 
 Map the child report fields into the finish summary:
@@ -706,10 +687,6 @@ Map the child report fields into the finish summary:
 pull request, so the run can end only through the gate:
 `agent-loop role finish --require-ci <pr>` here, and
 `agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
-
-Before you pass `--pr`, and when a declared run refuses a finish, read
-[Declaring a PR run](orchestrator/pr-declaration.md). Read it also when the
-PR does not exist at init, and when a headless run declares its PR itself.
 
 ## Blockers and terminal states
 
@@ -741,7 +718,7 @@ PR does not exist at init, and when a headless run declares its PR itself.
   `halted`. The parent-edit guard (#57, Claude Code, Codex CLI, Copilot CLI,
   OpenCode, and Antigravity CLI) releases on any of them. Every `agent-loop role`
   init requires `--parent-session`, so the guard always has a parent to match.
-  The headless `agent-loop` command is the explicit unguarded path.
+  The unguarded path is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
 
 ## Repeated rejects of one finding class
 
@@ -764,6 +741,3 @@ dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
 `dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the
 Claude session of the role. Do not end that process. The maintainer ends it or waits for it.
-
-A run keeps the `--parent-session` of the session that started it. How each subcommand treats the
-flag after init is in [Parent session id after init](orchestrator/parent-session-guard.md).

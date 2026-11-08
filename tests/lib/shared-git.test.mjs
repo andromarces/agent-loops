@@ -565,6 +565,24 @@ test("an added, edited, and removed hook file is reported by name", async () => 
   expect(changed).toEqual(["hooks/commit-msg", "hooks/pre-commit", "hooks/pre-push"]);
 });
 
+// Usefulness: the common-directory read keeps a trailing space — no other case has a spaced Git directory.
+// Windows cannot create a directory name that ends in a space.
+test.skipIf(process.platform === "win32")(
+  "a common directory that ends in a space keeps its hook files",
+  async () => {
+    const parent = await trackedTempDir("agent-loops-shared-git-space-", dirs);
+    const repo = join(parent, "repo");
+    const gitDir = join(parent, "git dir ");
+    await execa("git", ["init", "--separate-git-dir", gitDir, repo]);
+    await mkdir(join(gitDir, "hooks"), { recursive: true });
+    await writeFile(join(gitDir, "hooks", "pre-commit"), "#!/bin/sh\nexit 0\n");
+
+    const state = await readSharedGit(repo);
+
+    expect(Object.keys(state.hooks)).toEqual(["pre-commit"]);
+  },
+);
+
 // Usefulness: verifies "the sample hooks that `git init` writes are not active hooks", so a stale
 // sample never reads as a change.
 test("a sample hook file is not reported", async () => {

@@ -50,7 +50,7 @@ Andro Marces
 - Partially supersedes [ADR 0039](0039-machine-wide-test-slot.md)
 - [ADR 0044](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)
 - Implementation:
-  - Source: `testSlotOptions` and `TEST_SLOT_HELP` in `src/lib/test-slot.mjs`, `src/cli.mjs`
+  - Source: `testSlotOptions` in `src/lib/test-slot.mjs`, `TEST_SLOT_HELP` in `src/lib/test-slot-cli.mjs`, `src/cli.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`
   - Docs: `docs/reference/usage.md`
 - [ADR Index](README.md)

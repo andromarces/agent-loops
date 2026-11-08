@@ -10,7 +10,7 @@ Partially superseded by [ADR 0093: Report a held inherited temporary directory n
 
 - The single last-read report of decision 2.
 
-[ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md) replaced decision 3's non-terminal requirement.
+[ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md) replaced decision 3 of ADR 0081: the requirement that the run is non-terminal.
 
 Superseded by [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md):
 

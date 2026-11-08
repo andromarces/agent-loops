@@ -15,7 +15,7 @@ Superseded by [ADR 0095: Report inherited temporary directory names as diagnosti
 
 No decision remains in force.
 
-Partially supersedes [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md). This ADR replaced decision 2's rule that the report lists every entry that appeared, and the matching consequence. ADR 0095 restores that rule for the one post-turn read.
+Partially supersedes [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md). This ADR replaced decision 2's rule that the report lists every entry that appeared, and the matching consequence. It also partially supersedes [ADR 0068: Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md), whose all-entries rule it replaced. ADR 0095 restores that rule for the one post-turn read.
 
 ## Date
 

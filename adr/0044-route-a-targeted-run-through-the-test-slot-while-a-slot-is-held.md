@@ -62,7 +62,7 @@ Andro Marces
 - [Issue #1611](https://github.com/andromarces/agent-loops/issues/1611) (decision 7, test files that name a changed non-module file by path)
 - Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492), [#1611](https://github.com/andromarces/agent-loops/issues/1611)
 - Implementation:
-  - Source: `holdTestSlot` and `parseTestSlotArgs` in `src/lib/test-slot.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
+  - Source: `holdTestSlot` in `src/lib/test-slot.mjs`, `parseTestSlotArgs` in `src/lib/test-slot-cli.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`
   - Docs: `docs/orchestrator-instructions.md`, `docs/reference/usage.md` (Test slot)
 - [ADR Index](README.md)

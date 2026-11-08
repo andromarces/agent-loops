@@ -46,10 +46,10 @@ The runtime enforces step limits and mutation boundaries.
 
 Subcommands:
 
-  agent-loop role               Run a single worker or reviewer turn, or finish/abort/extend/refresh
-                                a run, from a lifecycle state file (see below). One JSON
-                                object on stdout, except --help, which prints plain
-                                usage; logs on stderr.
+  agent-loop role               Run dispatch, finish, abort, extend, declare-pr,
+                                refresh-local, set-model, or wait-checks on a run, from a
+                                lifecycle state file (see below). One JSON object on stdout,
+                                except --help, which prints plain usage; logs on stderr.
   agent-loop install            Install harness entry points and parent guards at user
                                 scope. Interactive, or --harness <list> --yes.
   agent-loop uninstall          Remove the installed entry points and guards. Restores
@@ -129,16 +129,14 @@ Role flags:
   --role worker|reviewer        Role to dispatch. Required for dispatch.
   --cwd <directory>             Target work tree. Must be inside a Git work tree.
                                 Defaults to the current directory.
-  --parent-session <id>         Required on the init call, on extend, declare-pr, refresh-local, and set-model.
-                                The harness
-                                session id the parent-edit guard matches; later calls
-                                reject a changed value, and extend, declare-pr,
-                                refresh-local, and set-model refuse a mismatch. The headless form (no subcommand) is the explicit
-                                unguarded path.
-  --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout / --no-copy-local-files / --copy-local-path
-                                First (init) call only. Later calls read these from the
-                                state file and reject any attempt to change them.
-                                Only extend takes --max-steps after init, and only set-model takes a role model.
+  --parent-session <id>         ${wrapHelp(`Required on the init call, on extend, declare-pr, refresh-local, and set-model. The harness session id is the value that the parent-edit guard matches. Later calls reject a changed value. Extend, declare-pr, refresh-local, and set-model refuse a mismatch. The headless form (no subcommand) is the explicit unguarded path.`)}
+  --task / --task-file / --mode / --worker* / --reviewer* / --max-steps / --timeout
+  --no-copy-local-files
+                                ${wrapHelp(`First (init) call only. Later calls read these from the state file and reject any attempt to change them. Only extend takes --max-steps after init, and only set-model takes a role model.`)}
+  --copy-local-path <path>      ${wrapHelp(`Role init only. Repeatable. Add one ignored path of the main work tree to the local-file copy, for example a downloaded specification directory. The path is relative to the main work tree. An absolute path, or a path that leaves the tree or passes through a symlink or junction, is refused. A path that holds a tracked file or a file that is not ignored is refused.`)}
+
+                                ${wrapHelp(`So is use with --no-copy-local-files. The refusal happens before any state is written. Every copy rule applies. The init envelope lists the copied files in localFiles.`)}
+  --reason <text>               abort only: the reason recorded on the run. Required for abort.
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
   --resume-interrupted          Explicitly continue after an uncertain previous turn.
@@ -269,13 +267,6 @@ Options:
                                 .env, .envrc, and the other paths in the reference docs) before the
                                 first turn, never overwriting a file and never following a symlink.
                                 The transcript names the copied and skipped paths and never a content.
-  --copy-local-path <path>      role init only. Repeatable. Add one ignored path of the main work tree to
-                                the local-file copy, for example a downloaded specification directory.
-                                The path is relative to the main work tree. An absolute path, a path that
-                                leaves it or passes through a symlink or junction, a path that holds a
-                                tracked file or a file that is not ignored, and use with
-                                --no-copy-local-files are refused before any state is written. Every copy rule applies. The init
-                                envelope lists the copied files in localFiles.
   --verbose                     Enable debug-level lifecycle logging, including snapshot activity.
   --require-accept              Refuse finish until a reviewer turn reports on the state, and
                                 after a worker turn that reviewer turn accepts with a Checks
