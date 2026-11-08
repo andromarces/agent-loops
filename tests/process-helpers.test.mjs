@@ -289,7 +289,8 @@ test(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
-const CEILING_MS = 4000;
+const CEILING_MS = 500;
+const HARD_DEADLINE_MS = 8000;
 // Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not exit
 // silently, or the kill check reads its ceiling exit as a kill. The marker path is a directory, so
 // the write fails; the shim must stay alive past its ceiling and the helper must report it.
@@ -305,12 +306,11 @@ test(
         held.catch(() => {});
         const started = join(shimDir, "started.txt");
         await pollUntil(async () => (existsSync(started) ? true : undefined), 10_000);
-        // Past the ceiling, and early enough that the kill check ends before the hard deadline
-        // (twice the ceiling), as it does with the real ceilings.
+        // Past the ceiling, while the hard exit bound leaves room for a slow runner.
         await delay(CEILING_MS + 200);
       },
       undefined,
-      { ceilingMs: CEILING_MS },
+      { ceilingMs: CEILING_MS, hardDeadlineMs: HARD_DEADLINE_MS },
     ).then(
       () => undefined,
       (error) => error,
