@@ -82,16 +82,18 @@ test("the rule lets a targeted run add the tests that name a changed non-module 
   }
 });
 
-// Usefulness: verifies the rendered wrapper runs a suite command in the default shell of the host
-// (cmd on Windows, sh elsewhere), so a child that follows the rule runs its suite, not an error.
-test("the rendered wrapper runs a suite command in the default shell", async () => {
+// Usefulness: issue #1673 — the rendered wrapper passes the suite command as an argument vector
+// that runs without a shell, so a child that follows the rule runs its suite with no quoting step.
+test("the rendered wrapper runs the suite as an argument vector without a shell", async () => {
   const shell = process.platform === "win32" ? "bash or cmd" : "sh";
   const form = testSlotRule()
     .split(" ; ")
-    .map((part) => part.match(new RegExp(`${shell}: (.*test-slot -- "<full suite command>")`)))
+    .map((part) =>
+      part.match(new RegExp(`${shell}: (.*test-slot -- <suite command as separate arguments>)`)),
+    )
     .find(Boolean);
   expect(form).toBeTruthy();
-  const command = form[1].replace("<full suite command>", "node --version");
+  const command = form[1].replace("<suite command as separate arguments>", "node --version");
   const run = await execa(command, { shell: true, reject: false, all: true });
   expect(run.exitCode).toBe(0);
   expect(run.all).toMatch(/v\d+\.\d+\.\d+/);
@@ -105,6 +107,21 @@ test("the rule names the platform shell that runs the quoted suite command", () 
   );
   expect(rule).toContain("bash -c '<command>'");
   expect(rule).toMatch(/absolute paths/);
+});
+
+// Usefulness: issue #1673 — the rule names the argument-vector form as the default from Git Bash
+// on Windows and states the Windows executable limit, so a child passes separate arguments and
+// never a .cmd shim that the OS cannot spawn without a shell. No other test pins this text.
+test("the rule names the argument-vector form as the default from Git Bash on Windows", () => {
+  const rule = testSlotRule();
+  expect(rule).toMatch(
+    /Two or more arguments after -- form an argument vector that runs without a shell/,
+  );
+  expect(rule).toMatch(/From Git Bash on Windows, use this argument-vector form as the default/);
+  expect(rule).toMatch(
+    /must start with a real executable such as node, not a \.cmd shim such as pnpm/,
+  );
+  expect(rule).toContain("test-slot -- <suite command as separate arguments>");
 });
 
 // Usefulness: verifies the decided rule for a worker red run under a held test slot (issue #1612):

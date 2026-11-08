@@ -645,7 +645,9 @@ test("every reviewer turn routes a full suite through the test slot wrapper of t
     reviewerPrompt({ prompt: "check", testRun: TEST_RUN, sandboxMode: "none" }),
   ]) {
     expect(prompt).toMatch(/Run a targeted test file through the test slot wrapper with --if-held/);
-    const match = prompt.match(/"([^"]+)" "([^"]+)" test-slot -- "<full suite command>"/);
+    const match = prompt.match(
+      /"([^"]+)" "([^"]+)" test-slot -- <suite command as separate arguments>/,
+    );
     expect(match).not.toBeNull();
     expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
     await access(match[2]);

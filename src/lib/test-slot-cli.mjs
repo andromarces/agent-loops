@@ -13,14 +13,18 @@ const TEST_SLOT_HELP = `
 Usage:
 
   agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] [--] "<command>"
+  agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] -- <executable> [<argument>...]
 
-Runs <command> only while this process holds one of the machine-wide test slots.
+Runs a command only while this process holds one of the machine-wide test slots.
 A wrapper starts only while fewer than its own <n> slots are held by live
 owners, so wrappers that pass different <n> never run more than the largest
-<n> among them. The command is one argument, run through the platform shell
-(/bin/sh -c, or cmd.exe on Windows) in the current directory, as --test-cmd
-runs its command. Quote it as one argument for the calling shell. stdout and
-stderr pass through, and stdin is closed.
+<n> among them. One argument after -- is a shell string, run through the
+platform shell (/bin/sh -c, or cmd.exe on Windows) in the current directory, as
+--test-cmd runs its command. Quote it as one argument for the calling shell.
+Two or more arguments after -- form an argument vector, spawned without a
+shell, so no shell quoting applies. On Windows the vector must start with a
+real executable such as node, not a .cmd shim such as pnpm, which the OS cannot
+spawn without a shell. stdout and stderr pass through, and stdin is closed.
 
 Options:
 
@@ -67,15 +71,18 @@ Exit codes:
 
 /**
  * Parses the `test-slot` argv. A flag wins over its environment value, which is read only when
- * the flag is absent; an empty environment value counts as unset. Throws an error with
- * `usage: true` on an invalid value that applies.
- * @returns {{ help: true } | { slots: number, waitSeconds: number, ifHeld: boolean, command: string }}
+ * the flag is absent; an empty environment value counts as unset. Two or more arguments after `--`
+ * form an argument vector, returned as `command` plus `args`; one argument keeps the shell-string
+ * form, returned as `command` alone. Throws an error with `usage: true` on an invalid value that
+ * applies.
+ * @returns {{ help: true } | { slots: number, waitSeconds: number, ifHeld: boolean, command: string, args?: string[] }}
  */
 export function parseTestSlotArgs(argv, env = process.env) {
   let slots = null;
   let wait = null;
   let ifHeld = false;
   let rest = [];
+  let afterSeparator = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
@@ -103,25 +110,40 @@ export function parseTestSlotArgs(argv, env = process.env) {
     if (arg !== "--" && arg.startsWith("-")) {
       throw usageError(`Unknown option ${arg}.`);
     }
-    rest = argv.slice(arg === "--" ? i + 1 : i);
+    afterSeparator = arg === "--";
+    rest = argv.slice(afterSeparator ? i + 1 : i);
     break;
   }
-  if (rest.length !== 1 || rest[0].trim() === "") {
-    throw usageError("Pass the command as exactly one argument, quoted for the calling shell.");
+  const commandForm =
+    'Pass the command as one quoted argument, or as two or more arguments after "--" that run without a shell.';
+  if (rest.length === 0 || rest[0].trim() === "") {
+    throw usageError(commandForm);
+  }
+  if (afterSeparator && rest.length >= 2) {
+    return {
+      ...testSlotOptions(env, { slots, waitSeconds: wait }),
+      ifHeld,
+      command: rest[0],
+      args: rest.slice(1),
+    };
+  }
+  if (rest.length !== 1) {
+    throw usageError(commandForm);
   }
   return { ...testSlotOptions(env, { slots, waitSeconds: wait }), ifHeld, command: rest[0] };
 }
 
 const signalExit = (name) => 128 + (constants.signals[name] ?? 0);
 
-// Runs the command with the `--test-cmd` runner semantics: the platform shell, and a tree that
-// `killLiveTrees` ends. A top-level run leads a process group of its own on POSIX. A nested run
-// (`ownGroup` false) stays in the group of the outer wrapper's command, so the outer kill
-// reaches it. The command text is never logged.
-async function runCommand(command, { env, ownGroup }) {
+// Runs the command with the `--test-cmd` runner semantics: a shell string in the platform shell,
+// or an argument vector spawned without a shell, and a tree that `killLiveTrees` ends. A top-level
+// run leads a process group of its own on POSIX. A nested run (`ownGroup` false) stays in the
+// group of the outer wrapper's command, so the outer kill reaches it. The command text is never
+// logged.
+async function runCommand({ command, args }, { env, ownGroup }) {
   logInfo("test slot command started");
-  const result = await execBounded(command, [], {
-    shell: true,
+  const result = await execBounded(command, args ?? [], {
+    shell: args === undefined,
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",
@@ -172,7 +194,7 @@ export async function runTestSlot(argv) {
   // A run that a signal reached exits with the code of that signal, whatever the killed command
   // returned.
   const run = async (env, ownGroup) => {
-    const code = received ? null : await runCommand(options.command, { env, ownGroup });
+    const code = received ? null : await runCommand(options, { env, ownGroup });
     return received ? signalExit(received) : code;
   };
   process.on("SIGINT", onSignal);
