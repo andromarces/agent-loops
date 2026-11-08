@@ -135,17 +135,17 @@ test("a dirty work tree is kept", async () => {
   }
 });
 
-// Usefulness: a failed, interrupted, or needs-owner loop keeps its work tree.
+// Usefulness: a failed, interrupted, or needs-owner loop keeps its work tree. These cases return
+// before any Git or file system read, so they need no repository fixture.
 for (const status of ["failed", "interrupted", "needs-owner"]) {
   test(`a ${status} work tree is kept`, async () => {
-    const fixture = await setup({ status });
-    try {
-      const result = await fixture.cleanup();
-      expect(result.removed).toBe(false);
-      expect(result.reason).toContain(status);
-    } finally {
-      await fixture.clean();
-    }
+    const result = await cleanupLoop({
+      manifest: { id: "b1", repo: "unused", repoKey: REPO_KEY, workTreeRoot: "unused" },
+      loop: { issue: 7, status, workTree: null },
+      runsRoot: "unused",
+    });
+    expect(result.removed).toBe(false);
+    expect(result.reason).toContain(status);
   });
 }
 

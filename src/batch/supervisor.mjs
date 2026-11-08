@@ -6,15 +6,16 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
+import { canonicalPath } from "../lib/canonical-path.mjs";
 import { declaredPrFromTranscript } from "../lib/gate.mjs";
 import { endSubprocessTree, killTreeOnExit } from "../lib/exec-tree.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
-import { processStartTime, ownerAlive } from "../lib/process-identity.mjs";
+import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
 import { execBounded } from "../lib/exec.mjs";
 import { renderTask } from "./args.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
-import { createLoopWorkTree } from "./git.mjs";
+import { createLoopWorkTree, git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
 import {
@@ -339,6 +340,22 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
+  const verifyRecordedWorkTree = async (loop) => {
+    const workTree = loop.workTree;
+    if (!workTree?.path) return "the recorded work tree is missing";
+    const identity = await pathIdentity(workTree.path);
+    if (identity === null || !identityEqual(identity, workTree)) {
+      return "the recorded work tree identity changed";
+    }
+    if ((await canonicalPath(workTree.path)) !== workTree.canonicalPath) {
+      return "the recorded work tree identity changed";
+    }
+    const branch = await gitRead(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
+    return branch.exitCode === 0 && branch.stdout === workTree.branch
+      ? null
+      : "the recorded branch is not checked out";
+  };
+
   const launchIssue = async (issue, { recovery = null } = {}) => {
     let loop = loops.get(issue);
     if (recovery === null) {
@@ -382,25 +399,28 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         progress(`issue ${issue}: skipped (${eligibility.reason}: ${eligibility.evidence})`);
         return;
       }
-      const claimResult = await acquireClaim(
-        runsRoot,
-        prepared.repoKey,
-        issue,
-        {
-          batchId: id,
-          repo: prepared.repo,
-          workTree: prepared.workTreeRoot,
-          pid: process.pid,
-          startTime: await ownStartTimeOnce(),
-        },
-        {
-          onStale: async (record) => {
-            if (record.batchId === id) return true;
-            const owner = await readLoop(runsRoot, record.batchId, issue).catch(() => null);
-            return owner?.status === "failed";
-          },
-        },
-      );
+      const ownClaim = claim.exists && claim.record?.batchId === id;
+      const claimResult = ownClaim
+        ? { acquired: true }
+        : await acquireClaim(
+            runsRoot,
+            prepared.repoKey,
+            issue,
+            {
+              batchId: id,
+              repo: prepared.repo,
+              workTree: prepared.workTreeRoot,
+              pid: process.pid,
+              startTime: await ownStartTimeOnce(),
+            },
+            {
+              onStale: async (record) => {
+                if (record.batchId === id) return true;
+                const owner = await readLoop(runsRoot, record.batchId, issue).catch(() => null);
+                return owner?.status === "failed";
+              },
+            },
+          );
       if (!claimResult.acquired) {
         await changeLoop(issue, {
           status: "skipped",
@@ -427,7 +447,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         repo: prepared.repo,
       });
       const workTreePath = join(prepared.workTreeRoot, `issue-${issue}`);
-      let workTree = loop.workTree;
+      const recordedWorkTree = loop.workTree;
+      let workTree = recordedWorkTree;
       try {
         if (workTree === null || workTree === undefined) {
           workTree = await createLoopWorkTree({
@@ -447,11 +468,40 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         return;
       }
       loop = { ...loop, task, workTree };
+      let freshRecovery = { continueFrom: null, pr: null };
+      if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
+        const refused = await verifyRecordedWorkTree(loop);
+        if (refused !== null) {
+          await changeLoop(issue, { status: "needs-owner", reason: refused });
+          return;
+        }
+        const decision = await reconcileLoop({
+          loop,
+          repo: prepared.repo,
+          base: prepared.base,
+          gh,
+          deps,
+        });
+        if (decision.status === "succeeded") {
+          await finishSuccess(issue, loop, {
+            stepsUsed: loop.stepsUsed,
+            remainingSteps: loop.remainingSteps,
+            pr: decision.pr ?? loop.pr,
+          });
+          return;
+        }
+        if (decision.status === "needs-owner") {
+          await changeLoop(issue, { status: "needs-owner", reason: decision.reason });
+          return;
+        }
+        if (decision.pr !== null) freshRecovery = { continueFrom: null, pr: decision.pr };
+      }
       await changeLoop(issue, {
         workTree,
         task,
         status: "queued",
         setupDone: loop.setupDone === true,
+        pr: freshRecovery.pr ?? loop.pr,
       });
       if (prepared.setupCmd && loop.setupDone !== true) {
         const ok = await runSetup({
@@ -473,7 +523,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       if (interrupted || hard) return;
       await changeLoop(issue, { attempts: loop.attempts + 1 });
       loop = loops.get(issue);
-      return startChild(issue, loop, { resume: { continueFrom: null, pr: null } });
+      return startChild(issue, loop, { resume: freshRecovery });
     }
 
     if (interrupted || hard) return;
@@ -629,7 +679,18 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   const recover = async (issue, initial) => {
     let loop = initial;
     if (isLive(loop)) {
-      // A recorded live PID is never restarted, even when its start stamp is missing.
+      // A recorded live PID is never restarted. Without a readable identity the loop needs its
+      // owner instead of waiting forever (ADR 0106 decision 10).
+      const current = await processStartTime(loop.pid);
+      if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
+        await changeLoop(issue, {
+          status: "needs-owner",
+          reason: "unverified-process-identity",
+          pid: null,
+          startTime: null,
+        });
+        return;
+      }
       while (await ownerStillLive(loop)) {
         if (interrupted || hard) return;
         await new Promise((resolve) => setTimeout(resolve, 250));
@@ -736,15 +797,19 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const loop = loops.get(issue);
     return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
   });
+  const needsOwnerCount = () =>
+    [...loops.values()].filter((loop) => loop.status === "needs-owner").length;
+  const canFill = () => {
+    if (active.size + needsOwnerCount() < prepared.loops) return true;
+    // A needs-owner loop is re-examined in the slot it already holds; a queued loop behind it is
+    // not launched while that slot stays held.
+    if (start || cursor >= queue.length || active.size >= prepared.loops) return false;
+    const candidate = loops.get(queue[cursor]);
+    return ["needs-owner", "running", "interrupted"].includes(candidate?.status);
+  };
   let cursor = 0;
   for (;;) {
-    while (
-      !interrupted &&
-      !hard &&
-      pausedReason === null &&
-      active.size < prepared.loops &&
-      cursor < queue.length
-    ) {
+    while (!interrupted && !hard && pausedReason === null && canFill() && cursor < queue.length) {
       const issue = queue[cursor++];
       const runOne = async () => {
         const current = await readLoop(runsRoot, id, issue);
@@ -796,6 +861,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   else if (pausedReason !== null) status = "paused";
   else if ([...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))) {
     status = "failed";
+  } else if ([...loops.values()].some((loop) => loop.status === "running")) {
+    status = "paused";
+    pausedReason ??= "a loop is running under another resume";
   } else status = "completed";
   manifest = await updateManifestReturning(runsRoot, id, (value) => ({
     ...value,

@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { afterAll, expect, test } from "vite-plus/test";
 import { prepareBatch } from "../../src/batch/args.mjs";
 import { git } from "../../src/batch/git.mjs";
+import { tryStateLock } from "../../src/lib/state-lock.mjs";
 import { endSubprocessTree } from "../../src/lib/exec-tree.mjs";
 import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/store.mjs";
@@ -726,8 +727,9 @@ test("a live recorded process with no start stamp is not restarted", async () =>
     });
     await new Promise((resolve) => setTimeout(resolve, 600));
     resumeController.abort();
-    await resumed;
+    const result = await resumed;
     expect(resumeChild.calls).toHaveLength(0);
+    expect(result.summary.loops[0].status).toBe("needs-owner");
   } finally {
     live.kill("SIGKILL");
     await cleanupRepo(repo);
@@ -889,6 +891,179 @@ test("a queued checkpoint does not restart a proven transcript", async () => {
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a fatal exit with no gate event is still a recorded attempt and is never retried.
+test("a fatal exit without a gate event is not retried", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 1, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(
+      transcript,
+      JSON.stringify({
+        ...data,
+        exitCode: 1,
+        error: "detected a mutation",
+        events: data.events.filter((event) => event.type !== "gate"),
+      }),
+    );
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1" });
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a needs-owner loop holds its slot, so --loops 1 does not launch the next issue.
+test("a needs-owner loop holds its only slot", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1, 2], { loops: 1 });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "the owner must resolve the remote state",
+      pid: null,
+      startTime: null,
+    }));
+    const failing = (args) => {
+      if (args[0] === "issue" && args[1] === "view") {
+        return { status: 1, stdout: "", stderr: "the read failed" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected" };
+    };
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: failing,
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.summary.loops[1].status).toBe("queued");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a resume that loses the ownership lock never reports a running loop as complete.
+test("a loop owned by another resume is not reported complete", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  let release;
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "running",
+      pid: null,
+      startTime: null,
+    }));
+    const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-1.resume.lock");
+    release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+    expect(release).not.toBe(null);
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.summary.status).toBe("paused");
+  } finally {
+    await release?.();
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a queued checkpoint trusts no replaced work tree; it stops as needs-owner.
+test("a queued checkpoint with a replaced work tree stops before launch", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const workTree = join(prepared.workTreeRoot, "issue-1");
+    const transcript = child.calls[0].transcript;
+    await removePath(workTree);
+    await mkdir(workTree);
+    await removePath(transcript);
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "queued",
+      setupDone: true,
+      pid: null,
+      startTime: null,
+    }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0].status).toBe("needs-owner");
   } finally {
     await cleanupRepo(repo);
   }

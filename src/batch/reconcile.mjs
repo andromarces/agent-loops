@@ -3,7 +3,7 @@
 // stops the loop as needs-owner.
 import { isJsonObject } from "../lib/json.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
-import { git as gitRead, pathIdentity } from "./git.mjs";
+import { git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
 
 const asGit = (deps) => deps.git ?? gitRead;
 
@@ -52,8 +52,7 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   const identity = await identityOf(workTree.path);
   if (identity === null) return owner("the recorded work tree is missing");
   if (
-    identity.dev !== workTree.dev ||
-    identity.ino !== workTree.ino ||
+    !identityEqual(identity, workTree) ||
     (await canonical(workTree.path)) !== workTree.canonicalPath
   ) {
     return owner("the recorded work tree identity changed");
@@ -75,16 +74,18 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   }
 
   const fetched = await git(["fetch", "origin", workTree.branch], repo);
-  const remoteReadFailed = fetched.exitCode !== 0;
-  const remoteHead = remoteReadFailed
-    ? null
-    : await (async () => {
-        const head = await git(
-          ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${workTree.branch}`],
-          repo,
-        );
-        return head.exitCode === 0 ? head.stdout : null;
-      })();
+  let remoteReadFailed = fetched.exitCode !== 0;
+  let remoteHead = null;
+  if (!remoteReadFailed) {
+    const head = await git(
+      ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${workTree.branch}`],
+      repo,
+    );
+    // A fetch that succeeded proves the ref should resolve, so a failed read is not an absent
+    // branch.
+    if (head.exitCode !== 0) remoteReadFailed = true;
+    else remoteHead = head.stdout === "" ? null : head.stdout;
+  }
 
   let pulls;
   let issue;

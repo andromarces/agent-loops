@@ -5,6 +5,7 @@ import { access, constants, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { supportedAgents } from "../agents/index.mjs";
+import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT, initRefusal, ROLE_KINDS, roleFlags } from "../lib/args.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
@@ -224,7 +225,7 @@ function setReviewerSandbox(options, value, viaAlias) {
 /** The first unsupported model or effort of a configured role, or null. */
 function roleOptionRefusal(options) {
   for (const role of ROLE_KINDS) {
-    const kind = options[role];
+    const kind = options[role] === null ? null : normalizeAgent(options[role]);
     if (kind === null) continue;
     const model = options[`${role}Model`];
     if (model !== null && !(MODEL_PATTERNS[kind]?.test(model) ?? true)) {
@@ -280,12 +281,42 @@ export async function nearestExistingDirectory(path) {
 /** Refuses a runs root that lies inside any Git work tree (ADR 0106 decision 8). */
 export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = git } = {}) {
   const candidate = await canonicalWritePath(runsRoot);
+  const top = await gitWorkTreeTop(candidate, gitRun);
+  if (top !== null && inside(top, candidate)) {
+    throw usage("The runs root must lie outside every Git work tree.");
+  }
+}
+
+// The work-tree top of the nearest existing ancestor of `candidate`, or null. A `.git` entry in
+// any ancestor counts even when the Git read fails.
+async function gitWorkTreeTop(candidate, gitRun) {
   const ancestor = await nearestExistingDirectory(candidate);
   try {
     const top = (await gitRun(["rev-parse", "--show-toplevel"], ancestor)).trim();
-    if (top !== "") throw usage("The runs root must lie outside every Git work tree.");
-  } catch (err) {
-    if (err?.usage) throw err;
+    if (top !== "") return canonicalPath(top);
+  } catch {
+    // Fall through to the `.git` entry scan.
+  }
+  let current = ancestor;
+  for (;;) {
+    try {
+      await stat(join(current, ".git"));
+      return canonicalPath(current);
+    } catch (err) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") throw err;
+    }
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+/** Refuses a work-tree root inside any Git work tree, not only the target repository. */
+export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = git } = {}) {
+  const candidate = await canonicalWritePath(workTreeRoot);
+  const top = await gitWorkTreeTop(candidate, gitRun);
+  if (top !== null && inside(top, candidate)) {
+    throw usage("The work-tree root must lie outside every Git work tree.");
   }
 }
 
@@ -369,11 +400,7 @@ export async function prepareBatch(options, { gitRun = git } = {}) {
     options.workTreeRoot ??
     join(dirname(repo), `${basename(repo)}-batch-${options.id ?? "preview"}`);
   const rootCanonical = await canonicalWritePath(workTreeRoot);
-  for (const entry of entries) {
-    if (inside(await canonicalPath(entry.path), rootCanonical)) {
-      throw usage("The work-tree root must lie outside every Git work tree.");
-    }
-  }
+  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
   await assertWritableDirectory(rootCanonical);
 
   const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);

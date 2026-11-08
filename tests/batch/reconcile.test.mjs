@@ -323,3 +323,24 @@ test("a pull request from another branch that closes the issue stops the loop", 
   expect(result).toMatchObject({ status: "needs-owner" });
   expect(result.reason).toContain("9");
 });
+
+// Usefulness: a successful fetch followed by a failed ref read is still a failed read.
+test("a failed remote-ref read stops the loop", async () => {
+  const result = await reconcileLoop({
+    loop: loop(),
+    repo: "C:\repo",
+    base: "main",
+    gh: ghReplies(),
+    deps: deps(
+      baseGit(HEAD, {
+        '["rev-parse","--verify","--quiet","refs/remotes/origin/batch/1/7"]': [
+          1,
+          "",
+          "reference is broken",
+        ],
+      }),
+    ),
+  });
+  expect(result).toMatchObject({ status: "needs-owner" });
+  expect(result.reason).toContain("remote branch");
+});

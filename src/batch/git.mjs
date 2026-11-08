@@ -1,6 +1,6 @@
 // Git and work-tree operations of one batch loop. Every call is a bounded Git process, and a
 // work tree is created from `origin/<base>` on a deterministic branch.
-import { lstat as lstatRaw, mkdir, readdir, rmdir, unlink } from "node:fs/promises";
+import { lstat as lstatRaw, mkdir, readdir, rmdir, stat, unlink } from "node:fs/promises";
 import { dirname, relative, resolve, sep, isAbsolute } from "node:path";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
@@ -37,14 +37,28 @@ export async function readRegisteredWorkTrees(repo) {
   return parseWorkTreeList(await gitOrThrow(["worktree", "list", "--porcelain", "-z"], repo));
 }
 
-/** The device and inode identity of `path`, or null when it is missing. */
+/**
+ * The device and inode identity of `path` as bigint values, or null when it is missing. `stat`
+ * reports the directory a link names; a link at the root is caught by the canonical-path check.
+ */
 export async function pathIdentity(path) {
   try {
-    const found = await lstatRaw(path, { bigint: true });
-    return { dev: String(found.dev), ino: String(found.ino) };
+    const found = await stat(path, { bigint: true });
+    return { dev: found.dev, ino: found.ino };
   } catch (err) {
     if (err?.code === "ENOENT") return null;
     throw err;
+  }
+}
+
+/** True when two identities name the same device and inode, compared as bigint. */
+export function identityEqual(current, recorded) {
+  try {
+    return (
+      BigInt(current.dev) === BigInt(recorded.dev) && BigInt(current.ino) === BigInt(recorded.ino)
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -63,8 +77,8 @@ export async function createLoopWorkTree({ repo, base, workTree, branch }) {
   return {
     path: resolve(workTree),
     canonicalPath: await canonicalPath(workTree),
-    dev: identity.dev,
-    ino: identity.ino,
+    dev: String(identity.dev),
+    ino: String(identity.ino),
     branch,
   };
 }
@@ -137,19 +151,54 @@ export async function removeWorkTree(repo, workTree, identity) {
  * @returns {Promise<{ removed: boolean, reason: string | null }>}
  */
 export async function removeDirectoryWithoutLinks(path, identity) {
-  const current = await pathIdentity(path);
-  if (current === null) return { removed: true, reason: null };
-  if (current.dev !== identity.dev || current.ino !== identity.ino) {
-    return { removed: false, reason: "the directory identity changed" };
+  // Inspect the whole remainder first, so a refusal leaves every entry in place.
+  const check = await inspectRemainder(path, identity, true);
+  if (!check.ok) return { removed: false, reason: check.reason };
+  return deleteRemainder(path, identity, true);
+}
+
+// Checks the root identity, then every entry below it. A link is allowed, a real file is not.
+async function inspectRemainder(path, identity, root) {
+  if (root) {
+    const current = await pathIdentity(path);
+    if (current === null) return { ok: true };
+    if (!identityEqual(current, identity)) {
+      return { ok: false, reason: "the directory identity changed" };
+    }
+  }
+  const found = await lstatRaw(path);
+  if (found.isSymbolicLink()) return { ok: true };
+  if (!found.isDirectory()) return { ok: false, reason: "a real file remains" };
+  for (const entry of await readdir(path)) {
+    const child = resolve(path, entry);
+    const childFound = await lstatRaw(child);
+    if (childFound.isSymbolicLink()) continue;
+    if (childFound.isDirectory()) {
+      const result = await inspectRemainder(child, null, false);
+      if (!result.ok) return result;
+      continue;
+    }
+    return { ok: false, reason: "a real file remains" };
+  }
+  return { ok: true };
+}
+
+// The second pass deletes only what the first pass inspected. It repeats the identity check on the
+// root, so a path replaced between the checks is kept.
+async function deleteRemainder(path, identity, root) {
+  if (root) {
+    const current = await pathIdentity(path);
+    if (current === null) return { removed: true, reason: null };
+    if (!identityEqual(current, identity)) {
+      return { removed: false, reason: "the directory identity changed" };
+    }
   }
   const found = await lstatRaw(path);
   if (found.isSymbolicLink()) {
     await unlink(path);
     return { removed: true, reason: null };
   }
-  if (!found.isDirectory()) {
-    return { removed: false, reason: "a real file remains" };
-  }
+  if (!found.isDirectory()) return { removed: false, reason: "a real file remains" };
   for (const entry of await readdir(path)) {
     const child = resolve(path, entry);
     const childFound = await lstatRaw(child);
@@ -158,10 +207,7 @@ export async function removeDirectoryWithoutLinks(path, identity) {
       continue;
     }
     if (childFound.isDirectory()) {
-      const result = await removeDirectoryWithoutLinks(child, {
-        dev: String(childFound.dev),
-        ino: String(childFound.ino),
-      });
+      const result = await deleteRemainder(child, null, false);
       if (!result.removed) return result;
       continue;
     }

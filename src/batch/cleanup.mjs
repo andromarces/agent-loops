@@ -3,6 +3,7 @@
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import {
   commitsAhead,
+  identityEqual,
   fetchRemoteBranch,
   git,
   isAncestor,
@@ -65,7 +66,7 @@ export async function cleanupLoop({ manifest, loop, runsRoot, gh = null }) {
   }
   const identity = await pathIdentity(workTree.path);
   if (identity === null) return keep("the recorded work tree is missing");
-  if (identity.dev !== workTree.dev || identity.ino !== workTree.ino) {
+  if (!identityEqual(identity, workTree)) {
     return keep("the work tree identity changed");
   }
 

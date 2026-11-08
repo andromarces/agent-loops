@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { expect, test } from "vite-plus/test";
+import { afterAll, expect, test } from "vite-plus/test";
 import { execa } from "execa";
 import { parseBatchArgs, prepareBatch } from "../../src/batch/args.mjs";
 import { removePath } from "../fs-helpers.mjs";
@@ -192,46 +192,53 @@ test("the default task template names the delivery commands", () => {
 
 // Usefulness: --repo must name the main work tree, and the refusal names it.
 test("a linked work tree as --repo is refused with the main work tree", async () => {
-  const { base, main } = await createBatchRepo();
-  try {
-    await expect(prepareBatch(args({ repo: base }), {})).rejects.toThrow(
-      `--repo must name the main work tree (${await canonicalPath(main)}).`,
-    );
-  } finally {
-    await removePath(base);
-  }
+  const { base, main } = await sharedBatchRepo();
+  await expect(prepareBatch(args({ repo: base }), {})).rejects.toThrow(
+    `--repo must name the main work tree (${await canonicalPath(main)}).`,
+  );
 });
 
 // Usefulness: a work-tree root inside any Git work tree would put batch state in a reviewed tree.
 test("a work-tree root inside a Git work tree is refused", async () => {
-  const { base, main } = await createBatchRepo();
-  try {
-    await expect(
-      prepareBatch(args({ repo: main, workTreeRoot: join(main, "nested") }), {}),
-    ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
-  } finally {
-    await removePath(base);
+  const { main } = await sharedBatchRepo();
+  await expect(
+    prepareBatch(args({ repo: main, workTreeRoot: join(main, "nested") }), {}),
+  ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
+});
+
+// One immutable repository for the file. Each case only reads it, so no case runs git init or a
+// worktree registration of its own.
+let sharedRepoPromise;
+function sharedBatchRepo() {
+  sharedRepoPromise ??= (async () => {
+    const main = await createTempRepo();
+    // One remote default branch, so the base check resolves.
+    await execa("git", ["remote", "add", "origin", main], { cwd: main });
+    await execa("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: main });
+    await execa("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], {
+      cwd: main,
+    });
+    const linked = `${main}-linked`;
+    await execa("git", ["worktree", "add", "-b", "batch-check", linked], { cwd: main });
+    await mkdir(join(main, "docs"), { recursive: true });
+    await writeFile(join(main, "docs", "keep.txt"), "keep" + String.fromCharCode(10));
+    return { base: linked, main };
+  })();
+  return sharedRepoPromise;
+}
+
+afterAll(async () => {
+  const repo = await sharedRepoPromise;
+  if (repo) {
+    await removePath(repo.base);
+    await removePath(repo.main);
+    sharedRepoPromise = undefined;
   }
 });
 
-async function createBatchRepo() {
-  const main = await createTempRepo();
-  // One remote default branch, so the base check resolves.
-  await execa("git", ["remote", "add", "origin", main], { cwd: main });
-  await execa("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: main });
-  await execa("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], {
-    cwd: main,
-  });
-  const linked = `${main}-linked`;
-  await execa("git", ["worktree", "add", "-b", "batch-check", linked], { cwd: main });
-  await mkdir(join(main, "docs"), { recursive: true });
-  await writeFile(join(main, "docs", "keep.txt"), "keep\n");
-  return { base: linked, main };
-}
-
 // Usefulness: a work-tree root reached through a directory link is still inside the work tree.
 test("a work-tree root under a linked alias of the work tree is refused", async () => {
-  const { base, main } = await createBatchRepo();
+  const { main } = await sharedBatchRepo();
   const aliasParent = await mkdtemp(join(tmpdir(), "batch-alias-"));
   const alias = join(aliasParent, "alias");
   try {
@@ -241,6 +248,36 @@ test("a work-tree root under a linked alias of the work tree is refused", async 
     ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
   } finally {
     await removePath(aliasParent);
-    await removePath(base);
+  }
+});
+
+// Usefulness: a model and effort are validated after an agent alias maps to its kind.
+test("an alias still validates the model and effort", () => {
+  expect(() =>
+    parseBatchArgs([
+      ...BASE.map((v) => (v === "agy" ? "antigravity" : v)),
+      "--reviewer-effort",
+      "hgh",
+    ]),
+  ).toThrow("Unsupported reviewer effort: hgh");
+  expect(() =>
+    parseBatchArgs([
+      ...BASE.map((v) => (v === "agy" ? "antigravity" : v)),
+      "--reviewer-model",
+      "nope",
+    ]),
+  ).toThrow("Unsupported reviewer model: nope");
+});
+
+// Usefulness: a work-tree root inside any repository, not only the target, is refused.
+test("a work-tree root inside another Git work tree is refused", async () => {
+  const repo = await sharedBatchRepo();
+  const other = await createTempRepo();
+  try {
+    await expect(
+      prepareBatch(args({ repo: repo.main, workTreeRoot: join(other, "nested") }), {}),
+    ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
+  } finally {
+    await removePath(other);
   }
 });
