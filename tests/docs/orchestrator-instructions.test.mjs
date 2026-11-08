@@ -1006,15 +1006,19 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
     ...pin,
     text: texts[key].slice(texts[key].indexOf(pin.start), texts[key].indexOf(pin.end)).trim(),
   });
+  const unapplied = new Set(Object.keys(unsafe));
   for (const [name, mutate] of Object.entries(unsafe)) {
     for (const [key, blockPin] of Object.entries(REFUSED_CWD_BLOCKS)) {
       const pin = current(key, blockPin);
       const mutated = mutate(texts[key], key);
       // A mutation that does not apply to a text is not a case for it.
       if (mutated === texts[key]) continue;
+      unapplied.delete(name);
       expect(() => expectRefusedCwdBlock(mutated, pin), `${name} in ${key}`).toThrow();
     }
   }
+  // Usefulness: a mutation whose anchor matches no text fails here, not pass unchecked.
+  expect([...unapplied], "each mutation changes at least one pinned text").toEqual([]);
   const unrelated = [
     "After compaction, restore the session from the state file.",
     "The module imports the helper from the path `src/lib/helper.mjs`.",
