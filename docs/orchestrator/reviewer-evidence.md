@@ -52,8 +52,8 @@ The `--require-ci` finish gate stays the enforcement point.
 
 ## The runtime supplies the required-check status
 
-A Codex reviewer with no sandbox (the default) keeps shell network, so its own
-read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
+A Codex reviewer with no sandbox (the default) keeps shell network, and its own
+read is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
 knows the pull request before the first turn. So the runtime reads the
 required-check status for that PR head and supplies it to every reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
@@ -98,8 +98,7 @@ looking at. Every supplied status states the head it describes.
 
 The runtime reads the check runs and commit statuses by SHA, every page of each, for
 the commit the gate evaluates (the test merge commit when it carries a check,
-otherwise the head), so a PR head that moves away and back during the read cannot
-put the checks of another commit in the status. The required checks come from the
+otherwise the head). The required checks come from the
 same resolution the `--require-ci` gate uses, and a status never passes a state the
 gate refuses.
 

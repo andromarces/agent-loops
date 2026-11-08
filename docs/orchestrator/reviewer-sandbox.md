@@ -6,23 +6,21 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 A Codex reviewer turn runs with no sandbox by default. An operator can choose a
 sandbox at init with `--reviewer-sandbox read-only` or `--reviewer-sandbox
-workspace-write`. The older `--reviewer-workspace-write` stays as an alias of
+workspace-write`. `--reviewer-workspace-write` is an alias of
 `--reviewer-sandbox workspace-write`. The flag needs `--reviewer codex`, and any
 other reviewer is refused at init.
 
 The modes, their Codex settings, the app-connector setting, and the ADRs are in
 [Codex reviewer sandbox mode](../reference/reviewer-safety.md#codex-reviewer-sandbox-mode).
 
-- Only reviewer turns change. Every orchestrator turn keeps `read-only`, every
-  worker turn gets no reviewer input, and the other four adapters keep their
-  invocations. The runtime mutation check still wraps every reviewer turn in
-  every mode.
+- Only reviewer turns change. Every orchestrator turn keeps `read-only`, and every
+  worker turn gets no reviewer input. The runtime mutation check still wraps every
+  reviewer turn in every mode.
 - In the two sandboxed modes, shell network stays off, and a user Codex execpolicy
   rule is an exception. The limit covers shell commands only. Choose a sandboxed
   mode when the turn must not reach the network. The facts and the exception are
   in [Codex read-only network limit](../reference/reviewer-safety.md#codex-read-only-network-limit).
-- The reviewer prompt gains one note that states the actual mode. The reviewer
-  still must not change a tracked file or an untracked file that Git does not
+- The reviewer must not change a tracked file or an untracked file that Git does not
   ignore, including a cache file, must not change Git state, and must not write to
   a remote. The file-change rule has the same scope in every mode: a test, build,
   or probe is allowed when every write goes to an ignored path or to a temporary
@@ -31,25 +29,24 @@ The modes, their Codex settings, the app-connector setting, and the ADRs are in
   directory.
   - It uses a temporary path outside the repository only when no
     ignored path fits. The reviewer keeps that output path short and
-    does not set `TMP`, `TEMP`, or `TMPDIR` to a deep path for a test runner. The worker preamble carries the temporary-path rule below
-    but no short-path rule. The prompt names no repository path.
+    does not set `TMP`, `TEMP`, or `TMPDIR` to a deep path for a test runner.
   - The reviewer removes each temporary
     file or directory that it created outside the repository before the closing
     block, and names any that it could not remove in `Notes`. It also removes each file or directory that it created under an ignored path inside the repository, and names any that it could not remove in `Notes`. When the turn has a runtime scratch folder, the reviewer leaves that folder out of this removal. It keeps output that a later step needs, such as a coverage report that the task asks for, and names it in `Notes`.
   - A change to a cache file that Git does not ignore is a reviewer mutation. A
-    reviewer that is not Codex has no mode, and its prompts name none.
-- The runtime creates one scratch folder for each reviewer turn at `.agent-loop/rev/<id>` under the work tree root. The prompt names that folder as the first place for probe and test output. The folder holds its own `.gitignore` with `*`, also in a linked work tree. The runtime removes the folder after the post-turn snapshot, on every turn outcome, and never follows a link or a junction inside it. It refuses and logs a warning when `.agent-loop` or `.agent-loop/rev` is a link. A failed removal logs a warning and never fails the run.
+    reviewer that is not Codex has no mode.
+- The runtime creates one scratch folder for each reviewer turn at `.agent-loop/rev/<id>` under the work tree root. The folder holds its own `.gitignore` with `*`, also in a linked work tree. The runtime removes the folder after the post-turn snapshot, on every turn outcome, and never follows a link or a junction inside it. It refuses and logs a warning when `.agent-loop` or `.agent-loop/rev` is a link. A failed removal logs a warning and never fails the run.
 - A reviewer turn runs no dependency install, repair, or update, and starts no command that installs, such as a test runner that installs when it finds no usable `node_modules` (`vp` does). An install writes to the shared package store outside the repository and reaches every work tree that links it, and the mutation check does not see that write. A probe of old source avoids the install: the reviewer copies the repository, links the dependency directory of the work tree (`node_modules` in a Node project) into the copy (a junction on Windows, a symlink elsewhere), and runs the tool there. When the copy cannot link `node_modules`, the reviewer reports the probe as unresolved in `Checks`.
-  - The reviewer prompt names no tool or directory. The worker preamble states the same rule for a worker probe that copies the repository. The rule is advisory, and the runtime does not detect a breach.
-- A cache that a tool writes to its own default location, such as a test runner cache under an ignored path or a compile cache in a temporary directory, is not reviewer output. The reviewer prompt tells the reviewer to leave it in place, to report it in no `Notes` line, and never to delete an entry that it cannot show its turn created. The prompt names no tool. Output under a path that the reviewer chose for the turn, such as a directory that it set `TMPDIR`, `TEMP`, or `TMP` to, or the runtime scratch folder, stays turn output even when a tool writes it there.
+  - The rule is advisory, and the runtime does not detect a breach.
+- A cache that a tool writes to its own default location, such as a test runner cache under an ignored path or a compile cache in a temporary directory, is not reviewer output. Output under a path that the reviewer chose for the turn, such as a directory that it set `TMPDIR`, `TEMP`, or `TMP` to, or the runtime scratch folder, stays turn output even when a tool writes it there.
   - For a reviewer `Notes` line: A refused cleanup of a tool cache in its default location, or of a cache entry that existed before the turn, is not a finding: do not carry it into `open`. Output under a path that the reviewer chose, such as a temporary directory that it set or the scratch folder, stays turn output, so a refused cleanup of it still goes into `open`. A refused cleanup of a probe file that the turn created also goes into `open`. The rule is advisory, and the runtime does not detect a breach.
 - The runtime pins `AGENT_LOOP_RUNS_ROOT`, `AGENT_LOOP_TEST_SLOTS_ROOT`, and `AGENT_LOOP_SESSION_RECORDS_ROOT` to the paths that it resolves for every worker and reviewer turn, on every adapter, unless the user set them. A `TMP`, `TEMP`, or `TMPDIR` override inside the turn cannot move the test-slot directory, so the machine-wide slot limit holds. The runtime also sets `npm_config_logs_max=0` for those turns, unless the user set
   `npm_config_logs_dir` or `npm_config_logs_max`.
 - Each turn of every adapter runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`. A `CLAUDE_CODE_TMPDIR` value that the user set stays. The runtime removes the
   private temporary directory after the turn.
-  - The reviewer prompt tells the reviewer to build a temporary path from the directory that TMPDIR, TEMP, or TMP names when one is set. It also tells the reviewer never to write a literal path to the system temporary directory, such as `/tmp`. The removal covers only the private directory. The worker preamble carries the same rule.
+  - Build a temporary path from the directory that TMPDIR, TEMP, or TMP names when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. The removal covers only the private directory.
     - The runtime lists an entry that appears directly in the inherited directory during a reviewer turn in one post-turn read. It names the entry `inheritedTmpdirEntries`, deletes none, and treats the list as a diagnostic with no automatic `open` item.
-    - The reviewer prompt names `/tmp` as the literal system path to avoid too. `AGENT_LOOP_SESSION_RECORDS_ROOT` overrides the default `<os tmpdir>/agent-loops/session-records`.
+    - `AGENT_LOOP_SESSION_RECORDS_ROOT` overrides the default `<os tmpdir>/agent-loops/session-records`.
 - The runtime lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`, as a JSON array of absolute paths, for the installer check of a package-runner root. The parent resolves every entry before it forwards the list, and forwards `unusable` for a value that it cannot resolve. A value that is present but is not a valid list makes the installer refuse every root. A helper process removes the turn directory only when its device and inode match the recorded ones, and ends at a 30-second bound. A replacement between the final check and `rmdir` loses at most an empty directory.
 - Choose the mode at init, and never change it later. The state file holds
   `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) for a Codex reviewer

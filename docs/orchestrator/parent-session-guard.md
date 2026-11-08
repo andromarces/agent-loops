@@ -23,6 +23,5 @@ call moves the stored id to the new session. The new session can run `dispatch`,
 any parent-side caller that holds the id, and it gives no guard coverage.
 
 A child
-role never runs `extend`, `declare-pr`, `refresh-local`, or `set-model`: the spawn-time marker refuses it, and the prompt rule
-backs the marker. To get a guard, call `abort` and start a new run with
+role never runs `extend`, `declare-pr`, `refresh-local`, or `set-model`: the spawn-time marker refuses it. To get a guard, call `abort` and start a new run with
 the new session id. A new run starts every role on a new session.

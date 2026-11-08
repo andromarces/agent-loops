@@ -20,7 +20,7 @@ needed: the subcommand records each dispatched turn itself.
 - `status` is `ok`, `error`, or `interrupted`. An `interrupted` entry is a turn
   whose step was charged but whose outcome is unknown: no child result was ever
   recorded for it, so its verdict and head are `null`. The call that marks the
-  run `interrupted` records it, so the history stays complete across recovery.
+  run `interrupted` records it.
 - The one closing-block repair turn after a null child report runs inside the
   step that the original turn already charged, so it adds no entry and no charge. No refund path exists, and the refund keeps
   its narrow first-turn model-refusal scope.
