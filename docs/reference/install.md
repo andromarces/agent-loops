@@ -87,6 +87,16 @@ temporary directory. The runner or the system can delete that directory. When
 message asks for a global install first, so `install` never writes a path that
 can disappear.
 
+`install` also refuses, before it writes any file, a package root that holds a
+character the generated files cannot encode: a double quote, a dollar sign, a
+backtick, a percent sign, or a control character. The guard
+command and the skill CLI line are shell double-quoted strings, and the OpenCode
+plugin puts the instructions path in a JavaScript string literal, so such a root
+would either break the file or run a different path. Move the package to a path
+without these characters, then run `install` again. A backslash in a POSIX
+directory name is preserved: a run of two or more backslashes is doubled in the
+shell commands, and the plugin string escapes each backslash.
+
 The `bunx` layout was observed on macOS with bun 1.2.20 and on
 Windows 11 with bun 1.3.8. The `yarn dlx` layout was observed on macOS with yarn
 4.9.2. On Windows 11 with yarn 4.9.2, only the `%TEMP%\xfs-<hex>\dlx-<pid>`

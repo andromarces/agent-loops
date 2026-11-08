@@ -408,12 +408,29 @@ export const INHERITED_TMPDIR_INVALID_MESSAGE =
   "paths, so the installer cannot tell whether this package root is a temporary one. " +
   "Unset it, then run install again.";
 
+// A double quote ends the shell double-quoted command and the plugin string literal, a dollar
+// sign or a backtick starts shell expansion, a percent sign expands in cmd.exe even inside
+// double quotes, and a control character breaks the line.
+const UNENCODABLE_CHAR = /["$`%]/;
+const CONTROL_CHAR = /\p{Cc}/u;
+
+function hasUnencodableCharacter(packageRoot) {
+  return UNENCODABLE_CHAR.test(packageRoot) || CONTROL_CHAR.test(packageRoot);
+}
+
+const unencodableRootMessage = (packageRoot) =>
+  `Refusing to install: the package root ${packageRoot} holds a character that the generated ` +
+  "commands and the OpenCode plugin cannot encode. Move the package to a path without a double " +
+  "quote, dollar sign, backtick, percent sign, or control character, then run install again.";
+
 /**
  * The reason that `install` refuses `packageRoot`, or null. An invalid
  * `AGENT_LOOP_INHERITED_TMPDIR` refuses every root. A folder that the check cannot read refuses
- * with its own message, since the root is then not known to be a runner cache (#1081).
+ * with its own message, since the root is then not known to be a runner cache (#1081). A root
+ * that holds a character the generated files cannot encode is refused before any write (#1635).
  */
 export function installRefusal(packageRoot) {
+  if (hasUnencodableCharacter(packageRoot)) return unencodableRootMessage(packageRoot);
   const tempRoots = temporaryRoots();
   if (tempRoots.invalid) return INHERITED_TMPDIR_INVALID_MESSAGE;
   const refusal = packageRootRefusal(packageRoot, process.platform, tempRoots);
