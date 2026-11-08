@@ -13,9 +13,8 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   `--require-ci` names another PR is refused without reading GitHub. The headless path takes both flags on one
   command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the
   run starts.
-- A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
-  resolves that compare. The recorded marker is the accepted gap of a run that
-  declares no PR, and a declared run does not have it. One refusal names every
+- A `finish` that sets `"unresolvedCompare": true` is refused. A declared run
+  does not have the marker. One refusal names every
   condition the finish broke above the `--require-ci` gate, so read all of it
   rather than the first reason. The interactive `finish` reads the gate only
   after those conditions pass, so a later `finish` can report a `--require-ci`
@@ -37,20 +36,16 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   required-check source stated that it holds none. The gate passes on the PR head,
   the clean reviewed tree, and the merge state, and the run records it, so a
   declared run on such a branch ends and never keeps the #286 gap. A base branch
-  whose required checks this credential cannot read still refuses every finish,
-  because the gate cannot establish the absence, and the refusal names the source
-  it could not read.
+  whose required checks this credential cannot read still refuses every finish, and
+  the refusal names the source it could not read.
 - Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
-  the gate, for example a private repository on the GitHub Free plan, because
-  a declared run there refuses every finish and can end only through `abort`.
+  the gate, for example a private repository on the GitHub Free plan: a declared
+  run there refuses every finish and can end only through `abort`.
   Init with `--pr`, `role declare-pr`, and the headless start read the required-check
   sources of the PR base once. They refuse when the rulesets read settled nothing,
   before any state file is written or child spawns.
   - A read that fails for another
-    reason, such as a transport failure, warns and does not refuse. A `--continue-from`
-    run that restored its PR makes no start read, because the earlier run read at the
-    start of its own `--pr` run or before it declared a worker-opened PR, and its
-    prompt states none. After a refusal, omit
+    reason, such as a transport failure, warns and does not refuse. A `--continue-from` run that restored its PR makes no start read. After a refusal, omit
     `--pr` and finish with `--compare-head <pr>`, which compares the PR head with
     `reviewed.head` in the runtime and requires the PR to be open.
   - Use the `"unresolvedCompare": true` marker only
@@ -85,7 +80,7 @@ passed `--pr` and `--require-ci` for that PR.
   branch and the remote repository must be unchanged by the read. A change
   leaves the run undeclared.
 - The branch remote is `branch.<branch>.remote`, or `origin` when none is set.
-  The PR URL gives the base repository, because `GH_REPO` can redirect `gh`.
+  The PR URL gives the base repository.
 - These states leave the run undeclared: no match, several matches, a PR from a
   fork, a PR for another base repository, and a detached head. A head that
   differs from the turn head does the same. So does a branch or remote that
@@ -104,7 +99,7 @@ passed `--pr` and `--require-ci` for that PR.
   commit, a clean reviewed tree, a merge state the gate accepts, and every
   required check passed. A finish is refused while a required check fails or is
   pending, and a refusal names the check. A finish with `unresolvedCompare` is
-  refused, because the gate resolves that compare. The missing-gate refusal and
+  refused. The missing-gate refusal and
   the abort-only outcome apply only to `--pr` with no `--require-ci`.
 - `--continue-from` keeps a declared PR. The continued run restores it from the
   `pr-declared` events of the earlier transcript. It emits a `pr-declared` event
@@ -115,20 +110,17 @@ passed `--pr` and `--require-ci` for that PR.
 - A continuation refuses `--mode review-only` for a declared PR. It also refuses
   a malformed `pr-declared` record, such as a `pr` that is not a positive integer.
 - A continued run applies the same gate to the restored PR. A `--pr` for that PR
-  adds no refusal, because the PR was declared by the runtime.
+  adds no refusal.
 - Before the runtime declares the PR, it reads the required-check sources of the
   PR base once, as the start of a `--pr` run does. When the rulesets read
   settles nothing, such as the Free-plan 403, the run stays undeclared and the
   runtime logs a warning that names the reason. The runtime then records the PR in
   a `pr-undeclared` transcript event and compares its head at finish, as
   `--compare-head` does: see the headless compare
-  below. A finish with `unresolvedCompare` is refused, because the compare resolves
-  that head. A read that fails for another reason, such as a transport failure, warns
+  below. A finish with `unresolvedCompare` is refused. A read that fails for another reason, such as a transport failure, warns
   and still declares the PR.
-- A continued run that restored its PR reads no required-check source at start,
-  because the earlier run read at the start of its own `--pr` run or before it
-  declared a worker-opened PR. Its orchestrator prompt states no
-  start read. A continuation that declares a new PR makes the read.
+- A continued run that restored its PR reads no required-check source at start.
+  A continuation that declares a new PR makes the read.
 - A repository whose required-check sources are unreadable refuses `--pr <n>` and
   `--require-ci <n>` at start or at finish, so a headless run for an existing PR there
   passes `--compare-head <n>`. At finish, the runtime reads the PR head of
@@ -184,9 +176,8 @@ GitHub. Declare the PR after the worker opens it:
   marker refuses it, as it refuses `extend`, `refresh-local`, `set-model`, `finish`, and `abort`. It requires
   `--parent-session` with the stored id, and the id check has the limits that the
   `extend` rules state.
-- The headless loop has no `declare-pr`, because the orchestrator is a child turn
-  and never chooses the PR. The runtime resolves it instead, as the next
-  section states.
+- The headless loop has no `declare-pr`. The runtime resolves the PR instead, as
+  the next section states.
 - Declare the PR before the first reviewer turn that follows the worker turn, so
   that turn already carries the status. A reviewer turn that ran earlier read the
   checks itself.
@@ -197,6 +188,5 @@ GitHub. Declare the PR after the worker opens it:
   marker-only case are in the section above; the `headCompare` record is in
   [Finish with --compare-head](finish-compare-head.md).
   - Run
-    `wait-checks --all` once before each reviewer turn, because the required wait
-    refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
+    `wait-checks --all` once before each reviewer turn. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
     envelope that ends it at once.

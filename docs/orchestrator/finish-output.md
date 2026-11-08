@@ -19,9 +19,7 @@ runtime does not compare the summary with the reviewer result. Record the
 reviewer status and verdict in `verified`, including an error or a missing
 report.
 
-- `agent-loop role finish` applies no reviewer-turn rule of its own. Every
-  reachable interactive run already has a reviewer turn, because the init
-  dispatch is itself that turn.
+- `agent-loop role finish` applies no reviewer-turn rule of its own.
 - A headless `--mode review-only` run can reach a finish before any reviewer
   turn. The runtime refuses that finish until a reviewer turn was dispatched. A
   `run_worker` action ends the headless run on exit 1 with the reason
@@ -61,10 +59,9 @@ refusal names each unknown key; resend the finish with only the allowed keys.
 The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
 `summary`, so a recorded unresolved compare never reads the same as a verified
-finish, which keeps the current envelope and state. A finish with the
+finish. A finish with the
 field absent, or set to `false`, is a verified finish. The marker cannot be
-combined with `--require-ci`: that gate resolves the PR head itself, so a
-compare it verified is not unresolved. A run that cannot use `--require-ci`,
+combined with `--require-ci`: that gate resolves the PR head itself. A run that cannot use `--require-ci`,
 for example one whose base branch requires a check this credential cannot read,
 finishes with `--compare-head <pr>`, or records the marker when it cannot
 read the PR head. A base branch whose required-check sources each state that it
@@ -82,16 +79,14 @@ state the required checks, are in
 
 The runtime
 reads no required-check source or check result and claims none, so `verified` still states what
-the checks showed. A finish that also sets `unresolvedCompare` is refused, because the compare
-resolves that head. Dispatch the reviewer again when the PR head moved, then repeat the finish. The
+the checks showed. A finish that also sets `unresolvedCompare` is refused. Dispatch the reviewer again when the PR head moved, then repeat the finish. The
 command and the `headCompare` record are in
 [Finish with --compare-head](finish-compare-head.md).
 
-Without the gate or `--compare-head`, the runtime never resolves the PR head, so it cannot tell an
-absent field from a verified compare. A finish that records the compare under
+A finish that records the compare under
 notDone and open and omits the field is a verified finish to every machine
 consumer, and the free text is the only trace. `--require-ci` closes the gap in
-both paths, because it resolves the head in the runtime: `agent-loop role finish
+both paths: `agent-loop role finish
 --require-ci <pr>` here, and `agent-loop --require-ci <pr>` in the headless loop. A run with no usable gate, for example one
 that cannot read the required checks, keeps the marker as its only trace.
 

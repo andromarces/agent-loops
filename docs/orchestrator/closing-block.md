@@ -4,7 +4,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 A child turn whose successful string response parses to a null report takes one repair turn in the same session. The repair asks for the closing block alone in a short canonical format and keeps the original findings, checks, and verdict. It runs inside the charged step, under the reviewer mutation check, and changes no work product. The repaired block is untrusted: a label that held a value must keep its normalized content, whatever list form it used, an absent label may gain only `none`, and a reviewer verdict must match an explicit original verdict. An accept needs a non-empty original value for every required label and for `Checks`, so an empty original label cannot become acceptance evidence. A lost or replaced session, a failed repair, a repair that still parses to null, and a repair that does not match the original leave the original response in `raw`. A cancel during the repair ends the turn as a cancel on the original error path, with no result and no `raw`.
 
-A report that parses but lacks the reviewer `Checks` line or the `Verdict` line takes no repair. `acceptanceFailure` rejects that report as before: a missing `Verdict` yields `verdict`, and an accept without a `Checks` line yields `checks`. The repair handles only a null report, so a model cannot restate its way past a failed acceptance condition.
+A report that parses but lacks the reviewer `Checks` line or the `Verdict` line takes no repair. `acceptanceFailure` rejects that report: a missing `Verdict` yields `verdict`, and an accept without a `Checks` line yields `checks`. The repair handles only a null report, so a model cannot restate its way past a failed acceptance condition.
 
 ## Triage a parser report
 
@@ -25,7 +25,7 @@ read `a, b, c`. A sub-item under `1. a` takes three spaces, so `1. a` and
 
 An ordered sub-item at the parent text column folds the same way. So `- a`, two spaces then `1. b`, and two spaces then `2. c` read `a, b, c`. A sub-item marker need not match the parent item or its sibling sub-items. An ordered sub-item that opens with a report label name or `Verdict` line stays unparseable.
 
-An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, like a Markdown lazy continuation, so `- a`, `  - b`, and `  more` read `a, b more`. An indented line never folds when it reads as a label line: after NFKC normalization, it skips every leading character that is no letter or digit and one optional number, then holds a report label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace. Any colon variant (`:`, `：`, `∶`), any other separator, and any count or kind of markup around the name then refuse (`**Verdict:** x`, `Verdict***: x`, `1 Verdict: x`, and `> Verdict： x` after two spaces are examples), so the items after it stay unparseable lists. A label word that a letter follows (`Notes about x`), or whitespace and then a letter (`Why this matters:`), is prose and folds. An indented list line there is no continuation and stays unparseable.
+An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, so `- a`, `  - b`, and `  more` read `a, b more`. An indented line never folds when it reads as a label line: after NFKC normalization, it skips every leading character that is no letter or digit and one optional number, then holds a report label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace. Any colon variant (`:`, `：`, `∶`), any other separator, and any count or kind of markup around the name then refuse (`**Verdict:** x`, `Verdict***: x`, `1 Verdict: x`, and `> Verdict： x` after two spaces are examples), so the items after it stay unparseable lists. A label word that a letter follows (`Notes about x`), or whitespace and then a letter (`Why this matters:`), is prose and folds. An indented list line there is no continuation and stays unparseable.
 
 The run ends at the first line that is not a `- ` or `N. ` item, a sub-item of the item above it, or an indented continuation line of that item, so a blank line or unindented prose between
 the label and the list breaks it. Two shapes with a blank line fold anyway.
@@ -110,8 +110,7 @@ list, and one shape is the case that matters here: a `*` line whose closing
 character or `*`, and where nothing glued from that character on is a letter
 or an ASCII digit, for example `*file*` or `*use a* b`. Such a line is
 dropped without `raw` under any label, and every matching line in the block
-drops the same way, so the block still parses with the text gone. This is an
-accepted gap.
+drops the same way, so the block still parses with the text gone.
 
 A child is told to write no block line that starts with `*`. Every other `*`
 line either is a list and blanks the block, for example `*item`, `* item`, or

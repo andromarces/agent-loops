@@ -1,8 +1,6 @@
 # Orchestrator instructions (harness-neutral)
 
-You are the parent orchestrator for an `agent-loop role` run. The headless
-prompt in `src/prompts/orchestrator.mjs` states the same role rules in
-JSON-action form; this file is the source for shared rules.
+You are the parent orchestrator for an `agent-loop role` run.
 
 The rules that only some turns need are in the reference files under `orchestrator/`. The
 Reference sections list below names each file and when to read it.
@@ -17,7 +15,7 @@ Reference sections list below names each file and when to read it.
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
-  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
@@ -73,8 +71,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 
 - The first role matches the mode: `worker` in `work-first`, `reviewer` in
   `review-first` and `review-only`. The subcommand refuses only `--role worker`
-  in `review-only`; it accepts either role at a `review-first` init, so the Loop
-  policy section sets the order.
+  in `review-only`; it accepts either role at a `review-first` init.
 - `--worker` is required in `work-first` and `review-first` and optional in
   `review-only`, which never dispatches the worker. `--worker-model` and
   `--worker-effort` are always optional, and require `--worker`. An OpenCode
@@ -89,8 +86,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) reaches each child conversation once, as
   [Init task delivery](orchestrator/task-delivery.md) states.
-  - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
-    dispatch, so write it to state the work of that turn.
+  - The `Instructions:` text is still the prompt of the dispatch, so write it to
+    state the work of that turn.
 - `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
   [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
@@ -190,9 +187,7 @@ out of scope).
 
 A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
-branch and pushes it, so the PR head equals the reviewed head. The run supplies
-the PR number, and the head commit comes from that PR. In a headless run, the
-task names the PR number.
+branch and pushes it, so the PR head equals the reviewed head. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
 
 After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
@@ -230,13 +225,11 @@ Apply these parent rules:
   - The read covers the global config, the local (shared) scope, the run work tree's own worktree
     scope, and the main work tree's worktree scope. A `core.worktree` change in the linked work
     tree's own file reports a field without affecting the main work tree. A watched key in the
-    main work tree's worktree config names only that key. A global change affects every repository
-    of the user.
+    main work tree's worktree config names only that key.
   - The field reports a change observed between the two reads. It does not prove the turn made the
     change. Another process or another run on the host can cause a change.
   - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or an identity or signing key needs
-    action before the next dispatch. Such a key can change the author or signing of every later
-    commit. It can break the main work tree or every later commit at once.
+    action before the next dispatch. Such a key can change the author or signing of every later commit.
     - Dispatch a worker to read that key in the shared config and report its current state. From
       that report, name the turn whose report says it changed it and ask the user whether to
       restore it.
@@ -258,8 +251,7 @@ Apply these parent rules:
   - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
     only, at most 20, and never content. A failed or canceled worker turn carries the field too.
     Report it under `open` in the finish summary. The user or another process can cause the change
-    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only
-    access moves only the access time, so it names no path.
+    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only access moves only the access time, so it names no path.
   - An absent path does not prove that no in-window edit happened.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field proves nothing.
@@ -287,9 +279,7 @@ Apply these parent rules:
   a non-Node dependency file by its root-relative path. A dependency file whose read fails before or
   after the turn counts as changed.
   - When the runtime cannot read the work tree root, the field names every lockfile. That list can
-    include a lockfile that does not exist: reinstall anyway. The worker
-    never installs, so the installed dependencies no longer match
-    the lockfile. When the runtime cannot read the dependency file list, the field names every
+    include a lockfile that does not exist: reinstall anyway. When the runtime cannot read the dependency file list, the field names every
     lockfile and every non-Node path known from the other read.
   - When the field appears, run only the dependency setup, such as the Node lockfile install, before
     the next reviewer dispatch. The dependency setup is the one that the repository documents for
@@ -323,7 +313,7 @@ Apply these parent rules:
   - Every reviewer turn that read the directory before it started carries the field, a failed,
     halted, or canceled turn too. The parent never deletes an entry that `inheritedTmpdirEntries`
     names: it leaves removal to the user, and a reviewer `Notes` line never makes an entry safe to
-    delete, because another process can hold a matching name.
+    delete.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish
@@ -352,43 +342,21 @@ The hold ignores a workflow that runs only on `push`. That workflow never holds 
 ## Work tree ownership
 
 The parent creates the run's work tree and owns it. Keep that work tree in place
-for the whole run, and never tell a worker to remove it: a worker turn pushes its
-branch and stops there, because every later dispatch of that run targets the same
-`--cwd`.
-
-The worker preamble states the work tree edit rule. Edit, create, and delete
-files only under the run work tree. Before an edit with an absolute path, check
-that the path starts with the work tree root. A path that a tool returns for
-another checkout maps to the same relative path in the run work tree.
-
-The worker preamble also states the report-and-stop rule. If an edit lands in
-another checkout, report the paths in the closing block and stop. Never restore
-or discard a file there, because a restore can discard an uncommitted change of
-the user.
+for the whole run, and never tell a worker to remove it.
 
 When a worker report says its edit landed in another checkout, stop the run,
 report the paths under `open` in the finish summary, and leave that checkout to
-the user: `mainWorkTreeChangedInTurn` stays report-only, because a concurrent run
-can report the same path, so the runtime cannot attribute the edit to one run
-(ADR 0080).
+the user: `mainWorkTreeChangedInTurn` stays report-only: a concurrent run can report
+the same path, so the runtime cannot attribute the edit to one run.
 
-Create the work tree with no upstream, so a plain `git push` of a worker cannot
-reach the default branch:
+Create the work tree with no upstream:
 
 ```bash
 git worktree add --no-track -b <branch> <work tree> origin/<default>
 ```
 
-Without `--no-track`, the new branch gets the upstream `origin/<default>` when
-`branch.autoSetupMerge` is at its default.
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
-
-The no-upstream rule guards a plain `git push` only when `push.default` follows
-the upstream. With `push.default=matching`, a plain `git push` pushes every
-local branch that has a remote branch of the same name. A linked work tree
-shares its local branches with the main checkout. So a local default branch that
-is ahead of `origin/<default>` is pushed too.
 
 Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or
 `git push -u origin <pr branch>` for an existing PR branch. Never let the worker
@@ -480,13 +448,6 @@ a non-terminal run at that path: a path with no run state is refused with
 `Run is already <lifecycle>.`, so neither is a command to run there. A maintainer
 who recreates the work tree starts a new run there: a run over an aborted work
 tree is not resumed, and the state file names the work tree, not the work in it.
-
-The headless loop states the same rule and cannot act on it: `agent-loop`
-snapshots its `--cwd` before and after every orchestrator turn, so a work tree in
-any of those three states ends the run on that snapshot failure before the
-orchestrator can act, and the run keeps no state file. A headless worker turn
-gets the ownership rule from the same file, because `runChild` builds the worker
-prompt there for both paths.
 
 ## Reference sections
 
@@ -712,7 +673,7 @@ pull request, so the run can end only through the gate:
 - Every run ends in exactly one terminal lifecycle: `finished`, `aborted`, or
   `halted`. The parent-edit guard (Claude Code, Codex CLI, Copilot CLI,
   OpenCode, and Antigravity CLI) releases on any of them. Every `agent-loop role`
-  init requires `--parent-session`, so the guard always has a parent to match.
+  init requires `--parent-session`.
   The unguarded path is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
 
 ## Repeated rejects of one finding class

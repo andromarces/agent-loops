@@ -16,25 +16,22 @@ text. The init envelope reports the setting as `sparseCheckout: {enabled, skipWo
 by path only, at most 20 paths. A Git read that fails or passes its 10 second bound adds
 no field, and the absent field then proves nothing.
 
-A repository with no remote has no `origin/<default>`, so the creation
-command in [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership)
-fails. Use the local default branch as the base:
+A repository with no remote has no `origin/<default>`. Use the local default
+branch as the base:
 
 ```bash
 git worktree add --no-track -b <branch> <work tree> <default>
 ```
 
-In that repository, a worker commits in the work tree and never pushes, because
-there is no remote for `git push -u origin <branch>`. After `finish`, the parent
+In that repository, a worker commits in the work tree and never pushes. After `finish`, the parent
 merges the branch or hands it to the user.
 
-That run is not PR work, because no pull request can exist. Finish it with a plain
+That run is not PR work. Finish it with a plain
 `role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks`
 line on the latest changed state. Add `--require-accept` where it applies. Compare
 `reviewed.head` with the `workTree.head` of the last worker envelope. Never pass
 `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set
-`unresolvedCompare`: each one concerns a PR head, and this run has none, so the
-#286 gap does not apply to it.
+`unresolvedCompare`: each one concerns a PR head, and this run has none.
 
 A run on an existing pull request, such as a review or a correction of PR #N, must
 run on the PR head branch. Then the worker pushes to that branch, and
@@ -65,8 +62,7 @@ If it prints another branch, such as `origin/<default>`, run
 `git -C "<work tree>" branch --unset-upstream`, or set the PR branch with
 `git -C "<work tree>" branch -u origin/<pr branch>`.
 
-The upstream `origin/<pr branch>` is acceptable, because the PR branch is the branch
-that the worker must push. The `--no-track` rule guards a new branch that tracks
+The upstream `origin/<pr branch>` is acceptable. The `--no-track` rule guards a new branch that tracks
 `origin/<default>`. The worker pushes with `git push -u origin <pr branch>`.
 
 The work tree head must equal the PR head before the first dispatch: compare

@@ -41,9 +41,8 @@ needed: the subcommand records each dispatched turn itself.
   most `maxSteps` entries; each refunded refusal adds one entry for its role.
 - Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
   The CLI refuses a `--max-steps` outside it, and `dispatch`, `finish`, and
-  `extend` re-check the stored `maxSteps` against the same range before reading the
-  budget, because a state file written by an earlier version or hand-edited
-  carries the value past the flag check. A refusal names the state file field to
+  `extend` re-check the stored `maxSteps` against the same range before reading
+  the budget. A refusal names the state file field to
   correct. Every budget a run reads is therefore a safe integer, so the step
   count always advances by exactly one per charged step.
 - `abort` is not subject to that check. It charges no step and reads no budget,

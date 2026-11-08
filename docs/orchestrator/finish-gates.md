@@ -21,7 +21,6 @@ A headless run ends when two refusals land with no child turn between them. The 
 satisfied on a re-finish, with no child turn; the `review-only` condition and
 `--require-accept` take the same corrective turn, which costs a step, and the
 missing gate of a declared PR run is the one condition no child turn can supply.
-Two things decide whether a refused `finish` reads GitHub, and they are separate.
 The interactive `role finish` command throws as soon as any condition above the
 gate refused, so on that path a refused `finish` never reaches the gate and never
 reads GitHub. The headless loop evaluates every gate it owns,
@@ -29,16 +28,13 @@ so the `--require-ci` gate runs whenever the run carries it and the declared-PR
 condition did not refuse, and a finish the marker, the `review-only` condition, or
 `--require-accept` already refused still runs the gate.
 
-Only the declared-PR gate
-condition skips it, because that condition means no gate for this run's PR.
-Those local conditions are exactly two.
+Only the declared-PR gate condition skips it. Those local conditions are exactly
+two.
 
 The gate refuses with no GitHub call when the latest reviewer turn has no reviewed
 state. That case includes a worker turn after the last review. The gate also
-refuses when the reviewed work tree is not clean. Every other condition it
-checks needs a read to settle it, the PR head comparison included, because it reads
-the PR first. In `review-only`, a `finish` without them keeps the current behavior,
-and each flag fails with a clear error.
+refuses when the reviewed work tree is not clean. Every other condition it checks needs a read to settle it, the PR head comparison
+included. In `review-only`, each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is
@@ -81,11 +77,9 @@ and each flag fails with a clear error.
     Otherwise a finish passes on the absence only when no source named a required
     check and no source is unknown, so both sources must have stated the outcome, and
     an unknown classic-protection source keeps the empty-union refusal with the reason
-    naming it, so a parent can fix a source it can name. An exact list of every reply
-    shape and its class is in
-    `adr/0012-establish-the-absence-of-a-required-check.md`; the classes are
-    absent, has-contexts, empty, and unknown, and the table states each one on both the normal
-    and the relaxed path.
+    naming it, so a parent can fix a source it can name. The classes are absent,
+    has-contexts, empty, and unknown, and each one applies on both the normal and the
+    relaxed path.
   - Absent, the only class that lets a finish pass, has exactly one reply per source.
     For repository rulesets it is a read of every page that returns a non-empty array
     whose entries all carry a documented rule type and none is a
@@ -120,19 +114,12 @@ and each flag fails with a clear error.
     required names from its stdout whatever the exit status, so a non-zero exit whose
     stdout holds that JSON still contributes names, and only a stdout that is not a
     JSON array of named checks contributes none. It is an independent source.
-  - The observed replies for the two configuration sources are `Not Found` (404) for a
-    token without repository admin, `Branch not protected` (404) for an admin on a
-    branch with no classic protection,
-    `Resource not accessible by integration` (403) for a `GITHUB_TOKEN`, and
-    `Resource not accessible by personal access token` (403) for a fine-grained PAT
-    without the Administration permission. A rate-limit or SSO 403 fails the run by
-    design, because it matches no unreadable shape and is not read as a source at all.
-    The exception to ruleset readability is a private repository on the GitHub Free
-    plan, where the plan does not allow the rule at all.
-  - The Free-plan 403, `Upgrade
-    to GitHub Pro or make this repository public to enable this feature.`, leaves
-    each endpoint with no required contexts, and it is classified unknown rather
-    than empty, so the empty-union refusal names it. A private GitHub
+  - A rate-limit or SSO 403 fails the run by design, because it matches no unreadable
+    shape and is not read as a source at all. The exception to ruleset readability is
+    a private repository on the GitHub Free plan, where the plan does not allow the
+    rule at all.
+  - A Free-plan 403 leaves each endpoint with no required contexts, and it is
+    classified unknown rather than empty, so the empty-union refusal names it. A private GitHub
     Free-plan repository still refuses a declared run, so such a repository must omit
     `--pr`, which leaves the #286 gap in place. Init with `--pr`, `role declare-pr`, and the headless `--pr`
     start refuse that case up front, so the parent does not learn of it at

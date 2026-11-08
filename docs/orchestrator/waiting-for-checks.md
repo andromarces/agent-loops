@@ -18,7 +18,7 @@ agent-loop role wait-checks --cwd <dir> --pr <n> --head <sha> --timeout <seconds
 
 The command returns inside its own bound, before the command timeout your harness
 applies to a shell command, and prints one JSON envelope on stdout. `--cwd` must
-be inside a Git work tree, as it is for `dispatch`, because the read runs there:
+be inside a Git work tree, as it is for `dispatch`:
 
 ```json
 {
@@ -71,37 +71,35 @@ to a commit other than `head`, and the parent decides what it means.
 ```
 
 `prFailures` survives a bound that a later read reaches (`timedOut: true`) and a commit
-or source read that fails. In the second case `head` is `null` and `checks` is empty,
-because no state was read for a commit.
+or source read that fails. In the second case `head` is `null` and `checks` is empty.
 
 The required wait refuses a required context it cannot resolve. A ruleset or protection
 source with no usable reply (a 403 or 404 for a caller without admin rights, for example), a
 source reply that is not valid JSON, and a failed read of the required names each exit 1
 with `status: "error"` (a server error of that read is retried, below) before any state is judged, including when `gh pr checks --required`
-answers that the branch has no required check, because such a
-source can hold a required check or an app qualifier that the wait never saw. A listed
+answers that the branch has no required check. A listed
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
 source. A commit read that fails, or that returns a reply the wait fails to parse or order,
 is an error too, with one exception. The commit reads are the gate's own reads, and no read of the wait or the gate uses `gh --paginate`: each sends one `gh api --include` request per page, for the documented page number (`?per_page=100&page=N`), and never follows the `Link` header.
 
-The read does look at the `Link` header of every reply, a retryable 5xx included and before its status is judged, only to reject it: a target on a host other than the request host (`GH_HOST`, else the default host of `gh`, and its API host) or a target that is not a URL ends the read with an error, never a pass, and is never requested. Such a reply is terminal even when its status is 500, 502, 503, or 504: it is never retried. Each `gh` output then holds exactly one exchange, and `gh` writes the status line of that request first, followed by the headers, a blank line, and the body, so body bytes can only follow the status line and never form a status block of their own. The default host of `gh` is the one host of its configuration, or github.com for none or several. The read takes it from `gh auth status --json hosts`, run once per read for a reply that carries a `Link` target, with `GH_TOKEN` and `GITHUB_TOKEN` removed from that one call, because either variable adds github.com to the listing. A failed call and a reply of another shape name no host, so every target is then refused.
+The read does look at the `Link` header of every reply, a retryable 5xx included and before its status is judged, only to reject it: a target on a host other than the request host (`GH_HOST`, else the default host of `gh`, and its API host) or a target that is not a URL ends the read with an error, never a pass, and is never requested. Such a reply is terminal even when its status is 500, 502, 503, or 504: it is never retried. Each `gh` output then holds exactly one exchange, and `gh` writes the status line of that request first, followed by the headers, a blank line, and the body, so body bytes can only follow the status line and never form a status block of their own. The default host of `gh` is the one host of its configuration, or github.com for none or several. The read takes it from `gh auth status --json hosts`, run once per read for a reply that carries a `Link` target, with `GH_TOKEN` and `GITHUB_TOKEN` removed from that one call. A failed call and a reply of another shape name no host, so every target is then refused.
 
-Observed with `gh` 2.103.1 against a local server: a 403, a 502 with an empty, JSON, or HTML body, and a 403 whose body held a forged status block each wrote their own status line first, a redirect showed only the status line of its final reply, and `gh` itself rejected a 403 body that held extra bytes after one JSON value. The wait takes the status only from that first line and never reads the error text, which carries server-supplied text. A successful page needs a 2xx first line and a remainder that is exactly one JSON value, checked on the whole remainder, so trailing bytes make the read an error. For an endpoint that reports `total_count`, such as the check runs, the read ends only when the collected count equals it: an empty or short page while the count is unmet, a `total_count` that changes or disappears between pages, and a collected count above it are each an error, never a pass, so a failure on a later page is never skipped. For an endpoint with no `total_count`, the first page of fewer than 100 items ends the read.
+The wait takes the status only from that first line and never reads the error text, which carries server-supplied text. A successful page needs a 2xx first line and a remainder that is exactly one JSON value, checked on the whole remainder, so trailing bytes make the read an error. For an endpoint that reports `total_count`, such as the check runs, the read ends only when the collected count equals it: an empty or short page while the count is unmet, a `total_count` that changes or disappears between pages, and a collected count above it are each an error, never a pass, so a failure on a later page is never skipped. For an endpoint with no `total_count`, the first page of fewer than 100 items ends the read.
 
 A failed read is retried on the next poll, inside the bound, only when the first-line status is exactly 500, 502, 503, or 504. A pass on a later poll settles the wait. The retried body classes are empty, JSON, and truncated JSON.
 
-A failed 5xx read names its body class in the error: empty, JSON, truncated JSON, unparseable JSON, or other text. The error carries only the status and the class, never the server-supplied text and never a body byte. A 5xx with a truncated JSON body is retried inside the bound. A cut-short JSON value is a GitHub-shaped reply that a transient failure truncated. An unparseable or other-text body stays terminal, because its bytes cannot be told apart from forged text.
+A failed 5xx read names its body class in the error: empty, JSON, truncated JSON, unparseable JSON, or other text. The error carries only the status and the class, never the server-supplied text and never a body byte. A 5xx with a truncated JSON body is retried inside the bound. A cut-short JSON value is a GitHub-shaped reply that a transient failure truncated. An unparseable or other-text body stays terminal.
 
-The read stops with an error after 100 pages. Each page read stays inside the wait bound. A real 5xx whose body is HTML or plain text, as a proxy sends, stays terminal, because its body cannot be told apart from forged text. The `--require-ci` gate reads and the ruleset read page the same way, so no read follows a reply-supplied `Link` URL, and no request goes to a target that a reply named. A `Link` target on another host is an error for the gate reads, the ruleset read, and the wait alike, because they share one pager.
+The read stops with an error after 100 pages. Each page read stays inside the wait bound. A real 5xx whose body is HTML or plain text, as a proxy sends, stays terminal. The `--require-ci` gate reads and the ruleset read page the same way, so no read follows a reply-supplied `Link` URL, and no request goes to a target that a reply named. A `Link` target on another host is an error for the gate reads, the ruleset read, and the wait alike, because they share one pager.
 
-A gate read that cannot be accounted for page by page is an error, and a ruleset read that cannot is an unknown source, never a pass. The pager hands the ruleset classifier every page it received, empty pages included, so the ruleset classes are unchanged: a full page of 100 rules followed by an empty page is unknown and refuses. Any other failure also ends the wait at once. That covers another first-line status, such as 501 or a 4xx, whatever its body says. It also covers a failure with no status line, and a body that is unparseable JSON or other text.
+A gate read that cannot be accounted for page by page is an error, and a ruleset read that cannot is an unknown source, never a pass. The pager hands the ruleset classifier every page it received, empty pages included: a full page of 100 rules followed by an empty page is unknown and refuses. Any other failure also ends the wait at once. That covers another first-line status, such as 501 or a 4xx, whatever its body says. It also covers a failure with no status line, and a body that is unparseable JSON or other text.
 
 A later poll that completes replaces the error of an earlier one, whether it settles, skips its reads because the PR head is another commit than `--head`, or reads the commit. A wait that reaches the bound while the latest completed poll failed with a retryable status exits 1 with `status: "error"` and that error, with no `timedOut: true` and no pass, unless `gh pr checks` listed a failure in that poll, which `prFailures` reports with the bound as before.
 
 The retry covers `wait-checks` only: the `--require-ci` finish gate keeps failing closed on every read failure. `childExitUnconfirmed: true` covers every `gh` child of the poll, including a source
 read that the first failure of the poll left running to the ceiling, and it rides on every
 envelope, settled, timed out, or error. A required check that no
-read of the PR lists yet is absent, as before.
+read of the PR lists yet is absent.
 
 The `gh pr` reads of a poll are retried on the next poll, inside the bound, when `gh` names
 a server error (HTTP 500, 502, 503, or 504) as the opening of its error text, as in
@@ -171,7 +169,7 @@ poll also reads the required-check sources.
 If the rulesets and the classic protection
 both settle nothing and no source names a check, as on a private repository on the
 GitHub Free plan, the required wait refuses at once on the first poll with the
-unresolved-source error below, because no check can be known to report. A readable
+unresolved-source error below. A readable
 source keeps the wait running, whether it names a required check or states the absence,
 whatever the other source returned. The required names of that poll come from the same
 `no checks reported` reply, which is no failure. A server error (500, 502, 503, 504) on a source read is
@@ -193,8 +191,7 @@ reports it only when every required-check source states the absence, as the
 the rulesets read has a rule but no required-status-check rule, and the classic
 protection read states the branch is not protected. A source that settles nothing, as
 the 403 of a private repository on the GitHub Free plan does, and a ruleset read that
-found no rule with no source naming a check, exit 1 with `status: "error"`, because
-the gate refuses the same states. A source that names a required
+found no rule with no source naming a check, exit 1 with `status: "error"`. A source that names a required
 check is no absence, even beside a ruleset read that found no rule, and the wait
 continues to judge that check:
 
@@ -209,7 +206,7 @@ continues to judge that check:
 }
 ```
 
-It is not a read error and not a pass, because no check was read. There is
+It is not a read error and not a pass. There is
 nothing required to wait for, so do not run the required wait again. On
 `noRequiredChecks`, run `agent-loop role wait-checks --all` once, then dispatch the
 reviewer, which reads the CI status of the PR head itself, and never record the CI
@@ -222,7 +219,7 @@ When no source can state the required checks, the required wait cannot say wheth
 PR holds a required check, so it refuses with exit 1 and `status: "error"`. The error
 says that a source `settled nothing`, that a source `could not be read`, or that a source
 `did not state that it holds no required check`, and that the required checks of the PR
-are unresolved. The 403 of a private repository on the GitHub Free plan (#301) is that
+are unresolved. The 403 of a private repository on the GitHub Free plan is that
 case. It is no required-check read, so do not run the required wait again. Run the
 `--all` wait below once, as after `noRequiredChecks`, then dispatch the reviewer, which
 reads the CI status of the PR head itself.
@@ -281,7 +278,7 @@ empty `checks`. An `UNKNOWN` or null merge state, and merge fields that the read
 parse, keep the wait.
 
 Exit 1 with `no required checks reported on the '<branch>' branch` stays
-unresolved, because `--all` has no required-check answer. A `noRequiredChecks`
+unresolved. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`
 or after the refusal above that no source states the required checks. A
 `--compare-head` run takes the same path, so it runs `--all` after that refusal.
@@ -317,14 +314,13 @@ When all three conditions hold, the wait returns at once with `noCheckSource: tr
   `push`, `merge_group`, `workflow_run`, or `check_suite`. The command scans the text
   of each file, so a name in a comment or a step keeps the wait. A file with a
   backslash or a control character, or one that is not valid UTF-8 or valid base64,
-  keeps the wait too, because a YAML escape can spell an event name. A reusable
+  keeps the wait. A reusable
   workflow inherits the events of its caller, and the callers are files of the same
   directory.
   - A file that names a trigger is passed over only when the
     whole file is one well-formed YAML document, every event under its `on` key is
     `pull_request` or `pull_request_target`, each has a `paths` list, and no PR file
-    matches a pattern under the GitHub filter rules, because that workflow cannot run
-    for the PR. Any other event, `push` included, `paths-ignore`, a pattern
+    matches a pattern under the GitHub filter rules. Any other event, `push` included, `paths-ignore`, a pattern
     that the command cannot settle (a `!` negation, `?`, `+`, `[...]`), a syntax
     error anywhere in the file, a second document, a duplicate key, a tag on any node (`!!str` and `!!map` included), an anchor, an alias,
     and a PR file name with a control character, a line separator, or a lone surrogate
@@ -332,8 +328,8 @@ When all three conditions hold, the wait returns at once with `noCheckSource: tr
     a file that is well-formed YAML but that GitHub rejects for another reason is
     still passed over.
 - The base head, and the head of the latest merged PR of that commit, have no check run
-  and no commit status from any source, because a GitHub App or third-party CI can
-  report a check with no workflow file, and one can report on PR heads only.
+  and no commit status from any source, including a GitHub App or third-party CI with
+  no workflow file.
 
 `noCheckSource` is never a pass. On it, dispatch the reviewer at once, record in
 `verified` that the CI status is not verified, and never record the CI status as
@@ -351,8 +347,8 @@ only the wait covers it. `noCheckSource` never comes from the required
 wait. The headless orchestrator prompt carries the same rule.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
-failed one. A check that has not started is absent from `checks`, because the
-command omits it, so an empty list means no required check has reported yet and
+failed one. A check that has not started is absent from `checks`, so an empty list means no
+required check has reported yet and
 the wait continues.
 
 A required check still pending after a wait, whether it failed or the bound
@@ -363,7 +359,7 @@ the reason.
 
 ## A required check that fails on a known flaky test
 
-A required check can fail on a test that the diff does not reach. The parent never reruns a job, because the parent writes nothing to GitHub.
+A required check can fail on a test that the diff does not reach. The parent never reruns a job.
 
 Dispatch one worker turn for a required check that fails on a known flaky test. The turn does all of these steps in order:
 
@@ -373,11 +369,9 @@ Dispatch one worker turn for a required check that fails on a known flaky test. 
 4. The worker turn must record a known flaky recurrence in the flaky-test record of the target repository, for example its open issue for that test, as the rules of that record state. When the target repository has no such record, the worker turn records nothing and names the recurrence in its report.
 5. The worker turn must rerun only the failed jobs with `gh run rerun <run id> --failed`.
 
-The wait comes first because of two `gh` limits. `gh run view --log-failed` has no log until the run completes. `gh run rerun` refuses while another job of the run is in progress.
-
 If the diff reaches the failure, or no section of the target repository's flaky-test record matches it, the worker turn reruns nothing and reports the failure. A target repository with no such record has no matching section, so the worker turn reruns nothing and reports the failure. If the run is still in progress at the bound, the worker turn reruns nothing and reports that.
 
-After that worker turn, run `wait-checks` again for the same head before the reviewer turn. Never use `wait-checks` to wait for the rest of the run, because it settles on the first failing check.
+After that worker turn, run `wait-checks` again for the same head before the reviewer turn. Never use `wait-checks` to wait for the rest of the run.
 
 ## Headless loop waits
 

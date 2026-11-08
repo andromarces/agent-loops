@@ -5,17 +5,14 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 ## Reviewer prompts
 
 The reviewer prompt sets the task scope; the fixed review scope and closing
-block wrap it on every turn. Name the guards and contracts that the change puts
-at risk, so the reviewer can trace each changed input through them. Do not
+block wrap it on every turn. Name the guards and contracts that the change puts at risk. Do not
 restate the spec as the pass condition: a restated spec asks the reviewer to
 confirm it, not to test it.
 
-The init task reaches each role once, so a later operator decision reaches only
-the worker prompt that carries it. Restate every operator decision made after
-init in the next reviewer prompt, beside the worker prompt that carries it. The
-reviewer then judges the change against the decision, not only against the init
-task. State the decision as an approved change of the spec, with the guard or
-contract that it changes, so the reviewer still tests the change.
+The init task reaches each role once. Restate every operator decision made after
+init in the next reviewer prompt, beside the worker prompt that carries it. State
+the decision as an approved change of the spec, with the guard or contract that it
+changes.
 
 The fixed review scope also sets what a blocker is. A weakened existing guard or
 documented contract stays a blocker. A finding that is not a defect against the
@@ -33,7 +30,7 @@ The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
 then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
 head. The command reads status only and changes nothing. Every
-rule below belongs to that one condition, so the prompt nests them under it:
+rule below belongs to that one condition:
 
 - When the task names a pull request, read the required checks for the reviewed
   head with `gh pr checks <pr> --required`. The command reads status only. It
@@ -52,9 +49,7 @@ rule below belongs to that one condition, so the prompt nests them under it:
     status is unresolved and goes in `Checks`. A pass is reported only when the
     read shows one.
 
-The `--require-ci` finish gate stays the enforcement point. The rule only lets
-the reviewer see a failure before the gate refuses, so the run needs no extra
-worker turn and no extra reviewer turn for that failure.
+The `--require-ci` finish gate stays the enforcement point.
 
 ## The runtime supplies the required-check status
 
@@ -88,10 +83,7 @@ a check that starts or finishes later is not in it, and a failed read is an
 unresolved status rather than a turn failure. The runtime reports the
 status it read beside the reviewer result, in the dispatch envelope and in the
 state file, so compare it with the reviewer Checks line and act on a
-disagreement. A headless run renders the same status in the result prompt the
-orchestrator receives after a reviewer turn, as `prChecks` beside the response and
-the reviewed state, so the orchestrator holds the status and the reviewer Checks
-line in one prompt. A turn that made no read carries no `prChecks` field.
+disagreement. A turn that made no read carries no `prChecks` field.
 
 A worker or reviewer turn on a CLI that refuses a tool call (Copilot, under
 `--no-ask-user`) can carry `"shellDenied": true`, in the dispatch envelope and in
@@ -116,8 +108,7 @@ gate refuses.
 The envelope field is `prChecks`:
 `{ pr, head, status, checks, summary, advisory }`, where `status` is `pass`,
 `failing`, `pending`, or `unresolved`, `checks` names the checks in that state, and
-`summary` is the one-line form that the reviewer prompt carries. Every supplied status still carries
-`advisory: true`, because the status is a report, and the `--require-ci` finish
+`summary` is the one-line form that the reviewer prompt carries. Every supplied status still carries `advisory: true`, and the `--require-ci` finish
 gate re-reads GitHub and enforces the condition. The status is a snapshot taken
 before the turn, so a check that starts or finishes later is not in it. The reviewer
 treats the status as evidence. A status never replaces the gate.
@@ -156,9 +147,7 @@ the flag is unchanged.
   changed value and a missing value are refused before a step is charged. Never
   pass a command that a turn produced.
 - The command goes to the platform shell as one string: `/bin/sh -c` on POSIX
-  and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the
-  environment of the runtime, so the operator keeps secrets out of the command
-  text.
+  and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the environment of the runtime.
 - The command runs inside a machine-wide test slot (`agent-loop test-slot`), so
   runs that share a host do not run their suites beyond the slot count. The default is 1 slot on every CPU count, and
   `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
@@ -205,24 +194,21 @@ the flag is unchanged.
   targeted test file through the test slot wrapper with `--if-held`, and run a full
   suite only through the plain wrapper, or rely on the required CI checks. With
   `--if-held`, the run stays direct while all slots are free and waits for a slot
-  while any slot is held. A targeted run that starts while all slots are free holds
-  no slot, so a slot holder can start beside it. A targeted run covers the test
+  while any slot is held. A targeted run that starts while all slots are free holds no slot. A targeted run covers the test
   files that mirror the changed source files first, then the test files that import
   a changed source file directly, then the test files of the direct importers of a
   changed source file, then the test files that name the path or file name of a
   changed file that is not an importable module, for example a script or a config
   file, at most 10 test files in total, never a whole directory.
-  - Any broader
-    run is a full suite and goes through the plain wrapper. A run whose paths cannot
-    be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
-    binary and the CLI script of the run, so it works where `agent-loop` is not on
-    PATH. A run with or without `--test-cmd` gives the same rule, on the headless
-    and the interactive path.
-  - Exit code 75 from the wrapper means that the suite
-    did not run, which a child reports as unresolved. The rule also bars a CPU or
-    memory load generator, a busy loop, and a detached or background process that
-    can outlive the turn. The required CI checks are the evidence under
-    load.
+  - Any broader run is a full suite and goes through the plain wrapper. A run whose
+    paths cannot be quoted keeps a direct targeted run, and a broader run relies on
+    the required CI checks. The rule renders the wrapper command from the Node binary
+    and the CLI script of the run. A run with or without `--test-cmd` gives the same
+    rule.
+  - Exit code 75 from the wrapper means that the suite did not run, which a child
+    reports as unresolved. The rule also bars a CPU or memory load generator, a busy
+    loop, and a detached or background process that can outlive the turn. The
+    required CI checks are the evidence under load.
 - A reviewer in a sandboxed mode sees the result of the whole command only. It
   cannot run a targeted test, unless the run set `--reviewer-sandbox
   workspace-write` or runs with no sandbox ([Codex reviewer sandbox mode](reviewer-sandbox.md)).
@@ -230,11 +216,8 @@ the flag is unchanged.
 ## Test evidence when the reviewer cannot run tests
 
 A Codex reviewer in the `read-only` mode cannot run the test suite on Windows or on
-macOS. A child spawn fails, or `vp` cannot write its temporary directory. A
-reviewer with no sandbox is not limited this way, and the `workspace-write` mode
-probably is on the unelevated Windows sandbox. The reference section
-[Codex read-only child-spawn limit](../reference/reviewer-safety.md#codex-read-only-child-spawn-limit)
-holds the probes.
+macOS. A reviewer with no sandbox is not limited this way, and the
+`workspace-write` mode may be limited on the unelevated Windows sandbox.
 
 When a reviewer `Checks` line shows that tests did not run, for any reason, the
 reviewer accept is not test evidence. Use the required CI checks for test

@@ -28,8 +28,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     item for it by itself.
   - The runtime cannot attribute an entry to a turn, so the parent cannot prove ownership. The
     parent deletes no entry that `inheritedTmpdirEntries` names, and removal stays with the user. A
-    `Notes` line from a reviewer never makes an entry safe to delete, because another process can
-    hold a matching name. The directory is shared with the user and with other
+    `Notes` line from a reviewer never makes an entry safe to delete. The directory is shared with the user and with other
     processes.
   - Every reviewer turn that read the directory before it started carries the field. The turns
     are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
@@ -38,8 +37,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     interrupted dispatch. A headless run also emits an `inherited-tmpdir` event with `fatal: true`
     for a fatal error. The transcript keeps that event.
   - A turn that cannot carry it is one whose process ended
-    without a throw, for example a crash or a kill, because the before-read lives in memory, and
-    one whose before-read failed. A run that the next call marks `interrupted` after such an end
+    without a throw, for example a crash or a kill, and one whose before-read
+    failed. A run that the next call marks `interrupted` after such an end
     has none.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that `node_modules/.modules.yaml` of the work tree records as `storeDir`.
