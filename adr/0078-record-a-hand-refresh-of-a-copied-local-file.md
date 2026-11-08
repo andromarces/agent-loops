@@ -43,7 +43,7 @@ Andro Marces
 
 - [Issue #1534](https://github.com/andromarces/agent-loops/issues/1534)
 - [Pull request #1545](https://github.com/andromarces/agent-loops/pull/1545)
-- Implementation: `refreshLocalFile` in `src/lib/local-files.mjs`, the `refresh-local` operation in `src/role/index.mjs`, and `--path` in `src/role/args.mjs`
+- Implementation: `refreshLocalFile` in `src/lib/local-file-changes.mjs`, the `refresh-local` operation in `src/role/index.mjs`, and `--path` in `src/role/args.mjs`
 - Documented in [Local files copied into the work tree](../docs/orchestrator/local-files-copy.md), the [orchestrator instructions](../docs/orchestrator-instructions.md), the [role reference](../docs/reference/role.md), and the headless orchestrator prompt in `src/prompts/orchestrator.mjs`
 - Extends [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - Supersedes (partially): [ADR 0074](0074-report-the-side-that-changed-in-local-files-differ.md), decision 2's init-hash compare, decision 3's init-hash comparison, and decision 5's source action

@@ -121,6 +121,43 @@ test("resolves the work tree root once per lookup", async () => {
   expect(resolved.calls.filter((path) => path === root)).toHaveLength(1);
 });
 
+// Usefulness: verifies an alias cwd still names the top-level path in the lock command.
+// Not redundant: the real Git cases never pass an alias cwd.
+test("locks the top-level path for an alias cwd", async (ctx) => {
+  const { base, main, linked: root } = await linked();
+  const alias = `${base}-alias`;
+  await symlinkOrSkip(ctx, root, alias, process.platform === "win32" ? "junction" : "dir");
+  bases.push(alias);
+  const lockArgs = [];
+  const read = async (_cwd, args) => {
+    if (args[0] === "rev-parse" && args[1] === "--show-toplevel") {
+      return { exitCode: 0, stdout: `${root}\n`, stderr: "" };
+    }
+    if (args[0] === "worktree" && args[1] === "list") {
+      const stdout = [
+        `worktree ${main}`,
+        "HEAD 0",
+        "branch refs/heads/main",
+        "",
+        `worktree ${root}`,
+        "HEAD 0",
+        "branch refs/heads/run",
+        "",
+      ].join("\0");
+      return { exitCode: 0, stdout, stderr: "" };
+    }
+    if (args[0] === "worktree" && args[1] === "lock") {
+      lockArgs.push(...args);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+
+  await lockWorkTree(alias, { runId: "abc123", read });
+
+  expect(lockArgs.at(-1)).toBe(root);
+});
+
 // Usefulness: verifies the existing-lock rule. A lock made by a user or another tool keeps its
 // reason through init and is never unlocked at the end. Not redundant: it covers the lock already
 // present before the call, which the other cases never create.

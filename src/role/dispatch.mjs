@@ -8,7 +8,8 @@ import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
 import { reportedPathNames } from "../lib/entry-report.mjs";
 import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
 import { sha256 } from "../lib/hash.mjs";
-import { copyLocalFiles, findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-files.mjs";
+import { findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-file-changes.mjs";
+import { copyLocalFiles, locateLocalFiles } from "../lib/local-files.mjs";
 import { logInfo, logWarn, logWarnFull } from "../lib/log.mjs";
 import { processStartTime } from "../lib/process-identity.mjs";
 import { redactAndClean } from "../lib/redact.mjs";
@@ -513,10 +514,11 @@ async function applyInitSideEffects(
   // state file exists. A copy that throws leaves no run to abort. The copy also
   // comes before the first child turn and snapshot, so every turn sees the files.
   if (state.copyLocalFiles) {
+    const located = await locateLocalFiles(args.cwd, { signal });
     localFiles = await copyLocalFiles(
       args.cwd,
       {},
-      { signal, extraPaths: state.copyLocalPaths ?? [] },
+      { signal, extraPaths: state.copyLocalPaths ?? [], located },
     );
     if (localFiles) {
       // Names only, so a later dispatch can compare each copy with its source. The stored hash of
@@ -525,6 +527,7 @@ async function applyInitSideEffects(
       try {
         state.localFilesCopiedSha256 = await hashCopiedLocalFiles(args.cwd, localFiles.copied, {
           signal,
+          located,
         });
       } catch (err) {
         if (readProp(err, "isCanceled")) {
