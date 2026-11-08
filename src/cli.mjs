@@ -48,6 +48,7 @@ import { printHelp } from "./help.mjs";
 import { runProbeTurn } from "./child-turn.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
 import { main as runRoleMain } from "./role/index.mjs";
+import { runBatchMain } from "./batch/cli.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
 const noForceExitWrite = () => {};
@@ -306,6 +307,11 @@ export async function main(
 
   if (argv[0] === "test-slot") {
     process.exitCode = await runTestSlot(argv.slice(1));
+    return;
+  }
+
+  if (argv[0] === "batch") {
+    process.exitCode = await runBatchMain(argv.slice(1));
     return;
   }
 

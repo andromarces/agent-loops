@@ -1,0 +1,729 @@
+// The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
+// one headless child per issue, prints progress on stderr, and returns one summary for stdout.
+import { createWriteStream } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execa } from "execa";
+import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
+import { execBounded } from "../lib/exec.mjs";
+import { renderTask } from "./args.mjs";
+import { cleanupLoop } from "./cleanup.mjs";
+import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
+import { createLoopWorkTree } from "./git.mjs";
+import { reconcileLoop } from "./reconcile.mjs";
+import { readStepsUsed } from "./steps.mjs";
+import {
+  acquireClaim,
+  batchPaths,
+  createBatchStore,
+  listBatches,
+  readClaim,
+  readLoop,
+  readManifest,
+  releaseClaim,
+  updateLoop,
+  updateManifest,
+} from "./store.mjs";
+
+const TERMINAL = new Set(["succeeded", "skipped", "failed", "needs-owner"]);
+const INTERRUPT_WAIT_MS = 30_000;
+
+let ownStamp;
+function ownStartTimeOnce() {
+  ownStamp ??= processStartTime(process.pid);
+  return ownStamp;
+}
+
+/** Generates a batch id that is safe as a directory and a branch segment. */
+export function newBatchId(now = new Date()) {
+  const iso = now.toISOString();
+  const stamp = `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}-${iso.slice(11, 13)}${iso.slice(14, 16)}${iso.slice(17, 19)}`;
+  return `${stamp}-${randomUUID().slice(0, 8)}`;
+}
+
+/** A progress line on stderr, because stdout carries one JSON summary. */
+export function progress(message) {
+  process.stderr.write(`[agent-loop] batch: ${message}\n`);
+}
+
+function queuedLoop(paths, id, issue, maxSteps) {
+  return {
+    issue,
+    status: "queued",
+    skipReason: null,
+    reason: null,
+    attempts: 0,
+    branch: `batch/${id}/${issue}`,
+    workTree: null,
+    transcript: paths.transcript(id, issue),
+    log: null,
+    pid: null,
+    startTime: null,
+    stepsUsed: 0,
+    remainingSteps: maxSteps,
+    pr: null,
+    cleanup: null,
+  };
+}
+
+/** The argv of one headless run. No shell shim, and the child receives only explicit flags. */
+export function childArguments({ prepared, loop, workTree, transcript, maxSteps, resume }) {
+  const args = [
+    "--orchestrator",
+    prepared.roles.orchestrator.kind,
+    "--worker",
+    prepared.roles.worker.kind,
+    "--reviewer",
+    prepared.roles.reviewer.kind,
+    "--cwd",
+    workTree,
+    "--task",
+    loop.task,
+    "--max-steps",
+    String(maxSteps),
+    "--transcript",
+    transcript,
+    "--require-accept",
+  ];
+  for (const role of ["orchestrator", "worker", "reviewer"]) {
+    const { model, effort } = prepared.roles[role];
+    if (model) args.push(`--${role}-model`, model);
+    if (effort) args.push(`--${role}-effort`, effort);
+  }
+  if (prepared.testCmd) args.push("--test-cmd", prepared.testCmd);
+  if (prepared.testCmdTimeout) args.push("--test-cmd-timeout", String(prepared.testCmdTimeout));
+  if (prepared.timeout) args.push("--timeout", String(prepared.timeout));
+  if (prepared.reviewerSandbox) args.push("--reviewer-sandbox", prepared.reviewerSandbox);
+  if (resume.continueFrom) args.push("--continue-from", resume.continueFrom);
+  if (resume.pr !== null && resume.pr !== undefined) {
+    args.push("--pr", String(resume.pr), "--require-ci", String(resume.pr));
+  }
+  return args;
+}
+
+function shellCommand(command) {
+  return process.platform === "win32"
+    ? [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command]]
+    : ["/bin/sh", ["-c", command]];
+}
+
+/** Runs `--setup-cmd` once in the new work tree through the platform shell, within its bound. */
+export async function runSetup({ command, workTree, timeoutSeconds, deps = {} }) {
+  const run = deps.execBounded ?? execBounded;
+  const [file, args] = shellCommand(command);
+  const result = await run(file, args, {
+    cwd: workTree,
+    timeoutMs: timeoutSeconds * 1000,
+  });
+  return result.exitCode === 0;
+}
+
+function cliPath() {
+  return fileURLToPath(new URL("../cli.mjs", import.meta.url));
+}
+
+/** Spawns one headless run with stdout and stderr appended to `logPath`. */
+export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
+  if (deps.spawn) return deps.spawn({ args, cwd, logPath });
+  const stream = createWriteStream(logPath, { flags: "a" });
+  const subprocess = execa(process.execPath, [cliPath(), ...args], {
+    cwd,
+    reject: false,
+    stdin: "ignore",
+    stdout: stream,
+    stderr: stream,
+  });
+  const pid = subprocess.pid;
+  const startTime = await processStartTime(pid);
+  const done = subprocess
+    .then((result) => ({ exitCode: result.exitCode ?? null }))
+    .catch(() => ({ exitCode: null }));
+  return {
+    pid,
+    startTime,
+    done,
+    kill: (signal = "SIGINT") => {
+      try {
+        subprocess.kill(signal);
+      } catch {
+        // A run that already ended needs no signal.
+      }
+    },
+    hardKill: () => {
+      try {
+        subprocess.kill("SIGKILL");
+      } catch {
+        // A run that already ended needs no signal.
+      }
+    },
+    close: () => stream.end(),
+  };
+}
+
+const terminal = (status) => TERMINAL.has(status);
+
+function loopEntry(loop) {
+  return {
+    issue: loop.issue,
+    status: loop.status,
+    skipReason: loop.skipReason,
+    reason: loop.reason,
+    workTree: loop.workTree?.path ?? null,
+    branch: loop.branch,
+    pr: loop.pr,
+    attempts: loop.attempts,
+    stepsUsed: loop.stepsUsed,
+    remainingSteps: loop.remainingSteps,
+    log: loop.log,
+    transcript: loop.transcript,
+    cleanup: loop.cleanup,
+  };
+}
+
+function summaryOf(manifest, loops) {
+  return {
+    batchId: manifest.id,
+    status: manifest.status,
+    loops: manifest.issues.map((issue) => loopEntry(loops.get(issue))),
+  };
+}
+
+function exitCodeOf(manifest, loops) {
+  if (manifest.status === "interrupted") return 130;
+  if (manifest.status === "paused") return 1;
+  return [...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))
+    ? 1
+    : 0;
+}
+
+function isLive(loop) {
+  return loop.pid != null && loop.startTime != null;
+}
+
+async function ownerStillLive(loop) {
+  if (!isLive(loop)) return false;
+  return ownerAlive({ pid: loop.pid, startTime: loop.startTime });
+}
+
+/**
+ * Starts or resumes one batch. Returns `{ exitCode, summary }`. Every state write is a checkpoint
+ * event; a quiet interval writes nothing.
+ */
+export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
+  const paths = batchPaths(runsRoot);
+  const id = prepared.id;
+  let manifest;
+  const loops = new Map();
+  let start = true;
+
+  if (prepared.resume) {
+    manifest = await readManifest(runsRoot, id);
+    if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
+    start = false;
+    for (const issue of manifest.issues) loops.set(issue, await readLoop(runsRoot, id, issue));
+    const pending = manifest.issues.some((issue) => !terminal(loops.get(issue).status));
+    if (!pending) {
+      return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+    }
+    if (manifest.status !== "running") {
+      manifest = await updateManifestReturning(runsRoot, id, (value) => ({
+        ...value,
+        status: "running",
+        pauseReason: null,
+      }));
+    }
+  } else {
+    manifest = {
+      id,
+      repo: prepared.repo,
+      repoKey: prepared.repoKey,
+      createdAt: new Date().toISOString(),
+      base: prepared.base,
+      workTreeRoot: prepared.workTreeRoot,
+      issues: prepared.issues,
+      status: "running",
+      settings: {
+        loops: prepared.loops,
+        maxSteps: prepared.maxSteps,
+        taskTemplate: prepared.taskTemplate,
+        setupCmd: prepared.setupCmd,
+        setupTimeout: prepared.setupTimeout,
+        testCmd: prepared.testCmd,
+        testCmdTimeout: prepared.testCmdTimeout,
+        timeout: prepared.timeout,
+        reviewerSandbox: prepared.reviewerSandbox,
+        roles: prepared.roles,
+      },
+    };
+    for (const issue of prepared.issues)
+      loops.set(issue, queuedLoop(paths, id, issue, prepared.maxSteps));
+    await createBatchStore(runsRoot, manifest, [...loops.values()]);
+  }
+
+  const controller = new AbortController();
+  if (deps.signal) {
+    if (deps.signal.aborted) controller.abort();
+    else deps.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+
+  let interrupted = false;
+  let hard = false;
+  const active = new Map();
+  const children = new Map();
+  let pausedReason = null;
+
+  const forward = (signal) => {
+    for (const child of children.values()) {
+      if (signal === "SIGKILL") child.hardKill?.();
+      else child.kill?.("SIGINT");
+    }
+  };
+  const onSigInt = () => {
+    if (!interrupted) {
+      interrupted = true;
+      progress("interrupted: stopping new launches and forwarding SIGINT");
+      controller.abort();
+      forward("SIGINT");
+      for (const [issue, child] of children) {
+        const timer = setTimeout(() => {
+          if (children.has(issue)) child.hardKill?.();
+        }, INTERRUPT_WAIT_MS);
+        timer.unref?.();
+      }
+    } else if (!hard) {
+      hard = true;
+      progress("second interrupt: ending the child trees now");
+      forward("SIGKILL");
+    }
+  };
+  const installSignal = deps.installSignal !== false;
+  if (installSignal) process.on("SIGINT", onSigInt);
+  if (deps.signal) {
+    deps.signal.addEventListener("abort", () => {
+      if (!interrupted) {
+        interrupted = true;
+        forward("SIGINT");
+      }
+    });
+  }
+
+  const changeLoop = async (issue, patch) => {
+    const next = await updateLoop(runsRoot, id, issue, (current) => ({ ...current, ...patch }));
+    loops.set(issue, await readLoop(runsRoot, id, issue));
+    return next;
+  };
+
+  const refreshOpenPr = async () => {
+    try {
+      return await readOpenPrClosures({ gh, repo: prepared.repo });
+    } catch (err) {
+      throw Object.assign(new Error(`the open pull request read failed: ${err.message}`), {
+        batchWide: true,
+      });
+    }
+  };
+
+  const launchIssue = async (issue, { recovery = null } = {}) => {
+    let loop = loops.get(issue);
+    if (recovery === null) {
+      let closures;
+      try {
+        closures = await refreshOpenPr();
+      } catch (err) {
+        pausedReason = err.message;
+        await changeLoop(issue, {
+          status: "queued",
+          reason: "eligibility-unverified",
+          skipReason: "eligibility-unverified",
+        });
+        throw err;
+      }
+      if (closures.incompletePr !== null) {
+        pausedReason = `pull request ${closures.incompletePr} returned a 250-commit page`;
+        await changeLoop(issue, {
+          status: "queued",
+          skipReason: "eligibility-unverified",
+          reason: pausedReason,
+        });
+        throw Object.assign(new Error(pausedReason), { batchWide: true });
+      }
+      const claim = await readClaim(runsRoot, prepared.repoKey, issue);
+      const eligibility = await checkEligibility({
+        issue,
+        gh,
+        repo: prepared.repo,
+        batchId: id,
+        claim,
+        openPrClosures: closures,
+      });
+      if (!eligibility.ok) {
+        await changeLoop(issue, {
+          status: "skipped",
+          skipReason: eligibility.reason,
+          reason: eligibility.evidence,
+          remainingSteps: loop.remainingSteps,
+        });
+        progress(`issue ${issue}: skipped (${eligibility.reason}: ${eligibility.evidence})`);
+        return;
+      }
+      const claimResult = await acquireClaim(
+        runsRoot,
+        prepared.repoKey,
+        issue,
+        {
+          batchId: id,
+          repo: prepared.repo,
+          workTree: prepared.workTreeRoot,
+          pid: process.pid,
+          startTime: await ownStartTimeOnce(),
+        },
+        {
+          onStale: async (record) => {
+            if (record.batchId === id) return true;
+            const owner = await readLoop(runsRoot, record.batchId, issue).catch(() => null);
+            return owner?.status === "failed";
+          },
+        },
+      );
+      if (!claimResult.acquired) {
+        await changeLoop(issue, {
+          status: "skipped",
+          skipReason: "claimed",
+          reason: `claimed by batch ${claimResult.owner ?? "unknown"}`,
+        });
+        progress(`issue ${issue}: skipped (claimed by batch ${claimResult.owner ?? "unknown"})`);
+        return;
+      }
+      let title = `issue ${issue}`;
+      try {
+        const reply = await gh(["issue", "view", String(issue), "--json", "title"], prepared.repo);
+        if (reply?.status === 0) {
+          const parsed = JSON.parse(reply.stdout);
+          if (typeof parsed?.title === "string" && parsed.title.trim() !== "") title = parsed.title;
+        }
+      } catch {
+        // A missing title keeps the issue number in the task.
+      }
+      const task = renderTask(prepared.taskTemplate, {
+        issue,
+        title,
+        branch: loop.branch,
+        repo: prepared.repo,
+      });
+      const workTreePath = join(prepared.workTreeRoot, `issue-${issue}`);
+      let workTree = loop.workTree;
+      try {
+        if (workTree === null || workTree === undefined) {
+          workTree = await createLoopWorkTree({
+            repo: prepared.repo,
+            base: prepared.base,
+            workTree: workTreePath,
+            branch: loop.branch,
+          });
+        }
+      } catch (err) {
+        await changeLoop(issue, {
+          status: "failed",
+          reason: `work-tree-failed: ${err.message}`,
+          workTree: null,
+        });
+        await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+        return;
+      }
+      loop = { ...loop, task, workTree };
+      await changeLoop(issue, {
+        workTree,
+        task,
+        status: "queued",
+        setupDone: loop.setupDone === true,
+      });
+      if (prepared.setupCmd && loop.setupDone !== true) {
+        const ok = await runSetup({
+          command: prepared.setupCmd,
+          workTree: workTree.path,
+          timeoutSeconds: prepared.setupTimeout,
+          deps,
+        });
+        if (!ok) {
+          await changeLoop(issue, { status: "failed", reason: "setup-failed" });
+          await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+          progress(`issue ${issue}: failed (setup-failed)`);
+          return;
+        }
+        await changeLoop(issue, { setupDone: true });
+      }
+      if (interrupted || hard) return;
+      await changeLoop(issue, { attempts: loop.attempts + 1 });
+      loop = loops.get(issue);
+      return startChild(issue, loop, { resume: { continueFrom: null, pr: null } });
+    }
+
+    if (interrupted || hard) return;
+    await changeLoop(issue, { attempts: loop.attempts + 1 });
+    loop = loops.get(issue);
+    return startChild(issue, loop, { resume: recovery });
+  };
+
+  const startChild = async (issue, loop, { resume }) => {
+    if (interrupted || hard) return;
+    const attempt = loop.attempts;
+    const logPath = paths.log(id, issue, attempt);
+    const args = childArguments({
+      prepared,
+      loop,
+      workTree: loop.workTree.path,
+      transcript: loop.transcript,
+      maxSteps: loop.remainingSteps,
+      resume,
+    });
+    await changeLoop(issue, {
+      status: "running",
+      skipReason: null,
+      reason: null,
+      log: logPath,
+      pid: null,
+      startTime: null,
+    });
+    let child;
+    try {
+      child = await spawnHeadless({
+        args,
+        cwd: loop.workTree.path,
+        logPath,
+        deps,
+      });
+    } catch (err) {
+      await changeLoop(issue, {
+        status: "failed",
+        reason: `child-error: ${err.message}`,
+      });
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      return;
+    }
+    children.set(issue, child);
+    if (interrupted || hard) child.kill?.("SIGINT");
+    await changeLoop(issue, { pid: child.pid ?? null, startTime: child.startTime ?? null });
+    progress(`issue ${issue}: attempt ${attempt} started (pid ${child.pid ?? "unknown"})`);
+    const promise = (async () => {
+      const { exitCode } = await child.done;
+      child.close?.();
+      children.delete(issue);
+      await finishChild(issue, exitCode, { interrupted: interrupted || hard });
+    })();
+    active.set(issue, promise);
+    promise.finally(() => active.delete(issue));
+  };
+
+  const finishChild = async (issue, exitCode, { interrupted: wasInterrupted }) => {
+    let loop = await readLoop(runsRoot, id, issue);
+    const steps = await readStepsUsed(loop.transcript, {
+      checkpointSteps: loop.stepsUsed,
+      attempts: loop.attempts,
+    });
+    const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
+    const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
+    const common = { stepsUsed, remainingSteps, pid: null, startTime: null };
+
+    if (wasInterrupted || exitCode === 130) {
+      await changeLoop(issue, { ...common, status: "interrupted", reason: "interrupted" });
+      progress(`issue ${issue}: interrupted`);
+      return;
+    }
+    if (exitCode === 0) {
+      await changeLoop(issue, { ...common, status: "succeeded" });
+      loop = await readLoop(runsRoot, id, issue);
+      const cleanup = await cleanupLoop({
+        manifest,
+        loop,
+        runsRoot,
+        gh,
+      }).catch((err) => ({ removed: false, reason: err.message }));
+      await changeLoop(issue, { cleanup });
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      progress(
+        `issue ${issue}: succeeded${cleanup.removed ? " (work tree removed)" : ` (work tree kept: ${cleanup.reason})`}`,
+      );
+      return;
+    }
+    await changeLoop(issue, {
+      ...common,
+      status: "failed",
+      reason: `exit-${exitCode ?? "unknown"}`,
+    });
+    await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+    progress(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
+  };
+
+  const recover = async (issue, loop) => {
+    if (loop.pid != null) {
+      const current = await processStartTime(loop.pid);
+      if (pidAlive(loop.pid) && current === null && typeof loop.startTime === "string") {
+        // An identity that cannot be read is needs-owner, and no second process starts.
+        await changeLoop(issue, {
+          status: "needs-owner",
+          reason: "unverified-process-identity",
+          pid: null,
+          startTime: null,
+        });
+        return;
+      }
+      if (await ownerStillLive(loop)) {
+        // A recorded owner is never restarted; wait for it to end, reading only liveness.
+        while (await ownerStillLive(loop)) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    }
+    const steps = await readStepsUsed(loop.transcript, {
+      checkpointSteps: loop.stepsUsed,
+      attempts: loop.attempts,
+    });
+    if (!steps.ok) {
+      await changeLoop(issue, {
+        status: "needs-owner",
+        reason: "unverified-steps",
+        pid: null,
+        startTime: null,
+      });
+      return;
+    }
+    const remaining = prepared.maxSteps - steps.steps;
+    if (remaining <= 0) {
+      await changeLoop(issue, {
+        status: "failed",
+        reason: "step-budget-exhausted",
+        stepsUsed: steps.steps,
+        remainingSteps: 0,
+        pid: null,
+        startTime: null,
+      });
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      return;
+    }
+    const decision = await reconcileLoop({
+      loop,
+      repo: prepared.repo,
+      base: prepared.base,
+      gh,
+      deps,
+    });
+    if (decision.status === "succeeded") {
+      await changeLoop(issue, {
+        status: "succeeded",
+        stepsUsed: steps.steps,
+        remainingSteps: remaining,
+        pr: decision.pr ?? loop.pr,
+        pid: null,
+        startTime: null,
+      });
+      const updated = await readLoop(runsRoot, id, issue);
+      const cleanup = await cleanupLoop({ manifest, loop: updated, runsRoot, gh }).catch((err) => ({
+        removed: false,
+        reason: err.message,
+      }));
+      await changeLoop(issue, { cleanup });
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      return;
+    }
+    if (decision.status === "needs-owner") {
+      await changeLoop(issue, {
+        status: "needs-owner",
+        reason: decision.reason,
+        stepsUsed: steps.steps,
+        remainingSteps: remaining,
+        pid: null,
+        startTime: null,
+      });
+      return;
+    }
+    await changeLoop(issue, {
+      stepsUsed: steps.steps,
+      remainingSteps: remaining,
+      pr: decision.pr ?? loop.pr,
+      pid: null,
+      startTime: null,
+    });
+    await launchIssue(issue, {
+      recovery: { continueFrom: loop.transcript, pr: decision.pr },
+    });
+  };
+
+  // Fill the loop slots from the frozen set, in order.
+  const queue = manifest.issues.filter((issue) => !terminal(loops.get(issue).status));
+  let cursor = 0;
+  for (;;) {
+    while (
+      !interrupted &&
+      !hard &&
+      pausedReason === null &&
+      active.size < prepared.loops &&
+      cursor < queue.length
+    ) {
+      const issue = queue[cursor++];
+      const loop = await readLoop(runsRoot, id, issue);
+      if (terminal(loop.status)) continue;
+      if (!start && loop.status !== "queued") {
+        // A resume reconciles one recovered loop before it launches, so it never restarts blindly.
+        await recover(issue, loop);
+        continue;
+      }
+      try {
+        await launchIssue(issue);
+      } catch (err) {
+        if (!err?.batchWide) throw err;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    if (active.size === 0) break;
+    if (hard) break;
+    await Promise.race(active.values());
+  }
+  // A resume runs its recovered loops one at a time; this drains any that the pass left live.
+  while (active.size > 0 && !hard) await Promise.race(active.values());
+
+  if (installSignal) process.removeListener("SIGINT", onSigInt);
+
+  let status;
+  if (interrupted) status = "interrupted";
+  else if (pausedReason !== null) status = "paused";
+  else if ([...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))) {
+    status = "failed";
+  } else status = "completed";
+  manifest = await updateManifestReturning(runsRoot, id, (value) => ({
+    ...value,
+    status,
+    ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
+  }));
+  return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+}
+
+async function updateManifestReturning(runsRoot, id, updater) {
+  await updateManifest(runsRoot, id, updater);
+  return readManifest(runsRoot, id);
+}
+
+/** Reads one batch for `batch status`; a live-owner checkpoint that is gone reads `stale`. */
+export async function readBatchStatus({ runsRoot, id }) {
+  const manifest = await readManifest(runsRoot, id);
+  if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
+  const loops = [];
+  for (const issue of manifest.issues) {
+    const loop = await readLoop(runsRoot, id, issue);
+    if (loop === null) continue;
+    if (loop.status === "running" && loop.pid != null) {
+      const live = await ownerAlive({ pid: loop.pid, startTime: loop.startTime });
+      loops.push({
+        ...loopEntry(loop),
+        status: live ? "running" : "stale",
+        nextAction: live ? null : "batch resume",
+      });
+    } else loops.push({ ...loopEntry(loop), nextAction: null });
+  }
+  return { ...manifest, loops };
+}
+
+/** The local batches, newest first, for `batch status` with no id. */
+export async function listBatchStatus({ runsRoot }) {
+  return listBatches(runsRoot);
+}
