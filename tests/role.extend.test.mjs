@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
-import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
+import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../src/lib/exec.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
   cleanup,
@@ -26,10 +26,8 @@ afterEach(() => {
 });
 
 /** The marker a worker process of the run in `repo` receives from `exec`. */
-async function markerOf(repo) {
-  const script = `console.log(process.env.${SPAWNED_RUN_ENV})`;
-  const spawned = await exec(process.execPath, ["-e", script], { role: "worker", cwd: repo });
-  return spawned.stdout.trim();
+function markerOf(repo) {
+  return spawnedRunMarker(repo);
 }
 
 const PARENT = ["--parent-session", "parent-sess-1"];

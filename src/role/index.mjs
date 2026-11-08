@@ -9,7 +9,8 @@ import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
-import { normalizeLocalPath, refreshLocalFile } from "../lib/local-files.mjs";
+import { refreshLocalFile } from "../lib/local-file-changes.mjs";
+import { normalizeLocalPath } from "../lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
 import {
   TERMINAL_LIFECYCLES,
@@ -355,7 +356,6 @@ async function setModel(args) {
       if (!Array.isArray(state.modelChanges)) {
         state.modelChanges = [];
       }
-      // The change is appended to `modelChanges`.
       state.modelChanges.push({
         role: roleName,
         from: previousModel,

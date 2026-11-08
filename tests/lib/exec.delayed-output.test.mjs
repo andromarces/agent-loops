@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test, vi } from "vite-plus/test";
 
-// A stdout transform that holds the first line for 4.5 s, longer than the drain bound, as a slow
+// A stdout transform that holds the first line for 1.5 s, longer than the drain bound, as a slow
 // consumer of the child output does.
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -16,7 +16,7 @@ vi.mock("execa", async (importOriginal) => {
             async *transform(line) {
               if (first) {
                 first = false;
-                await sleep(4500);
+                await sleep(1500);
               }
               yield line;
             },
@@ -33,6 +33,6 @@ import { exec } from "../../src/lib/exec.mjs";
 // the consumer takes longer than the drain bound to deliver it (review of PR #1306).
 test("exec keeps output that a slow stdout consumer delivers after the child exit", async () => {
   const script = 'console.log("one"); console.log("two");';
-  const result = await exec(process.execPath, ["-e", script]);
+  const result = await exec(process.execPath, ["-e", script], { drainGraceMs: 500 });
   expect(result.stdout).toBe("one\ntwo");
 }, 20_000);

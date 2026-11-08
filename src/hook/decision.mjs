@@ -44,11 +44,46 @@ async function readHookInput() {
 }
 
 /**
- * Runs the shared command-hook flow: read the hook JSON from stdin, extract the
- * harness's session id, evaluate the guard, and print one deny payload from
- * `formatDeny`. Fails open: a missing session id, unparseable input, a tool the
- * harness does not guard, and a lookup error all exit without output, so the
- * normal permission flow stays intact.
+ * The one deny payload for a hook input, or null when the call is allowed. Fails open on a missing
+ * session id, a tool that the harness does not guard, and a lookup error.
+ * @param {unknown} input the parsed hook payload
+ * @param {(reason: string) => object} formatDeny builds the harness's deny payload
+ * @param {{
+ *   readSessionId?: (input: unknown) => string | null,
+ *   isGuarded?: (input: unknown) => boolean,
+ * }} [options] maps the harness input; defaults to the Claude/Codex/Copilot
+ *   `session_id` field and every tool
+ * @returns {Promise<object | null>}
+ */
+export async function hookDecision(
+  input,
+  formatDeny,
+  {
+    readSessionId = (value) => (typeof value?.session_id === "string" ? value.session_id : null),
+    isGuarded = () => true,
+  } = {},
+) {
+  if (!input || !isGuarded(input)) {
+    return null;
+  }
+  const sessionId = readSessionId(input);
+  if (!sessionId) {
+    return null;
+  }
+  try {
+    const verdict = await decideParentGuard(sessionId);
+    return verdict.decision === "deny" ? formatDeny(verdict.reason) : null;
+  } catch {
+    // A failed lookup denies nothing: the guard never blocks on its own error.
+    return null;
+  }
+}
+
+/**
+ * Runs the shared command-hook flow. It reads the hook JSON from stdin, maps the harness's session
+ * id, evaluates the guard, and prints one deny payload from `formatDeny`. Fails open: a missing
+ * session id, unparseable input, a tool the harness does not guard, and a lookup error print
+ * nothing. The normal permission flow stays intact.
  * @param {(reason: string) => object} formatDeny builds the harness's deny payload
  * @param {{
  *   readSessionId?: (input: unknown) => string | null,
@@ -64,19 +99,8 @@ export async function runParentGuard(
   } = {},
 ) {
   const input = await readHookInput();
-  if (!input || !isGuarded(input)) {
-    return;
-  }
-  const sessionId = readSessionId(input);
-  if (!sessionId) {
-    return;
-  }
-  try {
-    const verdict = await decideParentGuard(sessionId);
-    if (verdict.decision === "deny") {
-      console.log(JSON.stringify(formatDeny(verdict.reason)));
-    }
-  } catch {
-    // A failed lookup denies nothing: the guard never blocks on its own error.
+  const payload = await hookDecision(input, formatDeny, { readSessionId, isGuarded });
+  if (payload) {
+    console.log(JSON.stringify(payload));
   }
 }

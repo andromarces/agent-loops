@@ -168,9 +168,11 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
-    // A test uses onMainWatch and mainWatchDeadlineMs to observe and bound the watch.
+    // A test uses onMainWatch, mainWatchDeadlineMs, and mainReadDeadlineMs to bound the watch and
+    // the main work tree read.
     onMainWatch,
     mainWatchDeadlineMs = null,
+    mainReadDeadlineMs = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
@@ -439,6 +441,7 @@ export async function runChild(options) {
     localFilesCopied,
     sharedGitReadBoundMs,
     mainWatchDeadlineMs,
+    mainReadDeadlineMs,
   });
 
   try {
@@ -505,7 +508,9 @@ export async function runChild(options) {
     if (isReviewer && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
-    // Read after the last child call of the dispatch, the task-only turn included.
+    // Read after the last child call before the closing-block repair, the task-only turn included.
+    // A repair turn runs after these reads, so an entry that it creates stays unseen (ADR 0094,
+    // ADR 0095).
     const localSourceChangedInTurn = await evidence.localSourceChangedInTurn();
     const { inheritedTmpdirEntries, packageStoreEntries } = await evidence.advisory();
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of

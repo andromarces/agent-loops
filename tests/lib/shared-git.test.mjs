@@ -12,6 +12,7 @@ const fsFailure = vi.hoisted(() => ({
   operation: null,
   stallReaddir: false,
   lstatDelayMs: 0,
+  delayedLstat: Promise.resolve(),
   requests: [],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -21,7 +22,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     async (path, ...rest) => {
       if (String(path).includes("hook-")) fsFailure.requests.push(operation);
       if (operation === "lstat" && fsFailure.lstatDelayMs > 0 && String(path).includes("hook-")) {
-        await new Promise((resolve) => setTimeout(resolve, fsFailure.lstatDelayMs));
+        fsFailure.delayedLstat = new Promise((resolve) =>
+          setTimeout(resolve, fsFailure.lstatDelayMs),
+        );
+        await fsFailure.delayedLstat;
       }
       if (fsFailure.operation === operation) {
         const failedPath = `/${"secret-hook-marker-7731"}/${operation}`;
@@ -81,6 +85,7 @@ afterEach(async () => {
   fsFailure.operation = null;
   fsFailure.stallReaddir = false;
   fsFailure.lstatDelayMs = 0;
+  fsFailure.delayedLstat = Promise.resolve();
   fsFailure.requests.length = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
@@ -723,7 +728,9 @@ test("no hook file system request starts after the deadline", async () => {
   await expect(readSharedGit(linked, { deadlineMs: 2_000 })).rejects.toThrow(/2000 ms/);
   const atDeadline = [...fsFailure.requests];
   expect(atDeadline).toContain("lstat");
-  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  // The lstat in flight at the deadline is the last one that started.
+  await fsFailure.delayedLstat;
+  await new Promise((resolve) => setImmediate(resolve));
   expect(fsFailure.requests).toEqual(atDeadline);
 }, 20_000);
 

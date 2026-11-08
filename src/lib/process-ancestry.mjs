@@ -10,6 +10,10 @@ import { harnessForCommand } from "./harnesses.mjs";
 // Characters of decoded text per output stream of a process-table read.
 const PROCESS_TABLE_MAX_BUFFER = 32 * 1024 * 1024;
 
+/**
+ * Returns the known harness for a process name, or null. The name drops its directory, lowercases,
+ * and loses a trailing `.exe`, `.cmd`, `.bat`, or `.com`.
+ */
 export function harnessForProcessName(name) {
   if (typeof name !== "string" || name.trim() === "") {
     return null;

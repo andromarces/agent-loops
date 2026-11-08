@@ -1,10 +1,10 @@
 import { errorLine } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { gitRead, stripLf } from "./git-read.mjs";
-import { mainWorkTreePath } from "./local-files.mjs";
 import { logWarn } from "./log.mjs";
 import { snapshot } from "./snapshot.mjs";
 import { withTimeBound } from "./time-bound.mjs";
+import { mainWorkTreePath } from "./work-tree-layout.mjs";
 
 // Whole-read bound, including main work tree resolution and content hashing.
 const READ_BOUND_MS = 10_000;

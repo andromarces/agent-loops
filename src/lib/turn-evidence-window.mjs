@@ -5,7 +5,7 @@ import { logInfo, logWarn } from "./log.mjs";
 import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./tmpdir-entries.mjs";
 import { changedInPackageStore, snapshotPackageStore } from "./package-store-entries.mjs";
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lockfile-change.mjs";
-import { hashCopiedLocalSources } from "./local-files.mjs";
+import { hashCopiedLocalSources } from "./local-file-changes.mjs";
 import {
   diffMainWorkTree,
   diffMainWorkTreeInTurn,
@@ -18,6 +18,25 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
 /**
  * The pre-turn baselines and post-turn evidence caches of one child turn.
  * @typedef {object} ChildEvidenceState
+ * @property {string} cwd
+ * @property {AbortSignal | undefined} signal
+ * @property {boolean} isWorker
+ * @property {string[]} localFilesCopied
+ * @property {number} sharedGitReadBoundMs
+ * @property {object | null} sharedBefore
+ * @property {object | null} lockfilesBefore
+ * @property {object | null} mainBefore
+ * @property {object | null} mainWatch
+ * @property {number | null} mainWatchDeadlineMs
+ * @property {number | null} mainReadDeadlineMs
+ * @property {object | null} localSourcesBefore
+ * @property {string[] | null} localSourcePaths
+ * @property {string[] | null} lockfilePaths
+ * @property {object | null} mainEvidence
+ * @property {object | null} tmpdirBefore
+ * @property {object | null} storeBefore
+ * @property {object | null} advisory
+ * @property {string[] | null} sharedGitItems
  */
 
 /**
@@ -32,11 +51,15 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  */
 async function readBeforeTurn(state) {
   if (state.isWorker) {
+    const mainRead =
+      state.mainReadDeadlineMs === null
+        ? readMainWorkTree(state.cwd)
+        : readMainWorkTree(state.cwd, { deadlineMs: state.mainReadDeadlineMs });
     const [copiedSources, shared, lockfiles, main] = await Promise.all([
       readCopiedSources(state, { signal: state.signal }),
       readShared(state),
       readLockfiles(state.cwd),
-      readMainWorkTree(state.cwd),
+      mainRead,
     ]);
     state.localSourcesBefore = copiedSources;
     state.sharedBefore = shared;
@@ -294,7 +317,8 @@ async function readFailedTurnEvidence(state) {
  * before the CLI call and `workTree` reads the work tree once after it. `beforeTurn` also starts the
  * main work tree watch, which `mainWatch` exposes and `stop` closes; call `stop` on every outcome.
  * @param {{ cwd: string, signal?: AbortSignal, isWorker: boolean, localFilesCopied: string[],
- *   sharedGitReadBoundMs: number, mainWatchDeadlineMs?: number | null }} options
+ *   sharedGitReadBoundMs: number, mainWatchDeadlineMs?: number | null,
+ *   mainReadDeadlineMs?: number | null }} options
  */
 export function createTurnEvidence({
   cwd,
@@ -303,6 +327,7 @@ export function createTurnEvidence({
   localFilesCopied,
   sharedGitReadBoundMs,
   mainWatchDeadlineMs = null,
+  mainReadDeadlineMs = null,
 }) {
   const state = {
     cwd,
@@ -317,6 +342,7 @@ export function createTurnEvidence({
     // The turn-window watch of the main work tree, stopped on every outcome.
     mainWatch: null,
     mainWatchDeadlineMs,
+    mainReadDeadlineMs,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,
     localSourcePaths: null,

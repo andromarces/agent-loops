@@ -6,11 +6,7 @@
 // call from the registered parent while its run is non-terminal. Fail-open by
 // design: an unparseable payload, an absent record, a terminal lifecycle, and a
 // lookup error all deny nothing.
-import { ANTIGRAVITY_GUARDED_TOOLS } from "./antigravity-guarded-tools.mjs";
+import { ANTIGRAVITY_GUARD } from "./antigravity-guarded-tools.mjs";
 import { runParentGuard } from "./decision.mjs";
 
-await runParentGuard((reason) => ({ decision: "deny", reason }), {
-  readSessionId: (input) =>
-    typeof input?.conversationId === "string" ? input.conversationId : null,
-  isGuarded: (input) => ANTIGRAVITY_GUARDED_TOOLS.has(input?.toolCall?.name),
-});
+await runParentGuard(ANTIGRAVITY_GUARD.deny, ANTIGRAVITY_GUARD);

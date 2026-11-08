@@ -13,6 +13,53 @@ The toolchain config lives in `vite.config.mjs`. A `vite-plus` upgrade re-pins t
 `vite` and `vitest` overrides in `pnpm-workspace.yaml` to the values that `vite-plus`
 depends on, then runs `pnpm install`. `tests/pnpm-workspace.overrides.test.mjs` fails when an override differs ([ADR 0022](https://github.com/andromarces/agent-loops/blob/main/adr/0022-vite-plus-toolchain-and-npm-distribution.md)).
 
+### From a clone (development)
+
+Development uses pnpm and the repository Git hooks. The dev toolchain is
+Vite+ (`vite-plus`), which needs the Node range in [Requirements](install.md#requirements).
+The `pre-commit` hook runs `vp staged`, which needs Node 22.22.1 or later on the
+22 line, or 24.11.0 or later, and Git 2.32.0 or later. Every script runs the
+project-local `vp`, so no global `vp` install is needed. User-scope integrations
+point at the package location, so a clone registers its own copy with `npm link`
+before `agent-loop install`:
+
+```bash
+git clone <repository-url>
+cd agent-loops
+pnpm install
+npm link
+agent-loop install
+```
+
+`npm link` writes its bin shim to the global prefix bin directory, so that
+directory must be on `PATH` for `agent-loop` to resolve. It is the
+`npm prefix -g` directory on Windows and `$(npm prefix -g)/bin` on macOS and
+Linux.
+
+Entries rendered from a clone point at that clone. After the clone moves, run
+`npm link --force` from the new location, then `agent-loop install` again. A
+plain `npm link` fails with `EEXIST` on Windows when a shim already exists.
+`--force` overwrites the shim.
+`pnpm link` is not a supported path: pnpm 12 `link` has no global mode. Without a
+link, call the CLI entry directly and quote the repository path so a path with
+spaces works:
+
+```bash
+node "<repo>/src/cli.mjs" install --harness claude --yes
+```
+
+`pnpm agent-loop` still runs the CLI entry from the repository root. The
+repository Git hooks run formatting and linting on commit and push. They need
+`pnpm install` to have completed, because its `prepare` script installs the
+Vite+ hook dispatcher (`vp config`). The hook scripts live in `.vite-hooks/`.
+
+`prepare` exits 0 in CI, in production, with `VP_GIT_HOOKS=0`, and when
+`vite-plus` is absent. `prepare` writes nothing to stdout. When the dispatcher
+install fails, it writes one warning line to stderr and still exits 0. A clone set up under Husky has a local `core.hooksPath`
+that resolves to `<repo>/.husky/_`. `prepare` unsets only that local value, so
+`vp config` can install the dispatcher. Any other hooks path, and a value in the
+global or system config, stays unchanged.
+
 ## Releasing
 
 The release workflow stages a version on a published GitHub release or a manual dispatch, authenticated by OIDC trusted publishing. No npm token is stored.

@@ -50,7 +50,7 @@ Operations: `dispatch` (default), `finish`, `abort`, `extend`, `declare-pr`, `re
   - OpenCode printed `"sessionID":""` on the refused turn.
   - The executed model is not verified for agy, because its JSON output has no model field.
 
-- `wait-checks --pr <pr> [--all [--expect <check name>]...] [--head <sha>] [--cwd <dir>] [--timeout <seconds>]` waits for the required checks of that pull request and prints one JSON envelope whose `head` names the commit that `checks` describe. It reads status only, writes no run state, needs no init, and returns inside its own bound. A pass is never read from an unresolved read, a `timedOut: true` envelope, or an envelope that carries `prFailures`. The full contract is in [wait-checks](wait-checks.md).
+- `wait-checks --pr <pr> [--all [--expect <check name>]...] [--head <sha>] [--cwd <dir>] [--timeout <seconds>]` waits for the required checks of that pull request. It prints one JSON envelope whose `head` names the commit that `checks` describe. It reads status only, writes no run state, needs no init, and returns inside its own bound. A pass is never read from an unresolved read, a `timedOut: true` envelope, or an envelope that carries `prFailures`. The full contract is in [`wait-checks`](#wait-checks).
 - The state file records `task`, `mode`, `cwd`, `parentSession`, `maxSteps`, `timeout`, `stepsUsed`, `lifecycle`, `pr` (the declared run PR, or `null`), `turnsComplete` (present only on a run initialized by this version), `roles.{worker,reviewer}.{kind,model,effort,sessionId}` (`roles.worker` is null in `review-only`), `lastDispatch` (with `turnTmpdir`, the private temporary directory and child pid of an adapter turn), and `lastResult`, plus `budgetChanges` after an `extend`, `modelChanges` after a `set-model`, `summary` or `reason` when terminal, `unresolvedCompare` when a finished run recorded an unresolved PR-head compare, `noRequiredChecks` when a gated finish passed on a base branch with no required check, and `resumeDecision` when a maintainer resumed an interrupted run. Updates are atomic (temp file plus rename); exclusive access uses `state.lock` with a stale-lock check on the owner pid.
 - Every run keeps a turn history without `--transcript`: `turns` holds one entry per dispatched turn, in order, each with `role`, `status`, `verdict`, `head`, and `at`, and report and response text stay out. A first turn that a recognized model refusal ends charges no step but still records its entry (issue #1565, ADR 0084). The entry shape, the `interrupted` status, the size bound, and the accepted `--max-steps` range (1 to 9007199254740991, `Number.MAX_SAFE_INTEGER`) with its re-check at `dispatch`, `finish`, and `extend` are in [Turn history and the step budget](../orchestrator/run-history.md).
 
@@ -146,3 +146,13 @@ A reviewer envelope carries `reviewed`: `{ head, clean, exact, digest }` from th
 `head` is the commit, `clean` is true when the work tree has no uncommitted entries, `exact` is true when every entry has a content hash or is a deletion, and `digest` identifies the uncommitted state. A symlink hashes its link target text with a tag, so two links with different targets have different digests, dangling included, and a link never collides with a regular file that holds the same bytes.
 
 The `finish` envelope is `{ "status": "ok", "lifecycle": "finished" }`, and the command exits 0. A finish that recorded an unresolved PR-head compare adds `"unresolvedCompare": true`, and a verified `finish --compare-head <pr>` adds `"headCompare": "verified"` (#1098, #1021). The summary keys, the marker, and the `--compare-head` guards are in [Finish output](../orchestrator/finish-output.md).
+
+## `wait-checks`
+
+Part of [Child dispatch](#interactive-child-dispatch-agent-loop-role). The orchestrator rules for the command are in [Waiting for required checks](../orchestrator/waiting-for-checks.md), which also holds the retry, paging, and `Link` host rules of its reads.
+
+Usage: `agent-loop role wait-checks --pr <pr> [--all [--expect <check name>]...] [--head <sha>] [--cwd <dir>] [--timeout <seconds>]`. It prints `{"status": "ok", "pr": 42, "timedOut": false, "head": "<sha>", "checks": [{"name": "ci", "state": "SUCCESS", "bucket": "pass"}]}`.
+
+The [command detail](../orchestrator/waiting-for-checks.md#command-detail) holds each rule that this page previously restated.
+
+`--cwd` must be inside a Git work tree, as it is for `dispatch`.

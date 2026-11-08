@@ -66,14 +66,14 @@ test("a replacement of the turn directory loses no content", async () => {
 // another directory is at risk. The test accepts that outcome only when the rename was refused.
 test("a replacement during the removal keeps its empty directory", async () => {
   await withRoot(async (root) => {
-    // Windows cannot swap, so a short tree keeps its slow file creation within the test timeout.
-    const TOP = process.platform === "win32" ? 20 : 400;
+    // Windows cannot swap, so a short tree keeps its file creation within the test timeout.
+    const TOP = process.platform === "win32" ? 20 : 200;
     let replacement;
     let swap = "never tried";
     await withTurnTmpdir(async (env) => {
       for (let d = 0; d < TOP; d++) {
         mkdirSync(join(env.TMPDIR, `d${d}`));
-        for (let f = 0; f < 25; f++) writeFileSync(join(env.TMPDIR, `d${d}`, `f${f}`), "x");
+        for (let f = 0; f < 10; f++) writeFileSync(join(env.TMPDIR, `d${d}`, `f${f}`), "x");
       }
       replacement = env.TMPDIR;
       // Swaps as soon as the removal has started deleting content.

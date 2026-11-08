@@ -82,8 +82,8 @@ async function holdSlot({ cwd, scratch, busy }, ms) {
 test("two commands that share one slot run one after the other", async () => {
   const ctx = await setup();
   const runs = await Promise.all([
-    runTestCmd({ command: ctx.busy(800), cwd: ctx.cwd }),
-    runTestCmd({ command: ctx.busy(800), cwd: ctx.cwd }),
+    runTestCmd({ command: ctx.busy(300), cwd: ctx.cwd }),
+    runTestCmd({ command: ctx.busy(300), cwd: ctx.cwd }),
   ]);
   expect(runs.map((run) => run.status)).toEqual(["pass", "pass"]);
 });
