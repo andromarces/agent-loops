@@ -140,8 +140,8 @@ with `on run argv`, and the title and text are two argv entries. On Windows it r
 `powershell.exe -NoProfile -NonInteractive` and passes the title and text in environment
 variables. No notification text is interpolated into a script.
 
-The notifier bounds the text length and removes control characters. It bounds the process time
-and ends only its own child on the bound. A missing binary, a non-zero exit, and a timeout log a
+The notifier bounds the text length and removes control characters other than a newline and a
+tab. It bounds the process time and ends only its own child on the bound. A missing binary, a non-zero exit, and a timeout log a
 warning. A notification never fails or stalls the batch.
 
 Tests inject the notifier and a clock. A test passes quotes, backticks, `$()`, `%`, newlines, and
