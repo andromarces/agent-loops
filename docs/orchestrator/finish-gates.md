@@ -16,8 +16,7 @@ checks only after every other condition passes. A refusal from `role finish` nev
 `--require-ci` condition beside another condition.
 
 The interactive `role finish` command throws as soon as any condition above the
-gate refused, so on that path a refused `finish` never reaches the gate and never
-reads GitHub.
+gate refused.
 
 The gate checks its own local conditions first, and only then reads GitHub. Those
 local conditions are exactly two.
@@ -29,8 +28,7 @@ included. In `review-only`, each flag fails with a clear error.
 
 - `--require-accept`: refuse unless the latest turn is a reviewer accept with a
   `Checks` line, the reviewed snapshot is exact, and the current snapshot is
-  exact with the same `head` and `digest`. The `head` and `digest` comparison
-  detects a change to an uncommitted state at the same commit. A worker turn
+  exact with the same `head` and `digest`. A worker turn
   after the last review resets the accept, so the refusal names that turn order
   and the reviewer accept on the current state that must come before `finish`.
 - `--require-ci <pr>`: refuse unless the PR head equals the reviewed `head`, the
@@ -74,8 +72,8 @@ included. In `review-only`, each flag fails with a clear error.
     whose entries all carry a documented rule type and none is a
     `required_status_checks` rule, which is the read of a branch that has no
     required-status-check rule; the read is paginated by page number, 100 rules per page, and never
-    follows a reply-supplied `Link` URL, so a rule on a later page is enforced rather than
-    missed, and a read the runtime cannot account for every page of is unknown. For classic branch protection it is exactly
+    follows a reply-supplied `Link` URL, so a rule on a later page is enforced; a read the runtime
+    cannot account for every page of is unknown. For classic branch protection it is exactly
     `gh: Branch not protected (HTTP 404)`, one trailing line break aside, which the
     endpoint writes only to a caller that can read protection. No successful
     classic-protection body proves an absence, so a readable body that names no check

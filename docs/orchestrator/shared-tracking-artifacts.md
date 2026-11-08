@@ -2,10 +2,9 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you dispatch several runs in one repository.
 
-Workers of runs in one repository can each create the
+Workers of runs in one repository can create the
 same tracking issue, for example a repository's singleton verification-checklist
-issue. Two workers that reach that step close together both find none and
-both open one.
+issue.
 
 - Before dispatch, name every shared tracking artifact that a run can create, such
   as the issues that the repository rules treat as one per target.
@@ -17,8 +16,6 @@ both open one.
 ## Concurrent edits of one issue body
 
 Two workers of concurrent runs in one repository can edit the body of the same issue.
-Each worker reads the body, adds an item, and writes the whole body back.
-A write replaces the whole body, so two writes that overlap can drop the item of one run.
 
 - Tell each worker of a concurrent run to read the body right before the write, with `gh issue view <n> --json body -q .body`.
 - The worker changes only the target lines, writes the body, then reads the body again.
@@ -29,7 +26,7 @@ A write replaces the whole body, so two writes that overlap can drop the item of
 
 ## Sequential identifiers
 
-Workers of runs in one repository can each take the same sequential identifier, such as the next ADR number, a migration number, or a changelog entry.
+Workers of runs in one repository can take the same sequential identifier, such as the next ADR number, a migration number, or a changelog entry.
 
 - Before dispatch, name every sequentially numbered artifact that more than one run can create, such as an ADR or a migration.
 - Reserve a distinct number for each run in its worker prompt. Tell the worker to use that number and no other.

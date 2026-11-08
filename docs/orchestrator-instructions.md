@@ -229,7 +229,7 @@ Apply these parent rules:
   - The field reports a change observed between the two reads. It does not prove the turn made the
     change. Another process or another run on the host can cause a change.
   - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or an identity or signing key needs
-    action before the next dispatch. Such a key can change the author or signing of every later commit.
+    action before the next dispatch.
     - Dispatch a worker to read that key in the shared config and report its current state. From
       that report, name the turn whose report says it changed it and ask the user whether to
       restore it.
@@ -490,9 +490,9 @@ of this file.
 - [Removing a work tree](orchestrator/work-tree-removal.md): read it when you remove the work tree
   of a terminal run, before the removal command.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
-  dispatch several runs in one repository. Two runs can create the same tracking issue or take the
-  same sequential identifier, such as an ADR number. Read it before concurrent runs can edit one
-  issue body, and put its read-write-read rule in each worker prompt.
+  dispatch several runs in one repository, before concurrent runs can edit one issue body, and
+  when a run can create a shared tracking issue or take a sequential identifier such as an ADR
+  number, and put its read-write-read rule in each worker prompt.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
   tree for a repository with no remote or for a run on an existing PR, and when
   `extensions.worktreeConfig` is on.
@@ -543,10 +543,10 @@ required CI checks are then its only test evidence, as
 A parent that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the
 first dispatch.
 
-Workers of runs in one repository can also edit the body of the same issue at once, which drops an
-item when two writes overlap. Put the read-write-read rule of
-[Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md) in each worker prompt of a
-concurrent run, and state its limit there. That rule narrows the race and does not remove it.
+When two workers of concurrent runs can edit the body of the same issue, put the read-write-read
+rule of [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md) in each worker
+prompt of a concurrent run, and state its limit there: that rule narrows the race and does not
+remove it.
 
 ## Loop policy
 
