@@ -54,6 +54,10 @@ An LLM orchestrator directs the task by choosing discrete structured actions, wh
 
 See [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md) for background and architectural decisions ([ADR 0001](https://github.com/andromarces/agent-loops/blob/main/adr/0001-hybrid-orchestrator-runtime.md), which [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md) supersedes, and [ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md), which partially supersedes ADR 0019, and [ADR 0002](https://github.com/andromarces/agent-loops/blob/main/adr/0002-harness-neutral-orchestrator-instructions.md)).
 
+## Batch supervisor
+
+`agent-loop batch start` is one foreground supervisor for an explicit set of issues. It creates a linked work tree and branch per issue, runs `--setup-cmd` once in each, and then launches one headless child `node <cli> --cwd <work tree>` per issue, at most `--loops` live. The child is the same headless runtime, so the review gate, the required-check gate, and the test slot are unchanged. The supervisor records local claims in `<runs root>/batches/claims/` and one checkpoint per loop under `<runs root>/batches/<batch id>/`, resumes an interrupted batch with the remaining step budget, reconciles an uncertain GitHub state before a repeat, and removes only a work tree whose push is proved. It creates no label, comment, issue edit, or pull request. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
+
 ## Supported agents
 
 The controller supports these CLI names:

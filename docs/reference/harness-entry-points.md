@@ -38,6 +38,12 @@ tool. When the read tool caps a read, the skill tells the parent to read again
 with an offset until the end of the file. See
 [Parent guard details](parent-guard.md) for every guard target.
 
+The entry-point skill is the only natural-language reader. It resolves a request such as
+"work these issues with codex and claude, three at a time" into explicit values and passes
+them as flags. The runtime validates those values and never reads a request, infers a
+setting, or prompts an operator. A missing required value is a usage refusal, not a
+question.
+
 Live check (issue #710, PR #1059): on 2026-10-25, Claude Code 2.1.310 on Windows 11 ran
 `/agent-loop` from the installed user-scope skill. The parent read
 `docs/orchestrator-instructions.md` (719 lines) in one read of the read tool, with no cap, and

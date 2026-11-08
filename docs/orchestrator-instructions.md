@@ -523,6 +523,14 @@ gh api --paginate "repos/{owner}/{repo}/pulls/<n>/commits" --jq '.[].commit.mess
 
 Exclude every issue that a commit message closes. The commits endpoint returns at most 250 commits of a PR, so a read that returns 250 commits is incomplete. For that PR, stop issue selection and ask the user which issues the PR closes before you select any issue.
 
+## Batch runs
+
+When the user asks to work several issues as one batch, the skill resolves the request into explicit flags and runs one `agent-loop batch start` command. It passes every setting as a flag: the repository, each `--issue` in launch order, the agents, models, efforts, `--max-steps`, `--loops`, the base branch, the work-tree root, the task template, the setup command, the test command, the timeout, and the reviewer sandbox. It shows the resolved settings and issue numbers before it starts. The runtime prompts for nothing and reads no request.
+
+Do not dispatch one `role` turn per issue for a batch. The batch command owns the loops, the claims, the checkpoints, and the recovery. Use [Selecting issues for a batch](#selecting-issues-for-a-batch) to choose the numbers; the runtime never selects one.
+
+Read a batch with `agent-loop batch status --batch <id>` and continue an interrupted batch with `agent-loop batch resume --batch <id>`. A `needs-owner` loop is not a failure and is not retried; resolve the named local or remote state, then run `batch resume` again. A target that needs a decision in the batch, a slot release, or a merge continuation belongs to a later milestone and is not available here.
+
 ## Several runs at once
 
 - Interleave: dispatch one turn per run in turn, and read each envelope before
