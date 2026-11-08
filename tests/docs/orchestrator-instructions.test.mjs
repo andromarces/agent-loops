@@ -1714,7 +1714,6 @@ function fiveWordRuns(sentence) {
  * a sentence that was in a reference file before that change, and say why in this comment.
  */
 const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
-  ["reviewer-evidence.md", "Do not restate the spec as the pass condition"],
   ["reviewer-evidence.md", "That status is advisory evidence"],
   ["reviewer-evidence.md", "The --require-ci finish gate re-reads GitHub"],
   ["runtime-advisory-fields.md", "It is advisory: the store is shared"],

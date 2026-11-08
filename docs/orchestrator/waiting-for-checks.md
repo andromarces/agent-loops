@@ -84,7 +84,7 @@ is an error too, with one exception. The commit reads are the gate's own reads, 
 
 The read does look at the `Link` header of every reply, a retryable 5xx included and before its status is judged, only to reject it: a target on a host other than the request host (`GH_HOST`, else the default host of `gh`, and its API host) or a target that is not a URL ends the read with an error, never a pass, and is never requested. Such a reply is terminal even when its status is 500, 502, 503, or 504: it is never retried. Each `gh` output then holds exactly one exchange, and `gh` writes the status line of that request first, followed by the headers, a blank line, and the body, so body bytes can only follow the status line and never form a status block of their own. The default host of `gh` is the one host of its configuration, or github.com for none or several. The read takes it from `gh auth status --json hosts`, run once per read for a reply that carries a `Link` target, with `GH_TOKEN` and `GITHUB_TOKEN` removed from that one call. A failed call and a reply of another shape name no host, so every target is then refused.
 
-The wait takes the status only from that first line and never reads the error text, which carries server-supplied text. A successful page needs a 2xx first line and a remainder that is exactly one JSON value, checked on the whole remainder, so trailing bytes make the read an error. For an endpoint that reports `total_count`, such as the check runs, the read ends only when the collected count equals it: an empty or short page while the count is unmet, a `total_count` that changes or disappears between pages, and a collected count above it are each an error, never a pass, so a failure on a later page is never skipped. For an endpoint with no `total_count`, the first page of fewer than 100 items ends the read.
+The wait takes the status only from that first line and never reads the error text. A successful page needs a 2xx first line and a remainder that is exactly one JSON value, checked on the whole remainder, so trailing bytes make the read an error. For an endpoint that reports `total_count`, such as the check runs, the read ends only when the collected count equals it: an empty or short page while the count is unmet, a `total_count` that changes or disappears between pages, and a collected count above it are each an error, never a pass, so a failure on a later page is never skipped. For an endpoint with no `total_count`, the first page of fewer than 100 items ends the read.
 
 A failed read is retried on the next poll, inside the bound, only when the first-line status is exactly 500, 502, 503, or 504. A pass on a later poll settles the wait. The retried body classes are empty, JSON, and truncated JSON.
 
@@ -122,9 +122,8 @@ URL. A failure that lasts to the bound exits 1 with `status: "error"` that names
 `timedOut: true`. A 4xx, a status line, a foreign-host `Link` refusal, a reply body, and an unknown
 text stay terminal.
 
-The PR head is the one read at the start of the poll, so the PR can have moved on by
-the time the wait returns. Compare `head` with the commit you expect before you record the
-checks as passed.
+The PR head is the one read at the start of the poll. Compare `head` with the commit
+you expect before you record the checks as passed.
 
 Pass `--head <sha>` with the commit you expect, for example `workTree.head` of
 the worker envelope. It takes a full lowercase commit SHA, 40 or 64 hex digits,

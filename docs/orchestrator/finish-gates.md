@@ -12,9 +12,8 @@ can report a `--require-ci` condition that the first refusal did not name. The
 headless loop collects them in this order: the marker condition, then the `review-only` reviewer-turn condition, then
 `--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
 `role finish` command checks the same conditions in the same order, except the
-`review-only` condition, which it cannot reach, because its init dispatch is
-itself a reviewer turn, and except `--require-ci`, which it checks only after
-every other condition passes. A refusal from `role finish` never lists a
+`review-only` condition, which it cannot reach, and except `--require-ci`, which it
+checks only after every other condition passes. A refusal from `role finish` never lists a
 `--require-ci` condition beside another condition.
 
 A headless run ends when two refusals land with no child turn between them. The marker is
@@ -67,8 +66,7 @@ included. In `review-only`, each flag fails with a clear error.
     configuration source is classified by what its reply proved. A ruleset read the gate
     cannot interpret has the class unknown, and it refuses the finish whatever the rest of
     the union
-    holds, before the per-check pass, because that reply may carry a required-status rule
-    the gate never saw; that is a failed or partial page, a ruleset read that the runtime cannot account for page by page (no 2xx status block, a body that is not one JSON value, or more than 100 pages; a `Link` target on another host is an error, not an unknown source), an anomalous page sequence, which is no page at all, two or more empty pages,
+    holds, before the per-check pass; that is a failed or partial page, a ruleset read that the runtime cannot account for page by page (no 2xx status block, a body that is not one JSON value, or more than 100 pages; a `Link` target on another host is an error, not an unknown source), an anomalous page sequence, which is no page at all, two or more empty pages,
     or an empty page beside a page that holds rules, and an unlisted or malformed rule type.
     A ruleset read of exactly one empty page is neither of those: its class is empty, a
     successful read that found no rule, so it contributes no contexts
@@ -77,7 +75,7 @@ included. In `review-only`, each flag fails with a clear error.
     Otherwise a finish passes on the absence only when no source named a required
     check and no source is unknown, so both sources must have stated the outcome, and
     an unknown classic-protection source keeps the empty-union refusal with the reason
-    naming it, so a parent can fix a source it can name. The classes are absent,
+    naming it. The classes are absent,
     has-contexts, empty, and unknown, and each one applies on both the normal and the
     relaxed path.
   - Absent, the only class that lets a finish pass, has exactly one reply per source.

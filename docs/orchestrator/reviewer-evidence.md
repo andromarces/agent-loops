@@ -6,8 +6,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 The reviewer prompt sets the task scope; the fixed review scope and closing
 block wrap it on every turn. Name the guards and contracts that the change puts at risk. Do not
-restate the spec as the pass condition: a restated spec asks the reviewer to
-confirm it, not to test it.
+restate the spec as the pass condition.
 
 The init task reaches each role once. Restate every operator decision made after
 init in the next reviewer prompt, beside the worker prompt that carries it. State
@@ -55,9 +54,8 @@ The `--require-ci` finish gate stays the enforcement point.
 
 A Codex reviewer with no sandbox (the default) keeps shell network, so its own
 read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
-knows the pull request before the first turn. So the
-runtime reads the required-check status for that PR head and supplies it to every
-reviewer prompt. The prompt adds two lines inside the required-check group, so
+knows the pull request before the first turn. So the runtime reads the
+required-check status for that PR head and supplies it to every reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
 
 - This run read the required checks for PR <pr> before this turn: <summary>. That
