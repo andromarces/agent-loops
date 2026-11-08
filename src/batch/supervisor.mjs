@@ -259,6 +259,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     for (const issue of prepared.issues)
       loops.set(issue, queuedLoop(paths, id, issue, prepared.maxSteps));
     await createBatchStore(runsRoot, manifest, [...loops.values()]);
+    progress(`batch ${id} started (${prepared.issues.length} issue(s), ${prepared.loops} loop(s))`);
   }
 
   const controller = new AbortController();
