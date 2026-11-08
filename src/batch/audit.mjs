@@ -16,6 +16,7 @@ import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import { escapeLineSeparators } from "../prompts/escape.mjs";
+import { reviewerPrompt } from "../prompts/reviewer.mjs";
 import {
   canonicalWritePath,
   refuseWorkTreeRootInGitWorkTree,
@@ -69,6 +70,14 @@ export function parseAuditArgs(argv) {
   };
   let current = null;
   let sandboxAlias = false;
+  const repeated = new Map();
+  const setScalar = (key, flag, value) => {
+    if (repeated.has(key) && repeated.get(key) !== value) {
+      throw usage(`${flag} conflicts with an earlier value.`);
+    }
+    repeated.set(key, value);
+    return value;
+  };
 
   for (let i = 0; i < argv.length; i += 1) {
     const raw = argv[i];
@@ -105,13 +114,13 @@ export function parseAuditArgs(argv) {
         current.effort = read(flag);
         break;
       case "--worker":
-        options.worker = read(flag);
+        options.worker = setScalar("worker", flag, read(flag));
         break;
       case "--worker-model":
-        options.workerModel = read(flag);
+        options.workerModel = setScalar("worker-model", flag, read(flag));
         break;
       case "--worker-effort":
-        options.workerEffort = read(flag);
+        options.workerEffort = setScalar("worker-effort", flag, read(flag));
         break;
       case "--base":
         options.base = read(flag);
@@ -458,6 +467,8 @@ function initialState(prepared) {
       status: "pending",
       error: null,
       findings: [],
+      auditedRevision: null,
+      clean: null,
     })),
     existingIssues: null,
     consolidation: { status: "pending", error: null, findings: [] },
@@ -482,7 +493,61 @@ export async function createAuditWorkTree({ repo, revision, workTree }) {
   };
 }
 
-/** Extracts the findings document from a reviewer or consolidation response, or null. */
+/**
+ * The HEAD and clean state of an audit checkout. Returns null when Git cannot read it, so a caller
+ * fails closed instead of treating an unreadable checkout as clean.
+ */
+export async function readAuditCheckout(workTree) {
+  const head = await git(["rev-parse", "HEAD"], workTree);
+  const status = await git(["status", "--porcelain"], workTree);
+  if (head.exitCode !== 0 || status.exitCode !== 0) return null;
+  return { head: head.stdout, clean: status.stdout === "" };
+}
+
+/** Restores an audit checkout to its frozen revision and returns the new state. */
+export async function restoreAuditCheckout({ workTree, revision }) {
+  await git(["reset", "--hard", revision], workTree);
+  await git(["clean", "-fd"], workTree);
+  return readAuditCheckout(workTree);
+}
+
+function checkoutIsFrozen(checkout, revision) {
+  return checkout !== null && checkout.head === revision && checkout.clean === true;
+}
+
+/** Drops every saved audit result when the checkout no longer holds the audited revision. */
+function discardSavedFindings(state) {
+  return {
+    ...state,
+    reviewers: state.reviewers.map((reviewer) =>
+      reviewer.status === "succeeded" || reviewer.status === "running"
+        ? {
+            ...reviewer,
+            status: "pending",
+            error: null,
+            findings: [],
+            auditedRevision: null,
+            clean: null,
+          }
+        : reviewer,
+    ),
+    consolidation: { status: "pending", error: null, findings: [] },
+  };
+}
+
+function savedFindingsAreBound(state) {
+  return state.reviewers.every(
+    (reviewer) =>
+      reviewer.status !== "succeeded" ||
+      (reviewer.auditedRevision === state.revision && reviewer.clean === true),
+  );
+}
+
+function reviewerSandboxMode(kind, reviewerSandbox) {
+  if (kind !== "codex") return null;
+  return reviewerSandbox ?? "none";
+}
+
 export function parseFindings(response) {
   if (typeof response !== "string") return null;
   const candidates = [];
@@ -597,7 +662,7 @@ async function defaultRunTurn({
   cwd,
   timeout,
   signal,
-  reviewerSandbox,
+  sandboxMode = null,
 }) {
   const state = { kind, model, effort, sessionId: null };
   return withMutationCheck(
@@ -612,9 +677,7 @@ async function defaultRunTurn({
         opts: {
           cwd,
           readOnly: true,
-          ...(roleName === "reviewer" && kind === "codex" && reviewerSandbox
-            ? { sandbox: reviewerSandbox }
-            : {}),
+          ...(sandboxMode === null || sandboxMode === undefined ? {} : { sandbox: sandboxMode }),
           timeout,
           signal,
         },
@@ -775,6 +838,32 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       }
     }
 
+    const runTurn = deps.runTurn ?? defaultRunTurn;
+    const readCheckout = deps.readCheckout ?? readAuditCheckout;
+    const restoreCheckout = deps.restoreCheckout ?? restoreAuditCheckout;
+
+    const ensureFrozenCheckout = async () => {
+      let checkout = await readCheckout(state.workTree.path);
+      if (!checkoutIsFrozen(checkout, state.revision) || !savedFindingsAreBound(state)) {
+        checkout = await restoreCheckout({
+          workTree: state.workTree.path,
+          revision: state.revision,
+        });
+        if (!checkoutIsFrozen(checkout, state.revision)) {
+          throw new Pause(
+            "work-tree-changed",
+            "the audit checkout no longer holds the frozen revision",
+          );
+        }
+        state = discardSavedFindings(state);
+        await writeState(runsRoot, state);
+        progress(`audit ${state.id}: discarded saved findings because the checkout changed`);
+      }
+      return checkout;
+    };
+
+    await ensureFrozenCheckout();
+
     if (state.setupDone !== true && state.settings.setupCmd) {
       const ok = await runSetup({
         command: state.settings.setupCmd,
@@ -787,9 +876,9 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       if (!ok) throw new Pause("setup-failed", "the setup command failed");
       state = { ...state, setupDone: true };
       await writeState(runsRoot, state);
+      await ensureFrozenCheckout();
     }
 
-    const runTurn = deps.runTurn ?? defaultRunTurn;
     for (const reviewer of state.reviewers) {
       if (reviewer.status === "succeeded") continue;
       if (state.approvedPartial && reviewer.status === "failed") continue;
@@ -804,31 +893,46 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
         ),
       };
       await writeState(runsRoot, state);
+      const sandboxMode = reviewerSandboxMode(reviewer.kind, state.settings.reviewerSandbox);
       try {
         const response = await runTurn({
           kind: reviewer.kind,
           model: reviewer.model,
           effort: reviewer.effort,
           roleName: "reviewer",
-          prompt: auditPrompt({
-            revision: state.revision,
-            base: state.base,
-            kind: reviewer.kind,
+          prompt: reviewerPrompt({
+            prompt: auditPrompt({
+              revision: state.revision,
+              base: state.base,
+              kind: reviewer.kind,
+            }),
+            sandboxMode,
           }),
           cwd: state.workTree.path,
           timeout: state.settings.timeout,
           signal,
-          reviewerSandbox: state.settings.reviewerSandbox,
+          sandboxMode,
         });
         const findings = parseFindings(response);
         if (findings === null) {
           throw new Error("the reviewer returned no valid findings document");
         }
+        const after = await readCheckout(state.workTree.path);
+        if (!checkoutIsFrozen(after, state.revision)) {
+          throw new Error("the reviewer changed the audited revision or left the work tree dirty");
+        }
         state = {
           ...state,
           reviewers: state.reviewers.map((entry) =>
             entry.index === reviewer.index
-              ? { ...entry, status: "succeeded", error: null, findings }
+              ? {
+                  ...entry,
+                  status: "succeeded",
+                  error: null,
+                  findings,
+                  auditedRevision: state.revision,
+                  clean: true,
+                }
               : entry,
           ),
         };
@@ -837,18 +941,38 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
         );
       } catch (err) {
         if (err?.isCanceled || signal?.aborted) throw err;
+        const restored = await restoreCheckout({
+          workTree: state.workTree.path,
+          revision: state.revision,
+        });
+        if (!checkoutIsFrozen(restored, state.revision)) {
+          throw new Pause(
+            "work-tree-changed",
+            "a reviewer changed the audit checkout and it could not be restored",
+          );
+        }
         state = {
           ...state,
           reviewers: state.reviewers.map((entry) =>
             entry.index === reviewer.index
-              ? { ...entry, status: "failed", error: errorText(err) }
+              ? {
+                  ...entry,
+                  status: "failed",
+                  error: errorText(err),
+                  auditedRevision: null,
+                  clean: null,
+                }
               : entry,
           ),
         };
+        await writeState(runsRoot, state);
+        if (err?.pauseReason) throw err;
         progress(`audit ${state.id}: reviewer ${reviewer.kind} failed`);
       }
       await writeState(runsRoot, state);
     }
+
+    await ensureFrozenCheckout();
 
     const unsuccessful = state.reviewers.filter((reviewer) => reviewer.status !== "succeeded");
     const approvedFailures =

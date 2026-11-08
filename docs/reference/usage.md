@@ -491,7 +491,9 @@ agent-loop batch audit approve --audit <id>
 
 `start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, and `--reviewer-sandbox`. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
 
-The command resolves `origin/<base>` once to a commit SHA and creates one detached work tree at that SHA. Every reviewer reads the same work tree and revision, in its own session and in the requested order. A reviewer never sees another reviewer's findings. A `--setup-cmd` runs once in the work tree before the first reviewer.
+The command resolves `origin/<base>` once to a commit SHA and creates one detached work tree at that SHA. Every reviewer reads the same work tree and revision, in its own session and in the requested order. A reviewer never sees another reviewer's findings. The reviewer turn uses the existing reviewer prompt, including its test-slot, secret-file, process, and sandbox rules. A Codex reviewer runs with no sandbox unless `--reviewer-sandbox` names one. A `--setup-cmd` runs once in the work tree before the first reviewer and must leave the checkout clean.
+
+After each reviewer turn the runtime reads the work tree HEAD and `git status --porcelain`. A changed HEAD or a non-empty status fails that audit, restores the work tree to the recorded revision, and keeps no finding from the turn. A resume reuses a saved result only when it names the current revision; otherwise the reviewer runs again. A failed audit pauses the run and creates no issue.
 
 Each reviewer returns a fenced JSON document with a `findings` array of `title`, `body`, and `evidence` entries. A turn that fails, returns no string, or returns no valid document is a failed audit. No consolidation and no issue starts until every requested audit succeeds.
 

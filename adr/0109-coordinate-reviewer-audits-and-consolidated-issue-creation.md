@@ -48,7 +48,7 @@ The entry-point skill passes every value as a flag and shows the resolved settin
 
 It accepts `--reviewer-model` and `--reviewer-effort` after each `--reviewer`, which set the model and effort of the most recent reviewer; a model or effort before the first reviewer is a usage error. It accepts `--worker-model`, `--worker-effort`, `--base`, `--work-tree-root`, `--timeout`, `--reviewer-sandbox`, and `--reviewer-workspace-write`. `--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. The remaining values keep the headless defaults, and every supplied value is validated by the same parser the headless command uses.
 
-`--reviewer-sandbox` is accepted only when every requested reviewer is `codex`, because the Codex adapter is the only one that applies a mode. A duplicate or conflicting sandbox flag, an unsupported agent, model, or effort, a duplicate conflicting value, a runs root or work-tree root inside any Git work tree, and a missing required flag are refused with exit 2 before a store, work tree, or child exists.
+`--reviewer-sandbox` is accepted only when every requested reviewer is `codex`, because the Codex adapter is the only one that applies a mode. A duplicate or conflicting sandbox flag, an unsupported agent, model, or effort, a duplicate conflicting value, a repeated `--worker`, `--worker-model`, or `--worker-effort` with a different value, a runs root or work-tree root inside any Git work tree, and a missing required flag are refused with exit 2 before a store, work tree, or child exists.
 
 No turn and no child supplies a setting. The runtime reads no request, selects no revision, and prompts for nothing.
 
@@ -64,11 +64,15 @@ The default work-tree root is `<repo parent>/<repo name>-audit-<audit id>`, and 
 
 Every reviewer reads that one work tree at that one SHA, whatever `origin/<base>` does later. The audit never writes a branch, a commit, or a tag. The work tree is kept for inspection; this milestone adds no removal rule.
 
-The run may run a supplied `--setup-cmd` once in the work tree before the first reviewer, within `--setup-timeout`, as a batch setup command does. A failed setup pauses the run with reason `setup-failed` and starts no reviewer.
+The run may run a supplied `--setup-cmd` once in the work tree before the first reviewer, within `--setup-timeout`, as a batch setup command does. The setup command must leave the checkout clean: a tracked or unignored change pauses the run with reason `work-tree-changed` and starts no reviewer. A failed setup pauses the run with reason `setup-failed`.
 
 ### 4. Every requested reviewer audits independently
 
 Each requested reviewer runs one read-only turn in its own session, in the requested order, with the same revision, work tree, and audit task. A later reviewer never receives an earlier reviewer's session or findings. The turn runs under the reviewer mutation check, so a tracked or unignored file change, a Git state change, or a cancel fails that audit rather than becoming an issue.
+
+The reviewer turn is the existing reviewer turn. Its prompt is built by the reviewer prompt builder, so an audit reviewer receives the test-slot rule, the secret-file restriction, the process restriction, the required-check rule, and the sandbox note of ADR 0038 and ADR 0044. The audit instructions are the task under those rules. A Codex reviewer runs with sandbox mode `none` unless the operator passes `--reviewer-sandbox`, so a read-only mode is a choice and not an accidental default.
+
+The runtime binds every saved result to the audited revision. After each reviewer turn it reads the work tree HEAD and `git status --porcelain`. A HEAD other than the recorded revision, or a non-empty status, fails that audit, restores the work tree to the recorded revision, and keeps no findings from the turn. A later reviewer therefore starts on the frozen revision. A resume reads the same evidence before it reuses a saved result; saved findings that do not name the current revision, or that were saved over a changed checkout, are discarded and the reviewer runs again.
 
 The audit task asks for a fenced JSON document with this shape:
 
@@ -78,7 +82,7 @@ The audit task asks for a fenced JSON document with this shape:
 
 A turn succeeds when it returns and the runtime parses at least one valid findings document, including a document with an empty array. A turn that fails to run, returns no string, or returns no valid findings document is a failed audit. The runtime records the reviewer kind, model, effort, status, error text, and parsed findings; it never treats a timeout, an error, or malformed output as an empty audit.
 
-The runtime runs the requested turns one at a time. Concurrency is not required for independence, and a sequential pass keeps one shared work tree free of two simultaneous test runs. The machine-wide test slot is untouched: the audit itself runs no full suite, and a reviewer that runs a targeted test follows the reviewer rule of [ADR 0044](0044-route-a-targeted-run-through-the-test-slot-while-any-slot-is-held.md).
+The runtime runs the requested turns one at a time. Concurrency is not required for independence, and a sequential pass keeps one shared work tree free of two simultaneous test runs. The machine-wide test slot is untouched: the audit itself runs no full suite, and a reviewer that runs a targeted test follows the reviewer rule of [ADR 0044](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md).
 
 ### 5. No consolidation before every requested audit succeeds
 
@@ -86,7 +90,7 @@ The consolidation step runs only when every requested reviewer ended `succeeded`
 
 `batch audit resume` retries only the reviewers that did not succeed. It does not rerun a successful reviewer, so the successful audits stay the same. If the retry succeeds, the run continues to consolidation.
 
-`batch audit approve` records the owner's approval of the partial results. It then consolidates only the audits that succeeded and records the failed reviewers and the approval in the summary. An approval never applies to a failed consolidation: a consolidation with no valid result can only be retried. The runtime never prompts for an approval and never treats silence as one.
+`batch audit approve` records the owner's approval of the partial results. It then consolidates only the audits that succeeded and records the failed reviewers and the approval in the summary. An approval never applies to a failed consolidation: a consolidation with no valid result can only be retried. An approval also never revives a saved result that is not bound to the frozen revision: the runtime discards it and pauses rather than feed it to creation. The runtime never prompts for an approval and never treats silence as one.
 
 ### 6. One consolidation worker merges findings and checks the issue set
 
@@ -184,6 +188,7 @@ Milestone 2 does not provide, and does not depend on:
 - The audit work tree stays on disk for inspection, so each run costs one checkout until the owner removes it.
 - The issue list is read once, so an issue created after that read is outside the dedupe. The exact-title check and the open or closed lookup catch the common case.
 - The frozen set is local. A later run is a deliberate second command, and no state of the first run blocks it.
+- A reviewer that changes the checkout fails that audit, and the runtime restores the frozen revision before the next reviewer. A saved result that does not name the current revision is discarded, so a changed checkout cannot feed issue creation, including through an owner approval.
 - The accepted limit: an issue that another process creates with the same title between the read and the create is not distinguished from this run's own pending write. The recorded provenance and the owner's review remain the protection.
 
 ## Alternatives
@@ -210,6 +215,7 @@ Andro Marces
 ## Links
 
 - [Issue #1710: Coordinate reviewer audits and issue creation](https://github.com/andromarces/agent-loops/issues/1710)
+- [PR #1731: Coordinate reviewer audits and issue creation](https://github.com/andromarces/agent-loops/pull/1731)
 - [Issue #1709: Implement foreground batch scheduling](https://github.com/andromarces/agent-loops/issues/1709)
 - [Issue #1711: Release loop slots on owner decisions, resume after owner merges, and notify](https://github.com/andromarces/agent-loops/issues/1711)
 - [Issue #707: Verification checklist: Linux](https://github.com/andromarces/agent-loops/issues/707)
@@ -222,7 +228,7 @@ Andro Marces
 - [ADR 0019: Opt in to a workspace-write sandbox for the Codex reviewer](0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)
 - [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md)
 - [ADR 0038: Run the Codex reviewer with no sandbox by default](0038-run-the-codex-reviewer-with-no-sandbox-by-default.md)
-- [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-any-slot-is-held.md)
+- [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)
 - [ADR 0049: Pin the machine-wide roots for every child turn](0049-pin-the-machine-wide-roots-for-every-child-turn.md)
 - [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md) (decision 16's milestone 2 entry superseded)

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -17,7 +17,6 @@ import { git, pathIdentity } from "../../src/batch/git.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
-const SHA = "1234567890abcdef1234567890abcdef12345678";
 const roots = [];
 const repos = [];
 
@@ -70,29 +69,28 @@ function fakeTurns({ reviewers = {}, consolidations = [] } = {}) {
   return { runTurn, calls };
 }
 
-async function workTreeAt(base) {
-  const path = join(base, "revision");
-  await mkdir(path, { recursive: true });
-  const identity = await pathIdentity(path);
-  return {
-    path,
-    canonicalPath: path,
-    dev: String(identity.dev),
-    ino: String(identity.ino),
-    revision: SHA,
-  };
-}
-
 async function preparedAudit(overrides = {}) {
   const base = await mkdtemp(join(tmpdir(), "audit-it-"));
   roots.push(base);
-  const workTree = await workTreeAt(base);
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const revision = (await git(["rev-parse", "HEAD"], repo)).stdout;
+  const workTreePath = join(base, "revision");
+  await git(["worktree", "add", "--detach", workTreePath, revision], repo);
+  const identity = await pathIdentity(workTreePath);
+  const workTree = {
+    path: workTreePath,
+    canonicalPath: workTreePath,
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    revision,
+  };
   return {
     id: "20260101-000000-test",
-    repo: join(base, "repo"),
+    repo,
     repoKey: "abc123abc123",
     base: "main",
-    revision: SHA,
+    revision,
     workTreeRoot: join(base, "root"),
     reviewers: [
       { kind: "claude", model: null, effort: null },
@@ -110,6 +108,245 @@ async function preparedAudit(overrides = {}) {
 }
 
 const depsWith = (workTree) => ({ createWorkTree: async () => workTree });
+
+// Usefulness: an audit reviewer receives the existing reviewer prompt, so the test-slot, secret,
+// process, and sandbox rules apply, and a Codex reviewer gets no sandbox by default (ADR 0038).
+test("an audit reviewer receives the reviewer prompt and codex defaults to no sandbox", async () => {
+  const prepared = await preparedAudit({
+    reviewers: [
+      { kind: "codex", model: null, effort: null },
+      { kind: "claude", model: null, effort: null },
+    ],
+  });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      codex: fenced({ findings: [] }),
+      claude: fenced({ findings: [] }),
+    },
+    consolidations: [fenced({ findings: [] })],
+  });
+  await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  const codex = turns.calls.find((call) => call.roleName === "reviewer" && call.kind === "codex");
+  const claude = turns.calls.find((call) => call.roleName === "reviewer" && call.kind === "claude");
+  expect(codex.prompt).toContain("machine-wide test slot");
+  expect(codex.prompt).toContain("Never read, print, or quote `.env`");
+  expect(codex.prompt).toContain("Never stop, kill, or signal a process");
+  expect(codex.prompt).toContain("Sandbox note, supplied by the runtime:");
+  expect(codex.prompt).toContain("no sandbox");
+  expect(codex.sandboxMode).toBe("none");
+  expect(claude.sandboxMode).toBeNull();
+});
+
+// Usefulness: a reviewer that changes the audit checkout fails that audit, the checkout is
+// restored before the next reviewer, and its findings never reach consolidation or creation.
+test("a reviewer that changes the checkout fails and does not contaminate the next audit", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      claude: async (request) => {
+        await writeFile(join(request.cwd, "mutation.txt"), "changed\n");
+        return fenced({ findings: [{ title: "Contaminated", body: "Body", evidence: "" }] });
+      },
+      agy: async (request) => {
+        const status = await git(["status", "--porcelain"], request.cwd);
+        expect(status.stdout).toBe("");
+        return fenced({ findings: [{ title: "Clean", body: "Body", evidence: "" }] });
+      },
+    },
+    consolidations: [
+      fenced({
+        findings: [{ title: "Clean", body: "Body", evidence: "", existingIssue: null }],
+      }),
+    ],
+  });
+  const { exitCode, summary } = await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(summary.status).toBe("paused");
+  expect(summary.pauseReason).toBe("audit-failed");
+  expect(summary.reviewers[0].status).toBe("failed");
+  expect(summary.reviewers[1].status).toBe("succeeded");
+  expect(summary.issues).toEqual([]);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+  const status = await git(["status", "--porcelain"], prepared.workTree.path);
+  expect(status.stdout).toBe("");
+  await expect(stat(join(prepared.workTree.path, "mutation.txt"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+async function pausedAudit(prepared, { reviewerOne = null, reviewerTwo = null } = {}) {
+  const state = {
+    id: prepared.id,
+    repo: prepared.repo,
+    repoKey: prepared.repoKey,
+    createdAt: new Date().toISOString(),
+    base: "main",
+    revision: prepared.revision,
+    workTreeRoot: prepared.workTreeRoot,
+    workTree: prepared.workTree,
+    settings: {
+      reviewers: prepared.reviewers,
+      worker: prepared.worker,
+      timeout: null,
+      reviewerSandbox: null,
+      setupCmd: null,
+      setupTimeout: 600,
+    },
+    status: "paused",
+    pauseReason: "audit-failed",
+    reason: "the audit did not succeed for: agy",
+    approvedPartial: false,
+    approvedAt: null,
+    reviewers: [
+      {
+        index: 0,
+        kind: "claude",
+        model: null,
+        effort: null,
+        status: reviewerOne === null ? "succeeded" : "failed",
+        error: null,
+        findings:
+          reviewerOne === null ? [{ title: "Old result", body: "Old body", evidence: "" }] : [],
+        auditedRevision: reviewerOne === null ? prepared.revision : null,
+        clean: reviewerOne === null ? true : null,
+      },
+      {
+        index: 1,
+        kind: "agy",
+        model: null,
+        effort: null,
+        status: reviewerTwo === null ? "succeeded" : "failed",
+        error: null,
+        findings: reviewerTwo === null ? [] : [],
+        auditedRevision: reviewerTwo === null ? prepared.revision : null,
+        clean: reviewerTwo === null ? true : null,
+      },
+    ],
+    existingIssues: [],
+    consolidation: {
+      status: "succeeded",
+      error: null,
+      findings: [{ title: "Old result", body: "Old body", evidence: "", existingIssue: null }],
+    },
+    pendingCreate: null,
+    created: [],
+    issues: [],
+  };
+  await mkdir(auditPaths(join(prepared.workTreeRoot, "runs")).root, { recursive: true });
+  await writeAudit(join(prepared.workTreeRoot, "runs"), state);
+  return state;
+}
+
+// Usefulness: a resume that finds a moved HEAD restores the frozen revision, discards the saved
+// findings, and reruns the reviewer instead of feeding the old result to creation.
+test("a resume discards saved findings when the checkout moved", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared);
+  await git(
+    [
+      "-c",
+      "user.name=Tester",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "move",
+    ],
+    prepared.workTree.path,
+  );
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      claude: fenced({ findings: [{ title: "Fresh", body: "Body", evidence: "" }] }),
+      agy: fenced({ findings: [] }),
+    },
+    consolidations: [
+      fenced({
+        findings: [{ title: "Fresh", body: "Body", evidence: "", existingIssue: null }],
+      }),
+    ],
+  });
+  const { exitCode, summary } = await runAudit({
+    prepared: { ...prepared, mode: "resume" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(0);
+  expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(2);
+  expect(summary.issues.map((issue) => issue.title)).toEqual(["Fresh"]);
+  const head = await git(["rev-parse", "HEAD"], prepared.workTree.path);
+  expect(head.stdout).toBe(prepared.revision);
+});
+
+// Usefulness: the owner's approval does not feed a saved result from a changed checkout; the
+// reviewer runs again and the failed reviewer stays failed.
+test("approve does not feed a saved result from a changed checkout", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, { reviewerTwo: new Error("failed") });
+  await writeFile(join(prepared.workTree.path, "init.txt"), "dirty\n");
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      claude: fenced({ findings: [{ title: "Fresh approval", body: "Body", evidence: "" }] }),
+    },
+    consolidations: [
+      fenced({
+        findings: [{ title: "Fresh approval", body: "Body", evidence: "", existingIssue: null }],
+      }),
+    ],
+  });
+  const { exitCode, summary } = await runAudit({
+    prepared: { ...prepared, mode: "approve" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(0);
+  expect(summary.approvedPartial).toBe(true);
+  expect(summary.reviewers[1].status).toBe("failed");
+  expect(summary.issues.map((issue) => issue.title)).toEqual(["Fresh approval"]);
+  expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
+});
+
+// Usefulness: a repeated worker flag with a different value is refused, not silently overwritten.
+test("a repeated worker flag with a conflicting value is a usage error", () => {
+  expect(() =>
+    parseAuditArgs([
+      "--repo",
+      ".",
+      "--reviewer",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--worker",
+      "codex",
+      "--worker",
+      "claude",
+    ]),
+  ).toThrow("--worker conflicts with an earlier value.");
+});
 
 // Usefulness: two reviewers audit one revision before one consolidation, and each consolidated
 // finding becomes exactly one issue. This is the gate and the creation contract together.
@@ -382,7 +619,7 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
     repoKey: prepared.repoKey,
     createdAt: new Date().toISOString(),
     base: "main",
-    revision: SHA,
+    revision: prepared.revision,
     workTreeRoot: prepared.workTreeRoot,
     workTree: prepared.workTree,
     settings: {
@@ -406,6 +643,8 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
         status: "succeeded",
         error: null,
         findings: [],
+        auditedRevision: prepared.revision,
+        clean: true,
       },
       {
         index: 1,
@@ -415,6 +654,8 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
         status: "succeeded",
         error: null,
         findings: [],
+        auditedRevision: prepared.revision,
+        clean: true,
       },
     ],
     existingIssues: [],
