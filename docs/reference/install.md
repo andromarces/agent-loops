@@ -74,8 +74,8 @@ lock that the next command removes once its owner process is dead. A dry run tak
 no lock and writes nothing.
 
 If lstat of the home reports ENOENT, `uninstall`
-returns at once without a lock, reports nothing to remove, writes nothing, and
-exits 0, so it never creates the home. This includes a Windows path that cannot
+returns at once without a lock. It reports nothing to remove, writes nothing,
+and exits 0, so it never creates the home. This includes a Windows path that cannot
 name a directory, which reports nothing to remove and no error. See [ADR 0025](https://github.com/andromarces/agent-loops/blob/main/adr/0025-lock-the-install-manifest-beside-the-home.md).
 
 `install` must run from an install whose package location survives an upgrade: a
