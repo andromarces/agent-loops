@@ -8,6 +8,7 @@ import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { mapInBatches } from "./batches.mjs";
+import { canonicalPath } from "./canonical-path.mjs";
 import {
   gitRead,
   gitReadError,
@@ -17,6 +18,7 @@ import {
   WORK_TREE_READ_TIMEOUT_MS,
 } from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
+import { isJsonObject } from "./json.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
@@ -318,9 +320,7 @@ export function normalizeLocalPath(raw) {
  * their `.git` entry is still there.
  */
 async function blockedTrees(entries, mainReal, rootReal) {
-  const trees = await Promise.all(
-    entries.map((entry) => realpath(entry.path).catch(() => resolve(entry.path))),
-  );
+  const trees = await Promise.all(entries.map((entry) => canonicalPath(entry.path)));
   const sourceBlocked = new Set(trees);
   sourceBlocked.delete(mainReal);
   const targetBlocked = new Set([mainReal, ...trees]);
@@ -738,10 +738,6 @@ const isPlainRelativeName = (rel) =>
   !isAbsolute(rel) &&
   !rel.split("/").some((part) => part === ".." || part === "");
 
-/** True for a JSON object, never an array or null. */
-const isPlainRecord = (value) =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
 /**
  * Reads the regular file `rel` under `base` and returns `{ bytes, hash, mode }`.
  * It returns `MISSING` when no file exists, or `NOT_COMPARABLE` when the path cannot be proven safe.
@@ -880,7 +876,7 @@ export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...
   if (located === null) {
     return [];
   }
-  const hashes = isPlainRecord(initHashes) ? initHashes : null;
+  const hashes = isJsonObject(initHashes) ? initHashes : null;
   // `afterAncestorCheck` and `beforeRead` are test seams on the guarded read.
   const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
     if (!isPlainRelativeName(rel)) {

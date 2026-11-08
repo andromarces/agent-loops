@@ -149,10 +149,10 @@ test("a failed creation returns null", async () => {
   }
 });
 
-// Usefulness: verifies removal refuses, with a warning and no deletion, when `.agent-loop` or
-// `.agent-loop/rev` was replaced by a link or junction to an outside folder, so a reviewer cannot
-// steer the removal onto content outside the scratch folder (acceptance #920).
 for (const parent of [".agent-loop", join(".agent-loop", "rev")]) {
+  // Usefulness: verifies removal refuses, with a warning and no deletion, when `.agent-loop` or
+  // `.agent-loop/rev` was replaced by a link or junction to an outside folder, so a reviewer cannot
+  // steer the removal onto content outside the scratch folder (acceptance #920).
   test(`removal refuses when ${parent} became a link`, async (ctx) => {
     const repo = await createTempRepo();
     const outside = await mkdtemp(join(tmpdir(), "scratch-outside-"));

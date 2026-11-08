@@ -234,6 +234,8 @@ test.each([
   expect(declaredPrFromTranscript(earlier)).toBeNull();
 });
 
+// Usefulness: verifies a run that selected the PR through --pr or --require-ci keeps that PR from
+// the transcript, so a continuation reads the declared PR.
 test.each([
   ["--pr", { pr: 42, requireCi: 42 }],
   ["--require-ci", { pr: null, requireCi: 42 }],

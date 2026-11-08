@@ -27,9 +27,10 @@ const CLEAN_OUTPUT = {
   agy: JSON.stringify({ conversation_id: SESSION, response: "done" }),
 };
 
-// Requirement (#587): a cancel that lands after the child exits and before the adapter returns ends
-// the turn as canceled for every adapter. Not redundant: the opencode test covers only its own adapter.
 for (const [kind, stdout] of Object.entries(CLEAN_OUTPUT)) {
+  // Requirement: a cancel that lands after the child exits and before the adapter returns ends the
+  // turn as canceled for every adapter (issue #587). Not redundant: the opencode test covers only
+  // its own adapter.
   test(`${kind} ends a turn as canceled when the signal aborts after the child exits`, async () => {
     const controller = new AbortController();
     vi.mocked(exec).mockImplementationOnce(async () => {
@@ -43,8 +44,8 @@ for (const [kind, stdout] of Object.entries(CLEAN_OUTPUT)) {
   });
 }
 
-// Requirement (#587): a turn with no abort still returns its response. Guards the check against a
-// false cancel.
+// Requirement: a turn with no abort still returns its response (issue #587). Guards the check
+// against a false cancel.
 test("a turn with an unaborted signal returns its response", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: CLEAN_OUTPUT.agy, stderr: "" });
 
@@ -56,9 +57,9 @@ test("a turn with an unaborted signal returns its response", async () => {
   ).resolves.toBe("done");
 });
 
-// Requirement (#587, #577, ADR 0027): a canceled turn that ran in a replaced agy conversation keeps
-// the id the CLI reported and the replaced mark, so the next worker turn sends the preamble to it.
-// Not redundant: the adapter test covers the replacement, not the cancel that follows it.
+// Requirement: a canceled turn that ran in a replaced agy conversation keeps the id the CLI
+// reported and the replaced mark, so the next worker turn sends the preamble to it (issues #587,
+// #577, ADR 0027). Not redundant: the adapter test covers the replacement, not the cancel.
 test("a cancel after agy replaced the conversation keeps the reported id and the replaced mark", async () => {
   const controller = new AbortController();
   vi.mocked(exec).mockImplementationOnce(async () => {
@@ -146,6 +147,9 @@ describe.each(["claude", "agy", "copilot", "opencode"])(
       return { seen, outcome };
     }
 
+    // Requirement: a private temporary directory keeps the scratch file of a turn out of the
+    // inherited directory, and the runtime removes it on a clean and a failed turn (issue #1178,
+    // ADR 0068).
     test.each([true, false])(
       "keeps the scratch file of a turn (ok: %s) out of the inherited directory",
       async (ok) => {

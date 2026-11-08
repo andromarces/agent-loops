@@ -2,7 +2,7 @@ import { lstat, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { execBounded } from "./exec.mjs";
 import { INHERITED_TMPDIR_ENV, inheritedTmpdirsForChild } from "./inherited-tmpdir.mjs";
 import { logDebug, logWarn } from "./log.mjs";
@@ -59,7 +59,7 @@ export async function withTurnTmpdir(run, { removalBoundMs = REMOVAL_BOUND_MS, o
     logDebug(`turn temporary directory created: ${created.dir}`);
   } catch (err) {
     logWarn(
-      `turn temporary directory not created, the turn uses the inherited one: ${firstErrorLine(readableErrorText(err))}`,
+      `turn temporary directory not created, the turn uses the inherited one: ${errorLine(err)}`,
     );
   }
   try {
@@ -127,14 +127,10 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
     } else if (result.exitCode === REMOVER_REFUSED) {
       logWarn(`turn temporary directory not removed, it is not the directory created: ${dir}`);
     } else {
-      failure(
-        firstErrorLine(
-          readableErrorText(result.stderr || result.shortMessage || "the removal helper failed"),
-        ),
-      );
+      failure(errorLine(result.stderr || result.shortMessage || "the removal helper failed"));
     }
   } catch (err) {
-    failure(firstErrorLine(readableErrorText(err)));
+    failure(errorLine(err));
   } finally {
     // A directory that the removal refused or failed on stays in place, and its name is no longer
     // the runtime's own, so a report can list it (issue #1024).
@@ -207,7 +203,7 @@ export async function removeAbandonedTurnTmpdir(record, boundMs = REMOVAL_BOUND_
       below = liveBelow(child.pid, await readProcessTable());
     } catch (err) {
       logWarn(
-        `turn temporary directory kept, the process table cannot be read: ${dir}: ${firstErrorLine(readableErrorText(err))}`,
+        `turn temporary directory kept, the process table cannot be read: ${dir}: ${errorLine(err)}`,
       );
       return;
     }
@@ -241,7 +237,7 @@ export async function recheckKeptTurnTmpdir(record) {
   try {
     await removeAbandonedTurnTmpdir(record);
   } catch (err) {
-    logWarn(`turn temporary directory not re-checked: ${firstErrorLine(readableErrorText(err))}`);
+    logWarn(`turn temporary directory not re-checked: ${errorLine(err)}`);
   }
 }
 

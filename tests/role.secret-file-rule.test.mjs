@@ -42,19 +42,19 @@ async function dispatchedPrompts(workerKind, reviewerKind) {
   };
 }
 
-// Usefulness: acceptance of #1248. A child that prints a copied ignored secret file sends the value
-// to the model provider, so the first worker turn carries the rule whichever adapter runs the
-// worker. No other test covers the dispatched worker prompt of each adapter kind.
 for (const adapter of ADAPTERS) {
+  // Usefulness: acceptance of #1248. A child that prints a copied ignored secret file sends the
+  // value to the model provider, so the first worker turn carries the rule whichever adapter runs
+  // the worker. No other test covers the dispatched worker prompt of each adapter kind.
   test(`the worker preamble carries the secret file rule on ${adapter}`, async () => {
     const { worker } = await dispatchedPrompts(adapter, "other");
     expect(worker).toContain(SECRET_RULE);
   });
 }
 
-// Usefulness: acceptance of #1248 for the reviewer. The reviewer prompt is rebuilt for each
-// adapter kind of the reviewer role, and the worker tests above never vary that kind.
 for (const adapter of ADAPTERS) {
+  // Usefulness: acceptance of #1248 for the reviewer. The reviewer prompt is rebuilt for each
+  // adapter kind of the reviewer role, and the worker tests above never vary that kind.
   test(`the reviewer prompt carries the secret file rule on ${adapter}`, async () => {
     const { reviewer } = await dispatchedPrompts("other", adapter);
     expect(reviewer).toContain(SECRET_RULE);

@@ -1,5 +1,6 @@
-import { lstat, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { canonicalPath } from "./canonical-path.mjs";
 import { sha256 } from "./hash.mjs";
 import { rootPath } from "./root-pins.mjs";
 import { isJsonObject } from "./json.mjs";
@@ -12,7 +13,6 @@ import { resolveWriteTarget, writeFileAtomic } from "./atomic-write.mjs";
 // transcript there during such a turn. The record is untrusted input. It holds only the id, the
 // unconfirmed mark, and the fields that bind it to one transcript state.
 
-const real = (path) => realpath(path).catch(() => resolve(path));
 const identity = (path) =>
   stat(path, { bigint: true }).then(
     (info) => `${info.dev}:${info.ino}`,
@@ -46,7 +46,11 @@ export const isUuid = (value) => typeof value === "string" && UUID.test(value);
 export async function isInside(root, path) {
   const rootId = await identity(root);
   const target = await resolveWriteTarget(path).catch(() => resolve(path));
-  for (const start of [await real(dirname(path)), dirname(resolve(path)), dirname(target)]) {
+  for (const start of [
+    await canonicalPath(dirname(path)),
+    dirname(resolve(path)),
+    dirname(target),
+  ]) {
     for (let dir = start; ; dir = dirname(dir)) {
       const id = await identity(dir);
       if (id !== null && id === rootId) return true;
@@ -60,7 +64,7 @@ export async function isInside(root, path) {
 // write target, so a case alias of the path and a file symlink to it find the same record (#658).
 async function recordKey(transcript) {
   const target = await resolveWriteTarget(transcript).catch(() => resolve(transcript));
-  const dir = await real(dirname(target));
+  const dir = await canonicalPath(dirname(target));
   const where = (await identity(dir)) ?? dir;
   return sha256(`${where}\0${basename(target).toLowerCase()}`).slice(0, 32);
 }

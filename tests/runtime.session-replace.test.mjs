@@ -347,16 +347,16 @@ test("a missing worker session reruns the turn as a first turn in the same step"
   }
 });
 
-// Usefulness: acceptance (#490) — the resume fallback reruns the turn as a first turn only for a
-// thrown value whose `sessionMissing` reads truthy. A value without it, including `null`,
-// `undefined`, and primitives, surfaces as the worker error. A throwing getter surfaces the
-// worker's own error with no rerun, and never replaces it with the getter error.
 const throwingSessionMissing = new Error("worker failed");
 Object.defineProperty(throwingSessionMissing, "sessionMissing", {
   get() {
     throw new Error("sessionMissing getter");
   },
 });
+// Usefulness: acceptance (#490) — the resume fallback reruns the turn as a first turn only for a
+// thrown value whose `sessionMissing` reads truthy. A value without it, including `null`,
+// `undefined`, and primitives, surfaces as the worker error. A throwing getter surfaces the
+// worker's own error with no rerun, and never replaces it with the getter error.
 test.each([
   ["null", null, false],
   ["undefined", undefined, false],

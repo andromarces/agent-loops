@@ -622,10 +622,10 @@ test("an added, retargeted, and removed remote is reported by name without its U
   expect(JSON.stringify(after)).not.toContain("token-9");
 });
 
-// Usefulness: verifies "a change to the local core.hooksPath is reported even when a worktree
-// config overrides it" (issue #984 review): the effective value is the override, so a read of the
-// effective value alone hides the change. Both the main and a linked work tree read it.
 for (const place of ["main", "linked"]) {
+  // Usefulness: verifies "a change to the local core.hooksPath is reported even when a worktree
+  // config overrides it" (issue #984 review): the effective value is the override, so a read of the
+  // effective value alone hides the change.
   test(`a local core.hooksPath change under a worktree override is reported from the ${place} work tree`, async () => {
     const { repo, linked } = await createRepoWithLinkedWorkTree();
     const cwd = place === "main" ? repo : linked;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
+  errorLine,
   errorMessage,
   firstErrorLine,
   readableErrorMessage,
@@ -152,6 +153,28 @@ describe("firstErrorLine", () => {
     expect(firstErrorLine("first\nsecond\nthird")).toBe("first");
     expect(firstErrorLine("only")).toBe("only");
     expect(firstErrorLine("")).toBe("");
+  });
+});
+
+describe("errorLine", () => {
+  // Usefulness: requirement — a log line gets only the first line of the readable error text, with
+  // secrets redacted. Not redundant: firstErrorLine is tested alone, not this composition.
+  test("returns the first line of the readable error text", () => {
+    expect(errorLine(new Error("first\nsecond"))).toBe("first");
+    vi.stubEnv("ERROR_MESSAGE_PROBE_TOKEN", SECRET);
+    expect(errorLine(new Error(`failed ${SECRET}\nmore`))).toBe(`failed ${REDACTED}`);
+  });
+
+  // Usefulness: requirement — a hostile message getter yields the unreadable placeholder, so an
+  // error path always has a line to print.
+  test("returns the unreadable placeholder for a hostile message getter", () => {
+    expect(errorLine(hostileGetter())).toBe(UNREADABLE_MESSAGE);
+  });
+
+  // Usefulness: requirement — a non-string message prints as its JSON form, which a parsed object
+  // with its own `toString` key needs.
+  test("prints a non-string message as JSON", () => {
+    expect(errorLine({ message: { code: 7 } })).toBe('{"code":7}');
   });
 });
 

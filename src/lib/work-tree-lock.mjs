@@ -1,8 +1,7 @@
 // Git work tree lock for an active run (issue #1347, ADR 0073). Init locks a linked `--cwd`, and a
 // terminal lifecycle unlocks it. Every failure is a warning: the lock is a protection, not a
 // precondition of the command that takes or drops it.
-import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
+import { canonicalPath } from "./canonical-path.mjs";
 import {
   gitRead,
   parseWorkTreeList,
@@ -27,15 +26,6 @@ async function readOutput(cwd, args, readGit, signal) {
     });
   }
   return result.stdout;
-}
-
-/** Resolves one path canonically, and falls back to `resolve` when `realpath` fails. */
-async function canonicalPath(path) {
-  try {
-    return await realpath(path);
-  } catch {
-    return resolve(path);
-  }
 }
 
 /**

@@ -1,7 +1,8 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
+import { buildTargets } from "../../src/install/targets.mjs";
 import {
   PACKAGE_ROOT,
   makeHome,
@@ -143,6 +144,77 @@ test("rendered targets carry absolute package paths and no placeholders", async 
     join(PACKAGE_ROOT, "src", "hook", "copilot-parent-guard.mjs"),
   );
 });
+
+// Usefulness: verifies the #1635 acceptance for a POSIX package root that holds
+// a literal backslash, alone or doubled: each generated command passes the exact
+// path through POSIX double quotes, and the OpenCode plugin string evaluates to
+// the exact instructions path. The renderer takes a platform so the case runs on
+// every host, where the POSIX separator and quoting rules are not native.
+test("POSIX package roots with backslashes render exact paths", async () => {
+  const templateDir = join(PACKAGE_ROOT, "src/install/templates");
+  for (const root of ["/opt/we\\ird/pkg", "/opt/we\\\\ird/pkg"]) {
+    const options = { home: PACKAGE_ROOT, packageRoot: root, platform: "linux", templateDir };
+    const claude = await buildTargets("claude", options);
+    const codex = await buildTargets("codex", options);
+    const antigravity = await buildTargets("antigravity", options);
+    const opencode = await buildTargets("opencode", options);
+
+    const guard = posix.join(root, "src/hook/parent-guard.mjs");
+    expect(parsePosixCommand(claude.settings[0].entry.hooks[0].command), root).toBe(guard);
+    expect(parsePosixCommand(codex.settings[0].entry.hooks[0].command), root).toBe(guard);
+    if (root === "/opt/we\\ird/pkg") {
+      // The single-backslash command keeps the bytes that stable-root.test.mjs
+      // expects, because POSIX quotes a lone backslash literally.
+      expect(claude.settings[0].entry.hooks[0].command, root).toBe(`node "${guard}"`);
+    }
+
+    for (const targets of [claude, codex, antigravity]) {
+      const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
+      expect(parsePosixCommand(skillCliCommand(skill)), root).toBe(posix.join(root, "src/cli.mjs"));
+    }
+
+    expect(pluginInstructionsPath(opencode.files[0].content), root).toBe(
+      posix.join(root, "docs/orchestrator-instructions.md"),
+    );
+  }
+});
+
+/** The value that POSIX `sh` gives the double-quoted word of a `node "<path>"` command. */
+function parsePosixCommand(command) {
+  const quoted = command.slice("node ".length);
+  expect(quoted.startsWith('"') && quoted.endsWith('"')).toBe(true);
+  let value = "";
+  for (let i = 1; i < quoted.length - 1; i += 1) {
+    const char = quoted[i];
+    const next = quoted[i + 1];
+    if (char === "\\" && ["$", "`", '"', "\\"].includes(next)) {
+      value += next;
+      i += 1;
+    } else {
+      value += char;
+    }
+  }
+  return value;
+}
+
+/** The `node "<path>"` command in the rendered skill's harness-check line. */
+function skillCliCommand(skill) {
+  const match = skill.match(/node "(?:[^"\\]|\\.)*" harness-check/);
+  expect(match).not.toBeNull();
+  return match[0].slice(0, -" harness-check".length);
+}
+
+/** The value of the instructions string literal that the OpenCode plugin holds. */
+function pluginInstructionsPath(plugin) {
+  const line = plugin.split("\n").find((text) => text.includes("instructionsPath:"));
+  expect(line).toBeDefined();
+  return JSON.parse(
+    line
+      .slice(line.indexOf(":") + 1)
+      .trim()
+      .replace(/,$/, ""),
+  );
+}
 
 // Usefulness: verifies the #751 acceptance — the one shared harness-check paragraph renders into
 // each skill with that harness's id, label, and session variable, so the three entry points keep

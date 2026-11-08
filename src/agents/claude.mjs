@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readdir, realpath } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
   isJsonObject,
   parseJson,
@@ -10,6 +10,7 @@ import {
   tryParseJson,
 } from "../lib/json.mjs";
 import { exec } from "../lib/exec.mjs";
+import { canonicalPath } from "../lib/canonical-path.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
 import {
@@ -27,8 +28,6 @@ import {
   setUsageOrDelete,
   turnExecOptions,
 } from "./shared.mjs";
-
-const canonicalPath = async (path) => realpath(path).catch(() => resolve(path));
 
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
 const missingSession = (id) => `No conversation found with session ID: ${id}`;

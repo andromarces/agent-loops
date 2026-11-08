@@ -335,16 +335,16 @@ test("a slot won after the wait bound does not run the command", async () => {
   expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
 }, 30_000);
 
-// Usefulness: issue #847 review — a valid flag wins over an invalid environment value, and
-// the invalid value is refused only when no flag replaces it.
-// Verifies the #926 decision: the default is 1 slot on any CPU count, and an override still wins.
-// Not redundant: no other test reads the default.
+// Usefulness: verifies the #926 decision: the default is 1 slot on any CPU count, and an
+// override still wins. No other test reads the default.
 test("the default slot count is 1 on a 16-CPU host, and AGENT_LOOP_TEST_SLOTS overrides it", () => {
   hostCpus.count = 16;
   expect(parseTestSlotArgs(["--", "x"], {}).slots).toBe(1);
   expect(parseTestSlotArgs(["--", "x"], { AGENT_LOOP_TEST_SLOTS: "3" }).slots).toBe(3);
 });
 
+// Usefulness: verifies a valid flag wins over an invalid environment value, and the invalid value
+// is refused only when no flag replaces it, so one bad variable never blocks a valid call.
 test("a valid flag wins over an invalid environment value", () => {
   const env = { AGENT_LOOP_TEST_SLOTS: "many", AGENT_LOOP_TEST_SLOT_WAIT: "-1" };
   expect(parseTestSlotArgs(["--slots", "2", "--wait", "5", "--", "x"], env)).toEqual({

@@ -331,6 +331,8 @@ describe("the rendered wait forms run in a real shell", () => {
   };
   const REFUSED = /wait-checks requires --pr/;
 
+  // Usefulness: verifies the sh form runs in bash and reaches the wait-checks refusal, so the
+  // POSIX command is executable.
   test.skipIf(isWindows || !hasBash)("the sh form runs in bash", async () => {
     await withDir(async (cwd, scripts) => {
       const [form] = waitChecksCommand({ cwd });
@@ -339,6 +341,8 @@ describe("the rendered wait forms run in a real shell", () => {
     });
   });
 
+  // Usefulness: verifies that the Windows bash-or-cmd form runs in Git Bash. Not redundant: the
+  // next test runs the same form in cmd only.
   test.skipIf(!isWindows || !hasBash)("the bash-or-cmd form runs in bash", async () => {
     await withDir(async (cwd, scripts) => {
       const form = waitChecksCommand({ cwd }).find((f) => f.shell === "bash or cmd");
@@ -347,6 +351,8 @@ describe("the rendered wait forms run in a real shell", () => {
     });
   });
 
+  // Usefulness: verifies the bash-or-cmd form runs in cmd and the PowerShell form does not, so the
+  // Windows shell choice is the executable one.
   test.skipIf(!isWindows)(
     "the bash-or-cmd form runs in cmd, and the call operator does not",
     async () => {
@@ -365,6 +371,8 @@ describe("the rendered wait forms run in a real shell", () => {
     },
   );
 
+  // Usefulness: verifies the PowerShell form runs in PowerShell and the bash-or-cmd form does not,
+  // so the PowerShell shell choice is executable.
   test.skipIf(!hasPowerShell)(
     "the PowerShell form runs in PowerShell, and the plain form does not",
     async () => {

@@ -616,6 +616,8 @@ test.each([
   },
 );
 
+// Usefulness: verifies a single new model replaces the earlier one, so the record describes the
+// model the turn named. The table above covers only unresolved evidence.
 test("copilot replaces the earlier resolvedModel when a turn names another single model", async () => {
   const state = { kind: "copilot", sessionId: null, model: null, resolvedModel: "m-1" };
   expect(await resolvedFrom([message({ model: "m-2" })], state)).toBe("m-2");
@@ -669,6 +671,8 @@ test.each([
   expect(state.resolvedModel).toBeNull();
 });
 
+// Usefulness: verifies an exit 0 with no result event clears the model, so a malformed reply
+// leaves no stale model behind.
 test("copilot marks the record unresolved after an exit 0 with no result event", async () => {
   vi.mocked(exec).mockResolvedValueOnce({ stdout: "garbage", stderr: "" });
   const state = recordedState();
@@ -746,6 +750,8 @@ test.each([
   expect(state.resolvedModel).toBe(expected);
 });
 
+// Usefulness: verifies a failed first turn records the model only when it adopts the reported
+// session, so a model from an unadopted session is not recorded.
 test("copilot failed first turn records the model only with the session it adopts", async () => {
   vi.mocked(exec).mockRejectedValueOnce(
     copilotFailure({
