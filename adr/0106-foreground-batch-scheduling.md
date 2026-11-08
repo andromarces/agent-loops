@@ -633,6 +633,7 @@ Andro Marces
 - [Issue #1486: State how to find the issues that open PRs close before a batch selects issues](https://github.com/andromarces/agent-loops/issues/1486)
 - [Issue #1560: Check that a PR body closing keyword reached closingIssuesReferences](https://github.com/andromarces/agent-loops/issues/1560)
 - [PR #1719: Propose the ADR for foreground batch scheduling](https://github.com/andromarces/agent-loops/pull/1719)
+- [PR #1724: Accept ADR 0106 and settle its owner decisions](https://github.com/andromarces/agent-loops/pull/1724)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - [ADR 0018: Copy untracked local files into a linked run work tree](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
