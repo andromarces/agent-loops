@@ -162,6 +162,11 @@ test("POSIX package roots with backslashes render exact paths", async () => {
     const guard = posix.join(root, "src/hook/parent-guard.mjs");
     expect(parsePosixCommand(claude.settings[0].entry.hooks[0].command), root).toBe(guard);
     expect(parsePosixCommand(codex.settings[0].entry.hooks[0].command), root).toBe(guard);
+    if (root === "/opt/we\\ird/pkg") {
+      // The single-backslash command keeps the bytes that stable-root.test.mjs
+      // expects, because POSIX quotes a lone backslash literally.
+      expect(claude.settings[0].entry.hooks[0].command, root).toBe(`node "${guard}"`);
+    }
 
     for (const targets of [claude, codex, antigravity]) {
       const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;

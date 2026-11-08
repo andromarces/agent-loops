@@ -79,8 +79,8 @@ command and the skill CLI line are shell double-quoted strings, and the OpenCode
 plugin puts the instructions path in a JavaScript string literal, so such a root
 would either break the file or run a different path. Move the package to a path
 without these characters, then run `install` again. A backslash in a POSIX
-directory name is preserved: the shell commands double it, and the plugin string
-escapes it.
+directory name is preserved: a run of two or more backslashes is doubled in the
+shell commands, and the plugin string escapes each backslash.
 
 The `bunx` layout was observed on macOS with bun 1.2.20 and on
 Windows 11 with bun 1.3.8. The `yarn dlx` layout was observed on macOS with yarn

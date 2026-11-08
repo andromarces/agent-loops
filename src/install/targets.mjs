@@ -14,10 +14,14 @@ function forwardSlashes(path, platform) {
   return platform === "win32" ? path.replaceAll("\\", "/") : path;
 }
 
-// A path inside a shell double-quoted word. POSIX consumes a backslash before `$`, a backtick,
-// `"`, a backslash, or a newline, so each backslash doubles. Windows keeps its separators.
+// A path inside a shell double-quoted word. POSIX consumes a backslash only before `$`, a
+// backtick, `"`, a backslash, or a newline; the installer refuses all but the backslash. A lone
+// backslash therefore stays literal, and a run of two or more doubles so every backslash
+// survives the pair rule. Windows keeps its separators.
 function shellPath(path, platform) {
-  return platform === "win32" ? path : path.replaceAll("\\", "\\\\");
+  return platform === "win32"
+    ? path
+    : path.replace(/\\{2,}/g, (run) => "\\".repeat(run.length * 2));
 }
 
 function nodeCommand(path, platform) {
