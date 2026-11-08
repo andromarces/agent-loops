@@ -269,7 +269,7 @@ export function diffSnapshots(before, after) {
   for (const [path, b] of beforeMap.entries()) {
     const a = afterMap.get(path);
     if (!a) {
-      // It was dirty and now it's not (e.g. reverted or staged/committed)
+      // The path was dirty before and is clean now, for example after a revert or a commit.
       changed.add(path);
     } else if (b.status !== a.status || b.hash !== a.hash) {
       changed.add(path);

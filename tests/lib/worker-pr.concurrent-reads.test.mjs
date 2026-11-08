@@ -4,19 +4,32 @@ import { resolveWorkerPr } from "../../src/lib/worker-pr.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 
-// The order in which the run state `git` reads start and end. `slowBranch` delays the end of the
-// branch read, as a slow disk does.
-const reads = vi.hoisted(() => ({ events: [], slowBranch: false }));
+// The order in which the run state `git` reads start and end. `slowBranch` holds the end of the
+// branch read until the head read starts, as a slow disk does.
+const reads = vi.hoisted(() => ({
+  events: [],
+  slowBranch: false,
+  branchGate: Promise.resolve(),
+  releaseBranch: () => {},
+  resetBranchGate() {
+    this.branchGate = new Promise((resolve) => {
+      this.releaseBranch = resolve;
+    });
+  },
+}));
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execBounded: async (command, args, ...rest) => {
       if (command !== "git") return real.execBounded(command, args, ...rest);
-      if (args[0] === "rev-parse") reads.events.push("head read started");
+      if (args[0] === "rev-parse") {
+        reads.events.push("head read started");
+        reads.releaseBranch();
+      }
       const result = await real.execBounded(command, args, ...rest);
       if (args[0] === "symbolic-ref" && reads.slowBranch) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await reads.branchGate;
         reads.events.push("branch read ended");
       }
       return result;
@@ -35,6 +48,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   reads.slowBranch = false;
+  reads.releaseBranch();
   await removePath(repo);
 });
 
@@ -43,6 +57,7 @@ afterEach(async () => {
 test("the PR resolution reads the work tree head while the branch read runs", async () => {
   reads.events.length = 0;
   reads.slowBranch = true;
+  reads.resetBranchGate();
   const gh = vi.fn(async () => ({ status: 0, stdout: "[]", stderr: "" }));
   const result = await resolveWorkerPr({ cwd: repo, head, gh });
   expect(reads.events.indexOf("head read started")).toBeGreaterThanOrEqual(0);

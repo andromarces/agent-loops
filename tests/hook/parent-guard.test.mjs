@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
-import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
+import { GUARD_DENY_REASON, decideParentGuard, hookDecision } from "../../src/hook/decision.mjs";
+import { ANTIGRAVITY_GUARD } from "../../src/hook/antigravity-guarded-tools.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
@@ -384,10 +385,9 @@ function runShellHookCommand(command, env, inputJson) {
     child.stdin.end(inputJson);
   });
 }
-// Usefulness: verifies the Claude and Codex hook contracts end to end — deny prints
-// one PreToolUse JSON decision on stdout, an unguarded session prints nothing,
-// and unparseable input fails open.
-
+// Usefulness: verifies the Claude and Codex hook contracts end to end: deny prints PreToolUse JSON.
+// Every other input stays silent. Unparseable input fails open.
+// A silent hook keeps the harness permission flow intact.
 test("hook script denies with PreToolUse JSON and stays silent otherwise", async () => {
   await setup();
   const repo = await createTempRepo();
@@ -397,19 +397,31 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
   );
 
-  for (const toolName of ["Edit", "apply_patch"]) {
-    const denied = await runHookScript(
-      JSON.stringify({ session_id: "parent-sess-1", tool_name: toolName }),
-    );
-    expect(denied.code, toolName).toBe(0);
-    const decision = JSON.parse(denied.stdout);
-    expect(decision.hookSpecificOutput).toMatchObject({
+  // Process: the hook entry point reads its JSON payload from stdin and reports its exit code.
+  const denied = await runHookScript(
+    JSON.stringify({ session_id: "parent-sess-1", tool_name: "Edit" }),
+  );
+  expect(denied.code).toBe(0);
+  const decision = JSON.parse(denied.stdout);
+  expect(decision.hookSpecificOutput).toMatchObject({
+    hookEventName: "PreToolUse",
+    permissionDecision: "deny",
+    permissionDecisionReason: GUARD_DENY_REASON,
+  });
+
+  // In process: the deny decision for the other tool, with no second hook process.
+  const claudeDeny = (reason) => ({
+    hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: GUARD_DENY_REASON,
-    });
-  }
+      permissionDecisionReason: reason,
+    },
+  });
+  expect(
+    await hookDecision({ session_id: "parent-sess-1", tool_name: "apply_patch" }, claudeDeny),
+  ).toEqual(claudeDeny(GUARD_DENY_REASON));
 
+  // Process: each fail-open path asserts the hook exit status and its silent stdout.
   const allowed = await runHookScript(JSON.stringify({ session_id: "other", tool_name: "Write" }));
   expect(allowed.code).toBe(0);
   expect(allowed.stdout).toBe("");
@@ -449,6 +461,7 @@ test("installed Claude hook command runs the guard through a shell", async () =>
   const targets = await buildTargets("claude", { home: PACKAGE_ROOT, packageRoot: PACKAGE_ROOT });
   const command = targets.settings[0].entry.hooks[0].command;
 
+  // Process: the registered command string runs in a shell and reports its exit status.
   const denied = await runShellHookCommand(
     command,
     {},
@@ -461,6 +474,7 @@ test("installed Claude hook command runs the guard through a shell", async () =>
     permissionDecisionReason: GUARD_DENY_REASON,
   });
 
+  // Process: the allow path asserts the same shell command exits 0 with silent stdout.
   const allowed = await runShellHookCommand(
     command,
     {},
@@ -482,6 +496,7 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
   );
 
+  // Process: one run covers the Copilot hook entry point and its stdin payload channel.
   const denied = await runCopilotHookScript(
     JSON.stringify({
       hook_event_name: "PreToolUse",
@@ -496,6 +511,7 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
     permissionDecisionReason: expect.stringMatching(/orchestrator/),
   });
 
+  // Process: each allow path asserts the hook exit status and its silent stdout.
   const allowed = await runCopilotHookScript(
     JSON.stringify({
       hook_event_name: "PreToolUse",
@@ -566,17 +582,30 @@ test("Antigravity hook denies guarded tools from the parent and stays silent oth
   const guarded = group.PreToolUse[0].matcher.split("|");
   expect(guarded.length).toBeGreaterThan(0);
 
-  for (const tool of guarded) {
-    const denied = await runAntigravityHookScript(
-      JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
-    );
-    expect(denied.code, tool).toBe(0);
-    expect(JSON.parse(denied.stdout), tool).toEqual({
-      decision: "deny",
-      reason: GUARD_DENY_REASON,
+  // Process: one run covers the deny payload and the Antigravity entry point exit status.
+  const denied = await runAntigravityHookScript(
+    JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: guarded[0] } }),
+  );
+  expect(denied.code).toBe(0);
+  expect(JSON.parse(denied.stdout)).toEqual({
+    decision: "deny",
+    reason: GUARD_DENY_REASON,
+  });
+
+  // In process: the deny decision for the other registered tools.
+  const guard = (input) =>
+    hookDecision(input, ANTIGRAVITY_GUARD.deny, {
+      readSessionId: ANTIGRAVITY_GUARD.readSessionId,
+      isGuarded: ANTIGRAVITY_GUARD.isGuarded,
     });
+  for (const tool of guarded.slice(1)) {
+    expect(
+      await guard({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
+      tool,
+    ).toEqual({ decision: "deny", reason: GUARD_DENY_REASON });
   }
 
+  // Process: each allow path asserts the hook exit status and its silent stdout.
   // `manage_subagents` stays allowed so the parent can still list and terminate
   // a child; an unregistered tool is never the adapter's concern.
   for (const tool of ["manage_subagents", "run_command"]) {
@@ -637,6 +666,7 @@ test("Antigravity hook entry runs the shim without a quoted path", async () => {
 // file URL and stays silent with exit 0 when that URL is stale, because
 // Antigravity blocks a tool call on a non-zero exit and the guard must fail
 // open for every session.
+// Process: each run loads the shim in a fresh process, which is the import behavior under test.
 test("Antigravity shim loads the guard and fails open on a stale URL", async () => {
   await setup();
   await initRunForParent();

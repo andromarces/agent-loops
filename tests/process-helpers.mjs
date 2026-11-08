@@ -114,7 +114,7 @@ export const ABORT_KILL_TEST_TIMEOUT_MS =
  * was created before that removal, so the later `hold` read sees it: no poll finds
  * both absent during the swap.
  */
-async function writeHangingShim(dir, command, ceilingMs) {
+async function writeHangingShim(dir, command, ceilingMs, hardDeadline = hardDeadlineMs(ceilingMs)) {
   const started = join(dir, "started.txt");
   const script = join(dir, "hang.js");
   const keep = join(dir, KEEP_FILE);
@@ -134,7 +134,7 @@ process.on("exit", () => {
 });
 const watch = setInterval(() => {
   const alive = fs.existsSync(${JSON.stringify(keep)}) || fs.existsSync(${JSON.stringify(hold)});
-  if (Date.now() - begun >= ${hardDeadlineMs(ceilingMs)}) {
+  if (Date.now() - begun >= ${hardDeadline}) {
     clearInterval(watch);
   } else if (!alive || !fs.existsSync(${JSON.stringify(dir)})) {
     clearInterval(watch);
@@ -250,7 +250,7 @@ async function returnsWithin(call, limitMs, message) {
 // record proves nothing and is reported as an unconfirmed exit. `gone` is true when
 // the test already proved the child ended. Returns the errors: the keep file removal,
 // and any exit that is not confirmed.
-async function stopShim(dir, gone, ceilingMs, shimExitWaitMs = SHIM_EXIT_WAIT_MS) {
+async function stopShim(dir, gone, shimExitWaitMs = SHIM_EXIT_WAIT_MS, hardDeadline) {
   const errors = [];
   try {
     await rm(join(dir, KEEP_FILE), { force: true });
@@ -272,7 +272,7 @@ async function stopShim(dir, gone, ceilingMs, shimExitWaitMs = SHIM_EXIT_WAIT_MS
   };
   const survivor = (pid) =>
     `the shim in ${dir} (pid ${pid ?? "unknown"}) did not exit within ${shimExitWaitMs} ms of cleanup. ` +
-    `The test does not own it and sends it no signal; its own hard wall-clock deadline of ${Math.ceil(hardDeadlineMs(ceilingMs) / 1000)} s ends it`;
+    `The test does not own it and sends it no signal; its own hard wall-clock deadline of ${Math.ceil(hardDeadline / 1000)} s ends it`;
   const pid = (await waitForRecord(join(dir, "started.txt"), 0))?.pid ?? null;
   if (!(await until(async () => existsSync(join(dir, EXITED_FILE))))) {
     errors.push(new Error(survivor(pid)));
@@ -296,7 +296,13 @@ async function stopShim(dir, gone, ceilingMs, shimExitWaitMs = SHIM_EXIT_WAIT_MS
 // whatever the shim stop does. Every failure reaches the caller: the body error, the
 // shim stop errors, and the removal error. One error is rethrown as is, several as
 // an AggregateError, so a failed body never hides a surviving shim.
-async function runWithShimCleanup(dir, ceilingMs, body, shimExitWaitMs = SHIM_EXIT_WAIT_MS) {
+async function runWithShimCleanup(
+  dir,
+  ceilingMs,
+  body,
+  shimExitWaitMs = SHIM_EXIT_WAIT_MS,
+  hardDeadline = hardDeadlineMs(ceilingMs),
+) {
   const errors = [];
   let gone = false;
   let result;
@@ -308,7 +314,7 @@ async function runWithShimCleanup(dir, ceilingMs, body, shimExitWaitMs = SHIM_EX
     errors.push(error);
   }
   try {
-    errors.push(...(await stopShim(dir, gone, ceilingMs, shimExitWaitMs)));
+    errors.push(...(await stopShim(dir, gone, shimExitWaitMs, hardDeadline)));
   } catch (error) {
     errors.push(error);
   } finally {
@@ -351,12 +357,14 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
   const ceilingMs =
     options.ceilingMs ??
     boundMs + CALL_CEILING_MS + RECORD_VISIBLE_MS + FORCE_KILL_AFTER_DELAY_MS + TEARDOWN_MARGIN_MS;
+  // The ceiling-marker test extends the hard exit bound, so the helper watches the failed write.
+  const hardDeadline = options.hardDeadlineMs ?? hardDeadlineMs(ceilingMs);
   // The test can shorten the cleanup wait; the default is the production ceiling (issue #1465).
   return runWithShimCleanup(
     dir,
     ceilingMs,
     async (markGone) => {
-      const shim = await writeHangingShim(dir, command, ceilingMs);
+      const shim = await writeHangingShim(dir, command, ceilingMs, hardDeadline);
       return withShimOnPath(dir, async () => {
         const result = await returnsWithin(
           run(boundMs),
@@ -373,6 +381,7 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
       });
     },
     options.shimExitWaitMs,
+    hardDeadline,
   );
 }
 

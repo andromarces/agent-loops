@@ -33,7 +33,7 @@ import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";
 
 // The main work tree resolution fails or stalls only in the tests that set these flags.
 const resolution = vi.hoisted(() => ({ fail: false, stall: false }));
-vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
+vi.mock("../src/lib/work-tree-layout.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -149,6 +149,27 @@ test("a worker turn that writes a tracked main work tree file reports its path",
     await writeFile(join(tree.main, "init.txt"), "changed\n");
   });
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies the whole pre-turn main read, layout lookup included, ends at its bound.
+// Not redundant: no other test stalls the layout through a turn.
+test("a stalled main work tree layout ends the turn at its bound", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  resolution.stall = true;
+  const started = Date.now();
+
+  const result = await runChild({
+    agents: { fake: scripted([async () => {}]) },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: tree.linked,
+    mainReadDeadlineMs: 50,
+  });
+
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree"))).toBe(true);
 });
 
 // Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError. A

@@ -272,6 +272,11 @@ function createEventHandler({ recordEvents, events, onInvocation, onTestRun }) {
   };
 }
 
+/**
+ * Runs the `agent-loop` CLI. It sets `process.exitCode` instead of returning one, and `--help`
+ * prints the help text and exits 0. Injected `agents`, `stdin`, and `gh` replace the runtime
+ * defaults.
+ */
 export async function main(
   argv = process.argv.slice(2),
   agents = defaultAgents,

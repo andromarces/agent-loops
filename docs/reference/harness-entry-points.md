@@ -155,6 +155,12 @@ Covered paths: `.agents/`, `.claude/`, `.codex/`, `.env`, `.envrc`, `.mcp.json`,
 
 An operator adds paths to this list for one run with `--copy-local-path <relative path>`, an init field of `agent-loop role` that repeats once for each path ([ADR 0050](https://github.com/andromarces/agent-loops/blob/main/adr/0050-let-an-operator-add-ignored-paths-to-the-local-file-copy.md), issue #980). The path is relative to the main work tree. The init is refused, before any file is copied, any state file is written, or any child spawns, for: an empty path, an absolute or drive-qualified path, a `.` or `..` segment, `.git`, a segment with a colon or a trailing dot or space, a path that holds a file tracked in the main work tree (names compare ignoring case, so `SRC/foo` is refused when `src/foo` is tracked), a path with a symlink or a junction at any level, a path that does not resolve to the main work tree plus the path as written, a path that holds a file that is not ignored in `--cwd`, and use with `--no-copy-local-files`. The checks also run when `--cwd` is the main work tree, where nothing is copied.
 
+A downloaded specification directory reaches the copy this way:
+
+```bash
+agent-loop role --task "..." --worker claude --reviewer agy --parent-session <id>   --copy-local-path docs/api-spec
+```
+
 Every other rule in this section applies to the files under the path, and its files are named in `localFiles.copied` or `localFiles.skipped`. The run state stores the normalized paths as `copyLocalPaths`, and a later call must repeat the same set or omit the flag. Names in `localFilesCopied` cover the files for `localFilesDiffer`. The headless `agent-loop` command has no such flag.
 
 - Nothing is overwritten, and the checks refuse to create or follow a symlink (within the swap limit stated below). A symlink in the main work tree, whatever its target, and a listed path under a symlinked directory are skipped and named. Nothing under `.git`, `.claude/worktrees/`, or any other work tree is copied, and neither is a `.gitignore` or `.gitattributes`, because a copy would change ignore rules or line endings in `--cwd`. A `*.lock` file under `.claude/`, such as `scheduled_tasks.lock`, is skipped and named too: it records a lock holder of the main work tree, and a copy would claim a lock that no process in `--cwd` holds (issue #964). Name exclusions ignore case, a trailing dot or space, and a stream suffix, so `.GITIGNORE` is skipped like `.gitignore`.

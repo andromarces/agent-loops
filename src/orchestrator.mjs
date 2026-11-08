@@ -36,7 +36,6 @@ export async function decide({ agent, state, prompt, options = {} }) {
     });
   }
 
-  // Attempt 1
   const firstResponse = await executeTurn(prompt);
   const firstValidation = parseAndValidate(firstResponse);
 
@@ -44,7 +43,6 @@ export async function decide({ agent, state, prompt, options = {} }) {
     return firstValidation.value;
   }
 
-  // Repair turn
   logWarn(`orchestrator action invalid; taking repair turn: ${firstValidation.error}`);
   const repair = repairPrompt(firstValidation.error);
   const repairResponse = await executeTurn(repair);

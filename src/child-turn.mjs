@@ -10,7 +10,7 @@ import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./lib/tmpdir
 import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockfile-change.mjs";
-import { hashCopiedLocalSources } from "./lib/local-files.mjs";
+import { hashCopiedLocalSources } from "./lib/local-file-changes.mjs";
 import {
   diffMainWorkTree,
   diffMainWorkTreeInTurn,
@@ -119,6 +119,25 @@ export async function runProbeTurn({
 /**
  * The pre-turn baselines and post-turn evidence caches of one child turn.
  * @typedef {object} ChildEvidenceState
+ * @property {string} cwd
+ * @property {AbortSignal | undefined} signal
+ * @property {boolean} isWorker
+ * @property {boolean} isReviewer
+ * @property {string[]} localFilesCopied
+ * @property {number} sharedGitReadBoundMs
+ * @property {object | null} sharedBefore
+ * @property {object | null} lockfilesBefore
+ * @property {object | null} mainBefore
+ * @property {object | null} mainWatch
+ * @property {number | null} mainWatchDeadlineMs
+ * @property {object | null} localSourcesBefore
+ * @property {string[] | null} localSourcePaths
+ * @property {string[] | null} lockfilePaths
+ * @property {object | null} mainEvidence
+ * @property {object | null} tmpdirBefore
+ * @property {object | null} storeBefore
+ * @property {object | null} advisory
+ * @property {string[] | null} sharedGitItems
  */
 
 /**
@@ -133,11 +152,15 @@ export async function runProbeTurn({
  */
 async function readBeforeTurn(state) {
   if (state.isWorker) {
+    const mainRead =
+      state.mainReadDeadlineMs === null
+        ? readMainWorkTree(state.cwd)
+        : readMainWorkTree(state.cwd, { deadlineMs: state.mainReadDeadlineMs });
     const [copiedSources, shared, lockfiles, main] = await Promise.all([
       readCopiedSources(state, { signal: state.signal }),
       readShared(state),
       readLockfiles(state.cwd),
-      readMainWorkTree(state.cwd),
+      mainRead,
     ]);
     state.localSourcesBefore = copiedSources;
     state.sharedBefore = shared;
@@ -452,9 +475,11 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
-    // A test uses onMainWatch and mainWatchDeadlineMs to observe and bound the watch.
+    // A test uses onMainWatch, mainWatchDeadlineMs, and mainReadDeadlineMs to bound the watch and
+    // the main work tree read.
     onMainWatch,
     mainWatchDeadlineMs = null,
+    mainReadDeadlineMs = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
@@ -730,6 +755,7 @@ export async function runChild(options) {
     // The turn-window watch of the main work tree, stopped on every outcome.
     mainWatch: null,
     mainWatchDeadlineMs,
+    mainReadDeadlineMs,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,
     localSourcePaths: null,
@@ -809,7 +835,9 @@ export async function runChild(options) {
     if (isReviewer && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
-    // Read after the last child call of the dispatch, the task-only turn included.
+    // Read after the last child call before the closing-block repair, the task-only turn included.
+    // A repair turn runs after these reads, so an entry that it creates stays unseen (ADR 0094,
+    // ADR 0095).
     const localSourceChangedInTurn = await readLocalSourceChangedInTurn(evidence);
     const { inheritedTmpdirEntries, packageStoreEntries } = await readAdvisory(evidence);
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of

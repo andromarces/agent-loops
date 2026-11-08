@@ -2,7 +2,7 @@
 // envelope then reports the tracked files that the run work tree lacks (issue #1538).
 import { errorLine } from "./error-message.mjs";
 import { gitRead, readTopLevel } from "./git-read.mjs";
-import { mainWorkTreePath } from "./local-files.mjs";
+import { mainWorkTreePath } from "./work-tree-layout.mjs";
 import { logWarn } from "./log.mjs";
 import { withTimeBound } from "./time-bound.mjs";
 
