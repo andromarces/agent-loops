@@ -37,7 +37,7 @@
     "test:watch": "vp test watch"
   },
   "dependencies": {
-    "execa": "^10.0.1",
+    "execa": "^10.2.1",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
@@ -46,5 +46,5 @@
   "engines": {
     "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
   },
-  "packageManager": "pnpm@12.16.1"
+  "packageManager": "pnpm@12.18.0"
 }

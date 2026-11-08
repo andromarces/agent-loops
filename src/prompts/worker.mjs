@@ -148,7 +148,7 @@ Your role:
   If the CLI refuses a command, never report it as run. Name the refusal in Checks and Blockers.
 - ${testSlotRule(slotOptions)}
 - ${redRunRule(slotOptions)}
-- ${hookTestSlotRule()}
+- ${hookTestSlotRule(slotOptions)}
 - ${longSuiteRule}
 - ${ciWaitRule}
 - ${unnamedHostRule({ namesHost: true })}

@@ -109,6 +109,24 @@ function sentencesOf(line) {
   return line.split(/(?<=[.!?])\s+/);
 }
 
+/**
+ * Returns the index where the clause that a leading supersede phrase governs ends.
+ * A conjunction that does not introduce a link, or a semicolon, ends that clause.
+ * Text inside a link is not a clause boundary.
+ */
+function supersedeClauseEnd(sentence) {
+  const links = [...sentence.matchAll(ADR_LINK)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+  const breakPattern = /;|[,;]?\s+(?:and|but|while|whereas|although|yet)\s+(\S)/gi;
+  for (const match of sentence.matchAll(breakPattern)) {
+    if (links.some((link) => match.index >= link.start && match.index < link.end)) continue;
+    if (match[1] !== "[") return match.index;
+  }
+  return sentence.length;
+}
+
 /** Resolves one Markdown link against the ADR directory and reads its displayed ADR number. */
 function linkParts(match) {
   const destination = match[2].trim().split("#")[0].split("?")[0];
@@ -130,11 +148,15 @@ function relationsOf(adr) {
   for (const block of blocksOf(adr.text)) {
     const inSection = section.has(block.start) && section.has(block.end);
     for (const sentence of sentencesOf(block.text)) {
+      const clauseEnd = supersedeClauseEnd(sentence);
       for (const match of sentence.matchAll(ADR_LINK)) {
         const link = linkParts(match);
         if (!isAdrLink(link)) continue;
         if (SUPERSEDED_BY.test(sentence.slice(0, link.index))) supersededBy.push(link);
-        if (inSection || SUPERSEDES_STATEMENT.test(statementText(sentence))) {
+        if (
+          inSection ||
+          (link.index < clauseEnd && SUPERSEDES_STATEMENT.test(statementText(sentence)))
+        ) {
           supersedes.push(link);
         }
       }
@@ -230,6 +252,28 @@ test("a wrapped supersede statement still finds its ADR link", () => {
   };
   const links = relationsOf(adr).supersedes.map((link) => link.fileName);
   expect(links).toEqual(["0081-example.md"]);
+});
+
+// Usefulness: a related citation after a new predicate is not governed by the supersede phrase, so it must not count as a backlink (issue #1662).
+test("a related citation in a supersede sentence is not a backlink", () => {
+  const adr = {
+    number: "0100",
+    name: "0100-example.md",
+    text: "## Status\n\naccepted\n\nPartially supersedes [ADR 0069: Example](0069-example.md) and cites [ADR 0068: Example](0068-example.md) as related background.\n",
+  };
+  const links = relationsOf(adr).supersedes.map((link) => link.fileName);
+  expect(links).toEqual(["0069-example.md"]);
+});
+
+// Usefulness: an adverb before a new predicate still ends the governed clause, so the later link is not a backlink (issue #1662).
+test("an adverb before a new predicate still ends the supersede clause", () => {
+  const adr = {
+    number: "0100",
+    name: "0100-example.md",
+    text: "## Status\n\naccepted\n\nPartially supersedes [ADR 0069: Example](0069-example.md) and also cites [ADR 0068: Example](0068-example.md) as related background.\n",
+  };
+  const links = relationsOf(adr).supersedes.map((link) => link.fileName);
+  expect(links).toEqual(["0069-example.md"]);
 });
 
 // Usefulness: treats every ADR link in the Supersedes section as a backlink, in a plain paragraph too.
