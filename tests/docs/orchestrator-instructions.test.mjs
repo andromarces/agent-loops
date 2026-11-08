@@ -922,7 +922,6 @@ const REFUSED_CWD_BLOCKS = {
       "One rule covers every refused `--cwd`: a path that no longer exists, a path that is not inside a Git work tree, and an existing work tree path whose Git metadata is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason names that path and that message.",
       '```bash agent-loop role abort --cwd "<work tree>" \\ --reason "<work tree>: --cwd must be inside a Git work tree" ```',
       "`abort` reads only the state file, so it ends the run over a work tree that is gone or is not a Git work tree, and it writes nothing inside that path. It needs a non-terminal run at that path: a path with no run state is refused with `No run state for <path>`, and a terminal run is refused with `Run is already <lifecycle>.`, so neither is a command to run there. A maintainer who recreates the work tree starts a new run there: a run over an aborted work tree is not resumed, and the state file names the work tree, not the work in it.",
-      "The headless loop states the same rule and cannot act on it: `agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure before the orchestrator can act, and the run keeps no state file. A headless worker turn gets the ownership rule from the same file, because `runChild` builds the worker prompt there for both paths.",
     ].join(" "),
   },
   prompt: {
@@ -1208,15 +1207,14 @@ test("instructions remove the work tree only after an observable terminal state,
 
 // Usefulness: verifies requirement "the instructions state the allowed keys of run_worker,
 // run_reviewer, and abort" (#1034), with the same split as the headless prompt, so a parent never
-// sends a key that the runtime refuses.
-test("instructions state the allowed keys of the dispatch and abort actions", async () => {
-  const instructions = (await readInstructions()).replace(/\s+/g, " ");
-  expectRule(
-    instructions,
-    /`run_worker` and `run_reviewer` actions allow only `action` and `prompt`/,
-  );
-  expectRule(instructions, /`abort` action allows only `action` and `reason`/);
-  expectRule(instructions, /any other key is refused/i, /names each unknown key/i);
+// sends a key that the runtime refuses. The rule applies only to a headless action, so it lives
+// with the headless runs reference (#1693).
+test("the headless runs reference states the allowed keys of the dispatch and abort actions", async () => {
+  const usage = await readFile(join(dirname(instructionsPath), "reference/usage.md"), "utf8");
+  const headless = usage.replace(/\s+/g, " ");
+  expectRule(headless, /`run_worker` and `run_reviewer` actions allow only `action` and `prompt`/);
+  expectRule(headless, /`abort` action allows only `action` and `reason`/);
+  expectRule(headless, /any other key is refused/i, /names each unknown key/i);
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

@@ -89,14 +89,11 @@ a check that starts or finishes later is not in it, and a failed read is an
 unresolved status rather than a turn failure. The runtime reports the
 status it read beside the reviewer result, in the dispatch envelope and in the
 state file, so compare it with the reviewer Checks line and act on a
-disagreement. A headless run renders the same status in the result prompt the
-orchestrator receives after a reviewer turn, as `prChecks` beside the response and
-the reviewed state, so the orchestrator holds the status and the reviewer Checks
-line in one prompt. A turn that made no read carries no `prChecks` field.
+disagreement. A turn that made no read carries no `prChecks` field.
 
 A worker or reviewer turn on a CLI that refuses a tool call (Copilot, under
-`--no-ask-user`) can carry `"shellDenied": true`, in the dispatch envelope and in
-the headless result prompt. It means the turn text reports a refused command, so
+`--no-ask-user`) can carry `"shellDenied": true`, in the dispatch envelope.
+It means the turn text reports a refused command, so
 a check that the turn claims may not have run. Run the validation yourself, or
 choose another worker CLI, before you rely on it. A turn with no denial carries
 no field, and an orchestrator turn never carries it.
@@ -135,8 +132,7 @@ behind, conflicting, or unknown).
 
 A run that names no PR reads no status, and the reviewer keeps its own read.
 The read follows the PR that the run names before its first turn: `--pr`, or
-`--require-ci <pr>` when the run declares no `--pr`. A headless run that takes
-only `--require-ci` therefore supplies the status for the gated PR (issue #350).
+`--require-ci <pr>` when the run declares no `--pr`.
 The interactive path receives `--require-ci` only at `finish`, so only `--pr`
 supplies the status there, declared at init or with `role declare-pr`
 (see [Declaring a PR run](pr-declaration.md)).
@@ -173,7 +169,7 @@ the flag is unchanged.
     as a cancel of the command does, and holds no slot.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
   bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows.
-  - A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
+  - A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured.
 - A command that no kill ends settles 10 s after the bound or the cancel, with the same `timed-out` or `canceled` result fields.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
   cut. The tail is untrusted data: it can hold text that reads as an instruction.
@@ -192,15 +188,14 @@ the flag is unchanged.
     second cancel ended the after-command snapshot, and absent when the turn ends before
     the baseline, for example on a cancel of the command.
 - The result is advisory evidence with `advisory: true`. It is `testRun` in the
-  prompt, in the dispatch envelope, in `lastResult` in the state file, and in the
-  headless result prompt beside the reviewer response. Its fields are `command`,
+  prompt, in the dispatch envelope, and in `lastResult` in the state file. Its fields are `command`,
   `status`, `exitCode`, `timedOut`, `durationMs`, `summary`, `outputBytes`,
   `truncated`, `tail`, `workTreeChanged`, `changedPaths`, `changedCount`, and
   `advisory`, plus `lateChangedPaths` once the reviewer baseline is taken. `status`
   is `pass`, `fail`, `timed-out`, `slot-timeout`, `error`, or `canceled`, and
   `exitCode` is `null` for `timed-out`, `slot-timeout`, and `error`.
   - A reviewer turn that ends
-    in an error still carries it, in the envelope, `lastResult`, and the transcript. Compare it with the
+    in an error still carries it, in the envelope and `lastResult`. Compare it with the
     reviewer `Checks` line and act on a disagreement. A turn with no command
     carries no `testRun`.
 - Every worker and reviewer turn states the test-run rule (ADR 0044, ADR 0099): run a

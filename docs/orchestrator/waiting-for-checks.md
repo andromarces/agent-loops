@@ -353,7 +353,7 @@ is malformed. A
 repository with a `pull_request` workflow keeps the wait, unless a `paths` filter keeps that workflow from running for every file of the PR. The limit: the base head and
 one merged PR head are two commits, so a provider that skipped both stays unseen, and
 only the wait covers it. `noCheckSource` never comes from the required
-wait. The headless orchestrator prompt carries the same rule.
+wait.
 
 A `bucket` of `pending` marks a pending check, and `fail` or `cancel` marks a
 failed one. A check that has not started is absent from `checks`, because the
@@ -435,11 +435,5 @@ The wait comes first because of two `gh` limits. `gh run view --log-failed` has 
 If the diff reaches the failure, or no section of the target repository's flaky-test record matches it, the worker turn reruns nothing and reports the failure. A target repository with no such record has no matching section, so the worker turn reruns nothing and reports the failure. If the run is still in progress at the bound, the worker turn reruns nothing and reports that.
 
 After that worker turn, run `wait-checks` again for the same head before the reviewer turn. Never use `wait-checks` to wait for the rest of the run, because it settles on the first failing check.
-
-## Headless loop waits
-
-The headless `agent-loop` command runs its own orchestrator and renders its own wait
-prompt ([ADR 0013](https://github.com/andromarces/agent-loops/blob/main/adr/0013-bound-the-headless-required-check-wait.md)). A `role` parent does not follow that prompt. It follows the wait
-rules above, and it runs the wait itself.
 
 The `--require-ci` finish gate is the only check read that enforces; the advisory status read of a named PR does not. The gate refuses a finish while a required check is pending. A reviewer dispatch corrects that refusal.

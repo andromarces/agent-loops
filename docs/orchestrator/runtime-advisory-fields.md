@@ -36,8 +36,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
     canceled turn.
   - The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
-    interrupted dispatch. A headless run also emits an `inherited-tmpdir` event with `fatal: true`
-    for a fatal error. The transcript keeps that event.
+    interrupted dispatch.
   - A turn that cannot carry it is one whose process ended
     without a throw, for example a crash or a kill, because the before-read lives in memory, and
     one whose before-read failed. A run that the next call marks `interrupted` after such an end
@@ -64,6 +63,5 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     no turn signal. Every reviewer turn that read the store before it started carries the field: an
     ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a canceled
     turn. The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
-    interrupted dispatch, and a headless run emits a `package-store` event with `fatal: true` for a
-    fatal error. Report `packageStoreEntries` in the finish summary under `open`, and do not treat
+    interrupted dispatch. Report `packageStoreEntries` in the finish summary under `open`, and do not treat
     it as a reason to reject (issue #1045).
