@@ -34,6 +34,7 @@ version.
   - [Options](reference/usage.md#options)
   - [Continue a run](reference/usage.md#continue-a-run)
   - [Loop policy and actions](reference/usage.md#loop-policy-and-actions)
+  - [A headless task whose worker opens the PR](reference/usage.md#a-headless-task-whose-worker-opens-the-pr)
   - [Compare-head and an undeclared PR](reference/usage.md#compare-head-and-an-undeclared-pr)
   - [Transcript](reference/usage.md#transcript)
   - [Exit codes](reference/usage.md#exit-codes)

@@ -524,8 +524,7 @@ of this file.
   Read it when a required check fails on a known flaky test. Read it when `wait-checks` returns an
   error, `noRequiredChecks`, or `noCheckSource`.
 - [Declaring a PR run](orchestrator/pr-declaration.md): read it before you pass `--pr`, when a
-  declared run refuses a finish, when the PR does not exist at init, or when a headless run
-  declares its PR itself.
+  declared run refuses a finish, or when the PR does not exist at init.
 - [Finish output](orchestrator/finish-output.md): read it before you call `finish`, when you need
   the exact summary shape or the `unresolvedCompare` marker, or when a `finish` is refused.
 - [Finish gates](orchestrator/finish-gates.md): read it when a `finish` is refused, and before you
