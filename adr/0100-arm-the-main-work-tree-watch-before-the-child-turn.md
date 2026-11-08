@@ -14,7 +14,7 @@ Partially supersedes [ADR 0080: Report a main work tree change that a turn resto
 
 `fs.watch(root, { recursive: true })` returns on macOS before the FSEvents stream starts on its own thread. A write that lands in the same event-loop turn can then be dropped, and `mainWorkTreeChangedInTurn` omits the path. Issue #1628 records three macOS CI misses and a local probe that reopened one root and missed a first write.
 
-A local probe on macOS 27.3 with Node v27.0.0-alpha.0.0.0 reopened one root and wrote once per iteration. A synchronous write right after `watch` missed 1 of 10,000 events. A write after one event-loop turn missed 0 of 5,000, and one after a 0 ms timer missed 0 of 5,000. The saved fields are under `node_modules/.cache/agent-loop-evidence/1628/`.
+A local probe on macOS 27.3 with Node v27.0.0-alpha.0.0.0 reopened one root and wrote once per iteration. A synchronous write right after `watch` missed 1 of 10,000 events. A write after one event-loop turn missed 0 of 5,000, and one after a 0 ms timer missed 0 of 5,000.
 
 ## Decision
 
