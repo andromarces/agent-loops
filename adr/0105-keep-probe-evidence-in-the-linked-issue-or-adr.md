@@ -44,6 +44,7 @@ Andro Marces
 ## Links
 
 - [Issue #1646: Move probe logs out of the reference docs](https://github.com/andromarces/agent-loops/issues/1646)
+- [Issue #1690: Move the dated reviewer-replacement probe logs out of session-resume.md](https://github.com/andromarces/agent-loops/issues/1690)
 - [PR #1688](https://github.com/andromarces/agent-loops/pull/1688)
 - [ADR 0019: Opt in to a workspace-write sandbox for the Codex reviewer](0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)
 - [ADR 0038: Run the Codex reviewer with no sandbox by default](0038-run-the-codex-reviewer-with-no-sandbox-by-default.md)
@@ -374,3 +375,35 @@ Moved from `docs/reference/session-resume.md` on 2026-11-08.
 
 - One worker turn and one reviewer turn ran, with one hostile task shape.
 - Not verified: Windows, Linux, and the other CLIs.
+
+## Reviewer replacement live checks
+
+Moved from `docs/reference/session-resume.md` on 2026-11-08.
+
+### Reviewer conversation replacement (live), 2026-11-03
+
+- The probe ran on agy 1.4.12 with model `gemini-3.8-flash-low`.
+- It ran on macOS 27.2 build 26B123 with Node v27.0.0-alpha.0.0.0.
+- The agent-loop source was `1aa816eac03b5c53d3c445f6115f40073e85916b`.
+- The raw agy result JSON of the init turn named conversation `eb0295a5-7231-4a4a-9a4a-7989eb7bdbc6`.
+- `taskSentTo` named that same conversation.
+- Renaming that conversation's database out of the CLI store forced the next resume with `--conversation eb0295a5-7231-4a4a-9a4a-7989eb7bdbc6`.
+- The raw result of that resume named conversation `ecdf63da-e15d-4992-9f98-4032738d96ed`.
+- That review prompt carried no `Init task:` block.
+- The task-only turn in the same dispatch then carried the block.
+- `role finish --require-accept` exited 0.
+- The state recorded `taskSentTo` as the replacement id.
+
+### Interrupt during the reviewer task-only turn (live), 2026-11-03
+
+- The probe ran on agy 1.4.12 with model `gemini-3.8-flash-low`.
+- It ran on macOS 27.2 build 26B123 with Node v27.0.0-alpha.0.0.0.
+- The agent-loop source was `dac8f6dd5c295ab6d3beba14e984e779ffb032d3`.
+- The replacement conversation recorded the task-only prompt at 2026-11-03T04:28:09Z.
+- SIGINT went to dispatch pid 54451 at 2026-11-03T04:28:09.362Z.
+- The agy child pid 54571 was alive at 2026-11-03T04:28:09.362Z.
+- The dispatch exited 130 with no verdict.
+- The state kept `conversationReplaced`.
+- The state recorded `taskSentTo` as the replacement id.
+- The resumed reviewer turn exited 0.
+- Its prompt carried no `Init task:` block.
