@@ -6,16 +6,11 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 // Answers `git` from memory for every case (see `cutLinkedReads` below). A case then starts no
 // process for the shared Git and lockfile reads of the linked work tree.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
-// Counts each `git worktree list` read, which one layout lookup performs exactly once.
-const layoutReads = vi.hoisted(() => ({ count: 0 }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) => {
-      if (command === "git" && args[0] === "worktree" && args[1] === "list") {
-        layoutReads.count += 1;
-      }
       const answer =
         gitDouble.answer && command === "git" ? gitDouble.answer(command, args, options) : null;
       return answer ?? real.execa(command, args, options);
@@ -58,14 +53,12 @@ beforeEach(async () => {
   // work tree is created for it. The main work tree stays real, so its snapshot stays real.
   tree = await createLinkedWorkTree({ linkedWorkTree: false });
   tree.mainReal = await realpath(tree.main);
-  layoutReads.count = 0;
   gitDouble.answer = cutLinkedReads;
 });
 afterEach(async () => {
   gitDouble.answer = null;
   resolution.fail = false;
   resolution.stall = false;
-  layoutReads.count = 0;
   if (tree) await removePath(tree.base);
   tree = undefined;
 });
@@ -158,28 +151,25 @@ test("a worker turn that writes a tracked main work tree file reports its path",
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
 });
 
-// Usefulness: verifies a worker turn reads the layout once before the turn and twice after it.
-// Not redundant: no other test counts the layout reads of one turn.
-test("a worker turn reads the layout once before and twice after the turn", async () => {
-  const realTree = await createLinkedWorkTree({ ignore: [".env"] });
-  try {
-    await writeFile(join(realTree.main, ".env"), "A=1\n");
-    layoutReads.count = 0;
+// Usefulness: verifies the whole pre-turn main work tree read, its layout lookup included, ends
+// at its bound. Not redundant: no other test stalls the layout through a turn.
+test("a stalled main work tree layout ends the turn at its bound", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  resolution.stall = true;
+  const started = Date.now();
 
-    const result = await runChild({
-      agents: { fake: scripted([async () => {}]) },
-      role: { kind: "fake", sessionId: null },
-      roleName: "worker",
-      prompt: "go",
-      cwd: realTree.linked,
-      localFilesCopied: [".env"],
-    });
+  const result = await runChild({
+    agents: { fake: scripted([async () => {}]) },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: tree.linked,
+    mainReadDeadlineMs: 50,
+  });
 
-    expect(result).not.toHaveProperty("mainWorkTreeChanged");
-    expect(layoutReads.count).toBe(3);
-  } finally {
-    await removePath(realTree.base);
-  }
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(result).not.toHaveProperty("mainWorkTreeChanged");
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree"))).toBe(true);
 });
 
 // Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError. A

@@ -59,6 +59,7 @@ async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {
     ) {
       return NOT_COMPARABLE;
     }
+    // The test seams run with the absolute path after the ancestor check and before the open.
     await afterAncestorCheck?.(path);
     if ((await realpath(path)) !== canon) {
       return NOT_COMPARABLE;
@@ -87,7 +88,8 @@ async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {
     return { bytes, hash: sha256(bytes), mode: Number(named.mode & 0o777n) };
   } catch (err) {
     // A file that vanished, a link met by `O_NOFOLLOW`, or a path that cannot be opened after the
-    // first probe is not comparable, never "missing": an absence after the probe is not proven.
+    // first probe is not comparable. It is never "missing", because an absence after the probe is
+    // not proven.
     if (["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM"].includes(err.code)) {
       return NOT_COMPARABLE;
     }
@@ -104,10 +106,10 @@ async function sha256Of(base, rel, hooks) {
 }
 
 /**
- * Hashes each named file of the copy root. `names` is the `copied` list of the init copy.
+ * Hashes each named file of the copy root, where `names` is the `copied` list of the init copy.
  * Returns a plain object of path to SHA-256 hex, or an empty object when there is no main work
  * tree. A name that cannot be hashed is left out, so the later compare fails closed for it.
- * Content is never returned or logged. `afterAncestorCheck` and `beforeRead` are test seams.
+ * Content is never returned or logged, and `afterAncestorCheck` and `beforeRead` are test seams.
  * `located` is a layout that the caller already read.
  * @param {string} cwd
  * @param {string[]} names
@@ -291,8 +293,6 @@ export async function refreshLocalFile(
  * the result is sorted names, or empty when there is no main work tree.
  * @param {string} cwd
  * @param {string[]} names
- * `afterAncestorCheck` and `beforeRead` are test seams that run with the absolute path after the
- * ancestor check and just before the file is opened.
  * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
  * @returns {Promise<string[]>}
  */

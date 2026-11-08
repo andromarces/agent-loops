@@ -1,6 +1,6 @@
 // The work-tree layout of a linked directory: the top-level path, the registered work trees,
-// the canonical-path match, and the main work tree (ADR 0018, ADR 0073). The local-file copy,
-// its comparison, and the work tree lock share it.
+// and the main work tree (ADR 0018, ADR 0073). It also holds the canonical-path match.
+// The local-file copy, its comparison, and the work tree lock share it.
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { canonicalPath } from "./canonical-path.mjs";
@@ -54,8 +54,8 @@ const isInsideByText = (parent, child) => {
 };
 
 /**
- * Returns `{ main }`, `{ main: null }`, or `{ refused }` with the name of a path that holds a
- * control character (decision 10 of ADR 0018).
+ * Returns `{ main }`, `{ main: null }`, or `{ refused }` with a control-character path name
+ * (decision 10, ADR 0018).
  *
  * The main work tree is the first entry of `git worktree list --porcelain -z`. It is taken only
  * when three conditions hold. The entry is not marked `bare`, its path is an existing directory,
@@ -135,9 +135,8 @@ async function findOwn(root, entries, rootReal) {
 }
 
 /**
- * Reads the work tree root of `cwd` and the registered work trees. `root` is the operator's `cwd`
- * string when Git names the same directory, else Git's top-level echo. `own` is the entry that
- * names the root, or null. A failed read throws.
+ * Reads the work tree root of `cwd` and its record in `git worktree list`, which holds the lock
+ * state. `own` is the entry that names the root, or null. A failed read throws.
  */
 export async function readWorkTreeLayout(cwd, read, { signal } = {}) {
   const options = {
@@ -148,21 +147,24 @@ export async function readWorkTreeLayout(cwd, read, { signal } = {}) {
   if (topResult.exitCode !== 0) {
     throw Object.assign(new Error("git rev-parse failed"), { exitCode: topResult.exitCode });
   }
-  const top = topResult.stdout;
-  if (top === "") {
+  const root = topResult.stdout;
+  if (root === "") {
     throw new Error("cwd has no work tree root");
   }
-  const cwdReal = await realpath(cwd);
-  const topReal = top === cwd ? cwdReal : await realpath(top);
-  const root = cwdReal === topReal ? cwd : top;
-  const entries = await readWorkTrees(root, read, { signal });
-  const rootReal = root === cwd ? cwdReal : topReal;
+  const entries = await readWorkTrees(cwd, read, { signal });
+  const rootReal = await canonicalPath(root);
   const own = await findOwn(root, entries, rootReal);
-  return { top, root, rootReal, entries, own };
+  return { root, rootReal, entries, own };
 }
 
-const workTreeReadError = (reason, context) =>
-  gitReadError(reason, context, { errorClass: Error, prefix: "work tree: " });
+// Keeps the `local files` message and plain error class of the earlier builder.
+const localReadError = (reason, context) =>
+  gitReadError(reason, context, {
+    errorClass: Error,
+    prefix: "local files: ",
+    detail: (result) => `: ${(result.stderr || result.code || "").trim()}`,
+    exit: (result) => result.exitCode ?? "none",
+  });
 
 export function readWorkTree(cwd, args, { signal, ...options } = {}) {
   return gitRead(cwd, args, {
@@ -171,7 +173,7 @@ export function readWorkTree(cwd, args, { signal, ...options } = {}) {
     ...options,
     ...(signal === undefined ? {} : { signal }),
     allowExit: [0],
-    createError: workTreeReadError,
+    createError: localReadError,
   });
 }
 

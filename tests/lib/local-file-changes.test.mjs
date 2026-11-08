@@ -80,8 +80,8 @@ async function createComparePair() {
   return { base, main, linked };
 }
 
-// Usefulness: verifies a linked parent directory, a junction on Windows or a symlink elsewhere, on
-// the main work tree side is never read through, so equal bytes behind it do not hide a difference.
+// Usefulness: verifies a link on the main work tree side is never read through, so equal bytes do
+// not hide a difference. The link is a junction on Windows and a symlink elsewhere.
 // Not redundant: the other comparison tests use real directories only.
 test("a linked parent directory in the main work tree is reported and not read through", async () => {
   const { main, linked, base } = await createComparePair();
@@ -373,8 +373,8 @@ test("a deleted side with the other side unchanged reports that side", async () 
   ]);
 });
 
-// Usefulness: verifies an ancestor that is swapped for a junction after the checks and before the
-// read is never read through, so equal bytes behind it do not hide a difference.
+// Usefulness: verifies an ancestor swapped for a link after the checks is never read through.
+// The swap happens before the read, so equal bytes do not hide a difference.
 // Not redundant: the static linked-ancestor tests link the directory before the comparison starts.
 test("an ancestor swapped for a link before the read is reported and not read through", async () => {
   const { main, linked, base } = await createComparePair();
@@ -404,10 +404,10 @@ test("an ancestor swapped for a link before the read is reported and not read th
   expect(differing).toEqual([".claude/settings.json"]);
 });
 
-// Usefulness: verifies a link that is inserted after the ancestor check and left in place is
-// rejected before the file is opened, so no read starts on a path outside its work tree root.
-// Not redundant: the earlier swap test undoes nothing but swaps before the open; this one swaps
-// between the ancestor check and the open and also asserts that the open stage is never reached.
+// Usefulness: verifies a link inserted after the ancestor check is rejected before the file is opened.
+// No read starts on a path outside its work tree root.
+// Not redundant: the earlier swap test swaps before the open; this one swaps between the check and the open.
+// It also asserts that the open stage is never reached.
 test("a link inserted after the ancestor check is rejected before any read starts", async () => {
   const { main, linked, base } = await createComparePair();
   // The hooks receive canonical paths, which differ from `main` where the temp dir is a link (macOS).
@@ -459,9 +459,9 @@ test("a file that disappears after the first probe is reported, not treated as m
 });
 
 // Usefulness: verifies an unchanged file is not reported when `--cwd` is reached through a link to
-// its parent directory, the shape of `/var` and `/private/var` on macOS.
-// Not redundant: the other comparison tests use the canonical temp path. Not run on Windows, which
-// needs a privilege for a directory symlink.
+// its parent. The link has the shape of `/var` and `/private/var` on macOS.
+// Not redundant: the other comparison tests use the canonical temp path.
+// Not run on Windows, which needs a privilege for a directory symlink.
 test.skipIf(process.platform === "win32")(
   "an unchanged file is not reported when --cwd is reached through a linked parent directory",
   async () => {

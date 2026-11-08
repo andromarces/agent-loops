@@ -55,7 +55,7 @@ Andro Marces
 
 - [Issue #1501](https://github.com/andromarces/agent-loops/issues/1501)
 - [Pull request #1503](https://github.com/andromarces/agent-loops/pull/1503)
-- Implementation: `hashCopiedLocalFiles` and `findLocalFileChanges` in `src/lib/local-files.mjs`, the init hash and envelope report in `src/role/dispatch.mjs`
+- Implementation: `hashCopiedLocalFiles` and `findLocalFileChanges` in `src/lib/local-file-changes.mjs`, the init hash and envelope report in `src/role/dispatch.mjs`
 - Documented in [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree), [Local files copied into the work tree](../docs/orchestrator/local-files-copy.md), and the headless orchestrator prompt in `src/prompts/orchestrator.mjs`
 - Extends [ADR 0018](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [ADR Index](README.md)

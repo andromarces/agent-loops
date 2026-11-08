@@ -26,7 +26,6 @@ import {
 import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
 import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
-import { mainWorkTreePath } from "./lib/work-tree-layout.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { closingBlockRepairPrompt } from "./prompts/rules.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -134,13 +133,15 @@ export async function runProbeTurn({
  */
 async function readBeforeTurn(state) {
   if (state.isWorker) {
-    // One layout read serves the copied-source hash and the main work tree baseline.
-    const mainPath = readMainPath(state);
+    const mainRead =
+      state.mainReadDeadlineMs === null
+        ? readMainWorkTree(state.cwd)
+        : readMainWorkTree(state.cwd, { deadlineMs: state.mainReadDeadlineMs });
     const [copiedSources, shared, lockfiles, main] = await Promise.all([
-      mainPath.then((path) => readCopiedSources(state, { signal: state.signal, mainPath: path })),
+      readCopiedSources(state, { signal: state.signal }),
       readShared(state),
       readLockfiles(state.cwd),
-      mainPath.then((path) => readMainWorkTree(state.cwd, path)),
+      mainRead,
     ]);
     state.localSourcesBefore = copiedSources;
     state.sharedBefore = shared;
@@ -168,36 +169,18 @@ async function readBeforeTurn(state) {
 }
 
 /**
- * Reads the main work tree path once for the copied-source hash and the main work tree baseline.
- * Returns `{ main }` or `{ error }`, and throws on a cancel.
- * @param {ChildEvidenceState} state
- */
-async function readMainPath(state) {
-  try {
-    return { main: await mainWorkTreePath(state.cwd, { signal: state.signal }) };
-  } catch (err) {
-    if (readProp(err, "isCanceled")) throw err;
-    return { error: err };
-  }
-}
-
-/**
  * Hashes the copied sources in the main work tree, or null when the read failed. A turn window
  * compares the pre-turn and post-turn results. A source that cannot be hashed is left out, so the
  * compare reports no path it cannot prove.
  * @param {ChildEvidenceState} state
- * @param {{ signal?: AbortSignal, mainPath?: { main?: string | null, error?: Error } }} [bound]
+ * @param {{ signal?: AbortSignal }} [bound]
  */
-async function readCopiedSources(state, { signal, mainPath } = {}) {
+async function readCopiedSources(state, { signal } = {}) {
   if (state.localFilesCopied.length === 0) {
     return {};
   }
   try {
-    if (mainPath?.error) throw mainPath.error;
-    return await hashCopiedLocalSources(state.cwd, state.localFilesCopied, {
-      signal,
-      ...(mainPath ? { main: mainPath.main } : {}),
-    });
+    return await hashCopiedLocalSources(state.cwd, state.localFilesCopied, { signal });
   } catch (err) {
     if (readProp(err, "isCanceled")) throw err;
     logWarn(`local files: the copied source read failed (${err.code ?? "error"})`);
@@ -473,9 +456,11 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
-    // A test uses onMainWatch and mainWatchDeadlineMs to observe and bound the watch.
+    // A test uses onMainWatch, mainWatchDeadlineMs, and mainReadDeadlineMs to bound the watch and
+    // the main work tree read.
     onMainWatch,
     mainWatchDeadlineMs = null,
+    mainReadDeadlineMs = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     sharedGitReadBoundMs = SHARED_GIT_READ_BOUND_MS,
@@ -748,6 +733,7 @@ export async function runChild(options) {
     // The turn-window watch of the main work tree, stopped on every outcome.
     mainWatch: null,
     mainWatchDeadlineMs,
+    mainReadDeadlineMs,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,
     localSourcePaths: null,
