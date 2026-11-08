@@ -93,11 +93,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   tree, so a later prompt never goes through a file. A piped `cat <file>` of a
   file that was never written gives an empty stdin, and `dispatch` refuses it:
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
-- The init task (`--task` or `--task-file`) reaches each child conversation once. The first turn of a
-  conversation shows the task under its own `Init task:` label, before `Instructions:`. This holds in the worker
-  preamble and in the reviewer prompt. A later turn of the same conversation does not repeat it.
-  - The delivery rules cover `taskSentTo`, a replacement conversation, the task-only turn, and
-    a cancel. They are in [Init task delivery](orchestrator/task-delivery.md).
+- The init task (`--task` or `--task-file`) reaches each child conversation once, as
+  [Init task delivery](orchestrator/task-delivery.md) states.
   - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
     dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
@@ -650,6 +647,8 @@ with an error (#1034).
 
 ## Completion
 
+The rule is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
+
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
@@ -719,6 +718,7 @@ pull request, so the run can end only through the gate:
   `halted`. The parent-edit guard (#57, Claude Code, Codex CLI, Copilot CLI,
   OpenCode, and Antigravity CLI) releases on any of them. Every `agent-loop role`
   init requires `--parent-session`, so the guard always has a parent to match.
+  The unguarded path is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
 
 ## Repeated rejects of one finding class
 
