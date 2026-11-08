@@ -12,8 +12,8 @@ import {
   releaseClaim,
   updateLoop,
   updateManifest,
-} from "../src/batch/store.mjs";
-import { removePath } from "./fs-helpers.mjs";
+} from "../../src/batch/store.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const REPO = "C:\\work\\repo";
 const REPO_KEY = "abcabcabcabc";
@@ -193,6 +193,28 @@ test("the batch list skips the claims directory", async () => {
     await acquireClaim(root, REPO_KEY, 1, { batchId: "b1", pid: process.pid });
     const ids = (await listBatches(root)).map((entry) => entry.id);
     expect(ids).toEqual(["b1"]);
+  } finally {
+    await removePath(root);
+  }
+});
+
+// Usefulness: a failed update does not poison the in-process chain and leaves no unhandled
+// rejection for the next update.
+test("a failed checkpoint update does not break the next update", async () => {
+  const root = await tempRoot();
+  try {
+    await createBatchStore(root, manifest("b1"), [loop(1)]);
+    await expect(
+      updateLoop(root, "b1", 1, () => {
+        throw new Error("writer failed");
+      }),
+    ).rejects.toThrow("writer failed");
+    const wrote = await updateLoop(root, "b1", 1, (value) => ({
+      ...value,
+      attempts: value.attempts + 1,
+    }));
+    expect(wrote).toBe(true);
+    expect((await readLoop(root, "b1", 1)).attempts).toBe(1);
   } finally {
     await removePath(root);
   }

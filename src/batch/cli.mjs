@@ -2,7 +2,7 @@
 // progress and logs go to stderr.
 import { setLogsToStderr, logError } from "../lib/log.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
-import { parseBatchArgs, prepareBatch } from "./args.mjs";
+import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree } from "./args.mjs";
 import { runGh } from "../lib/gh-api.mjs";
 import { listBatchStatus, newBatchId, readBatchStatus, runBatch } from "./supervisor.mjs";
 import { readManifest } from "./store.mjs";
@@ -92,6 +92,7 @@ export async function runBatchMain(argv) {
       const options = parseBatchArgs(argv.slice(1));
       const id = newBatchId();
       const prepared = await prepareBatch({ ...options, id });
+      await refuseRunsRootInGitWorkTree(runsRoot);
       const { exitCode, summary } = await runBatch({
         prepared,
         runsRoot,
@@ -128,6 +129,7 @@ export async function runBatchMain(argv) {
       }
       const prepared = await preparedForResume(manifest);
       prepared.resume = true;
+      await refuseRunsRootInGitWorkTree(runsRoot);
       const { exitCode, summary } = await runBatch({ prepared, runsRoot, gh: runGh });
       console.log(JSON.stringify(summary, null, 2));
       return exitCode;

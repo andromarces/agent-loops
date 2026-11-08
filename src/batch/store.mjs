@@ -14,14 +14,18 @@ import { withStateLock } from "../lib/state-lock.mjs";
 const chains = new Map();
 function serialized(key, fn) {
   const previous = chains.get(key) ?? Promise.resolve();
-  const next = previous.then(fn, fn);
-  chains.set(
-    key,
-    next.finally(() => {
-      if (chains.get(key) === next) chains.delete(key);
-    }),
+  const run = previous.then(fn, fn);
+  // The chain entry always settles, so a failed call is returned to its caller but never becomes
+  // an unhandled rejection or poisons the next call.
+  const settled = run.then(
+    () => undefined,
+    () => undefined,
   );
-  return next;
+  const tail = settled.finally(() => {
+    if (chains.get(key) === tail) chains.delete(key);
+  });
+  chains.set(key, tail);
+  return run;
 }
 
 const LINK_UNSUPPORTED = new Set([

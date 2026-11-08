@@ -1,17 +1,20 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
-import { cleanupLoop } from "../src/batch/cleanup.mjs";
-import { createLoopWorkTree, git } from "../src/batch/git.mjs";
-import { acquireClaim, releaseClaim } from "../src/batch/store.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
+import { cleanupLoop } from "../../src/batch/cleanup.mjs";
+import { createLoopWorkTree, git } from "../../src/batch/git.mjs";
+import { acquireClaim, releaseClaim } from "../../src/batch/store.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const REPO_KEY = "abcabcabcabc";
 
-async function setup({ status = "succeeded", push = true, dirty = false, lock = false } = {}) {
+let sharedFixture;
+let branchCounter = 0;
+
+async function createRepo() {
   const main = await createTempRepo();
   const base = (await git(["rev-parse", "--abbrev-ref", "HEAD"], main)).stdout;
   const remote = await mkdtemp(join(tmpdir(), "batch-remote-"));
@@ -22,15 +25,30 @@ async function setup({ status = "succeeded", push = true, dirty = false, lock = 
   await execa("git", ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${base}`], {
     cwd: main,
   });
+  return { main, remote, base };
+}
+
+// One repository and bare remote for the file, reset per case by removing that case's work tree,
+// branch, remote branch, runs root, and root directory. A case that changes the main branch gets
+// its own repository (`isolated`: a process-level state change that cannot be reset cheaply).
+async function setup({
+  status = "succeeded",
+  push = true,
+  dirty = false,
+  lock = false,
+  isolated = false,
+} = {}) {
+  const repo = isolated ? await createRepo() : (sharedFixture ??= await createRepo());
+  const { main, remote, base } = repo;
   const root = await mkdtemp(join(tmpdir(), "batch-root-"));
   const workTree = join(root, "issue-7");
-  const branch = "batch/b1/7";
+  const branch = `batch/b1/7-${branchCounter++}`;
   const recorded = await createLoopWorkTree({ repo: main, base, workTree, branch });
   await execa("git", ["config", "user.name", "Tester"], { cwd: workTree });
   await execa("git", ["config", "user.email", "test@example.com"], { cwd: workTree });
   await execa("git", ["commit", "--allow-empty", "-m", "work on the issue"], { cwd: workTree });
   if (push) await execa("git", ["push", "-u", "origin", branch], { cwd: workTree });
-  if (dirty) await writeFile(join(workTree, "dirty.txt"), "uncommitted\n");
+  if (dirty) await writeFile(join(workTree, "dirty.txt"), "uncommitted" + String.fromCharCode(10));
   if (lock) await execa("git", ["worktree", "lock", workTree], { cwd: main });
   const runsRoot = await mkdtemp(join(tmpdir(), "batch-runs-"));
   await acquireClaim(runsRoot, REPO_KEY, 7, {
@@ -65,10 +83,16 @@ async function setup({ status = "succeeded", push = true, dirty = false, lock = 
       deps: overrides.deps,
     });
   const clean = async () => {
+    await execa("git", ["worktree", "unlock", workTree], { cwd: main }).catch(() => {});
+    await execa("git", ["worktree", "remove", "--force", workTree], { cwd: main }).catch(() => {});
+    await execa("git", ["branch", "-D", branch], { cwd: main }).catch(() => {});
+    await execa("git", ["push", "origin", "--delete", branch], { cwd: main }).catch(() => {});
     await removePath(root);
     await removePath(runsRoot);
-    await removePath(remote);
-    await removePath(main);
+    if (isolated) {
+      await removePath(remote);
+      await removePath(main);
+    }
   };
   return { main, remote, root, workTree, branch, runsRoot, manifest, loop, cleanup, clean };
 }
@@ -125,15 +149,18 @@ for (const status of ["failed", "interrupted", "needs-owner"]) {
   });
 }
 
-// Usefulness: a replacement directory is never removed by the recorded path.
+// Usefulness: a directory whose device or inode no longer matches is never removed. The recorded
+// identity is changed instead of relying on the file system to allocate a different inode, which
+// an ext4 reuse can defeat.
 test("a replaced directory is kept", async () => {
   const fixture = await setup();
   try {
-    await rm(fixture.workTree, { recursive: true, force: true });
-    await mkdir(fixture.workTree);
-    const result = await fixture.cleanup();
+    const result = await fixture.cleanup({
+      loop: { workTree: { ...fixture.loop.workTree, dev: "0", ino: "0" } },
+    });
     expect(result.removed).toBe(false);
     expect(result.reason).toContain("identity");
+    expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
   } finally {
     await fixture.clean();
   }
@@ -173,7 +200,7 @@ test("the main work tree is never removed", async () => {
 
 // Usefulness: a merged pull request proves the push when the remote branch was deleted.
 test("a merged pull request proves a deleted remote branch", async () => {
-  const fixture = await setup();
+  const fixture = await setup({ isolated: true });
   try {
     const head = (await git(["rev-parse", "HEAD"], fixture.workTree)).stdout;
     await execa("git", ["merge", "--no-ff", "-m", "merge", fixture.branch], { cwd: fixture.main });

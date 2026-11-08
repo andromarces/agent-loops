@@ -6,9 +6,9 @@ const DISPATCH_ACTIONS = new Set(["run_worker", "run_reviewer"]);
 
 /**
  * Counts the charged steps of a loop transcript, whose segments split at each `continued` event.
- * Each segment contributes its highest `result` event's `stepsUsed`; a trailing dispatch action in
- * the last segment with no later result adds one, because the runtime charges a step before the
- * child starts. The checkpoint count is a cross-check, and the larger value wins.
+ * Each segment contributes its highest `result` event's `stepsUsed`; a trailing dispatch action
+ * with no later result adds one, because the runtime charges a step before the child starts. The
+ * checkpoint count is a cross-check, and the larger value wins.
  * @param {string} text the transcript JSON
  * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
  */
@@ -44,16 +44,15 @@ export function countSteps(text, { checkpointSteps = 0 } = {}) {
       lastResult = cursor;
     }
     total += highest ?? 0;
-    if (index === segments.length - 1) {
-      const trailing = events
-        .slice(lastResult + 1)
-        .some((event) => event.type === "action" && DISPATCH_ACTIONS.has(event.action?.action));
-      if (trailing) total += 1;
-    }
+    const trailing = events
+      .slice(lastResult + 1)
+      .some((event) => event.type === "action" && DISPATCH_ACTIONS.has(event.action?.action));
+    if (trailing) total += 1;
   }
   return {
     ok: true,
     steps: Math.max(total, Number.isInteger(checkpointSteps) ? checkpointSteps : 0),
+    segments: segments.length,
   };
 }
 
@@ -69,5 +68,46 @@ export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } 
     if (err?.code === "ENOENT" && attempts === 0) return { ok: true, steps: checkpointSteps };
     return { ok: false, reason: "the transcript is missing" };
   }
-  return countSteps(text, { checkpointSteps });
+  const counted = countSteps(text, { checkpointSteps });
+  if (!counted.ok) return counted;
+  if (attempts > 0 && counted.segments < attempts) {
+    return {
+      ok: false,
+      reason: `the transcript holds ${counted.segments} segment(s) for ${attempts} attempt(s)`,
+    };
+  }
+  return counted;
+}
+
+/**
+ * Reads the recorded exit code of a transcript. `ok` is false for a missing or malformed record,
+ * which proves nothing about the last attempt. `proven` is true only when the run ended with its
+ * `gate` event, so the default `exitCode: 1` of a transcript written before the first turn is never
+ * read as a finished run.
+ * @returns {Promise<{ ok: true, exitCode: number | null, proven: boolean } | { ok: false, reason: string }>}
+ */
+export async function readTranscriptExit(file) {
+  let text;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err?.code === "ENOENT" ? "the transcript is missing" : err.message,
+    };
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: "the transcript is not valid JSON" };
+  }
+  if (!isJsonObject(data) || !("exitCode" in data)) {
+    return { ok: false, reason: "the transcript holds no exit code" };
+  }
+  if (data.exitCode !== null && !Number.isInteger(data.exitCode)) {
+    return { ok: false, reason: "the transcript holds an unreadable exit code" };
+  }
+  const last = Array.isArray(data.events) ? data.events.at(-1) : null;
+  return { ok: true, exitCode: data.exitCode, proven: last?.type === "gate" };
 }

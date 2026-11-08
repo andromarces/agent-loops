@@ -1,17 +1,11 @@
 // Argument parsing and pre-write validation for `agent-loop batch` (ADR 0106).
 // The runtime validates explicit values only: it reads no request and prompts for nothing.
 import { execFile } from "node:child_process";
-import { access, constants, stat } from "node:fs/promises";
+import { access, constants, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { supportedAgents } from "../agents/index.mjs";
-import {
-  DEFAULT_MAX_STEPS,
-  DEFAULT_TIMEOUT,
-  initRefusal,
-  ROLE_KINDS,
-  roleFlags,
-} from "../lib/args.mjs";
+import { DEFAULT_TIMEOUT, initRefusal, ROLE_KINDS, roleFlags } from "../lib/args.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
@@ -21,6 +15,22 @@ const ROLE_FLAGS = roleFlags(ROLE_KINDS);
 const PLACEHOLDERS = new Set(["issue", "title", "branch", "repo"]);
 const MAX_LOOPS = 64;
 const DEFAULT_SETUP_TIMEOUT = 600;
+
+// The model and effort values that a supported CLI accepts. The adapters pass these through, so a
+// value outside the set is a usage error before any child exists.
+const MODEL_PATTERNS = {
+  claude: /^claude-/i,
+  codex: /^(?:gpt-|o\d|codex)/i,
+  copilot: /^(?:gpt-|claude-|o\d|gemini-)/i,
+  agy: /^gemini-/i,
+  opencode: /^[^\s/]+\/\S+$/,
+};
+const EFFORTS = {
+  claude: new Set(["low", "medium", "high", "max"]),
+  codex: new Set(["minimal", "low", "medium", "high", "xhigh"]),
+  copilot: new Set(["low", "medium", "high"]),
+  agy: new Set(["low", "medium", "high"]),
+};
 
 export const DEFAULT_TASK_TEMPLATE = [
   "Work on issue {issue} of {repo}.",
@@ -78,7 +88,7 @@ export function parseBatchArgs(argv) {
     timeout: DEFAULT_TIMEOUT,
     reviewerSandbox: null,
     loops: null,
-    maxSteps: DEFAULT_MAX_STEPS,
+    maxSteps: null,
     mode: null,
   };
   for (const role of ROLE_KINDS) {
@@ -159,15 +169,12 @@ export function parseBatchArgs(argv) {
             `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
           );
         }
-        options.reviewerSandbox = value;
+        setReviewerSandbox(options, value, false);
         break;
       }
       case "--reviewer-workspace-write":
         if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
-        if (options.reviewerSandbox !== null && options.reviewerSandbox !== "workspace-write") {
-          throw usage("--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.");
-        }
-        options.reviewerSandbox = "workspace-write";
+        setReviewerSandbox(options, "workspace-write", true);
         break;
       default:
         throw usage(`Unknown argument: ${raw}`);
@@ -177,6 +184,7 @@ export function parseBatchArgs(argv) {
   if (options.repo === null) throw usage("Missing required --repo.");
   if (options.issues.length === 0) throw usage("Missing required --issue.");
   if (options.loops === null) throw usage("Missing required --loops.");
+  if (options.maxSteps === null) throw usage("Missing required --max-steps.");
   for (const role of ROLE_KINDS) {
     if (options[role] === null) throw usage(`Missing required --${role}.`);
   }
@@ -189,8 +197,96 @@ export function parseBatchArgs(argv) {
     pathRefusal: () => null,
   });
   if (refusal) throw usage(refusal);
+  const roleRefusal = roleOptionRefusal(options);
+  if (roleRefusal) throw usage(roleRefusal);
   validateTemplate(options.taskTemplate);
   return options;
+}
+
+// The parsed option objects that used the `--reviewer-workspace-write` alias, for the conflict text.
+const aliasUsers = new WeakSet();
+
+function setReviewerSandbox(options, value, viaAlias) {
+  const earlier = options.reviewerSandbox;
+  if (earlier !== null && earlier !== value) {
+    const alias = viaAlias || aliasUsers.has(options);
+    const shown = viaAlias ? earlier : value;
+    throw usage(
+      alias
+        ? `--reviewer-workspace-write conflicts with --reviewer-sandbox ${shown}.`
+        : `--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`,
+    );
+  }
+  if (viaAlias) aliasUsers.add(options);
+  options.reviewerSandbox = value;
+}
+
+/** The first unsupported model or effort of a configured role, or null. */
+function roleOptionRefusal(options) {
+  for (const role of ROLE_KINDS) {
+    const kind = options[role];
+    if (kind === null) continue;
+    const model = options[`${role}Model`];
+    if (model !== null && !(MODEL_PATTERNS[kind]?.test(model) ?? true)) {
+      return `Unsupported ${role} model: ${model}`;
+    }
+    const effort = options[`${role}Effort`];
+    const allowed = EFFORTS[kind];
+    if (effort !== null && allowed !== undefined && !allowed.has(effort)) {
+      return `Unsupported ${role} effort: ${effort}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The canonical path of `path`, resolving the nearest existing ancestor through the real path and
+ * keeping the missing tail. A root reached through a directory link is therefore compared against
+ * the real work tree, never against the alias spelling.
+ */
+export async function canonicalWritePath(path) {
+  let current = resolve(path);
+  const tail = [];
+  for (;;) {
+    try {
+      const real = await realpath(current);
+      return join(real, ...tail.reverse());
+    } catch (err) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") throw err;
+      const parent = dirname(current);
+      if (parent === current) return resolve(path);
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** The nearest existing directory at or above `path`. */
+export async function nearestExistingDirectory(path) {
+  let current = resolve(path);
+  for (;;) {
+    try {
+      const found = await stat(current);
+      return found.isDirectory() ? current : dirname(current);
+    } catch (err) {
+      if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") throw err;
+      const parent = dirname(current);
+      if (parent === current) return current;
+      current = parent;
+    }
+  }
+}
+
+/** Refuses a runs root that lies inside any Git work tree (ADR 0106 decision 8). */
+export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = git } = {}) {
+  const candidate = await canonicalWritePath(runsRoot);
+  const ancestor = await nearestExistingDirectory(candidate);
+  try {
+    const top = (await gitRun(["rev-parse", "--show-toplevel"], ancestor)).trim();
+    if (top !== "") throw usage("The runs root must lie outside every Git work tree.");
+  } catch (err) {
+    if (err?.usage) throw err;
+  }
 }
 
 async function git(args, cwd) {
@@ -272,13 +368,13 @@ export async function prepareBatch(options, { gitRun = git } = {}) {
   const workTreeRoot =
     options.workTreeRoot ??
     join(dirname(repo), `${basename(repo)}-batch-${options.id ?? "preview"}`);
-  const rootCanonical = await canonicalPath(workTreeRoot);
+  const rootCanonical = await canonicalWritePath(workTreeRoot);
   for (const entry of entries) {
     if (inside(await canonicalPath(entry.path), rootCanonical)) {
       throw usage("The work-tree root must lie outside every Git work tree.");
     }
   }
-  await assertWritableDirectory(workTreeRoot);
+  await assertWritableDirectory(rootCanonical);
 
   const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
   return {

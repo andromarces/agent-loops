@@ -74,15 +74,17 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
     return owner("another branch is checked out in the work tree");
   }
 
-  const remoteHead = await (async () => {
-    const fetched = await git(["fetch", "origin", workTree.branch], repo);
-    if (fetched.exitCode !== 0) return null;
-    const head = await git(
-      ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${workTree.branch}`],
-      repo,
-    );
-    return head.exitCode === 0 ? head.stdout : null;
-  })();
+  const fetched = await git(["fetch", "origin", workTree.branch], repo);
+  const remoteReadFailed = fetched.exitCode !== 0;
+  const remoteHead = remoteReadFailed
+    ? null
+    : await (async () => {
+        const head = await git(
+          ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${workTree.branch}`],
+          repo,
+        );
+        return head.exitCode === 0 ? head.stdout : null;
+      })();
 
   let pulls;
   let issue;
@@ -148,6 +150,17 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   }
 
   const closed = String(issue.state).toUpperCase() === "CLOSED";
+  const references = Array.isArray(issue.closedByPullRequestsReferences)
+    ? issue.closedByPullRequestsReferences
+    : Array.isArray(issue.closedByPullRequestsReferences?.nodes)
+      ? issue.closedByPullRequestsReferences.nodes
+      : [];
+  const ownNumbers = new Set(details.map((pull) => pull.number));
+  for (const reference of references) {
+    if (Number.isInteger(reference?.number) && !ownNumbers.has(reference.number)) {
+      return owner(`the issue is closed by pull request ${reference.number} of another branch`);
+    }
+  }
   const merged = details.filter((pull) => pull.state === "MERGED");
   const open = details.filter((pull) => pull.state === "OPEN");
   const closedUnmerged = details.filter((pull) => pull.state === "CLOSED");
@@ -165,6 +178,9 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
     return owner("the merged pull request head lacks a local commit");
   }
 
+  if (remoteReadFailed) {
+    return owner("the remote branch could not be read");
+  }
   if (closedUnmerged.length > 0) {
     return owner(`pull request ${closedUnmerged[0].number} is closed without a merge`);
   }

@@ -1,10 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { expect, test } from "vite-plus/test";
 import { execa } from "execa";
-import { parseBatchArgs, prepareBatch } from "../src/batch/args.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { parseBatchArgs, prepareBatch } from "../../src/batch/args.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
+import { canonicalPath } from "../../src/lib/canonical-path.mjs";
 
 const BASE = [
   "--repo",
@@ -58,6 +60,44 @@ test("an invalid --max-steps is a usage error", () => {
   expect(() => parseBatchArgs([...BASE].map((v) => (v === "10" ? "0" : v)))).toThrow(
     "--max-steps must be a positive integer.",
   );
+});
+
+// Usefulness: --max-steps is required, so a missing budget is never defaulted silently.
+test("missing --max-steps is a usage error", () => {
+  expect(() =>
+    parseBatchArgs(BASE.filter((value) => value !== "--max-steps" && value !== "10")),
+  ).toThrow("Missing required --max-steps.");
+});
+
+// Usefulness: an unknown model is refused before any state write.
+test("an unknown model is a usage error", () => {
+  expect(() => parseBatchArgs([...BASE, "--worker-model", "nope"])).toThrow(
+    "Unsupported worker model: nope",
+  );
+});
+
+// Usefulness: an unknown effort is refused before any state write.
+test("an unknown effort is a usage error", () => {
+  expect(() =>
+    parseBatchArgs([...BASE, "--worker-model", "claude-sonnet-5-5", "--worker-effort", "extreme"]),
+  ).toThrow("Unsupported worker effort: extreme");
+});
+
+// Usefulness: two sandbox flags that disagree are a conflict, never a silent last value.
+test("conflicting sandbox flags are refused in both orders", () => {
+  const codex = BASE.map((value) => (value === "agy" ? "codex" : value));
+  expect(() =>
+    parseBatchArgs([
+      ...codex,
+      "--reviewer-sandbox",
+      "read-only",
+      "--reviewer-sandbox",
+      "workspace-write",
+    ]),
+  ).toThrow("--reviewer-sandbox workspace-write conflicts with --reviewer-sandbox read-only.");
+  expect(() =>
+    parseBatchArgs([...codex, "--reviewer-workspace-write", "--reviewer-sandbox", "read-only"]),
+  ).toThrow("--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.");
 });
 
 // Usefulness: an unsupported agent is refused with the headless wording.
@@ -155,7 +195,7 @@ test("a linked work tree as --repo is refused with the main work tree", async ()
   const { base, main } = await createBatchRepo();
   try {
     await expect(prepareBatch(args({ repo: base }), {})).rejects.toThrow(
-      `--repo must name the main work tree (${main}).`,
+      `--repo must name the main work tree (${await canonicalPath(main)}).`,
     );
   } finally {
     await removePath(base);
@@ -188,3 +228,19 @@ async function createBatchRepo() {
   await writeFile(join(main, "docs", "keep.txt"), "keep\n");
   return { base: linked, main };
 }
+
+// Usefulness: a work-tree root reached through a directory link is still inside the work tree.
+test("a work-tree root under a linked alias of the work tree is refused", async () => {
+  const { base, main } = await createBatchRepo();
+  const aliasParent = await mkdtemp(join(tmpdir(), "batch-alias-"));
+  const alias = join(aliasParent, "alias");
+  try {
+    await symlink(main, alias, process.platform === "win32" ? "junction" : "dir");
+    await expect(
+      prepareBatch(args({ repo: main, workTreeRoot: join(alias, "nested") }), {}),
+    ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
+  } finally {
+    await removePath(aliasParent);
+    await removePath(base);
+  }
+});

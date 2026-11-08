@@ -3,7 +3,7 @@ import {
   checkEligibility,
   hasStructuralMinimum,
   readOpenPrClosures,
-} from "../src/batch/eligibility.mjs";
+} from "../../src/batch/eligibility.mjs";
 
 const BODY_OK = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", ""].join("\n");
 

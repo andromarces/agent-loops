@@ -2,13 +2,21 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test } from "vite-plus/test";
-import { prepareBatch } from "../src/batch/args.mjs";
-import { git } from "../src/batch/git.mjs";
-import { batchPaths, readLoop, readManifest } from "../src/batch/store.mjs";
-import { newBatchId, readBatchStatus, runBatch } from "../src/batch/supervisor.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
+import { afterAll, expect, test } from "vite-plus/test";
+import { prepareBatch } from "../../src/batch/args.mjs";
+import { git } from "../../src/batch/git.mjs";
+import { endSubprocessTree } from "../../src/lib/exec-tree.mjs";
+import { pidAlive } from "../../src/lib/process-identity.mjs";
+import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/store.mjs";
+import {
+  childArguments,
+  newBatchId,
+  readBatchStatus,
+  runBatch,
+  runSetup,
+} from "../../src/batch/supervisor.mjs";
+import { createTempRepo } from "../git-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const BODY = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", ""].join("\n");
 
@@ -104,6 +112,7 @@ function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false } = {})
           ...earlier.events,
           ...(args.includes("--continue-from") ? [{ type: "continued", exitCode: 130 }] : []),
           ...nextEvents,
+          { type: "gate" },
         ],
         exitCode,
         error: null,
@@ -111,19 +120,31 @@ function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false } = {})
     );
     if (gate) pending.push(gate);
     const done = gate ? gate.promise : Promise.resolve({ exitCode });
+    const stop = async () => {
+      if (gate) {
+        const data = JSON.parse(await readFile(transcript, "utf8"));
+        await writeFile(transcript, JSON.stringify({ ...data, exitCode: 130 }));
+        gate.resolve({ exitCode: 130 });
+      }
+    };
     return {
       pid: process.pid,
       startTime: null,
       done,
-      kill: () => gate?.resolve({ exitCode: 130 }),
-      hardKill: () => gate?.resolve({ exitCode: 130 }),
+      kill: () => void stop(),
+      hardKill: () => void stop(),
       close: () => {},
     };
   };
   return { spawn, calls, pending };
 }
 
+// One immutable repository and bare remote for the file. Each case gets its own work-tree root
+// and batch id, so mutable state is per test and no case runs git init or an initial push.
+const roots = [];
+let sharedRepo;
 async function batchRepo() {
+  if (sharedRepo) return sharedRepo;
   const main = await createTempRepo();
   const base = (await git(["rev-parse", "--abbrev-ref", "HEAD"], main)).stdout;
   const remote = await mkdtemp(join(tmpdir(), "batch-it-remote-"));
@@ -134,12 +155,23 @@ async function batchRepo() {
   await execa("git", ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${base}`], {
     cwd: main,
   });
-  return { main, remote, base };
+  sharedRepo = { main, remote, base };
+  return sharedRepo;
 }
+
+afterAll(async () => {
+  for (const root of roots.splice(0)) await removePath(root);
+  if (sharedRepo) {
+    await removePath(sharedRepo.remote);
+    await removePath(sharedRepo.main);
+    sharedRepo = undefined;
+  }
+});
 
 async function preparedFor({ main, base }, issues, overrides = {}) {
   const id = overrides.id ?? newBatchId();
   const root = await mkdtemp(join(tmpdir(), "batch-it-root-"));
+  roots.push(root);
   return prepareBatch({
     id,
     repo: main,
@@ -166,10 +198,15 @@ async function preparedFor({ main, base }, issues, overrides = {}) {
   });
 }
 
-async function cleanupRepo({ main, remote }) {
-  await removePath(main);
-  await removePath(remote);
+async function pushLoop(prepared, issue = 1) {
+  const workTree = join(prepared.workTreeRoot, `issue-${issue}`);
+  const branch = `batch/${prepared.id}/${issue}`;
+  await execa("git", ["push", "-u", "origin", branch], { cwd: workTree });
 }
+
+// The shared repository and remote are removed once for the file. Each case removes only the
+// work-tree root it created, at `afterAll`, so no case depends on another case's teardown.
+async function cleanupRepo() {}
 
 // Usefulness: three issues get three work trees, three branches, and one child each.
 test("three selected issues create three work trees and one child each", async () => {
@@ -351,6 +388,7 @@ test("a resume with 3 of 10 steps spent passes --max-steps 7 and the same transc
     await run;
     const first = child.calls[0];
     expect(first.maxSteps).toBe("10");
+    await pushLoop(prepared);
 
     const childResume = childDouble({ steps: 2 });
     const resumed = await runBatch({
@@ -479,4 +517,346 @@ test("a resume with no pending work writes nothing", async () => {
   } finally {
     await cleanupRepo(repo);
   }
+});
+
+// Usefulness: a configured zero timeout reaches the child as --timeout 0, not the 3600 s default.
+test("a zero timeout is passed to the child", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1], { timeout: null });
+  try {
+    const args = childArguments({
+      prepared,
+      loop: { issue: 1, task: "Work", remainingSteps: 10 },
+      workTree: prepared.workTreeRoot,
+      transcript: "run.json",
+      maxSteps: 10,
+      resume: { continueFrom: null, pr: null },
+    });
+    const index = args.indexOf("--timeout");
+    expect(index).toBeGreaterThan(-1);
+    expect(args[index + 1]).toBe("0");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a needs-owner loop is not terminal for recovery, so a resolved state resumes it.
+test("a needs-owner loop resumes after the owner resolves the state", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await pushLoop(prepared);
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "a resolved state",
+      pid: null,
+      startTime: null,
+    }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(1);
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a recorded transcript exit 0 is a success and is never restarted.
+test("a transcript that exited 0 is not restarted on recovery", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(transcript, JSON.stringify({ ...data, exitCode: 0 }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a recorded transcript exit 2 is a failure and is never restarted.
+test("a transcript that exited 2 is not retried on recovery", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 3, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(transcript, JSON.stringify({ ...data, exitCode: 2 }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-2" });
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: two simultaneous resumes launch one loop once.
+test("two simultaneous resumes launch a loop once", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await pushLoop(prepared);
+    const resumeChild = childDouble({ hold: true });
+    const a = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    const b = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    expect(resumeChild.calls).toHaveLength(1);
+    resumeChild.pending[0]?.resolve({ exitCode: 0 });
+    await Promise.all([a, b]);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a live recorded PID with no start stamp is never restarted.
+test("a live recorded process with no start stamp is not restarted", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
+  live.catch(() => {});
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "running",
+      pid: live.pid,
+      startTime: null,
+    }));
+    const resumeChild = childDouble();
+    const resumeController = new AbortController();
+    const resumed = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        spawn: resumeChild.spawn,
+        installSignal: false,
+        signal: resumeController.signal,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    resumeController.abort();
+    await resumed;
+    expect(resumeChild.calls).toHaveLength(0);
+  } finally {
+    live.kill("SIGKILL");
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: an interrupted setup stops promptly and runs no child.
+test("an aborted setup returns without waiting for the timeout", async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  const run = runSetup({
+    command: "setup",
+    workTree: process.cwd(),
+    timeoutSeconds: 60,
+    signal: controller.signal,
+    deps: {
+      execBounded: async (file, args, options) => {
+        await new Promise((resolve) => {
+          options.signal.addEventListener("abort", resolve, { once: true });
+        });
+        return { exitCode: 130 };
+      },
+    },
+  });
+  setTimeout(() => controller.abort(), 20);
+  const ok = await run;
+  expect(ok).toBe(false);
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+
+// Usefulness: a PR declared by the earlier transcript is imported before recovery, so the resumed
+// attempt passes --pr and --require-ci for it.
+test("a transcript PR declaration reaches the resumed attempt", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await pushLoop(prepared);
+    const workTree = join(prepared.workTreeRoot, "issue-1");
+    const head = (await git(["rev-parse", "HEAD"], workTree)).stdout;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(
+      transcript,
+      JSON.stringify({
+        ...data,
+        exitCode: 130,
+        options: { pr: null, requireCi: null },
+        events: [...data.events, { type: "pr-declared", pr: 5, stepsUsed: 0 }],
+      }),
+    );
+    const pull = {
+      number: 5,
+      state: "OPEN",
+      headRefOid: head,
+      isCrossRepository: false,
+      baseRefName: prepared.base,
+    };
+    const gh = (args) => {
+      if (args[0] === "pr" && args[1] === "list" && args.includes("--head")) {
+        return { status: 0, stdout: JSON.stringify([pull]), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "OPEN", headRefOid: head, mergeCommit: null }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "issue" && args[1] === "view") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state: "OPEN", closedByPullRequestsReferences: [] }),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
+    };
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh,
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(1);
+    const args = resumeChild.calls[0].args;
+    expect(args[args.indexOf("--pr") + 1]).toBe("5");
+    expect(args[args.indexOf("--require-ci") + 1]).toBe("5");
+    expect(resumed.summary.loops[0].pr).toBe(5);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Process-level exception: a forced kill must end a descendant that inherited the group, so it
+// needs its own real process tree. Comment: this is the only case in this file that spawns a
+// process tree outside the child double.
+test("a forced kill ends the child process tree", async () => {
+  const script = [
+    "const { spawn } = require('node:child_process');",
+    "const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });",
+    "process.stdout.write(String(child.pid));",
+    "setTimeout(() => {}, 60000);",
+  ].join(" ");
+  const subprocess = execa(process.execPath, ["-e", script], {
+    killDescendants: true,
+    stdout: "pipe",
+  });
+  subprocess.catch(() => {});
+  const pid = await new Promise((resolve, reject) => {
+    subprocess.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim())));
+    subprocess.catch(reject);
+  });
+  expect(Number.isInteger(pid)).toBe(true);
+  endSubprocessTree(subprocess);
+  for (let attempt = 0; attempt < 20 && pidAlive(pid); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  expect(pidAlive(pid)).toBe(false);
 });

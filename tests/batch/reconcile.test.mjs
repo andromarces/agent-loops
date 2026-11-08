@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { reconcileLoop } from "../src/batch/reconcile.mjs";
+import { reconcileLoop } from "../../src/batch/reconcile.mjs";
 
 const HEAD = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -38,7 +38,13 @@ const baseGit = (head = HEAD, extra = {}) => ({
   ...extra,
 });
 
-const ghReplies = ({ pulls = [], issue = "OPEN", details = {}, fail = false } = {}) => {
+const ghReplies = ({
+  pulls = [],
+  issue = "OPEN",
+  details = {},
+  fail = false,
+  references = [],
+} = {}) => {
   return async (args) => {
     if (fail) return { status: 1, stdout: "", stderr: "gh failed" };
     if (args[0] === "pr" && args[1] === "list") {
@@ -53,7 +59,7 @@ const ghReplies = ({ pulls = [], issue = "OPEN", details = {}, fail = false } = 
     if (args[0] === "issue" && args[1] === "view") {
       return {
         status: 0,
-        stdout: JSON.stringify({ state: issue, closedByPullRequestsReferences: [] }),
+        stdout: JSON.stringify({ state: issue, closedByPullRequestsReferences: references }),
         stderr: "",
       };
     }
@@ -285,4 +291,35 @@ test("a dirty work tree with an open pull request stops the loop", async () => {
   });
   expect(result).toMatchObject({ status: "needs-owner" });
   expect(result.reason).toContain("not clean");
+});
+
+// Usefulness: a failed remote-branch fetch is a read failure, never an absent branch.
+test("a failed fetch stops the loop as needs-owner", async () => {
+  const result = await reconcileLoop({
+    loop: loop(),
+    repo: "C:\repo",
+    base: "main",
+    gh: ghReplies(),
+    deps: deps(baseGit(HEAD, { '["fetch","origin","batch/1/7"]': [1, "", "network down"] })),
+  });
+  expect(result).toMatchObject({ status: "needs-owner" });
+  expect(result.reason).toContain("remote branch");
+});
+
+// Usefulness: a pull request of another branch that closes the issue is not this loop's delivery.
+test("a pull request from another branch that closes the issue stops the loop", async () => {
+  const result = await reconcileLoop({
+    loop: loop(),
+    repo: "C:\repo",
+    base: "main",
+    gh: ghReplies({
+      issue: "CLOSED",
+      pulls: [openPull],
+      details: { 5: openDetail },
+      references: [{ number: 9 }],
+    }),
+    deps: deps(baseGit()),
+  });
+  expect(result).toMatchObject({ status: "needs-owner" });
+  expect(result.reason).toContain("9");
 });

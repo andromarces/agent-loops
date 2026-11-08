@@ -1,18 +1,22 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per issue, prints progress on stderr, and returns one summary for stdout.
 import { createWriteStream } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
-import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
+import { declaredPrFromTranscript } from "../lib/gate.mjs";
+import { endSubprocessTree, killTreeOnExit } from "../lib/exec-tree.mjs";
+import { tryStateLock } from "../lib/state-lock.mjs";
+import { processStartTime, ownerAlive } from "../lib/process-identity.mjs";
 import { execBounded } from "../lib/exec.mjs";
 import { renderTask } from "./args.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
 import { createLoopWorkTree } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
-import { readStepsUsed } from "./steps.mjs";
+import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
 import {
   acquireClaim,
   batchPaths,
@@ -26,7 +30,9 @@ import {
   updateManifest,
 } from "./store.mjs";
 
-const TERMINAL = new Set(["succeeded", "skipped", "failed", "needs-owner"]);
+// A needs-owner loop is not terminal: it stays resumable after the owner resolves its state and
+// keeps its slot in the batch that reported it (ADR 0106 decision 16).
+const TERMINAL = new Set(["succeeded", "skipped", "failed"]);
 const INTERRUPT_WAIT_MS = 30_000;
 
 let ownStamp;
@@ -93,7 +99,7 @@ export function childArguments({ prepared, loop, workTree, transcript, maxSteps,
   }
   if (prepared.testCmd) args.push("--test-cmd", prepared.testCmd);
   if (prepared.testCmdTimeout) args.push("--test-cmd-timeout", String(prepared.testCmdTimeout));
-  if (prepared.timeout) args.push("--timeout", String(prepared.timeout));
+  args.push("--timeout", String(prepared.timeout ?? 0));
   if (prepared.reviewerSandbox) args.push("--reviewer-sandbox", prepared.reviewerSandbox);
   if (resume.continueFrom) args.push("--continue-from", resume.continueFrom);
   if (resume.pr !== null && resume.pr !== undefined) {
@@ -109,14 +115,16 @@ function shellCommand(command) {
 }
 
 /** Runs `--setup-cmd` once in the new work tree through the platform shell, within its bound. */
-export async function runSetup({ command, workTree, timeoutSeconds, deps = {} }) {
+export async function runSetup({ command, workTree, timeoutSeconds, signal = null, deps = {} }) {
+  if (signal?.aborted) return false;
   const run = deps.execBounded ?? execBounded;
   const [file, args] = shellCommand(command);
   const result = await run(file, args, {
     cwd: workTree,
     timeoutMs: timeoutSeconds * 1000,
+    signal,
   });
-  return result.exitCode === 0;
+  return result.exitCode === 0 && !result.isCanceled && !signal?.aborted;
 }
 
 function cliPath() {
@@ -127,13 +135,16 @@ function cliPath() {
 export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
   if (deps.spawn) return deps.spawn({ args, cwd, logPath });
   const stream = createWriteStream(logPath, { flags: "a" });
-  const subprocess = execa(process.execPath, [cliPath(), ...args], {
-    cwd,
-    reject: false,
-    stdin: "ignore",
-    stdout: stream,
-    stderr: stream,
-  });
+  const subprocess = killTreeOnExit(
+    execa(process.execPath, [cliPath(), ...args], {
+      cwd,
+      reject: false,
+      stdin: "ignore",
+      stdout: stream,
+      stderr: stream,
+      killDescendants: true,
+    }),
+  );
   const pid = subprocess.pid;
   const startTime = await processStartTime(pid);
   const done = subprocess
@@ -152,7 +163,7 @@ export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
     },
     hardKill: () => {
       try {
-        subprocess.kill("SIGKILL");
+        endSubprocessTree(subprocess);
       } catch {
         // A run that already ended needs no signal.
       }
@@ -198,7 +209,7 @@ function exitCodeOf(manifest, loops) {
 }
 
 function isLive(loop) {
-  return loop.pid != null && loop.startTime != null;
+  return loop.pid != null;
 }
 
 async function ownerStillLive(loop) {
@@ -447,8 +458,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           command: prepared.setupCmd,
           workTree: workTree.path,
           timeoutSeconds: prepared.setupTimeout,
+          signal: controller.signal,
           deps,
         });
+        if (!ok && (interrupted || hard)) return;
         if (!ok) {
           await changeLoop(issue, { status: "failed", reason: "setup-failed" });
           await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
@@ -559,30 +572,111 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     progress(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
   };
 
-  const recover = async (issue, loop) => {
-    if (loop.pid != null) {
-      const current = await processStartTime(loop.pid);
-      if (pidAlive(loop.pid) && current === null && typeof loop.startTime === "string") {
-        // An identity that cannot be read is needs-owner, and no second process starts.
-        await changeLoop(issue, {
-          status: "needs-owner",
-          reason: "unverified-process-identity",
-          pid: null,
-          startTime: null,
-        });
-        return;
-      }
-      if (await ownerStillLive(loop)) {
-        // A recorded owner is never restarted; wait for it to end, reading only liveness.
-        while (await ownerStillLive(loop)) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
+  const readTranscript = async (file) => {
+    try {
+      return JSON.parse(await readFile(file, "utf8"));
+    } catch {
+      return null;
+    }
+  };
+
+  const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr }) => {
+    await changeLoop(issue, {
+      status: "succeeded",
+      reason: null,
+      skipReason: null,
+      stepsUsed,
+      remainingSteps,
+      pr: pr ?? loop.pr,
+      pid: null,
+      startTime: null,
+    });
+    const updated = await readLoop(runsRoot, id, issue);
+    const cleanup = await cleanupLoop({ manifest, loop: updated, runsRoot, gh }).catch((err) => ({
+      removed: false,
+      reason: err.message,
+    }));
+    await changeLoop(issue, { cleanup });
+    await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+  };
+
+  const finishFailure = async (issue, loop, reason, { stepsUsed, remainingSteps }) => {
+    await changeLoop(issue, {
+      status: "failed",
+      reason,
+      stepsUsed,
+      remainingSteps,
+      pid: null,
+      startTime: null,
+    });
+    await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+  };
+
+  const withLoopOwnership = async (issue, fn) => {
+    const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
+    const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+    if (release === null) {
+      progress(`issue ${issue}: another resume owns the loop`);
+      return;
+    }
+    try {
+      await fn();
+    } finally {
+      await release();
+    }
+  };
+
+  const recover = async (issue, initial) => {
+    let loop = initial;
+    if (isLive(loop)) {
+      // A recorded live PID is never restarted, even when its start stamp is missing.
+      while (await ownerStillLive(loop)) {
+        if (interrupted || hard) return;
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
+    const transcript = await readTranscript(loop.transcript);
+    if (transcript === null && loop.attempts > 0) {
+      await changeLoop(issue, {
+        status: "needs-owner",
+        reason: "unverified-steps",
+        pid: null,
+        startTime: null,
+      });
+      return;
+    }
+    let declaredPr = loop.pr;
+    try {
+      declaredPr = declaredPrFromTranscript(transcript) ?? loop.pr;
+    } catch (err) {
+      await changeLoop(issue, {
+        status: "needs-owner",
+        reason: `the transcript declares an unreadable pull request: ${err.message}`,
+        pid: null,
+        startTime: null,
+      });
+      return;
+    }
+    loop = { ...loop, pr: declaredPr };
+
+    const recordedExit = await readTranscriptExit(loop.transcript);
     const steps = await readStepsUsed(loop.transcript, {
       checkpointSteps: loop.stepsUsed,
       attempts: loop.attempts,
     });
+    const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
+    const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
+    if (recordedExit.ok && recordedExit.proven && recordedExit.exitCode === 0) {
+      await finishSuccess(issue, loop, { stepsUsed, remainingSteps, pr: loop.pr });
+      return;
+    }
+    if (recordedExit.ok && recordedExit.proven && [1, 2, 4].includes(recordedExit.exitCode)) {
+      await finishFailure(issue, loop, `exit-${recordedExit.exitCode}`, {
+        stepsUsed,
+        remainingSteps,
+      });
+      return;
+    }
     if (!steps.ok) {
       await changeLoop(issue, {
         status: "needs-owner",
@@ -592,17 +686,11 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       });
       return;
     }
-    const remaining = prepared.maxSteps - steps.steps;
-    if (remaining <= 0) {
-      await changeLoop(issue, {
-        status: "failed",
-        reason: "step-budget-exhausted",
-        stepsUsed: steps.steps,
+    if (remainingSteps <= 0) {
+      await finishFailure(issue, loop, "step-budget-exhausted", {
+        stepsUsed,
         remainingSteps: 0,
-        pid: null,
-        startTime: null,
       });
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
       return;
     }
     const decision = await reconcileLoop({
@@ -613,37 +701,27 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       deps,
     });
     if (decision.status === "succeeded") {
-      await changeLoop(issue, {
-        status: "succeeded",
-        stepsUsed: steps.steps,
-        remainingSteps: remaining,
+      await finishSuccess(issue, loop, {
+        stepsUsed,
+        remainingSteps,
         pr: decision.pr ?? loop.pr,
-        pid: null,
-        startTime: null,
       });
-      const updated = await readLoop(runsRoot, id, issue);
-      const cleanup = await cleanupLoop({ manifest, loop: updated, runsRoot, gh }).catch((err) => ({
-        removed: false,
-        reason: err.message,
-      }));
-      await changeLoop(issue, { cleanup });
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
       return;
     }
     if (decision.status === "needs-owner") {
       await changeLoop(issue, {
         status: "needs-owner",
         reason: decision.reason,
-        stepsUsed: steps.steps,
-        remainingSteps: remaining,
+        stepsUsed,
+        remainingSteps,
         pid: null,
         startTime: null,
       });
       return;
     }
     await changeLoop(issue, {
-      stepsUsed: steps.steps,
-      remainingSteps: remaining,
+      stepsUsed,
+      remainingSteps,
       pr: decision.pr ?? loop.pr,
       pid: null,
       startTime: null,
@@ -668,27 +746,30 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       cursor < queue.length
     ) {
       const issue = queue[cursor++];
-      const loop = await readLoop(runsRoot, id, issue);
-      if (!start && loop.status === "succeeded" && loop.cleanup === null) {
-        const cleanup = await cleanupLoop({ manifest, loop, runsRoot, gh }).catch((err) => ({
-          removed: false,
-          reason: err.message,
-        }));
-        await changeLoop(issue, { cleanup });
-        await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-        continue;
-      }
-      if (terminal(loop.status)) continue;
-      if (!start && loop.status !== "queued") {
-        // A resume reconciles one recovered loop before it launches, so it never restarts blindly.
-        await recover(issue, loop);
-        continue;
-      }
-      try {
-        await launchIssue(issue);
-      } catch (err) {
-        if (!err?.batchWide) throw err;
-      }
+      const runOne = async () => {
+        const current = await readLoop(runsRoot, id, issue);
+        if (!start && current.status === "succeeded" && current.cleanup === null) {
+          const cleanup = await cleanupLoop({ manifest, loop: current, runsRoot, gh }).catch(
+            (err) => ({ removed: false, reason: err.message }),
+          );
+          await changeLoop(issue, { cleanup });
+          await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+          return;
+        }
+        if (terminal(current.status)) return;
+        if (!start && current.status !== "queued") {
+          // A resume reconciles one recovered loop before it launches, so it never restarts blindly.
+          await recover(issue, current);
+          return;
+        }
+        try {
+          await launchIssue(issue);
+        } catch (err) {
+          if (!err?.batchWide) throw err;
+        }
+      };
+      if (start) await runOne();
+      else await withLoopOwnership(issue, runOne);
       await new Promise((resolve) => setImmediate(resolve));
     }
     if (active.size === 0) break;

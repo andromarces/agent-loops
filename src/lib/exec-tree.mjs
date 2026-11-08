@@ -256,6 +256,14 @@ function killTree(subprocess) {
 }
 
 /**
+ * Ends the process tree of one subprocess now, on every platform: SIGKILL to its process group on
+ * POSIX, or `taskkill /T /F` on Windows. Safe for a child that already ended.
+ */
+export function endSubprocessTree(subprocess) {
+  killTree(subprocess);
+}
+
+/**
  * Force-kills the process tree of every live run at once, on every platform: SIGKILL to the process
  * group on POSIX, and `taskkill /T /F` on Windows. It never throws, so the remaining runs still get
  * their kill, and it blocks for up to one `taskkill` bound per live run on Windows.
