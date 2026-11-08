@@ -23,5 +23,4 @@ session id.
 The id check alone does not identify the caller, so a child that
 clears its environment passes, and so does a harness that filters the variable
 from shell commands. An orchestrator or parent that a child of the same
-run started, in that run's work tree, inherits the key and is refused. The prompt
-rule backs the marker.
+run started, in that run's work tree, inherits the key and is refused.

@@ -9,12 +9,9 @@ pull request. The declaration is the run's PR input, so such a run can only end
 through the gate: `agent-loop role finish --require-ci <pr>`, with the same PR number.
 
 - A `finish` with no `--require-ci` is refused, and a `finish` whose
-  `--require-ci` names another PR is refused without reading GitHub. That refusal
-  is the only way the interactive path can catch a wrong number, because its
-  `--require-ci` arrives at `finish`.
-- A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
-  resolves that compare. The recorded marker is the accepted gap of a run that
-  declares no PR, and a declared run does not have it. One refusal names every
+  `--require-ci` names another PR is refused without reading GitHub.
+- A `finish` that sets `"unresolvedCompare": true` is refused. A declared run
+  does not have the marker. One refusal names every
   condition the finish broke above the `--require-ci` gate, so read all of it
   rather than the first reason. The interactive `finish` reads the gate only
   after those conditions pass, so a later `finish` can report a `--require-ci`
@@ -27,18 +24,16 @@ through the gate: `agent-loop role finish --require-ci <pr>`, with the same PR n
   other init field. The one exception is `role declare-pr`, below. A state file
   written before this field has no `pr`, and that run keeps the marker-only
   behavior.
-- `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
-  at finish and the run would refuse every finish.
+- `review-only` refuses `--pr` at init.
 - A base branch with no required check does not refuse `--pr` when every
   required-check source stated that it holds none. The gate passes on the PR head,
   the clean reviewed tree, and the merge state, and the run records it, so a
   declared run on such a branch ends and never keeps the #286 gap. A base branch
-  whose required checks this credential cannot read still refuses every finish,
-  because the gate cannot establish the absence, and the refusal names the source
-  it could not read.
+  whose required checks this credential cannot read still refuses every finish, and
+  the refusal names the source it could not read.
 - Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
-  the gate, for example a private repository on the GitHub Free plan (#301), because
-  a declared run there refuses every finish and can end only through `abort`.
+  the gate, for example a private repository on the GitHub Free plan: a declared
+  run there refuses every finish and can end only through `abort`.
   Init with `--pr` and `role declare-pr` read the required-check
   sources of the PR base once. They refuse when the rulesets read settled nothing,
   before any state file is written or child spawns.
@@ -51,16 +46,15 @@ through the gate: `agent-loop role finish --require-ci <pr>`, with the same PR n
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
-gap for a run that states its PR (issue #302).
+gap for a run that states its PR.
 
 The conditions that the `--require-accept` and `--require-ci` gates check at `finish` are in
 [Finish gates](finish-gates.md).
 
 ### A task whose worker opens the PR
 
-The PR does not exist at init when the task is "address issue N through a PR", and
-the parent cannot open it, because the role rules forbid a parent write to
-GitHub. Declare the PR after the worker opens it:
+The PR does not exist at init when the task is "address issue N through a PR".
+Declare the PR after the worker opens it:
 
 1. Init the run with no `--pr`, and dispatch the worker.
 2. Read the PR number from the worker report.
@@ -82,13 +76,12 @@ GitHub. Declare the PR after the worker opens it:
 - Declare the PR before the first reviewer turn that follows the worker turn, so
   that turn already carries the status. A reviewer turn that ran earlier read the
   checks itself.
-- A repository whose rulesets the gate does not get (#301) refuses every finish
+- A repository whose rulesets the gate does not get refuses every finish
   of a declared run, so do not declare the PR there. `declare-pr` reads the
   required-check sources once and refuses there, leaving the run unchanged. A read
   that fails for another reason warns and does not refuse. The recovery and the
   marker-only case are in the section above; the `headCompare` record is in
   [Finish with --compare-head](finish-compare-head.md).
   - Run
-    `wait-checks --all` once before each reviewer turn, because the required wait
-    refuses there. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
+    `wait-checks --all` once before each reviewer turn. [Waiting for required checks](waiting-for-checks.md) states that wait and the `noCheckSource`
     envelope that ends it at once.

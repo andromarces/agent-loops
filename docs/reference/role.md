@@ -153,6 +153,6 @@ Part of [Child dispatch](#interactive-child-dispatch-agent-loop-role). The orche
 
 Usage: `agent-loop role wait-checks --pr <pr> [--all [--expect <check name>]...] [--head <sha>] [--cwd <dir>] [--timeout <seconds>]`. It prints `{"status": "ok", "pr": 42, "timedOut": false, "head": "<sha>", "checks": [{"name": "ci", "state": "SUCCESS", "bucket": "pass"}]}`.
 
-The [command detail](../orchestrator/waiting-for-checks.md#command-detail) holds each rule that this page previously restated.
+The [wait rules](../orchestrator/waiting-for-checks.md#waiting-for-required-checks) hold each rule that this page previously restated.
 
 `--cwd` must be inside a Git work tree, as it is for `dispatch`.
