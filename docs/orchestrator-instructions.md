@@ -114,13 +114,11 @@ A run that set `--reviewer-sandbox` at init needs no flag on a later
 dispatch: the state file holds the mode. A later dispatch that names another
 mode is refused.
 
-Read the JSON envelope on stdout. The envelope is one JSON line, with no indent. A
-background task can merge stdout, child stderr logs, and a harness trailer such as
-`[exited with code 0]` into one output file.
+Read the JSON envelope on stdout. The envelope is one JSON line, with no indent.
 
-In that file, select the last line that
+In that output, select the last line that
 starts with `{`, and parse only that line. Never search for a multi-line block.
-The example below is indented for display only. Example reviewer envelope:
+Example reviewer envelope:
 
 ```json
 {
@@ -269,8 +267,7 @@ Apply these parent rules:
   run changed inside that turn window. The turn hashes each copied source in the main work tree
   before and after its child call. The field names the paths, at most 20, and never content. The
   user or another process can cause the change too. Report it under `open`, and ask the user before
-  refreshing the copy: a refresh would copy content that the turn wrote. Never read, print, or quote
-  the file to decide.
+  refreshing the copy. Never read, print, or quote the file to decide.
 - A worker envelope carries `lockfileChanged` when the turn changed a lockfile at the work tree root
   or a non-Node dependency file at any depth. Examples are `pnpm-lock.yaml` after a base branch
   merge and a `requirements.txt` in a subdirectory. The field names the lockfiles by path only, and
@@ -342,9 +339,9 @@ The parent creates the run's work tree and owns it. Keep that work tree in place
 for the whole run, and never tell a worker to remove it.
 
 When a worker report says its edit landed in another checkout, stop the run,
-report the paths under `open` in the finish summary, and leave that checkout to
-the user: `mainWorkTreeChangedInTurn` stays report-only: a concurrent run can report
-the same path, so the runtime cannot attribute the edit to one run.
+and leave that checkout to the user. Report the paths under `open` in the finish
+summary. `mainWorkTreeChangedInTurn` stays report-only: the runtime cannot
+attribute the edit to one run.
 
 Create the work tree with no upstream:
 
@@ -418,9 +415,8 @@ the refusal in the reason, and leave the work tree to a maintainer, who decides
 whether to recreate it and start a new run.
 
 Abort only when a non-terminal run exists at the refused `--cwd`. With no run
-state there, from a refused init or a path that was never this run's, no run
-started, so report the refusal and do not abort. A run that is already terminal
-needs no abort.
+state there, from a refused init or a path that was never this run's, report the
+refusal and do not abort. A run that is already terminal needs no abort.
 
 One rule covers every refused `--cwd`: a path that no longer exists, a path that
 is not inside a Git work tree, and an existing work tree path whose Git metadata
@@ -555,9 +551,9 @@ dispatches no worker, so it takes none of `--pr`, `--require-accept`, and
 `--require-ci`.
 
 `--pr <pr>` on either path declares the run PR work, so that run can only end
-through the gate for the same PR. The gate reads the reviewed state, so the
-reviewer turn is the one that satisfies it; a worker turn resets that state to none,
-so it is needed first only when the condition is about the change. An interactive
+through the gate for the same PR. The reviewer turn is the one that satisfies the gate.
+A worker turn resets the reviewed state to none. A worker turn is needed first only
+when the condition is about the change. An interactive
 `role finish` records the `unresolvedCompare` marker in its envelope and the state
 file instead of a transcript event.
 

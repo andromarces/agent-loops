@@ -24,9 +24,8 @@ does not name. GitHub reads that the rules allow stay allowed. A local process
 or loopback server that a check starts stays allowed. A check that needs such a
 contact goes in `Checks` as unverified and in `Deferred`.
 
-The fixed review scope also carries the required-check rule. The rule text is in
-every reviewer prompt. It applies only when the task names a pull request, and
-then every reviewer turn reads `gh pr checks <pr> --required` for the reviewed
+The required-check rule applies only when the task names a pull request. Every
+reviewer turn then reads `gh pr checks <pr> --required` for the reviewed
 head. The command reads status only and changes nothing. Every
 rule below belongs to that one condition:
 
@@ -53,8 +52,7 @@ The `--require-ci` finish gate stays the enforcement point.
 
 A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
 knows the pull request before the first turn. The runtime reads the
-required-check status for that PR head and supplies it to every reviewer prompt. The prompt adds two lines inside the required-check group, so
-they apply only under the pull request condition:
+required-check status for that PR head and supplies it to every reviewer prompt. The two lines below apply only under the pull request condition:
 
 - This run read the required checks for PR <pr> before this turn: <summary>. That
   status is advisory evidence for this turn, in place of the read above: report
@@ -65,13 +63,11 @@ they apply only under the pull request condition:
   supplied status names. Report any difference between your read and the supplied
   status in `Checks`.
 
-The runtime reads the status for that PR head and supplies it to every reviewer
-prompt. That status is advisory evidence, in place of the reviewer reading the
-checks: the reviewer reports it, keeps its own read as the fallback, and reads
-the checks itself when the supplied status is unresolved. The `--require-ci`
-finish gate re-reads GitHub and enforces the condition. The runtime reports the
-status it read beside the reviewer result, so compare it with the reviewer Checks
-line.
+That status is advisory evidence, in place of the reviewer reading the checks:
+the reviewer reports it, keeps its own read as the fallback. It reads the checks
+itself when the supplied status is unresolved. The `--require-ci` finish gate
+re-reads GitHub and enforces the condition. The runtime reports the status it read
+beside the reviewer result, so compare it with the reviewer Checks line.
 
 The reviewer's own read is never removed. A supplied status
 is evidence for that turn, not a gate: a failed read is an

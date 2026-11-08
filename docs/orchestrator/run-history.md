@@ -4,8 +4,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 ## Turn history
 
-Every `agent-loop role` run keeps its own turn history. No `--transcript` flag is
-needed: the subcommand records each dispatched turn itself.
+Every `agent-loop role` run keeps its own turn history.
 
 - The state file's `turns` array holds one entry per dispatched turn, in order, and
   each entry survives every later dispatch that overwrites `lastDispatch` and
@@ -34,8 +33,8 @@ needed: the subcommand records each dispatched turn itself.
   and new `maxSteps`), `stepsUsed` when the change ran, and `at`. A `<count>` outside
   the rule that [Blockers and terminal states](../orchestrator-instructions.md#blockers-and-terminal-states)
   states is refused and the state file stays unchanged. The call prints
-  `{"status": "ok", "lifecycle": "active", "maxSteps": 40, "stepsUsed": 20}`. It shows after
-  which turn the budget changed. A run never extended has no `budgetChanges`.
+  `{"status": "ok", "lifecycle": "active", "maxSteps": 40, "stepsUsed": 20}`. A run never
+  extended has no `budgetChanges`.
   A run with no refunded first-turn refusal holds at most `maxSteps` entries; each
   refunded refusal adds one entry for its role.
 - Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
