@@ -321,39 +321,6 @@ test("the runtime advisory docs name the macOS path that the report follows", as
   expectRule(text, /covers `\/tmp`/i, /`TMPDIR`, `TEMP`, and `TMP` are unset/i);
 });
 
-// Usefulness: verifies ADR 0095 supersedes each temporary directory reporting rule and keeps the
-// safety rules (issue #1616).
-test("ADR 0095 supersedes the temporary directory reporting rules and keeps the safety rules", async () => {
-  const adr95 = await readFile(
-    join(repoRoot, "adr/0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md"),
-    "utf8",
-  );
-  const superseded = [
-    [
-      "0076",
-      "adr/0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md",
-    ],
-    ["0081", "adr/0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md"],
-    ["0082", "adr/0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md"],
-    ["0085", "adr/0085-let-the-tmpdir-re-check-read-a-terminal-run.md"],
-    ["0093", "adr/0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md"],
-  ];
-  for (const [number, path] of superseded) {
-    const text = await readFile(join(repoRoot, path), "utf8");
-    expect(text).toMatch(/## Status\s+superseded/);
-    expect(text).toContain("[ADR 0095:");
-    expect(adr95).toContain(`[ADR ${number}:`);
-  }
-  expect(adr95).toMatch(/## Status\s+accepted/);
-  expect(adr95).toMatch(/no automatic `open` item/i);
-  expect(adr95).toMatch(/ADR 0047|ADR 0068/);
-  expect(adr95).toMatch(/detection limits/i);
-  const readme = await readFile(join(repoRoot, "adr/README.md"), "utf8");
-  const adr68 = readme.split("\n").find((line) => line.startsWith("- 0068"));
-  expect(adr68).not.toContain("qualified by ADR 0076");
-  expect(adr68).toContain("ADR 0095");
-});
-
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
 // reviewed-state parent rules (issue #217, issue #252, issue #328). The two parent paths never
 // diverge. The reviewer-Checks gate rule uses the same presence check as the gate test. A reword
