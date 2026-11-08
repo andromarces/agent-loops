@@ -410,25 +410,18 @@ export const INHERITED_TMPDIR_INVALID_MESSAGE =
 
 // A double quote ends the shell double-quoted command and the plugin string literal, a dollar
 // sign or a backtick starts shell expansion, a percent sign expands in cmd.exe even inside
-// double quotes, and a control character breaks the line. On POSIX a backslash is a literal
-// name character that the rendered forward-slash form would mangle, so it is refused there;
-// on Windows it is the path separator.
+// double quotes, and a control character breaks the line.
 const UNENCODABLE_CHAR = /["$`%]/;
 const CONTROL_CHAR = /\p{Cc}/u;
 
 function hasUnencodableCharacter(packageRoot) {
-  return (
-    UNENCODABLE_CHAR.test(packageRoot) ||
-    CONTROL_CHAR.test(packageRoot) ||
-    (process.platform !== "win32" && packageRoot.includes("\\"))
-  );
+  return UNENCODABLE_CHAR.test(packageRoot) || CONTROL_CHAR.test(packageRoot);
 }
 
 const unencodableRootMessage = (packageRoot) =>
   `Refusing to install: the package root ${packageRoot} holds a character that the generated ` +
   "commands and the OpenCode plugin cannot encode. Move the package to a path without a double " +
-  "quote, dollar sign, backtick, percent sign, control character, or on POSIX a backslash, then " +
-  "run install again.";
+  "quote, dollar sign, backtick, percent sign, or control character, then run install again.";
 
 /**
  * The reason that `install` refuses `packageRoot`, or null. An invalid
