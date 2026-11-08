@@ -289,9 +289,10 @@ async function readFailedTurnEvidence(state) {
 }
 
 /**
- * Builds the pre-turn baselines and post-turn evidence reads of one child turn. Each read keeps its
- * result for the turn, so a later call returns the same value. `beforeTurn` also starts the main
- * work tree watch, which `mainWatch` exposes and `stop` closes; call `stop` on every outcome.
+ * Builds the pre-turn baselines and post-turn evidence reads of one child turn. The post-turn reads
+ * keep their result for the turn, so a later call returns the same value. `beforeTurn` runs once
+ * before the CLI call and `workTree` reads the work tree once after it. `beforeTurn` also starts the
+ * main work tree watch, which `mainWatch` exposes and `stop` closes; call `stop` on every outcome.
  * @param {{ cwd: string, signal?: AbortSignal, isWorker: boolean, localFilesCopied: string[],
  *   sharedGitReadBoundMs: number, mainWatchDeadlineMs?: number | null }} options
  */
