@@ -1,6 +1,6 @@
 import { open, opendir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { tryParseJson } from "./json.mjs";
 import { logDebug, logWarn } from "./log.mjs";
@@ -155,7 +155,7 @@ export async function snapshotPackageStore({
       return Promise.race([read, stopped]);
     });
   } catch (err) {
-    logWarn(`package store not read: ${firstErrorLine(readableErrorText(err))}`);
+    logWarn(`package store not read: ${errorLine(err)}`);
     return null;
   }
 }

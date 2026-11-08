@@ -1,7 +1,7 @@
 import { Socket } from "node:net";
 import { execa } from "execa";
 import { killTreeOnExit } from "./exec-tree.mjs";
-import { firstErrorLine, readProp, readableErrorText } from "./error-message.mjs";
+import { errorLine, readProp } from "./error-message.mjs";
 import { logDebug, logInfo, logWarn } from "./log.mjs";
 import { rootPins } from "./root-pins.mjs";
 import { cwdHash } from "./runstate.mjs";
@@ -330,9 +330,7 @@ export async function exec(command, args = [], options = {}) {
     Number.isInteger(pid) && onSpawn
       ? Promise.resolve()
           .then(() => onSpawn(pid))
-          .catch((err) =>
-            logWarn(`${label}: the spawn hook failed: ${firstErrorLine(readableErrorText(err))}`),
-          )
+          .catch((err) => logWarn(`${label}: the spawn hook failed: ${errorLine(err)}`))
       : undefined;
   const result = await settleWithin(subprocess, {
     timeoutMs: execaOptions.timeout,

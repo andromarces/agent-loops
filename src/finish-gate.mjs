@@ -1,4 +1,4 @@
-import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
+import { errorLine, readProp } from "./lib/error-message.mjs";
 import {
   compareHeadConflict,
   missingGateRefusal,
@@ -32,7 +32,7 @@ async function readGate({ read, failedLog, failedReason, failedRecovery, refused
   } catch (err) {
     // A caller cancel ends the run; it is not a gate refusal that a later turn could pass.
     if (readProp(err, "isCanceled")) throw err;
-    const detail = firstErrorLine(readableErrorText(err));
+    const detail = errorLine(err);
     logError(`${failedLog}: ${detail}`);
     return {
       refusal: { reason: `${failedReason}: ${detail}`, recovery: failedRecovery },
