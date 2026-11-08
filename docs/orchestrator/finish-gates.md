@@ -72,7 +72,7 @@ included. In `review-only`, each flag fails with a clear error.
     whose entries all carry a documented rule type and none is a
     `required_status_checks` rule, which is the read of a branch that has no
     required-status-check rule; the read is paginated by page number, 100 rules per page, and never
-    follows a reply-supplied `Link` URL, so a rule on a later page is enforced; a read the runtime
+    follows a reply-supplied `Link` URL; a read the runtime
     cannot account for every page of is unknown. For classic branch protection it is exactly
     `gh: Branch not protected (HTTP 404)`, one trailing line break aside, which the
     endpoint writes only to a caller that can read protection. No successful

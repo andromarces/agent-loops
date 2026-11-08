@@ -678,8 +678,10 @@ for (const [name, load] of RULE_SURFACES) {
     expectRule(text, /exactly one empty page/i, /empty/i, /positive absence/i);
     // An unlisted rule type settles nothing either.
     expectRule(text, /not a documented rule type/i, /unknown/i);
-    // A rule on a later page is enforced rather than missed.
-    expectRule(text, /paginated/i, /later page/i, /enforced/i);
+    // The ruleset read pages by number and never follows a reply-supplied Link URL.
+    expectRule(text, /paginated/i, /page number/i, /100 rules per page/i);
+    expectRule(text, /never follows a reply-supplied `Link` URL/i);
+    expect(text).not.toMatch(/so a rule on a later page is enforced/i);
   });
 
   // Usefulness: verifies ${name} states the four ruleset outcomes (#336 review). The empty ruleset
