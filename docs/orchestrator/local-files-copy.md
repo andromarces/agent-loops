@@ -10,7 +10,7 @@ The init envelope reports the paths as `localFiles: {copied, skipped}`,
 by name only. A path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 
-The copy duplicates secrets such as `.env` into the run work tree, so remove that
+The copy duplicates secrets such as `.env` into the run work tree. Remove that
 work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
 the copy off. It is an init field, so a later call cannot change it.
 
@@ -38,16 +38,14 @@ reports every copied path as `unknown`.
 For `source`, the main work tree changed after init. Run
 `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
 `--parent-session` id when no `localSourceChangedInTurn` entry names it. The command writes the
-source bytes over the copy and stores their hash, so later envelopes stop reporting the path until
-a side changes again. The copy keeps its prior mode, including the read-only attribute on Windows.
+source bytes over the copy and stores their hash. The copy keeps its prior mode, including the read-only attribute on Windows.
 
 The command refuses a path that init did not copy, a missing or unreadable side, and a link at the
 file or a parent component. It also refuses a copy that differs from its stored hash, a terminal
 run, and a child role. A refused refresh writes nothing. It reports the path only, never the content
 or a hash.
 
-For `copy`, a turn changed the copy: report a breach under `open`. For `both`, the stored hash
-records no refresh of the current copy: report a breach under `open`. The first action checks
+For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`. The first action checks
 whether the main work tree holds a newer rule file, such as `AGENTS.md`. Never read, print, or
 quote the file to decide.
 
@@ -57,6 +55,5 @@ source that changed inside the window is reported on that turn's envelope as
 source changed or the read failed. The read proves no actor: the user or another process can
 change the source too.
 
-Report a `localSourceChangedInTurn` path under `open`, and ask the user before any refresh. A
-refresh would copy content that the turn wrote, and the child prompts forbid a turn to write one.
+Report a `localSourceChangedInTurn` path under `open`, and ask the user before any refresh.
 Never read, print, or quote the file to decide.

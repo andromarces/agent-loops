@@ -22,8 +22,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     no envelope field for it.
   - An entry that is the turn directory of another agent-loop process on the host, such as a
     concurrent run, carries the prefix `registered/`, for example `registered/al-Ab1234`. A process registers each turn directory in the runs root with its device and
-    inode, and the entry is marked only while it is still that directory. No entry name can hold
-    `/`, so a turn cannot forge the prefix. A turn can write a registration for a directory of its
+    inode, and the entry is marked only while it is still that directory.
+    A turn can write a registration for a directory of its
     own, so the prefix is a hint and never proof: the entry stays listed, and the parent creates no
     item for it by itself.
   - The runtime cannot attribute an entry to a turn, so the parent cannot prove ownership. The

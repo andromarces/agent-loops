@@ -98,11 +98,10 @@ fail too. An indented bullet that is not one nested level (no parent item, a sec
 another indent width) fails as well. A bold heading line that groups a `- ` list
 outside the fold rule above fails too.
 
-The parent prompt can format its own blockers as an ordered list. A child that mirrors that shape
-still puts the list under a label. An indented label or a decorated label
-does the same. This covers a label occurrence that a later repeat shadows, which
-also drops a list that the repeat shadows. A non-list line, for example a closing
-sentence, does not make the block unparseable.
+A child that mirrors the parent prompt's ordered list still puts the list under a label. An indented
+label or a decorated label does the same. A label occurrence that a later repeat shadows drops a
+list that the repeat shadows. A non-list line, for example a closing sentence, does not make the
+block unparseable.
 
 A `*` line is not always a
 list, and one shape is the case that matters here: a `*` line whose closing
@@ -112,8 +111,7 @@ or an ASCII digit, for example `*file*` or `*use a* b`. Such a line is
 dropped without `raw` under any label, and every matching line in the block
 drops the same way, so the block still parses with the text gone.
 
-A child is told to write no block line that starts with `*`. Every other `*`
-line either is a list and blanks the block, for example `*item`, `* item`, or
-`*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
+A `*` line that is not the dropped shape above either is a list and blanks the block, for example
+`*item`, `* item`, or `*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
 
 A table pair is a line with a `|` and a delimiter row directly below it. A Markdown table in the block makes it unparseable: put tabular data in `- ` items, one row per item.

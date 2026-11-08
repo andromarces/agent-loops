@@ -15,13 +15,12 @@ Reference sections list below names each file and when to read it.
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
-  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run.
-- The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
+  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states.
+- The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
-  other remote state. A status read, such as `agent-loop role wait-checks`,
-  changes nothing, so it is not a write. The runtime does not detect a remote
-  write, so this rule is advisory.
+  other remote state. A status read, such as `agent-loop role wait-checks`, is
+  not a write. The runtime does not detect a remote write, so this rule is advisory.
 - Read only the JSON envelope the subcommand prints on stdout. Child stderr
   logs and child response text beyond the envelope are not input.
 
@@ -81,8 +80,7 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `printf`. The exception is an init with `--task-file -`, which takes
   `--prompt-file`. While a run is active, the parent guard denies the file-edit
   tools of the parent for every path, including a scratch path outside the work
-  tree. A piped `cat <file>` of a
-  file that was never written gives an empty stdin, and `dispatch` refuses it:
+  tree. `dispatch` refuses an empty stdin:
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) reaches each child conversation once, as
   [Init task delivery](orchestrator/task-delivery.md) states.
@@ -187,7 +185,7 @@ out of scope).
 
 A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
-branch and pushes it, so the PR head equals the reviewed head. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
+branch and pushes it. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
 
 After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
@@ -218,9 +216,9 @@ Apply these parent rules:
   - The `sharedGitChanged` field also names the shared `core.bare`, `core.worktree`, and
     `extensions.*` config keys. It names every other local (shared) config key that the turn
     added, changed, or removed, including `user.*`, `commit.gpgsign`, `gpg.*`, and `includeIf.*`.
-    It names a key only, never a value. It leaves out `branch.<name>.*`, because a normal
-    `git push -u` writes those keys. The userinfo of a URL in a key name becomes `<redacted>`, so a
-    credential never appears. Two keys that differ only in that userinfo stay two entries with the
+    It names a key only, never a value. It leaves out `branch.<name>.*`.
+    The userinfo of a URL in a key name becomes `<redacted>`.
+    Two keys that differ only in that userinfo stay two entries with the
     same redacted name.
   - The read covers the global config, the local (shared) scope, the run work tree's own worktree
     scope, and the main work tree's worktree scope. A `core.worktree` change in the linked work
@@ -251,7 +249,7 @@ Apply these parent rules:
   - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
     only, at most 20, and never content. A failed or canceled worker turn carries the field too.
     Report it under `open` in the finish summary. The user or another process can cause the change
-    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only access moves only the access time, so it names no path.
+    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only access names no path.
   - An absent path does not prove that no in-window edit happened.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field proves nothing.
@@ -324,8 +322,7 @@ Apply these parent rules:
   never an accept.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
-  sets the marker described in [Finish output](orchestrator/finish-output.md). That marker is the only
-  machine-readable record of the compare, so always set it.
+  sets the marker described in [Finish output](orchestrator/finish-output.md). Always set that marker.
 
 ## Check waits
 
@@ -364,8 +361,7 @@ run a plain `git push`. Before the first dispatch, read
 `git -C "<work tree>" config push.default`. If it prints `matching`, state the
 named push in the task text.
 
-The named push closes the gap only when the worker follows it. A worker that
-runs a plain `git push` anyway can push the default branch under `matching`.
+The named push is not a guarantee: a worker that runs a plain `git push` can push the default branch under `matching`.
 
 A run on an existing pull request, such as a review or a correction of PR #N, must
 run on the PR head branch. A repository with no remote has no `origin/<default>`.
@@ -379,8 +375,7 @@ documents for its tests. For a Node project, that is the lockfile install, for
 example `pnpm install --frozen-lockfile`. For another toolchain, it is the
 documented setup, for example a virtual environment built from a hashed
 requirements file. Never link or junction the `node_modules` of another checkout
-into the work tree. Never run an install in another checkout: a tool such as `vp`
-can rewrite links in the `node_modules` that the junction points to.
+into the work tree. Never run an install in another checkout.
 
 `dispatch` checks the work tree before it reads the run state, charges a step, or
 spawns a child, so a refused `--cwd` leaves the run as it was: the init call
@@ -396,16 +391,14 @@ once as a first turn, with the worker preamble and the `Init task:` block. A rev
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files of the
 main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent
-instructions and `.env`. Do not read, print, or quote any copied file. The copy duplicates
-secrets such as `.env` into the run work tree, so remove that work tree when the run ends. The
+instructions and `.env`. Do not read, print, or quote any copied file. Remove that work tree when the run ends. The
 copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
 [Local files copied into the work tree](orchestrator/local-files-copy.md).
 
 For `source`, the main work tree changed after init. Run
 `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
 `--parent-session` id when no `localSourceChangedInTurn` entry names it. For `copy`, a turn
-changed the copy: report a breach under `open`. For `both`, the stored hash records no refresh of
-the current copy: report a breach under `open`. When `localSourceChangedInTurn` names a path, report
+changed the copy: report a breach under `open`. For `both`, report a breach under `open`. When `localSourceChangedInTurn` names a path, report
 it under `open` and ask the user before a refresh.
 
 Remove the work tree only after the run is terminal. A `finish` or `abort` envelope
@@ -420,7 +413,7 @@ remove the work tree after it reads `halted`. Run the removal as a separate comm
 after you read the result. Never chain it after `finish` or `abort` in one command.
 
 Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states.
-Never delete it with a recursive delete that follows junctions: it can damage the shared pnpm store.
+Never delete it with a recursive delete that follows junctions.
 
 A refused `--cwd` is not the parent's to repair: end the run, name the path and
 the refusal in the reason, and leave the work tree to a maintainer, who decides
@@ -535,10 +528,8 @@ Every command for a run passes that run's `--cwd`. Each run ends with its own
 `finish` or `abort`, and the guard releases only after every run is terminal.
 
 Runs on one host share the test slot table, whose default count is 1.
-A targeted test run with `--if-held` waits while any slot is held. A
-reviewer turn can then wait behind a full suite of another run. That wait, or
-exit 75 from the wrapper, can leave a reviewer turn with no local test run. The
-required CI checks are then its only test evidence, as
+A targeted test run with `--if-held` waits while any slot is held. When a
+reviewer turn has no local test run, the required CI checks are its only test evidence, as
 [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 A parent that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the
 first dispatch.
@@ -558,8 +549,7 @@ remove it.
   the subcommand rejects worker dispatch in this mode.
 
 Dispatch a remote-only worker edit, such as a checklist item, before the final
-reviewer turn. A worker turn after the review resets the reviewed state, so that
-order avoids an extra reviewer step.
+reviewer turn. A worker turn after the review resets the reviewed state.
 
 Both paths name the mode with `--mode <mode>`, with the same three values: on the
 `role` init call and on the headless `agent-loop` command. A `review-only` run
@@ -567,11 +557,11 @@ dispatches no worker, so it takes none of `--pr`, `--require-accept`, and
 `--require-ci`.
 
 `--pr <pr>` on either path declares the run PR work, so that run can only end
-through the gate for the same PR (#302). The gate reads the reviewed state, so the
+through the gate for the same PR. The gate reads the reviewed state, so the
 reviewer turn is the one that satisfies it; a worker turn resets that state to none,
 so it is needed first only when the condition is about the change. An interactive
 `role finish` records the `unresolvedCompare` marker in its envelope and the state
-file instead of a transcript event (#281).
+file instead of a transcript event.
 
 The rules that only a headless run acts on are in
 [Loop policy and actions](reference/usage.md#loop-policy-and-actions): the default of
@@ -633,9 +623,8 @@ pull request, so the run can end only through the gate:
   Never raise the budget on your own to avoid a stop the user set. The spawn marker and its
   limits are in [Child run guard](orchestrator/child-run-guard.md).
 - `extend` changes the budget in place on the same state file, so each role
-  keeps its stored session and the run does not send the preamble again. Do not
-  abort and start a new run to gain steps: that starts every role on a new
-  session and loses its conversation history. `<count>` must be larger than both
+  keeps its stored session. Do not
+  abort and start a new run to gain steps. `<count>` must be larger than both
   `stepsUsed` and the current `maxSteps`, and follows the `--max-steps` range
   in [Turn history and the step budget](orchestrator/run-history.md). `extend` works from `active`, `dispatched`, and `interrupted`, leaves
   the lifecycle as it is, and refuses a terminal run. An `interrupted` run still

@@ -9,8 +9,7 @@ value. The `git config push.default` read in
 effective value of the work tree, override included.
 
 With `extensions.worktreeConfig` on, a new linked work tree inherits the sparse-checkout
-setting of the main work tree. The run work tree then lacks
-every tracked file that the main work tree excludes. Before the first dispatch, run
+setting of the main work tree. Before the first dispatch, run
 `git sparse-checkout disable` in the run work tree, or state the exclusion in the task
 text. The init envelope reports the setting as `sparseCheckout: {enabled, skipWorktree}`,
 by path only, at most 20 paths. A Git read that fails or passes its 10 second bound adds
@@ -46,28 +45,24 @@ git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch>
 `-B` creates the branch, or moves an existing local branch of that name to
 `origin/<pr branch>`. If the local branch exists, run
 `git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. A left
-count above 0 means the local branch is ahead of or diverged from the PR head. Then
-`-B` drops its local-only commits from the branch, so do not run the command:
+count above 0 means the local branch is ahead of or diverged from the PR head. Do not run the command:
 report to the user.
 
 A left count of 0 means the local branch equals or is behind the
 PR head, and the command is safe. The command fails when another work tree has the
 branch checked out. Then report to the user, and never remove that work tree.
 
-`-B` keeps the upstream of an existing local branch. A plain `git push` of a worker
-follows that upstream, so the upstream must be `origin/<pr branch>` or none, and
+`-B` keeps the upstream of an existing local branch. The upstream must be `origin/<pr branch>` or none, and
 never the default branch. Before the first dispatch, read it with
 `git -C "<work tree>" for-each-ref --format='%(upstream:short)' "refs/heads/<pr branch>"`.
 If it prints another branch, such as `origin/<default>`, run
 `git -C "<work tree>" branch --unset-upstream`, or set the PR branch with
 `git -C "<work tree>" branch -u origin/<pr branch>`.
 
-The upstream `origin/<pr branch>` is acceptable. The `--no-track` rule guards a new branch that tracks
-`origin/<default>`. The worker pushes with `git push -u origin <pr branch>`.
+The upstream `origin/<pr branch>` is acceptable. The worker pushes with `git push -u origin <pr branch>`.
 
 The work tree head must equal the PR head before the first dispatch: compare
 `git -C "<work tree>" rev-parse HEAD` with
-`gh pr view <pr> --json headRefOid --jq .headRefOid`. If they differ, the PR head
-moved after the fetch. Run `git fetch origin <pr branch>` and
+`gh pr view <pr> --json headRefOid --jq .headRefOid`. If they differ, run `git fetch origin <pr branch>` and
 `git -C "<work tree>" merge --ff-only origin/<pr branch>`, then compare again. If
 the heads still differ, dispatch nothing and report to the user.

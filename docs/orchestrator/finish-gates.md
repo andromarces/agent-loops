@@ -58,9 +58,9 @@ included. In `review-only`, each flag fails with a clear error.
     holds, before the per-check pass; that is a failed or partial page, a ruleset read that the runtime cannot account for page by page (no 2xx status block, a body that is not one JSON value, or more than 100 pages; a `Link` target on another host is an error, not an unknown source), an anomalous page sequence, which is no page at all, two or more empty pages,
     or an empty page beside a page that holds rules, and an unlisted or malformed rule type.
     A ruleset read of exactly one empty page is neither of those: its class is empty, a
-    successful read that found no rule, so it contributes no contexts
-    and the per-check pass runs on the other sources, so a
-    classic-only repository whose required checks passed still finishes.
+    successful read that found no rule, and it contributes no contexts, so the per-check pass
+    runs on the other sources. A classic-only repository whose required checks passed still
+    finishes.
     Otherwise a finish passes on the absence only when no source named a required
     check and no source is unknown, so both sources must have stated the outcome, and
     an unknown classic-protection source keeps the empty-union refusal with the reason
@@ -70,13 +70,11 @@ included. In `review-only`, each flag fails with a clear error.
   - Absent, the only class that lets a finish pass, has exactly one reply per source.
     For repository rulesets it is a read of every page that returns a non-empty array
     whose entries all carry a documented rule type and none is a
-    `required_status_checks` rule, which is the read of a branch that has no
-    required-status-check rule; the read is paginated by page number, 100 rules per page, and never
+    `required_status_checks` rule; the read is paginated by page number, 100 rules per page, and never
     follows a reply-supplied `Link` URL; a read the runtime
     cannot account for every page of is unknown. For classic branch protection it is exactly
-    `gh: Branch not protected (HTTP 404)`, one trailing line break aside, which the
-    endpoint writes only to a caller that can read protection. No successful
-    classic-protection body proves an absence, so a readable body that names no check
+    `gh: Branch not protected (HTTP 404)`, one trailing line break aside.
+    No successful classic-protection body proves an absence, so a readable body that names no check
     is unknown. Has-contexts is a reply that named at least one required check, so the
     per-check pass runs and enforces it. Empty is exactly one empty page: a successful
     read that found no rule, which contributes no contexts and is not a positive absence,
@@ -85,14 +83,12 @@ included. In `review-only`, each flag fails with a clear error.
     a ruleset entry whose type is missing or is not a documented
     rule type, a malformed or unparseable body, an empty page inside a longer read,
     and every unreadable reply.
-  - A branch reaches the absence path where both sources state the outcome, so a
-    ruleset-only branch does, while a branch with no ruleset at all does not, because
-    its read is one empty page, and empty is not absent, and an empty page inside a
-    longer read states nothing, and neither does a
-    classic-protected branch that
-    requires reviews but names no check. GitHub documents that the ruleset read
-    returns active rules only, so a rule in a ruleset whose enforcement is `disabled`
-    or `evaluate` never appears in it and never affects the classification.
+  - A branch reaches the absence path only where both sources state the outcome, so a
+    ruleset-only branch does. A branch with no ruleset at all does not: its read is one empty page,
+    and empty is not absent. An empty page inside a longer read states nothing, and neither does a
+    classic-protected branch that requires reviews but names no check.
+    A rule in a ruleset whose enforcement is `disabled`
+    or `evaluate` never appears in the ruleset read and never affects the classification.
   - `gh pr checks --required` is never classified and never establishes the absence. It
     lists only the checks that already reported, so it can name a required check and
     it cannot prove one is absent, and on a base branch with no required check it
@@ -101,21 +97,19 @@ included. In `review-only`, each flag fails with a clear error.
     stdout holds that JSON still contributes names, and only a stdout that is not a
     JSON array of named checks contributes none. It is an independent source.
   - A rate-limit or SSO 403 fails the run by design. The exception to ruleset readability is
-    a private repository on the GitHub Free plan, where the plan does not allow the
-    rule at all.
+    a private repository on the GitHub Free plan.
   - A Free-plan 403 leaves each endpoint with no required contexts, and it is
     classified unknown rather than empty, so the empty-union refusal names it. A private GitHub
     Free-plan repository still refuses a declared run, so such a repository must omit
-    `--pr`, which leaves the #286 gap in place. Init with `--pr` and `role declare-pr` refuse that case up front, so the parent does not learn of it at
-    `finish`.
+    `--pr`, which leaves the #286 gap in place. Init with `--pr` and `role declare-pr` refuse that case up front.
   - Repository rulesets are readable with read access on a repository whose plan allows
     the rule, so a token without repository admin still gates through repository rulesets
     and through `gh pr checks --required` while the classic-protection source stays
-    unknown. A required check that never started cannot escape the gate: the per-check
+    unknown. A required check that never started is refused: the per-check
     pass refuses it when a source names it, and the blocked-merge-state refusal covers
     it when no source names it. A blocked merge state refuses after the per-check
-    pass, so a refusal for a named check keeps its name, and each refusal names the
+    pass, and each refusal names the
     failed condition. The gate cannot tell a missing check from an unmet
-    review or another required rule, so a repository with required approvals also
+    review or another required rule: a repository with required approvals also
     refuses until they are met, and a branch that states it has no required check still
     refuses while its merge state is blocked. This gate needs the `gh` CLI.

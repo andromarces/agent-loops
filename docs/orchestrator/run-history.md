@@ -29,8 +29,7 @@ needed: the subcommand records each dispatched turn itself.
   refunded first-turn refusal for each role. The recovery call runs no child,
   records an already-charged step from the `lastDispatch`
   role and time of that turn, and charges none of its own, so
-  it does not push the history past that bound. The entries are fixed-shape, so
-  the history cannot grow with the text a child returns.
+  it does not push the history past that bound.
 - `budgetChanges` holds one entry per `role extend`: `from` and `to` (the old
   and new `maxSteps`), `stepsUsed` when the change ran, and `at`. A `<count>` outside
   the rule that [Blockers and terminal states](../orchestrator-instructions.md#blockers-and-terminal-states)
@@ -43,8 +42,7 @@ needed: the subcommand records each dispatched turn itself.
   The CLI refuses a `--max-steps` outside it, and `dispatch`, `finish`, and
   `extend` re-check the stored `maxSteps` against the same range before reading
   the budget. A refusal names the state file field to
-  correct. Every budget a run reads is therefore a safe integer, so the step
-  count always advances by exactly one per charged step.
+  correct. The step count advances by exactly one per charged step.
 - `abort` is not subject to that check. It charges no step and reads no budget,
   so it proceeds and ends the run. Use it to close a run whose stored `maxSteps`
   is out of range: `dispatch` and `finish` are refused, and a new init refuses
