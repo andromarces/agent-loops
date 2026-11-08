@@ -304,7 +304,8 @@ export async function refreshLocalFile(
     handle = null;
     // A Windows rename over a read-only target fails with EPERM. Clear the attribute before the
     // rename; the temporary file carries the prior copy mode, so the rename brings it back.
-    // Re-check the path just before the clear, so a swapped link never redirects it.
+    // Re-check the path just before the clear. A swap after that check and before `chmod` can still
+    // redirect it, in the same path-based window that the following rename has.
     if (process.platform === "win32") {
       await beforeReadOnlyClear?.(target);
       if (!(await chmodPlain(rootReal, rel, target, copy.mode | 0o200))) {
