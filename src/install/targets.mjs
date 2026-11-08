@@ -3,14 +3,29 @@
 // package. `src/install/templates/` holds the entry point and guard files. The
 // Antigravity entry comes from `templates/antigravity/hooks.json`.
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ANTIGRAVITY_GUARDED_TOOLS } from "../hook/antigravity-guarded-tools.mjs";
 import { HARNESS_META } from "../lib/harnesses.mjs";
 
-function forwardSlashes(path) {
-  return path.replaceAll("\\", "/");
+// Windows commands use forward slashes. POSIX keeps a literal backslash, which is a name
+// character and not a separator there.
+function forwardSlashes(path, platform) {
+  return platform === "win32" ? path.replaceAll("\\", "/") : path;
 }
+
+// A path inside a shell double-quoted word. POSIX consumes a backslash before `$`, a backtick,
+// `"`, a backslash, or a newline, so each backslash doubles. Windows keeps its separators.
+function shellPath(path, platform) {
+  return platform === "win32" ? path : path.replaceAll("\\", "\\\\");
+}
+
+function nodeCommand(path, platform) {
+  return `node "${shellPath(path, platform)}"`;
+}
+
+/** The contents of a JavaScript string literal, escapes included but without its quotes. */
+const javascriptStringContents = (value) => JSON.stringify(value).slice(1, -1);
 
 async function template(templateDir, ...segments) {
   return readFile(join(templateDir, ...segments), "utf8");
@@ -35,20 +50,20 @@ const SESSION_CHANNEL = {
   },
 };
 
-function claudeEntry(guardPath) {
+function claudeEntry(guardPath, platform) {
   return {
     matcher: "Edit|Write|MultiEdit|NotebookEdit",
-    hooks: [{ type: "command", command: `node "${guardPath}"`, timeout: 10 }],
+    hooks: [{ type: "command", command: nodeCommand(guardPath, platform), timeout: 10 }],
   };
 }
 
-function codexEntry(guardPath) {
+function codexEntry(guardPath, platform) {
   return {
     matcher: "^apply_patch$",
     hooks: [
       {
         type: "command",
-        command: `node "${guardPath}"`,
+        command: nodeCommand(guardPath, platform),
         timeout: 10,
         statusMessage: "Checking parent orchestration guard",
       },
@@ -67,26 +82,40 @@ const skillNote = (discovery, command, label) =>
 /**
  * Builds the full target list for one harness.
  * @param {string} harness
- * @param {{ home: string, packageRoot: string, copilotHome?: string }} options
+ * @param {{ home: string, packageRoot: string, copilotHome?: string, platform?: NodeJS.Platform, templateDir?: string }} options
  * @returns {Promise<{ files: Array<{path: string, content: string}>, settings: Array<{path: string, locator: object, entry: object}>, notes: Array<{path: string, dryRun: boolean, detail: string}> }>}
  */
-export async function buildTargets(harness, { home, packageRoot, copilotHome }) {
-  const templateDir = join(packageRoot, "src/install/templates");
-  const instructions = join(packageRoot, "docs/orchestrator-instructions.md");
-  const guardPath = join(packageRoot, "src/hook/parent-guard.mjs");
+export async function buildTargets(
+  harness,
+  { home, packageRoot, copilotHome, platform = process.platform, templateDir },
+) {
+  const pathApi = platform === "win32" ? win32 : posix;
+  const templates = templateDir ?? pathApi.join(packageRoot, "src/install/templates");
+  const instructions = pathApi.join(packageRoot, "docs/orchestrator-instructions.md");
+  const guardPath = pathApi.join(packageRoot, "src/hook/parent-guard.mjs");
   // The absolute invocation works from Git Bash and PowerShell alike, where the
   // bare `agent-loop` command is absent or resolves only to a Windows `.cmd`
   // shim. Bash does not resolve that shim, so a PATH lookup would report a
   // missing command and the skill would misread it as a harness refusal (#151).
-  const cli = `node "${forwardSlashes(join(packageRoot, "src/cli.mjs"))}"`;
+  const cli = nodeCommand(
+    forwardSlashes(pathApi.join(packageRoot, "src/cli.mjs"), platform),
+    platform,
+  );
   const files = [];
   const settings = [];
   const notes = [];
 
-  const renderPaths = (text) =>
+  const renderSkillPaths = (text) =>
     text
-      .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions))
+      .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions, platform))
       .replaceAll("__AGENT_LOOP_CLI__", cli);
+  // The plugin holds the instructions path in a JavaScript string literal, so the
+  // value is escaped for that context rather than quoted as a shell word (#1635).
+  const renderPluginPaths = (text) =>
+    text.replaceAll(
+      "{{AGENT_LOOP_INSTRUCTIONS}}",
+      javascriptStringContents(forwardSlashes(instructions, platform)),
+    );
 
   // Renders the skill template of the current harness into `<skillsDir>/agent-loop/SKILL.md`.
   // The shared harness-check and session-channel paragraphs fill `{{HARNESS_CHECK}}` and
@@ -101,14 +130,14 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
         .replaceAll("{{SESSION_VAR_REASON}}", reason)
         .replaceAll("{{SESSION_BREAK}}", paragraphBreak)
         .trimEnd();
-    const skill = await template(templateDir, harness, "skills", "agent-loop", "SKILL.md");
-    const harnessCheck = renderParagraph(await template(templateDir, "harness-check.md"));
+    const skill = await template(templates, harness, "skills", "agent-loop", "SKILL.md");
+    const harnessCheck = renderParagraph(await template(templates, "harness-check.md"));
     const sessionChannel = skill.includes("{{SESSION_CHANNEL}}")
-      ? renderParagraph(await template(templateDir, "session-channel.md"))
+      ? renderParagraph(await template(templates, "session-channel.md"))
       : "";
     files.push({
       path: join(skillsDir, "agent-loop", "SKILL.md"),
-      content: renderPaths(
+      content: renderSkillPaths(
         skill
           .replaceAll("{{HARNESS_CHECK}}", harnessCheck)
           .replaceAll("{{SESSION_CHANNEL}}", sessionChannel),
@@ -119,7 +148,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   if (harness === "claude") {
     const skillsDir = join(home, ".claude", "skills");
     await addSkill(skillsDir);
-    const entry = claudeEntry(guardPath);
+    const entry = claudeEntry(guardPath, platform);
     settings.push({
       path: join(home, ".claude", "settings.json"),
       locator: {
@@ -143,16 +172,9 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
     await addSkill(skillsDir);
     files.push({
       path: join(skillsDir, "agent-loop", "agents", "openai.yaml"),
-      content: await template(
-        templateDir,
-        "codex",
-        "skills",
-        "agent-loop",
-        "agents",
-        "openai.yaml",
-      ),
+      content: await template(templates, "codex", "skills", "agent-loop", "agents", "openai.yaml"),
     });
-    const entry = codexEntry(guardPath);
+    const entry = codexEntry(guardPath, platform);
     settings.push({
       path: hooksFile,
       locator: {
@@ -184,24 +206,26 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       },
     );
   } else if (harness === "opencode") {
-    const plugin = await template(templateDir, "opencode", "plugins", "parent-guard.ts");
+    const plugin = await template(templates, "opencode", "plugins", "parent-guard.ts");
     files.push({
       path: join(home, ".config", "opencode", "plugins", "parent-guard.ts"),
-      content: renderPaths(plugin)
+      content: renderPluginPaths(plugin)
         .replaceAll(
           "__AGENT_LOOP_PLUGIN_URL__",
-          pathToFileURL(join(packageRoot, "src/hook/opencode-plugin.mjs")).href,
+          pathToFileURL(pathApi.join(packageRoot, "src/hook/opencode-plugin.mjs")).href,
         )
         .replaceAll(
           "__AGENT_LOOP_GUARD_URL__",
-          pathToFileURL(join(packageRoot, "src/hook/decision.mjs")).href,
+          pathToFileURL(pathApi.join(packageRoot, "src/hook/decision.mjs")).href,
         ),
     });
   } else if (harness === "copilot") {
-    const hook = JSON.parse(await template(templateDir, "copilot", "hooks", "parent-guard.json"));
+    const hook = JSON.parse(await template(templates, "copilot", "hooks", "parent-guard.json"));
     // Copilot consumes a flat permissionDecision object, so it runs its own
     // guard script rather than the Claude/Codex hookSpecificOutput shape (#155).
-    hook.hooks.PreToolUse[0].args = [join(packageRoot, "src/hook/copilot-parent-guard.mjs")];
+    hook.hooks.PreToolUse[0].args = [
+      pathApi.join(packageRoot, "src/hook/copilot-parent-guard.mjs"),
+    ];
     files.push({
       path: join(copilotHome ?? join(home, ".copilot"), "hooks", "parent-guard.json"),
       content: `${JSON.stringify(hook, null, 2)}\n`,
@@ -209,7 +233,7 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
   } else if (harness === "antigravity") {
     await addSkill(join(home, ".gemini", "antigravity-cli", "skills"));
     const shim = await template(
-      templateDir,
+      templates,
       "antigravity",
       "agent-loop-antigravity-parent-guard.mjs",
     );
@@ -217,10 +241,10 @@ export async function buildTargets(harness, { home, packageRoot, copilotHome }) 
       path: join(home, ".gemini", "config", "agent-loop-antigravity-parent-guard.mjs"),
       content: shim.replaceAll(
         "__AGENT_LOOP_GUARD_URL__",
-        pathToFileURL(join(packageRoot, "src/hook/antigravity-parent-guard.mjs")).href,
+        pathToFileURL(pathApi.join(packageRoot, "src/hook/antigravity-parent-guard.mjs")).href,
       ),
     });
-    const group = JSON.parse(await template(templateDir, "antigravity", "hooks.json"));
+    const group = JSON.parse(await template(templates, "antigravity", "hooks.json"));
     const [rule] = group["agent-loop-parent-guard"].PreToolUse;
     group["agent-loop-parent-guard"].PreToolUse[0] = {
       matcher: [...ANTIGRAVITY_GUARDED_TOOLS].join("|"),
