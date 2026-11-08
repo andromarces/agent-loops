@@ -3,7 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { entryCarrier } from "./entry-report.mjs";
 import { sha256 } from "./hash.mjs";
-import { gitRead, gitReadError, SnapshotError } from "./git-read.mjs";
+import { gitRead, gitReadError, SnapshotError, stripLf } from "./git-read.mjs";
 import { withTimeBound } from "./time-bound.mjs";
 
 // Item name of the hooks path setting in a shared Git state diff.
@@ -101,8 +101,16 @@ export async function readSharedGit(cwd, { deadlineMs, deadlineStart, signal, ..
 }
 
 async function readWithin(cwd, bound) {
+  // `stripFinalNewline: false` keeps a common-directory path that ends in a space or a carriage
+  // return byte-exact. The `-z` listing ends with NUL, so it reads the same either way.
   const read = (args, options = {}) =>
-    gitRead(cwd, args, { ...bound, ...options, allowExit: [0], createError: readFailure });
+    gitRead(cwd, args, {
+      ...bound,
+      ...options,
+      allowExit: [0],
+      createError: readFailure,
+      stripFinalNewline: false,
+    });
   // Both processes end before the read rejects, so none outlives a stopped read.
   const [commonResult, listResult] = await mapInBatches(
     [
@@ -112,7 +120,7 @@ async function readWithin(cwd, bound) {
     2,
     (args) => read(args),
   );
-  const commonDir = commonResult.stdout.trim();
+  const commonDir = stripLf(commonResult.stdout);
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
   const state = readConfigState(listResult.stdout);
   // The main work tree's own worktree config lives in the common directory. Git reads it only when

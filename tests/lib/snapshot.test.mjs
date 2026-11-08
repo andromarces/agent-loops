@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
@@ -15,6 +15,7 @@ import {
   sha256File,
   snapshot,
   withMutationCheck,
+  workTreeRoot,
 } from "../../src/lib/snapshot.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
@@ -76,6 +77,25 @@ test("assertGitWorkTree validates git directory", async () => {
     await removePath(nonRepo);
   }
 });
+
+// Usefulness: workTreeRoot keeps a trailing space in the work tree path — no other top-level case uses a real path.
+// Windows cannot create a directory name that ends in a space.
+test.skipIf(process.platform === "win32")(
+  "workTreeRoot keeps a trailing space in the work tree path",
+  async () => {
+    const repo = await createTempRepo();
+    const spaced = `${repo} `;
+    await rename(repo, spaced);
+    try {
+      const root = await workTreeRoot(spaced, {});
+
+      expect(root).toBe(await realpath(spaced));
+      expect(root.endsWith(" ")).toBe(true);
+    } finally {
+      await removePath(spaced);
+    }
+  },
+);
 
 // Usefulness: verifies the work-tree probe is bounded and terminates its child
 // when the bound expires, on Windows and on macOS. A real process is the only way
