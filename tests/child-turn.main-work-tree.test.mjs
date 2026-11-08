@@ -151,8 +151,8 @@ test("a worker turn that writes a tracked main work tree file reports its path",
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
 });
 
-// Usefulness: verifies the whole pre-turn main work tree read, its layout lookup included, ends
-// at its bound. Not redundant: no other test stalls the layout through a turn.
+// Usefulness: verifies the whole pre-turn main read, layout lookup included, ends at its bound.
+// Not redundant: no other test stalls the layout through a turn.
 test("a stalled main work tree layout ends the turn at its bound", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   resolution.stall = true;
