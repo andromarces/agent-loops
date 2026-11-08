@@ -2,6 +2,30 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you dispatch several runs in one repository.
 
+## Several runs at once
+
+One parent session can drive several runs, one per work tree. Each run registers
+a session entry keyed by the work tree. A second run in a different work tree
+does not replace the first. The parent-edit guard stays engaged while any
+session run is non-terminal.
+
+- Interleave: dispatch one turn per run in turn, and read each envelope before
+  the next dispatch. This works in every harness.
+- Background: run each dispatch as a background shell command where the harness
+  supports it, and read each envelope when it completes.
+
+Every command for a run passes that run's `--cwd`. Each run ends with its own
+`finish` or `abort`, and the guard releases only after every run is terminal.
+
+Runs on one host share the test slot table, whose default count is 1 (ADR 0046).
+A targeted test run with `--if-held` waits while any slot is held (ADR 0044). A
+reviewer turn can then wait behind a full suite of another run. That wait, or
+exit 75 from the wrapper, can leave a reviewer turn with no local test run. The
+required CI checks are then its only test evidence, as
+[Reviewer prompts and runtime evidence](reviewer-evidence.md) states. A parent
+that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the first
+dispatch, but 2 slots overloaded both measured hosts (ADR 0046).
+
 Workers of runs in one repository can each create the
 same tracking issue, for example a repository's singleton verification-checklist
 issue, because the repository rules say to add to the open issue or open it if
