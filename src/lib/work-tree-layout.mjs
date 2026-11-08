@@ -1,6 +1,6 @@
 // The work-tree layout of a linked directory: the top-level path, the registered work trees,
-// the canonical-path match, and the main work tree (ADR 0018, ADR 0073). The local-file copy
-// and the work tree lock share it.
+// the canonical-path match, and the main work tree (ADR 0018, ADR 0073). The local-file copy,
+// its comparison, and the work tree lock share it.
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { canonicalPath } from "./canonical-path.mjs";
