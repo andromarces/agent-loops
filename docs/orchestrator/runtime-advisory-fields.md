@@ -5,7 +5,9 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
   inherited temporary directory or in a literal system temporary directory during the turn, such as
   a probe directory that a turn created there. A worker envelope carries it only for a literal
-  system temporary directory, because a worker may legitimately write in the inherited one. The
+  system temporary directory, because a worker may legitimately write in the inherited one; when
+  that directory is itself a literal root, a new entry there is reported too, because the two
+  writes cannot be told apart. The
   field names the entries, redacted like the test command output, and never their content, at most 20. It is a diagnostic: the directories are shared with other processes, the runtime cannot
   attribute an entry to the turn, and it does not delete one.
   Only the turn directories that this process created, matched by exact name, are left out, and
@@ -18,8 +20,11 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     report follows `os.tmpdir()`, the inherited directory, whatever path it names, and it also
     reads the literal system temporary directories that differ from it. The literal roots are
     `/tmp` and `/private/tmp` on POSIX, and there are none on Windows, where a Git Bash `/tmp`
-    resolves to the inherited directory. A literal root that resolves to or holds the inherited directory is
-    left out of the extra read, so one write gives one name.
+    resolves to the inherited directory. A literal root that resolves to the inherited directory
+    while the inherited directory is read too is left out of the extra read, so one write gives one
+    name; a root that holds the inherited directory, as with `TMPDIR=/tmp/<sub>`, is read. When the
+    inherited directory is itself a literal root, a worker turn reads it as a literal root and
+    reports a new entry there, because the two writes cannot be told apart.
   - An entry of a literal system temporary directory carries the prefix `literal-tmp/`, for example
     `literal-tmp/x` for a write to `/tmp/x` on macOS (issue #1713). The prompt forbids that write,
     and the field names it after the turn. The entry is unattributed like every other entry: the

@@ -300,7 +300,10 @@ Apply these parent rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
   - The literal system temporary directories are `/tmp` and `/private/tmp` on POSIX, and none on
     Windows, where a Git Bash `/tmp` resolves to the inherited directory. The runtime leaves out a
-    literal root that resolves to or holds the inherited directory.
+    literal root that resolves to the inherited directory while it reads that directory too; a root
+    that holds the inherited directory is read, so a write directly in it is still seen. When the
+    inherited directory is itself a literal root, a worker turn reports a new entry there too,
+    because the two writes cannot be told apart.
   - A name with the prefix `literal-tmp/` is an entry of a literal system temporary directory, such
     as `/tmp/x` on macOS. The prompt forbids that write, and the field names it after the turn. The
     entry is unattributed like every other entry, and a turn that reports its own leftover makes it

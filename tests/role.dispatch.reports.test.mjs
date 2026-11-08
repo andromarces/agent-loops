@@ -23,6 +23,13 @@ import { removePath } from "./fs-helpers.mjs";
 import { roleReadsGit } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
+// A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
+// #1713).
+vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, literalTmpdirRoots: () => [] };
+});
+
 // Answers `git` from memory for the tests that switch it on. See `gitWhileDotGitExists` in
 // git-helpers.mjs, `roleReadsGit` for an unasserted read group, and `newCleanRunRepo` for the
 // cases that assert no Git result. Every other test, and every other command, reaches the real

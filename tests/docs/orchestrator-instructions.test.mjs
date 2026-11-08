@@ -333,7 +333,14 @@ test("the runtime advisory docs name the literal roots of the report", async () 
   expectRule(text, /report follows `os\.tmpdir\(\)`/i, /inherited directory/i);
   expectRule(text, /`\/tmp` and `\/private\/tmp`/i, /POSIX/i, /Windows/i);
   expectRule(text, /literal-tmp\//i, /`\/tmp\/x`/i, /macOS/i);
-  expectRule(text, /resolves to or holds the inherited directory/i, /left out/i);
+  expectRule(text, /resolves to the inherited directory/i, /left out/i);
+  expectRule(text, /holds the inherited directory/i, /`TMPDIR=\/tmp\/<sub>`/i, /is read/i);
+  expectRule(
+    text,
+    /inherited directory is itself a literal root/i,
+    /worker/i,
+    /reported?|reports/i,
+  );
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

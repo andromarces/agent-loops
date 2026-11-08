@@ -136,18 +136,38 @@ test("leaves the inherited entries out when the caller reports literal roots onl
   ]);
 });
 
-// Usefulness: verifies a literal root that holds the inherited directory is left out, because the
-// inherited read covers that tree. It also keeps the suite's per-file temporary directory, which
-// sits under `/tmp`, from making every turn read the host's `/tmp` wholesale.
-test("leaves out a literal root that holds the inherited directory", async () => {
-  const outer = join(root, "outer");
-  const inner = join(outer, "inner");
-  await mkdir(inner, { recursive: true });
+// Usefulness: verifies the confirmed gap for the `TMPDIR=/tmp/<sub>` case: the literal root still
+// holds the inherited directory, and a write directly in it stays unreported when the ancestor is
+// skipped. The before/after read keeps a pre-existing entry and the inherited entry out.
+test("reports a new entry of a literal root that holds the inherited directory", async () => {
+  const inner = join(root, "run-private");
+  await mkdir(inner);
+  await mkdir(join(root, "preexisting"));
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, inner);
-  const before = await snapshotInheritedTmpdir({ literalRoots: [outer] });
-  await writeFile(join(inner, "x"), "");
-  await writeFile(join(outer, "y"), "");
-  expect(await appearedInInheritedTmpdir(before)).toEqual(["x"]);
+  const before = await snapshotInheritedTmpdir({ literalRoots: [root] });
+  await writeFile(join(root, "x"), "probe");
+  await writeFile(join(inner, "y"), "probe");
+  expect(await appearedInInheritedTmpdir(before)).toEqual(["literal-tmp/x", "y"]);
+});
+
+// Usefulness: verifies a worker turn reports a new entry when the literal root is the inherited
+// directory, as a reviewer turn does, because the runtime cannot tell the two writes apart.
+test("reports an entry when the literal root is the inherited directory and the inherited report is off", async () => {
+  const before = await snapshotInheritedTmpdir({ literalRoots: [root], includeInherited: false });
+  await writeFile(join(root, "x"), "");
+  expect(await appearedInInheritedTmpdir(before, { includeInherited: false })).toEqual([
+    "literal-tmp/x",
+  ]);
+});
+
+// Usefulness: verifies the literal read leaves out this process's own turn directory, which lives
+// in the inherited directory and equals the literal root in that configuration.
+test("leaves out this process's turn directory in a literal root", async () => {
+  const before = await snapshotInheritedTmpdir({ literalRoots: [root], includeInherited: false });
+  const seen = await withTurnTmpdir(async () =>
+    appearedInInheritedTmpdir(before, { includeInherited: false }),
+  );
+  expect(seen).toEqual([]);
 });
 
 // Usefulness: verifies a literal root that cannot be read gives no entry instead of a false change.

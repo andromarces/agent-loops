@@ -1,6 +1,5 @@
 import { readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, relative } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
@@ -40,12 +39,6 @@ async function resolvedPath(path) {
   }
 }
 
-/** True when `parent` holds `child`, by the resolved paths. */
-function holds(parent, child) {
-  const path = relative(parent, child);
-  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
-}
-
 /** The names directly in `dir`, or null after a warning when the read fails for another reason than a missing directory. */
 async function readRootNames(dir) {
   try {
@@ -64,10 +57,12 @@ async function readRootNames(dir) {
 /**
  * Reads the entry names directly in the inherited temporary directory and in each literal root of
  * `literalRoots`, or null, after a warning, when the inherited directory cannot be read. A literal
- * root that does not resolve, that holds the inherited directory, or that repeats a root already
- * read is left out, because the inherited read covers that tree and one write gives one name. A
- * failed literal read adds no entry for that root. `includeInherited` is false for a worker turn,
- * which reports only the literal roots; the snapshot then holds no inherited names.
+ * root that does not resolve, that resolves to the inherited directory while that directory is read
+ * too, or that repeats a root already read is left out. A root that holds the inherited directory is
+ * read, so a write directly in it is still seen (issue #1713). A failed literal read adds no entry
+ * for that root. `includeInherited` is false for a worker turn, which reports only the literal roots;
+ * the snapshot then holds no inherited names, and a root equal to the inherited directory is read as
+ * a literal root because the two writes cannot be told apart.
  * @param {{ literalRoots?: string[], includeInherited?: boolean }} [options]
  * @returns {Promise<TmpdirSnapshot | null>}
  */
@@ -88,7 +83,8 @@ export async function snapshotInheritedTmpdir({
   const literal = new Map();
   for (const root of literalRoots) {
     const resolved = await resolvedPath(root);
-    if (resolved === null || holds(resolved, inheritedDir) || literal.has(resolved)) continue;
+    if (resolved === null || (includeInherited && resolved === inheritedDir)) continue;
+    if (literal.has(resolved)) continue;
     const rootNames = await readRootNames(resolved);
     if (rootNames !== null) literal.set(resolved, rootNames);
   }
@@ -110,7 +106,8 @@ export async function snapshotInheritedTmpdir({
  * directories are shared with every other process on the host, so the runtime cannot attribute an
  * entry to the turn and never deletes one (issue #1024). An unattributed difference creates no
  * automatic `open` item. `includeInherited` is false for a worker turn, which may legitimately
- * write directly in the inherited directory. Returns [] when either read failed.
+ * write directly in the inherited directory; a literal root that is that directory is still read,
+ * because the two writes cannot be told apart. Returns [] when either read failed.
  * @param {TmpdirSnapshot | null} before
  * @param {{ includeInherited?: boolean }} [options]
  * @returns {Promise<string[]>}
@@ -131,7 +128,8 @@ export async function appearedInInheritedTmpdir(before, { includeInherited = tru
     const beforeNames = before.literal.get(root);
     if (beforeNames === undefined) continue;
     for (const name of afterNames) {
-      if (!beforeNames.has(name)) literalAppeared.push(`${LITERAL_PREFIX}${name}`);
+      if (beforeNames.has(name) || isTurnTmpdirName(name)) continue;
+      literalAppeared.push(`${LITERAL_PREFIX}${name}`);
     }
   }
   if (inheritedAppeared.length === 0 && literalAppeared.length === 0) return [];

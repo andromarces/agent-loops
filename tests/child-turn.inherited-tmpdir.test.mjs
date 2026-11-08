@@ -73,9 +73,11 @@ test("a worker turn carries no inherited-directory entry", async () => {
   expect(result).not.toHaveProperty("inheritedTmpdirEntries");
 });
 
-// Usefulness: verifies the confirmed gap of issue #1713 — a worker write to a literal system
-// temporary directory that differs from the inherited one is reported (#1596 observed it on macOS
-// with no field), and a worker still carries no inherited-directory entry of its own.
+// Usefulness: verifies the confirmed gap of issue #1713 end to end — a worker write to a literal
+// system temporary directory that differs from the inherited one is reported in the envelope
+// (#1596 observed it on macOS with no field). This is the one real run for that path: the adapter
+// call and the envelope wiring are its behavior, and the read itself is covered in process by
+// `tests/lib/tmpdir-entries.test.mjs` and `tests/lib/turn-evidence-window.test.mjs`.
 test("a worker turn reports a literal system temporary directory entry", async () => {
   const literal = await mkdtemp(join(temp, "literal-"));
   const result = await turn(
@@ -87,36 +89,6 @@ test("a worker turn reports a literal system temporary directory entry", async (
     { tmpdirLiteralRoots: [literal] },
   );
   expect(result.status).toBe("ok");
-  expect(result.inheritedTmpdirEntries).toEqual(["literal-tmp/x"]);
-});
-
-// Usefulness: verifies a worker turn keeps its inherited-directory entries out while a literal root
-// is read, because a worker may legitimately write there (issue #1024).
-test("a worker turn leaves out an inherited entry while it reads a literal root", async () => {
-  const literal = await mkdtemp(join(temp, "literal-"));
-  const result = await turn(
-    "worker",
-    async () => {
-      await mkdir(join(temp, "pr-body"));
-      return "done";
-    },
-    { tmpdirLiteralRoots: [literal] },
-  );
-  expect(result).not.toHaveProperty("inheritedTmpdirEntries");
-});
-
-// Usefulness: verifies a reviewer turn reports a literal system temporary directory entry too,
-// because the gap of issue #1713 covers every child turn and the same one post-turn read lists it.
-test("a reviewer turn reports a literal system temporary directory entry", async () => {
-  const literal = await mkdtemp(join(temp, "literal-"));
-  const result = await turn(
-    "reviewer",
-    async () => {
-      await writeFile(join(literal, "x"), "probe");
-      return "done";
-    },
-    { tmpdirLiteralRoots: [literal] },
-  );
   expect(result.inheritedTmpdirEntries).toEqual(["literal-tmp/x"]);
 });
 

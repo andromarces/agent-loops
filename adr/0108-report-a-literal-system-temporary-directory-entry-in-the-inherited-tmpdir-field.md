@@ -25,19 +25,21 @@ The runtime cannot prevent an arbitrary shell command from naming a path. It can
 
 ## Decision
 
-1. **Read the literal roots too.** On POSIX the one post-turn read also reads `/tmp` and `/private/tmp`, which are one directory through the macOS symlink. A root that does not resolve, that resolves to or holds the inherited directory, or that repeats a root already read is left out, so one write gives one name. Windows reads none, because a Git Bash `/tmp` resolves to the inherited directory, which the inherited read covers.
+1. **Read the literal roots too.** On POSIX the one post-turn read also reads `/tmp` and `/private/tmp`, which are one directory through the macOS symlink. A root that does not resolve, that resolves to the inherited directory while that directory is read too, or that repeats a root already read is left out, so one write gives one name. A root that holds the inherited directory is read, so a write directly in `/tmp` is still seen when `TMPDIR` names a subdirectory such as `/tmp/<sub>`, and the before/after compare keeps a pre-existing entry and the inherited entry out. Windows reads none, because a Git Bash `/tmp` resolves to the inherited directory, which the inherited read covers.
 2. **Name the root.** An entry of a literal root carries the prefix `literal-tmp/`, which no entry name can hold, so the parent can tell it apart from an inherited entry. The list stays redacted like the test command output and capped at 20 entries together with the inherited names.
-3. **Every child turn.** A reviewer turn reads both the inherited directory and the literal roots. A worker turn reads the literal roots only, because a worker may legitimately write a PR body file in the inherited directory and that write is not a finding. The field keeps its name `inheritedTmpdirEntries`; no envelope field is added.
+3. **Every child turn.** A reviewer turn reads both the inherited directory and the literal roots. A worker turn reads the literal roots only, because a worker may legitimately write a PR body file in the inherited directory and that write is not a finding. When the inherited directory is itself a literal root, a worker turn reads it as a literal root and reports a new entry there as `literal-tmp/`, because the runtime cannot tell the allowed write to the variable from the forbidden literal path; the equal-root case then reports a new entry for both roles. The field keeps its name `inheritedTmpdirEntries`; no envelope field is added.
 4. **Detect, not prevent.** The change reports the write after the turn. The prompt restriction and its recovery action stay, because the runtime cannot stop a command from naming the path.
 5. **Keep the diagnostic contract.** The entry is unattributed: another process can hold the same name, no finish is refused, and an entry creates no automatic `open` item. The parent names it to the user, deletes nothing, and a turn that reports its own leftover makes it actionable. General system temporary directory cleanup stays out of scope (ADR 0095).
 
 ## Consequences
 
 - A macOS worker or reviewer turn that writes directly in `/tmp` leaves a `literal-tmp/` name in its envelope, so the parent and the user can act on the write that the prompt forbids.
+- A write directly in a literal root is reported when that root holds the inherited directory, so `TMPDIR=/tmp/<sub>` keeps the check.
+- When the inherited directory is itself a literal root, a worker turn reports a new entry of it, which can be its own allowed write to the `TMPDIR` variable. The entry is a diagnostic with no automatic action, and the alternative reports nothing for that configuration.
 - A Linux turn whose inherited directory is another path reads `/tmp`, which other processes also use. Those names are diagnostics, like every other unattributed entry, and they need no action.
 - A name created and removed around the post-turn read stays unseen. A turn that crashes or is killed carries no field.
 - A root that a turn creates and makes unresolvable, or a read that fails, gives no entry for that root. The inherited read failure keeps the whole snapshot null, so no false change is reported.
-- Tests name the literal roots through the runtime option, so the churn of the host's `/tmp` stays out of the assertion.
+- Tests name the literal roots so the churn of the host's `/tmp` stays out of the assertion.
 
 ## Alternatives
 
@@ -53,6 +55,7 @@ Andro Marces
 ## Links
 
 - [Issue #1713](https://github.com/andromarces/agent-loops/issues/1713)
+- [PR #1721](https://github.com/andromarces/agent-loops/pull/1721)
 - Related issues: #1249, #1529, #1596
 - [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md)
 - [ADR 0068: Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md)
