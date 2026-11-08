@@ -15,9 +15,10 @@ so the fixed number of one invocation is a slice of one loop budget.
 
 Decisions 1 to 4 and 6 to 8 of ADR 0014 stay in force. Decision 5 is partially superseded by
 ADR 0084. The `extend` command, its range and lifecycle checks, and its parent-session guard
-stay in force. The `budgetChanges` shape, the child guard, the live harness check, and every
-other consequence stay in force. Only the owner authorizes more steps. A batch recovery spends
-only the budget that `batch start` recorded, and it never raises that budget.
+stay in force. The `budgetChanges` shape, the live harness check, and every other consequence
+stay in force. The child guard and its rule that only the
+owner authorizes more steps stay in force. A batch recovery spends only the budget that
+`batch start` recorded; it never raises it.
 
 [ADR 0026](0026-detect-a-changed-resolved-model-on-continue-from.md) stays the headless
 continuation contract. This ADR composes it and does not replace its session, gate, model,
