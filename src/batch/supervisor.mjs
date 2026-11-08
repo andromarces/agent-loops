@@ -222,7 +222,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
     start = false;
     for (const issue of manifest.issues) loops.set(issue, await readLoop(runsRoot, id, issue));
-    const pending = manifest.issues.some((issue) => !terminal(loops.get(issue).status));
+    const pending = manifest.issues.some((issue) => {
+      const loop = loops.get(issue);
+      return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
+    });
     if (!pending) {
       return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
     }
@@ -651,7 +654,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   // Fill the loop slots from the frozen set, in order.
-  const queue = manifest.issues.filter((issue) => !terminal(loops.get(issue).status));
+  const queue = manifest.issues.filter((issue) => {
+    const loop = loops.get(issue);
+    return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
+  });
   let cursor = 0;
   for (;;) {
     while (
@@ -663,6 +669,15 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     ) {
       const issue = queue[cursor++];
       const loop = await readLoop(runsRoot, id, issue);
+      if (!start && loop.status === "succeeded" && loop.cleanup === null) {
+        const cleanup = await cleanupLoop({ manifest, loop, runsRoot, gh }).catch((err) => ({
+          removed: false,
+          reason: err.message,
+        }));
+        await changeLoop(issue, { cleanup });
+        await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+        continue;
+      }
       if (terminal(loop.status)) continue;
       if (!start && loop.status !== "queued") {
         // A resume reconciles one recovered loop before it launches, so it never restarts blindly.
