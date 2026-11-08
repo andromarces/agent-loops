@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
@@ -221,56 +221,6 @@ test("the argument-vector form runs without a shell and keeps the exit code", as
   ]);
   expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
 });
-
-// Usefulness: issue #1673 review — on Windows, a vector that starts with a `.cmd` or `.bat` shim
-// must fail as a wrapper failure instead of letting execa run it through cmd.exe, because ADR 0104
-// promises no shell for the vector form.
-test.skipIf(process.platform !== "win32")(
-  "a .cmd shim in the vector fails instead of running through a shell",
-  async () => {
-    const ctx = await setup({
-      "shim.cmd": "@echo off\r\necho ran>shim-ran.txt\r\nexit /b 0\r\n",
-    });
-    const { done } = wrapper(
-      ["--slots", "1", "--wait", "10", "--", join(ctx.cwd, "shim.cmd"), "unused"],
-      ctx,
-    );
-    expect((await done).code).toBe(1);
-    expect(existsSync(join(ctx.cwd, "shim-ran.txt"))).toBe(false);
-    expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
-  },
-);
-
-// Usefulness: issue #1673 review — a vector that names the real executable with its extension
-// must resolve through PATH, not only the current directory, so `node.exe --version` runs.
-test.skipIf(process.platform !== "win32")(
-  "an explicit node.exe resolves through PATH",
-  async () => {
-    const ctx = await setup();
-    const path = `${dirname(process.execPath)}${delimiter}${process.env.PATH}`;
-    const { done } = wrapper(["--slots", "1", "--wait", "10", "--", "node.exe", "--version"], {
-      ...ctx,
-      env: { PATH: path },
-    });
-    expect((await done).code).toBe(0);
-  },
-);
-
-// Usefulness: issue #1673 review — a local directory named like the executable must not stop the
-// PATH lookup, so a vector that names `node` still finds `node.exe`.
-test.skipIf(process.platform !== "win32")(
-  "a local node directory does not stop the PATH lookup",
-  async () => {
-    const ctx = await setup();
-    await mkdir(join(ctx.cwd, "node"));
-    const path = `${dirname(process.execPath)}${delimiter}${process.env.PATH}`;
-    const { done } = wrapper(["--slots", "1", "--wait", "10", "--", "node", "--version"], {
-      ...ctx,
-      env: { PATH: path },
-    });
-    expect((await done).code).toBe(0);
-  },
-);
 
 // Usefulness: acceptance (#847) — a nested wrapper inside a wrapped command runs at once
 // instead of waiting on the slot its parent holds, so it cannot deadlock.

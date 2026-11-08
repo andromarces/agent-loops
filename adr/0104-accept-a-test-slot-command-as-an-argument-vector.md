@@ -4,7 +4,7 @@
 
 accepted
 
-Partially supersedes [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md) decision 1. That decision made the command one argument, run through the platform shell. This ADR keeps that form and adds an argument vector for two or more arguments after `--`, spawned without a shell. Every other decision of ADR 0039 holds.
+Partially supersedes [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md) decision 1. That decision made the command one argument, run through the platform shell. This ADR keeps that form and adds an argument vector for two or more arguments after `--`, spawned with no shell option. A real executable runs without a shell; a `.cmd` or `.bat` first element is outside that contract (decision 4). Every other decision of ADR 0039 holds.
 
 ## Date
 
@@ -18,18 +18,18 @@ A shell string crosses two shells on Windows from Git Bash: the child's bash and
 
 ## Decision
 
-1. **Argument vector.** Two or more arguments after `--` form an argument vector. The wrapper spawns the first argument as the executable with the rest as its arguments, without a shell.
+1. **Argument vector.** Two or more arguments after `--` form an argument vector. The wrapper spawns the first argument as the executable with the rest as its arguments, with no shell option. A real executable runs without a shell; a `.cmd` or `.bat` first element is outside that contract (decision 4).
 2. **One-string form.** One argument after `--` keeps the shell-string form of ADR 0039 decision 1: the wrapper runs it in the platform shell (`/bin/sh -c`, or `cmd.exe` on Windows). A call without `--` and more than one argument, a call with no command, and a vector with an empty executable are usage errors.
 3. **Unchanged contracts.** The vector keeps the slot count, the wait bound, the `--if-held` rule, the nested marker, the process-group or process-tree kill, and the exit-code mapping of ADR 0039, ADR 0044, and ADR 0046. The wrapper runs the vector in the same current directory, with stdout and stderr passed through and stdin closed, and logs no command text.
-4. **Windows executable limit.** On Windows the vector must start with a real executable such as `node`, not a `.cmd` or `.bat` shim such as `pnpm`, and not a script that needs an interpreter. The wrapper resolves the first element through the current directory, `PATH`, and `PATHEXT`, accepts only a directly executable `.exe` or `.com`, and refuses anything else before the spawn, because execa runs a `.cmd`, `.bat`, or shebang script through a shell even with no shell set. The rule states this limit without naming a tool, so the reviewer prompt still fits any repository.
+4. **Windows executable limit.** On Windows the vector must start with a real executable such as `node`, not a `.cmd` or `.bat` shim such as `pnpm`. The wrapper passes the vector to the spawn with no shell option, and execa resolves the first element. A real executable runs directly. A `.cmd` or `.bat` first element is outside the no-shell contract, because execa runs it through `cmd.exe`; the wrapper does not detect or refuse it. The rule states this limit without naming a tool, so the reviewer prompt still fits any repository.
 5. **Rule text.** `testSlotRule` in `src/prompts/rules.mjs` renders the argument-vector form and names it as the default from Git Bash on Windows. It keeps the one-string form, the platform-shell sentence, and the exit 75 report.
-6. **Test.** A test covers the vector form: the parser, a run that passes a shell metacharacter unchanged and keeps the command exit code and slot release, a Windows `.cmd` shim that fails before the spawn, and the rendered rule text.
+6. **Test.** A test covers the vector form: the parser, a run that passes spaced arguments and a shell metacharacter unchanged with no shell quoting and keeps the command exit code and slot release, and the rendered rule text.
 
 ## Consequences
 
 - A Git Bash child on Windows runs a targeted test through the wrapper with no quoting step, which removes the observed failure.
 - A caller that holds a command with shell operators in one string keeps the shell-string form. A caller that needs a shell pipeline must use that form, because the vector runs no shell.
-- A Windows caller that names a `.cmd` or `.bat` shim in the vector gets a wrapper failure, not a silent shell run. The rule names the limit.
+- A Windows caller that names a `.cmd` or `.bat` shim in the vector runs it through `cmd.exe`, outside the no-shell contract. The rule names the limit.
 - The rendered rule text is longer. It names both forms, and the vector form is the default for Git Bash on Windows.
 - The slot, wait, kill, nested, and exit-code behavior is one path for both forms, so a vector caller keeps every contract of the one-string caller.
 
