@@ -2,10 +2,25 @@
 
 ## Status
 
-proposed
+accepted
 
-The intended partial supersession of ADR 0014, and the part it replaces, are stated in
-[Supersession on acceptance](#supersession-on-acceptance).
+## Supersedes
+
+This ADR partially supersedes
+[ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md).
+The replaced part is its consequence that the headless loop is unchanged and that its
+`--max-steps` stays fixed for the invocation. An invocation still starts its own count at 0,
+but the budget of a batch loop spans attempts and a continued attempt spends the remainder,
+so the fixed number of one invocation is a slice of one loop budget.
+
+Decisions 1 to 8 of ADR 0014, the `extend` command, its range and lifecycle checks, its
+parent-session and child guards, its `budgetChanges` record, and its rule that only the
+owner authorizes more steps stay in force. A batch recovery spends only the budget that
+`batch start` recorded; it never raises it.
+
+[ADR 0026](0026-detect-a-changed-resolved-model-on-continue-from.md) stays the headless
+continuation contract. This ADR composes it and does not replace its session, gate, model,
+or refusal rules.
 
 ## Date
 
@@ -556,7 +571,7 @@ be used alone.
   resumed session, and the per-invocation prompt reports only that attempt's slice.
 - The accepted hard-kill limit: a transcript that never recorded a step count cannot prove
   the remainder, so the loop is `needs-owner` instead of resumed. A per-step transcript write
-  would close it and is rejected for milestone 1 (alternative 10).
+  would close it and is rejected (alternative 10).
 - The local checkpoint and claim are unsigned. A well-formed edit can misdirect a resume, as
   a well-formed transcript edit can (ADR 0026). The live path, identity, work tree, and
   remote checks fail closed on every mismatch.
@@ -590,42 +605,20 @@ be used alone.
 9. **One orchestrator session for the whole batch.** Rejected. It gives one conversation the
    tasks of several independent issues, loses per-issue session continuity, and cannot run
    the loops concurrently.
-10. **Write the headless transcript after every step.** Not taken for milestone 1. It would
-    close the hard-kill step gap, but it changes the transcript write contract of ADR 0026
-    and adds one write per charged step to every headless run. Reopen it if the hard-kill
-    gap is exercised in use.
+10. **Write the headless transcript after every step.** Rejected. It would close the
+    hard-kill step gap, but it changes the transcript write contract of ADR 0026 and adds one
+    write per charged step to every headless run. The loop stops as `needs-owner` when the
+    transcript cannot prove the step count (owner decision 3).
 
-## Supersession on acceptance
+## Owner decisions
 
-The intended supersession is a partial replacement of
-[ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
-when the owner accepts it. The replaced part is its consequence that the headless loop is
-unchanged and that its `--max-steps` stays fixed for the invocation. An invocation still
-starts its own count at 0, but the budget of a batch loop spans attempts and a continued
-attempt spends the remainder, so the fixed number of one invocation is a slice of one loop
-budget.
-
-Decisions 1 to 8 of ADR 0014, the `extend` command, its range and lifecycle checks, its
-parent-session and child guards, its `budgetChanges` record, and its rule that only the
-owner authorizes more steps stay in force. A batch recovery spends only the budget that
-`batch start` recorded; it never raises it.
-
-[ADR 0026](0026-detect-a-changed-resolved-model-on-continue-from.md) stays the headless
-continuation contract. This ADR composes it and does not replace its session, gate, model,
-or refusal rules.
-
-## Open decisions
-
-1. **Default loop count.** `--loops` is required in this proposal, so a batch starts
-   concurrently only when the skill passes a count. A default of 1 would be safer for an
-   omitted flag and would make an explicit `--loops` the only way to gain concurrency. The
-   owner may prefer the default; the validation and slot rules do not change.
-2. **Checkpoint retention.** The proposal keeps every checkpoint, transcript, and log for
-   inspection and deletes none. A retention bound would need a cleanup rule and a second
-   decision; the owner may add one.
-3. **Hard-kill step accounting.** The proposal stops a loop as `needs-owner` when the
-   transcript cannot prove the step count. A per-step transcript write would close the gap
-   and is listed as alternative 10. The owner may choose it before implementation.
+1. **Required loop count.** `--loops` stays required. A batch starts concurrently only when
+   the skill passes a count, and a missing `--loops` is a usage error.
+2. **Checkpoint retention.** The batch keeps every checkpoint, transcript, and log for
+   inspection. No retention bound and no cleanup rule is added.
+3. **Hard-kill step accounting.** A loop stops as `needs-owner` with reason
+   `unverified-steps` when the transcript cannot prove the step count. Alternative 10, a
+   per-step transcript write, is not adopted.
 
 ## Authors
 

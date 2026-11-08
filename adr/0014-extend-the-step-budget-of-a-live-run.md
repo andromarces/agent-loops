@@ -9,6 +9,8 @@ Partially superseded by [ADR 0084: Charge no step for a first Codex turn that a 
 - Decision 5's rule that `turns` keeps its one-entry-per-charged-step rule. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): a refunded first-turn model refusal records an entry without a charge, so a budget change still is not a turn.
 - The consequence that the ADR 0008 point 5 bound still holds and `turns` never exceeds `maxSteps`. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): the array holds at most `maxSteps` entries plus one refunded first-turn refusal for each role.
 
+Partially superseded by [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md). The superseded part is the consequence that the headless loop is unchanged and that its `--max-steps` stays fixed for the invocation. An invocation still starts its own count at 0, but the budget of a batch loop spans attempts and a continued attempt spends the remainder.
+
 Decisions 1 to 4, 6 to 8, the `budgetChanges` shape, the child guard, the live harness check, and every other consequence stay in force.
 
 ## Date
