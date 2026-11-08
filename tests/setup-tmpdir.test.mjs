@@ -143,6 +143,7 @@ const NESTED_RUN_TIMEOUT_MS = 60000;
 // Usefulness: acceptance (#503, #1022) — one nested run that reaches the installer lock leaves no
 // agent-loops entry in the OS temp directory, and its pinned roots stay empty. Runner caches
 // (vite, Node compile cache) are not test output and are not asserted.
+// Process: a nested test run must start from a fresh process to inherit the test environment.
 test(
   "a test run that inherits the root pins leaves no agent-loops entry and writes nothing under them",
   async () => {

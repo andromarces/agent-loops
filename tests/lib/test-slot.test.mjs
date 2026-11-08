@@ -223,6 +223,7 @@ test("at the wait bound the command does not run and the wrapper exits 75", asyn
 
 // Usefulness: acceptance (#847) — the wrapper exits with the exit code of the command and
 // frees the slot, so a caller reads the test result through the wrapper.
+// Process: only a separate CLI process reports the command's exit code to its caller.
 test("the wrapper exits with the command's exit code and releases the slot", async () => {
   const ctx = await setup({ "exit7.mjs": "process.exit(7);\n" });
   const { done } = wrapper(["--slots", "1", "--wait", "10", "--", "node exit7.mjs"], ctx);
@@ -232,6 +233,7 @@ test("the wrapper exits with the command's exit code and releases the slot", asy
 
 // Usefulness: acceptance (#847) — a nested wrapper inside a wrapped command runs at once
 // instead of waiting on the slot its parent holds, so it cannot deadlock.
+// Process: the nested wrapper is a second CLI process inside the wrapped command.
 test("a nested wrapper inside a wrapped command runs without waiting", async () => {
   const ctx = await setup({
     "mark.mjs": "import { writeFileSync } from 'node:fs';\nwriteFileSync('mark', 'x');\n",
@@ -246,6 +248,7 @@ test("a nested wrapper inside a wrapped command runs without waiting", async () 
 // Usefulness: acceptance (#847) — a signal ends the command's tree before the slot is
 // freed, so no test process keeps running outside a slot. Windows has no catchable
 // SIGTERM for an outside sender, so the check runs on POSIX.
+// Process: an outside signal must reach a separate wrapper process.
 test.skipIf(process.platform === "win32")(
   "SIGTERM ends the command tree and releases the slot",
   async () => {
@@ -335,6 +338,7 @@ test.each([
 // Usefulness: issue #847 review — when the outer wrapper ends its command tree, the command
 // of a nested wrapper ends too, so no test process outlives the slot. POSIX only: the
 // defect is a separate process group, and Windows has no catchable outside SIGTERM.
+// Process: the signal must cross two wrapper processes.
 test.skipIf(process.platform === "win32")(
   "SIGTERM to the outer wrapper ends the command of a nested wrapper",
   async () => {
