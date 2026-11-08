@@ -91,8 +91,7 @@ test("exec throws ExecError on failure", async () => {
   }
 });
 
-// Usefulness: verifies timeout aborts execution, sets timedOut, and names the cause instead of an
-// exit code (issue #20).
+// Usefulness: verifies timeout aborts, sets timedOut, and names the cause not an exit code (#20).
 // Process: a real child must keep running past the bound, so the timeout path is process-level.
 test("exec sets timedOut and names the cause when execution exceeds timeout", async () => {
   try {
@@ -106,8 +105,7 @@ test("exec sets timedOut and names the cause when execution exceeds timeout", as
   }
 });
 
-// Usefulness: verifies cancel signal aborts execution, sets isCanceled, and names the cause
-// instead of an exit code (issue #20).
+// Usefulness: verifies cancel aborts, sets isCanceled, and names the cause not an exit code (#20).
 // Process: a real child must keep running until the cancel, so the cancel path is process-level.
 test("exec sets isCanceled and names the cause when signal aborts", async () => {
   const controller = new AbortController();

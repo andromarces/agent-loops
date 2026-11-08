@@ -112,6 +112,13 @@ function classifyWithEnv(env, layouts) {
   }
 }
 
+// Runs the classifier in a child with `cwd`, for the case that needs another working directory.
+const CLASSIFY_ROOTS = (layouts) => `
+const { isEphemeralPackageRoot } = await import(${JSON.stringify(
+  new URL("../../src/install/package-root.mjs", import.meta.url).href,
+)});
+console.log(JSON.stringify(${JSON.stringify(layouts)}.map((root) => isEphemeralPackageRoot(root))));`;
+
 // Usefulness: verifies the installer refusal of an ephemeral package-runner root holds inside a
 // Codex turn, so the private temporary directory cannot turn an inherited `yarn dlx` launcher
 // into an accepted install source.
@@ -197,6 +204,9 @@ const INHERITED_SHAPES = [
       ancestors: [resolve("rel-ancestor")],
       // The installer refuses a relative entry that it reads itself. A turn resolves it first.
       directlyInvalid: true,
+      // The classifier runs in a child with another working directory, so a raw relative entry
+      // would resolve there and change the verdict.
+      childCwd: true,
     }),
   ],
   [
@@ -227,16 +237,37 @@ const INHERITED_SHAPES = [
   ],
 ];
 
-// Usefulness: verifies the installer refuses every root that it refuses outside a turn, for every
-// shape of the inherited list, in a child turn and in a nested turn. A malformed value fails
-// closed, and a relative entry is forwarded as an absolute path, so no child directory moves it.
+// Usefulness: verifies the installer refusal matches outside a turn for every shape.
+// It holds in a child turn and in a nested turn.
+// A malformed value fails closed.
+// A relative entry is forwarded as an absolute path, so a child directory cannot move it.
+// Process: the relative-entry case runs the classifier in a child with another working directory.
 test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, build) => {
   const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
+  const other = join(root, "other-cwd");
   const saved = Object.fromEntries(
     ["TMPDIR", "TEMP", "TMP", INHERITED].map((name) => [name, process.env[name]]),
   );
   try {
-    const { raw, ancestors, invalid = false, directlyInvalid = invalid } = await build(root);
+    const {
+      raw,
+      ancestors,
+      invalid = false,
+      directlyInvalid = invalid,
+      childCwd = false,
+    } = await build(root);
+    if (childCwd) await mkdir(other);
+    const classify = childCwd
+      ? async (env, roots) =>
+          JSON.parse(
+            (
+              await execa(process.execPath, ["--input-type=module", "-e", CLASSIFY_ROOTS(roots)], {
+                env,
+                cwd: other,
+              })
+            ).stdout,
+          )
+      : async (env, roots) => classifyWithEnv(env, roots);
     const unrelated = join(root, "unrelated");
     const layouts = [root, ...ancestors, unrelated].map(yarnLayout);
     const stable = join(root, "stable", "node_modules", "pkg");
@@ -246,11 +277,11 @@ test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, 
     const seen = {};
     fakeCodex(async (home, env) => {
       seen.childEnv = env;
-      seen.child = classifyWithEnv(env, layouts);
+      seen.child = await classify(env, layouts);
       // The nested turn runs in a process that inherited the environment of the outer turn.
       Object.assign(process.env, env);
       fakeCodex(async (_nestedHome, nestedEnv) => {
-        seen.nested = classifyWithEnv(nestedEnv, layouts);
+        seen.nested = await classify(nestedEnv, layouts);
         return { stdout: OK_EVENTS, stderr: "" };
       });
       await runTurn();
@@ -259,7 +290,7 @@ test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, 
     await withInheritedTmp(root, async () => {
       if (raw === undefined) delete process.env[INHERITED];
       else process.env[INHERITED] = raw;
-      seen.direct = classifyWithEnv({ ...process.env }, layouts);
+      seen.direct = await classify({ ...process.env }, layouts);
       await runTurn();
     });
     expect(seen.direct.at(-1)).toBe(directlyInvalid);

@@ -140,21 +140,14 @@ test("an inherited AGENT_LOOP_INHERITED_TMPDIR is unset while a file runs, then 
 
 const NESTED_RUN_TIMEOUT_MS = 60000;
 
-// Usefulness: acceptance (#503, #1022) — one nested run that reaches the installer lock leaves no
-// agent-loops entry in the OS temp directory, and its pinned roots stay empty. Runner caches
-// (vite, Node compile cache) are not test output and are not asserted.
-// Process: a nested test run must start from a fresh process to inherit the test environment.
+// Usefulness: verifies a test run writes no agent-loops entry in the OS temp directory (#503).
+// It also runs the default-roots file, so unpinned startup stays in the per-file directory.
+// Runner caches (vite, Node compile cache) are not test output and are not asserted.
 test(
-  "a test run that inherits the root pins leaves no agent-loops entry and writes nothing under them",
+  "a test run that reaches the installer lock leaves no agent-loops entry in the OS temp directory",
   async () => {
     const osTmp = await mkdtemp(join(tmpdir(), "tmpdir-isolation-"));
-    const pins = {
-      AGENT_LOOP_RUNS_ROOT: join(osTmp, "pinned-runs"),
-      AGENT_LOOP_TEST_SLOTS_ROOT: join(osTmp, "pinned-slots"),
-      AGENT_LOOP_SESSION_RECORDS_ROOT: join(osTmp, "pinned-records"),
-    };
     try {
-      for (const dir of Object.values(pins)) await mkdir(dir);
       // `killTreeOnExit` ends the tree on Windows when this worker exits before the nested run (issue #612).
       await killTreeOnExit(
         execa(
@@ -168,13 +161,7 @@ test(
             "tests/lib/tmp-root.default-roots.test.mjs",
           ],
           {
-            env: {
-              ...pins,
-              AGENT_LOOP_TEST_SLOT_HELD: undefined,
-              TMPDIR: osTmp,
-              TEMP: osTmp,
-              TMP: osTmp,
-            },
+            env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
             extendEnv: true,
             // Bound the nested run and end its whole process tree on expiry (as `runGh`).
             // A forced timeout ended every descendant on Windows 11 and macOS (issue #513).
@@ -186,6 +173,41 @@ test(
         ),
       );
       expect(await readdir(osTmp)).not.toContain("agent-loops");
+    } finally {
+      await removePath(osTmp);
+    }
+  },
+  NESTED_RUN_TIMEOUT_MS + 30000,
+);
+
+// Usefulness: acceptance (#1022) — a suite that starts with the three machine-wide roots pinned to real paths (as inside an agent-loop turn) writes nothing under them. CI sets no pins, so this nested run supplies them. `tmp-root.default-roots.test.mjs` writes a default run state, session record, and test slot, and fails when any of them lands outside the per-file directory.
+test(
+  "a test run that inherits the three root pins writes nothing under them",
+  async () => {
+    const osTmp = await mkdtemp(join(tmpdir(), "tmpdir-isolation-"));
+    const pins = {
+      AGENT_LOOP_RUNS_ROOT: join(osTmp, "pinned-runs"),
+      AGENT_LOOP_TEST_SLOTS_ROOT: join(osTmp, "pinned-slots"),
+      AGENT_LOOP_SESSION_RECORDS_ROOT: join(osTmp, "pinned-records"),
+    };
+    try {
+      for (const dir of Object.values(pins)) await mkdir(dir);
+      await killTreeOnExit(
+        execa("pnpm", ["exec", "vp", "test", "run", "tests/lib/tmp-root.default-roots.test.mjs"], {
+          env: {
+            ...pins,
+            AGENT_LOOP_TEST_SLOT_HELD: undefined,
+            TMPDIR: osTmp,
+            TEMP: osTmp,
+            TMP: osTmp,
+          },
+          extendEnv: true,
+          timeout: NESTED_RUN_TIMEOUT_MS,
+          forceKillAfterDelay: 1000,
+          cleanup: true,
+          killDescendants: true,
+        }),
+      );
       for (const dir of Object.values(pins)) {
         expect(await readdir(dir)).toEqual([]);
       }

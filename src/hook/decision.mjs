@@ -80,11 +80,10 @@ export async function hookDecision(
 }
 
 /**
- * Runs the shared command-hook flow: read the hook JSON from stdin, extract the
- * harness's session id, evaluate the guard, and print one deny payload from
- * `formatDeny`. Fails open: a missing session id, unparseable input, a tool the
- * harness does not guard, and a lookup error all exit without output, so the
- * normal permission flow stays intact.
+ * Runs the shared command-hook flow. It reads the hook JSON from stdin, maps the harness's session
+ * id, evaluates the guard, and prints one deny payload from `formatDeny`. Fails open: a missing
+ * session id, unparseable input, a tool the harness does not guard, and a lookup error print
+ * nothing. The normal permission flow stays intact.
  * @param {(reason: string) => object} formatDeny builds the harness's deny payload
  * @param {{
  *   readSessionId?: (input: unknown) => string | null,
