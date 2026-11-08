@@ -860,3 +860,36 @@ test("a forced kill ends the child process tree", async () => {
   }
   expect(pidAlive(pid)).toBe(false);
 });
+
+// Usefulness: a lost checkpoint that says queued does not restart a child whose transcript
+// already recorded exit 0.
+test("a queued checkpoint does not restart a proven transcript", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble();
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false },
+    });
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "queued",
+      cleanup: null,
+    }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});

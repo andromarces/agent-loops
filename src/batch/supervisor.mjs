@@ -1,7 +1,7 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per issue, prints progress on stderr, and returns one summary for stdout.
 import { createWriteStream } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -757,10 +757,20 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           return;
         }
         if (terminal(current.status)) return;
-        if (!start && current.status !== "queued") {
-          // A resume reconciles one recovered loop before it launches, so it never restarts blindly.
-          await recover(issue, current);
-          return;
+        if (!start) {
+          // A queued checkpoint that already has a transcript is a lost record, not a fresh launch.
+          const hasTranscript =
+            current.status !== "queued" ||
+            (await stat(current.transcript).then(
+              () => true,
+              () => false,
+            ));
+          if (hasTranscript) {
+            // A resume reconciles one recovered loop before it launches, so it never restarts
+            // blindly.
+            await recover(issue, current);
+            return;
+          }
         }
         try {
           await launchIssue(issue);
