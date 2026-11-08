@@ -44,7 +44,7 @@ Andro Marces
 ## Links
 
 - [Issue #1646: Move probe logs out of the reference docs](https://github.com/andromarces/agent-loops/issues/1646)
-- PR: this pull request
+- [PR #1688](https://github.com/andromarces/agent-loops/pull/1688)
 - [ADR 0019: Opt in to a workspace-write sandbox for the Codex reviewer](0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)
 - [ADR 0038: Run the Codex reviewer with no sandbox by default](0038-run-the-codex-reviewer-with-no-sandbox-by-default.md)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md)
