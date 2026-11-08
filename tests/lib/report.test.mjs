@@ -2,7 +2,6 @@ import { expect, test } from "vite-plus/test";
 import {
   hasClosingBlockAttempt,
   acceptanceFailure,
-  isAcceptedReview,
   missingRequiredReportLabels,
   parseReportBlock,
   parseVerdict,
@@ -1030,24 +1029,24 @@ test("parseReportBlock keeps the origin/main result for every malformed fixture"
     const [report, verdict, accepted] = MALFORMED_RESULTS[index];
     expect(parseReportBlock(shape), shape).toEqual(report);
     expect(parseVerdict(shape), shape).toBe(verdict);
-    expect(isAcceptedReview(shape), shape).toBe(accepted);
+    expect(acceptanceFailure(shape) === null, shape).toBe(accepted);
   });
 });
 
 // Usefulness: verifies a spaceless bullet under an empty Checks line never supplies the Checks
 // text that an accept needs, while a `- ` item does (issues #218 and #846).
-test("isAcceptedReview never accepts from a folded spaceless bullet", () => {
+test("acceptanceFailure never accepts from a folded spaceless bullet", () => {
   const review = (list) => `${REPORT}\nVerdict: accept\nChecks:\n${list}`;
-  expect(isAcceptedReview(review("-item"))).toBe(false);
-  expect(isAcceptedReview(review("*item"))).toBe(false);
-  expect(isAcceptedReview(review("1.item"))).toBe(false);
-  expect(isAcceptedReview(review("-\titem"))).toBe(false);
-  expect(isAcceptedReview(review("- item"))).toBe(false);
-  expect(isAcceptedReview(review("- npm test passed"))).toBe(true);
+  expect(acceptanceFailure(review("-item"))).not.toBeNull();
+  expect(acceptanceFailure(review("*item"))).not.toBeNull();
+  expect(acceptanceFailure(review("1.item"))).not.toBeNull();
+  expect(acceptanceFailure(review("-\titem"))).not.toBeNull();
+  expect(acceptanceFailure(review("- item"))).not.toBeNull();
+  expect(acceptanceFailure(review("- npm test passed"))).toBeNull();
 });
 
 // Usefulness: pins the one shared acceptance rule that the accept gate reads to pick its refusal
-// message, so the verdict and Checks checks cannot drift from isAcceptedReview (issue #814).
+// message, so the verdict and Checks checks cannot drift from acceptanceFailure (issue #814).
 test("acceptanceFailure names the failing acceptance check or null", () => {
   expect(acceptanceFailure(`${REPORT}\nVerdict: reject\nChecks: npm test passed`)).toBe("verdict");
   expect(acceptanceFailure(`${REPORT}\nVerdict: accept\nChecks:`)).toBe("checks");
@@ -1183,7 +1182,7 @@ test("parseReportBlock returns null for a malformed Verdict line above a list", 
   for (const verdict of ["**Verdict:** reject", "  Verdict: reject", "Verdict : reject"]) {
     const response = `${REPORT}\nChecks:\n\n${verdict}\n- item\nVerdict: accept`;
     expect(parseReportBlock(response)).toBeNull();
-    expect(isAcceptedReview(response)).toBe(false);
+    expect(acceptanceFailure(response)).not.toBeNull();
   }
 });
 
@@ -1212,7 +1211,7 @@ test("parseReportBlock returns null for an indented prose line above a list", ()
   ]) {
     const response = `${REPORT}\nChecks:\n\n${heading}\n- item\nVerdict: accept`;
     expect(parseReportBlock(response)).toBeNull();
-    expect(isAcceptedReview(response)).toBe(false);
+    expect(acceptanceFailure(response)).not.toBeNull();
   }
 });
 
@@ -1234,7 +1233,7 @@ test("parseReportBlock returns null for a prose line above a list that holds a m
   ]) {
     const response = `${REPORT}\nChecks:\n\n${heading}\n- item\nVerdict: accept`;
     expect(parseReportBlock(response)).toBeNull();
-    expect(isAcceptedReview(response)).toBe(false);
+    expect(acceptanceFailure(response)).not.toBeNull();
   }
 });
 
@@ -1342,7 +1341,7 @@ ${line}
 - next
 Verdict: accept`;
     expect(parseReportBlock(response), line).toBeNull();
-    expect(isAcceptedReview(response), line).toBe(false);
+    expect(acceptanceFailure(response) === null, line).toBe(false);
   }
 });
 
@@ -1643,7 +1642,7 @@ test("acceptanceFailure keeps a reviewer report without Conclusion unaccepted", 
   expect(parseReportBlock(response)).not.toBeNull();
   expect(parseVerdict(response)).toBe("unknown");
   expect(acceptanceFailure(response)).toBe("verdict");
-  expect(isAcceptedReview(response)).toBe(false);
+  expect(acceptanceFailure(response)).not.toBeNull();
 });
 
 // Usefulness: verifies the issue #1592 shape, where a lone required label sits directly above
@@ -2040,7 +2039,7 @@ test("parseReportBlock gives a bold twin the same result as its plain twin", () 
     const bold = shape.replace(/^(Conclusion|Why|Blockers|Checks|Notes|Deferred):/gim, "**$1:**");
     expect(parseReportBlock(bold), bold).toEqual(parseReportBlock(shape));
     expect(parseVerdict(bold), bold).toBe(parseVerdict(shape));
-    expect(isAcceptedReview(bold), bold).toBe(isAcceptedReview(shape));
+    expect(acceptanceFailure(bold) === null, bold).toBe(acceptanceFailure(shape) === null);
   }
 });
 

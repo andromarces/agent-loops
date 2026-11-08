@@ -176,7 +176,7 @@ function hasTablePair(lines) {
 // - The cost is not only a reporting loss. A null block has no Checks line, so
 //   the `--require-accept` gate also refuses. `acceptGateReason` in
 //   src/role/finish.mjs returns "the accepted review has no Checks line", and
-//   `isAcceptedReview` in this file returns false. Both directions fail closed,
+//   `acceptanceFailure` in this file returns "checks". Both directions fail closed,
 //   but the report loses its text to `raw`, and the `acceptGateReason` refusal
 //   names the wrong cause.
 //
@@ -582,10 +582,6 @@ export function repairedReportMatches(
   return true;
 }
 
-// A report label line, empty or with a value, for example `Notes:` or `Notes: none`. The reviewer
-// `Verdict:` line is no report label, so a list after it never folds.
-const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
-
 // The list shapes that fold under a label: a `-` or an ordered `N.` marker at column 0, exactly
 // one ASCII space (U+0020), then an item (issue #915 added the ordered marker). Any other separator
 // (a tab, a nonbreaking space, a second space), a spaceless bullet, an indented bullet, a `*` or
@@ -747,7 +743,7 @@ function foldEmptyLabelLists(lines) {
   const folded = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (LABEL_LINE.test(line)) {
+    if (PLAIN_LABEL_LINE.test(line)) {
       let { items, end } = takeItems(lines, i, FOLDABLE_ITEM);
       if (items.length === 0 && lines[i + 1]?.trim() === "") {
         // One blank line then a dash or ordered run under the same label folds too (issues #1348
@@ -769,7 +765,7 @@ function foldEmptyLabelLists(lines) {
     ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
       const { items, end } = takeItems(lines, i, HEADING_ITEM);
-      if (items.length > 0 && at >= 0 && LABEL_LINE.test(out[at])) {
+      if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
         out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);
         i = end;
@@ -847,14 +843,4 @@ export function acceptanceFailure(response, report = parseReportBlock(response))
     return "verdict";
   }
   return report?.checks ? null : "checks";
-}
-
-/**
- * True when the response is an accept with a stored report that carries a Checks line.
- * @param {string} response
- * @param {ReturnType<typeof parseReportBlock>} [report]
- * @returns {boolean}
- */
-export function isAcceptedReview(response, report = parseReportBlock(response)) {
-  return acceptanceFailure(response, report) === null;
 }
