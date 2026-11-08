@@ -87,7 +87,6 @@ The headless action object allows only `action`, `summary`, and an optional bool
 - A headless `--mode review-only` run can reach a finish before any reviewer turn. The runtime refuses that finish until a reviewer turn was dispatched. A `run_worker` action ends the headless run on exit 1 with the reason `mode review-only rejects a run_worker action`.
 - A headless `--pr` start reads the required-check sources of the PR base once. It refuses when the rulesets read settled nothing, before any state file is written or child spawns.
 - A headless run names the PR number in the task.
-- The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the dispatch, so write it to state the work of that turn.
 
 ## Reviewer prompts and result fields
 
@@ -336,8 +335,6 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
   "error": null
 }
 ```
-
-`--transcript <file>` still appends one JSON line per `invocation` and `result` event. It stays a per-call flag and is not the turn history.
 
 A headless run also emits an `inherited-tmpdir` event with `fatal: true` for a fatal error. The transcript keeps that event.
 

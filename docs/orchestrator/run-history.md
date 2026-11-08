@@ -63,3 +63,5 @@ needed: the subcommand records each dispatched turn itself.
   names another mode.
 - Read `turns` after compaction or restart to rebuild which turns ran, which
   verdicts they returned, and which head each reviewer turn saw.
+- `--transcript <file>` still appends one JSON line per `invocation` and
+  `result` event. It stays a per-call flag and is not the turn history.

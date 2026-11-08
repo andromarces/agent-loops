@@ -95,6 +95,8 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) reaches each child conversation once, as
   [Init task delivery](orchestrator/task-delivery.md) states.
+  - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
+    dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
   [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
