@@ -4,7 +4,7 @@
 
 partially-superseded
 
-Partially superseded by [ADR 0046](0046-default-the-test-slot-count-to-one.md): it replaces decision 3 (the default count). The `--slots` and `AGENT_LOOP_TEST_SLOTS` overrides and every other decision hold.
+Partially superseded by [ADR 0046](0046-default-the-test-slot-count-to-one.md): it replaces decision 3 (the default count). Partially superseded by [ADR 0104](0104-accept-a-test-slot-command-as-an-argument-vector.md): it adds an argument-vector form beside the one-argument shell-string command of decision 1. The one-string form, the `--slots` and `AGENT_LOOP_TEST_SLOTS` overrides, and every other decision hold.
 
 ## Date
 

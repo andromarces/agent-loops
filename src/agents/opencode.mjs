@@ -56,9 +56,17 @@ const READONLY_CONFIG =
  * response text. Throws the cancel error when `options.signal` aborts.
  */
 export async function runOpenCode(state, prompt, options = {}) {
-  const { readOnly, timeout, signal, role, env } = options;
+  const { readOnly, timeout, signal, role } = options;
   const args = ["run", "--standalone", "--format", "json"];
   const execOptions = turnExecOptions(options, prompt);
+
+  // OpenCode opens its session in the inherited PWD when that variable is set, not in the process
+  // working directory. A worker child inherits the operator shell's PWD, which names the main
+  // checkout while `cwd` is the linked run work tree, so the session would start in the main work
+  // tree (issue #1678).
+  if (execOptions.cwd) {
+    execOptions.env = { ...execOptions.env, PWD: execOptions.cwd };
+  }
 
   if (state.sessionId) {
     args.push("--session", state.sessionId);
@@ -66,7 +74,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   if (readOnly) {
     args.push("--agent", "plan");
-    execOptions.env = { ...env, OPENCODE_CONFIG_CONTENT: READONLY_CONFIG };
+    execOptions.env = { ...execOptions.env, OPENCODE_CONFIG_CONTENT: READONLY_CONFIG };
   }
 
   // Argument validation rejects an effort without a model; this guards a direct adapter call.

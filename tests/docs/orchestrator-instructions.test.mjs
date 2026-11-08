@@ -118,6 +118,17 @@ const SHARED_PARENT_RULES = [
   // Issue #1556: an edit that the turn restores is reported by path under open, and an absent field
   // from a failed watch proves nothing.
   (text) => expectRule(text, /mainWorkTreeChangedInTurn/, /restores? before it ends/i),
+  // Issue #1678: a worker report that its edit landed in another checkout stops the run, and
+  // mainWorkTreeChangedInTurn stays report-only because a concurrent run can name the same path.
+  (text) =>
+    expectRule(
+      text,
+      /worker report/i,
+      /edit landed in another checkout/i,
+      /stop the run/i,
+      /leave that checkout to the user/i,
+    ),
+  (text) => expectRule(text, /mainWorkTreeChangedInTurn/, /report-only/i, /one run/i),
   // Issue #1583: a read-only access moves only the access time, so it names no path.
   (text) => expectRule(text, /read-only access/i, /access time/i),
   (text) => expectRule(text, /under open/i, /finish summary/i),
@@ -892,6 +903,7 @@ const REFUSED_CWD_BLOCKS = {
       "The parent creates the run's work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it: a worker turn pushes its branch and stops there, because every later dispatch of that run targets the same `--cwd`.",
       "The worker preamble states the work tree edit rule. Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.",
       "The worker preamble also states the report-and-stop rule. If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there, because a restore can discard an uncommitted change of the user.",
+      "When a worker report says its edit landed in another checkout, stop the run, report the paths under `open` in the finish summary, and leave that checkout to the user: `mainWorkTreeChangedInTurn` stays report-only, because a concurrent run can report the same path, so the runtime cannot attribute the edit to one run (ADR 0080).",
       "Create the work tree with no upstream, so a plain `git push` of a worker cannot reach the default branch:",
       "```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ```",
       "Without `--no-track`, the new branch gets the upstream `origin/<default>` when `branch.autoSetupMerge` is at its default. The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`.",

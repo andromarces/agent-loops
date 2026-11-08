@@ -47,7 +47,7 @@ Andro Marces
 
 - [Issue #1504](https://github.com/andromarces/agent-loops/issues/1504)
 - [Pull request #1507](https://github.com/andromarces/agent-loops/pull/1507)
-- Implementation: `hashCopiedLocalSources` in `src/lib/local-file-changes.mjs`, the turn window in `src/child-turn.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`
+- Implementation: `hashCopiedLocalSources` in `src/lib/local-file-changes.mjs`, the turn window in `src/lib/turn-evidence-window.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`
 - Documented in [Local files copied into the work tree](../docs/orchestrator/local-files-copy.md), the [orchestrator instructions](../docs/orchestrator-instructions.md), and [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree)
 - Supersedes (partially): [ADR 0074](0074-report-the-side-that-changed-in-local-files-differ.md), decision 5's unconditional action for `changed: "source"`
 - [ADR Index](README.md)

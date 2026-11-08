@@ -231,6 +231,29 @@ test("the wrapper exits with the command's exit code and releases the slot", asy
   expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
 });
 
+// Usefulness: issue #1673 — the argument-vector form spawns the executable with its arguments
+// without a shell, so an argument holding a shell metacharacter reaches the program unchanged,
+// and the wrapper keeps the command exit code and frees the slot.
+test("the argument-vector form runs without a shell and keeps the exit code", async () => {
+  const ctx = await setup({
+    "argv.mjs":
+      "import { writeFileSync } from 'node:fs';\n" +
+      "writeFileSync('argv.json', JSON.stringify(process.argv.slice(2)));\n" +
+      "process.exit(7);\n",
+  });
+  const { done } = wrapper(
+    ["--slots", "1", "--wait", "10", "--", process.execPath, "argv.mjs", "a b", "$HOME", ";"],
+    ctx,
+  );
+  expect((await done).code).toBe(7);
+  expect(JSON.parse(await readFile(join(ctx.cwd, "argv.json"), "utf8"))).toEqual([
+    "a b",
+    "$HOME",
+    ";",
+  ]);
+  expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+});
+
 // Usefulness: acceptance (#847) — a nested wrapper inside a wrapped command runs at once
 // instead of waiting on the slot its parent holds, so it cannot deadlock.
 // Process: the nested wrapper is a second CLI process inside the wrapped command.
@@ -407,6 +430,33 @@ test("a valid flag wins over an invalid environment value", () => {
   expect(() => parseTestSlotArgs(["--slots", "2", "--", "x"], env)).toThrow(
     /AGENT_LOOP_TEST_SLOT_WAIT/,
   );
+});
+
+// Usefulness: issue #1673 — two or more arguments after -- form an argument vector that runs
+// without a shell, so a Git Bash child passes the suite command with no quoting step; one
+// argument keeps the shell-string form.
+test("two or more arguments after -- parse as an argument vector, one keeps the string form", () => {
+  expect(parseTestSlotArgs(["--", "node", "tests/foo.test.mjs", "run"], {})).toEqual({
+    slots: 1,
+    waitSeconds: 1800,
+    ifHeld: false,
+    command: "node",
+    args: ["tests/foo.test.mjs", "run"],
+  });
+  expect(parseTestSlotArgs(["--", "node tests/foo.test.mjs"], {})).toEqual({
+    slots: 1,
+    waitSeconds: 1800,
+    ifHeld: false,
+    command: "node tests/foo.test.mjs",
+  });
+});
+
+// Usefulness: issue #1673 — the vector needs the -- separator, at least two arguments, and a
+// non-empty executable, so a malformed call is a usage error instead of a shell run.
+test("an argument vector needs -- and a non-empty executable", () => {
+  expect(usageRefusal(() => parseTestSlotArgs(["--"], {})).usage).toBe(true);
+  expect(usageRefusal(() => parseTestSlotArgs(["node", "x"], {})).usage).toBe(true);
+  expect(usageRefusal(() => parseTestSlotArgs(["--", "", "x"], {})).usage).toBe(true);
 });
 
 // Usefulness: maintainer decision (#847) — `--wait 0` is one attempt: the command runs when a
