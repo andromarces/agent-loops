@@ -69,7 +69,8 @@ const foreignCheckoutEditRule =
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry (issue #1249). The reviewer prompt carries the same rule (issue #1024).
 // A literal `/tmp` path stays forbidden even when TMPDIR names another directory, because another
-// run can hold the same name (issue #1596).
+// run can hold the same name (issue #1596). The runtime reports such a write on POSIX as a
+// `literal-tmp/` entry when the inherited directory is another path (issue #1713).
 const tmpdirRule = tempPathRule(
   "work tree",
   ", such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory, because another run can hold the same name",

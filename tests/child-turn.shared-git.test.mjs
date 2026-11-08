@@ -44,6 +44,8 @@ const turn = (act, signal, extra = {}) =>
     prompt: "go",
     cwd: extra.cwd ?? repo,
     signal,
+    // This file stalls every directory read, so a literal root would hang the post-turn read.
+    tmpdirLiteralRoots: [],
   });
 
 // Usefulness: verifies requirement "a worker turn that sets core.bare in the shared config reports

@@ -289,13 +289,25 @@ Apply these parent rules:
   - The field redacts each path like the other path fields, names at most 20 paths, and keeps a
     fixed root lockfile name byte-identical.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory during the turn. One example is a probe directory that the
-  reviewer created there. The field names the entries, redacted like the test command output, and
-  never their content, at most 20. It is a diagnostic: the directory is shared with other
-  processes, the runtime cannot attribute an entry to the turn, and it does not delete one. The
-  runtime reads the directory once after the turn, with no re-read and no wait. The field creates
-  no `open` item by itself, and it never refuses a finish. Field rules:
+  inherited temporary directory or in a literal system temporary directory during the turn. A
+  worker envelope carries it only for a literal system temporary directory, because a worker may
+  legitimately write in the inherited one. One example is a probe directory that a turn created
+  there. The field names the entries, redacted like the test command output, and never their
+  content, at most 20. It is a diagnostic: the directories are shared with other processes, the
+  runtime cannot attribute an entry to the turn, and it does not delete one. The runtime reads
+  them once after the turn, with no re-read and no wait. The field creates no `open` item by
+  itself, and it never refuses a finish. Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
+  - The literal system temporary directories are `/tmp` and `/private/tmp` on POSIX, and none on
+    Windows, where a Git Bash `/tmp` resolves to the inherited directory. The runtime leaves out a
+    literal root that resolves to the inherited directory while it reads that directory too; a root
+    that holds the inherited directory is read, so a write directly in it is still seen. When the
+    inherited directory is itself a literal root, a worker turn reports a new entry there too,
+    because the two writes cannot be told apart.
+  - A name with the prefix `literal-tmp/` is an entry of a literal system temporary directory, such
+    as `/tmp/x` on macOS. The prompt forbids that write, and the field names it after the turn. The
+    entry is unattributed like every other entry, and a turn that reports its own leftover makes it
+    actionable.
   - Turn directories that this process created are left out, and every other name of that one
     read is listed, an `al-` name too.
   - A name with the prefix `registered/` is the turn directory of another agent-loop process,

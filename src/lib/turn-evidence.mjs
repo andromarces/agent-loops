@@ -31,9 +31,10 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 //   its tests in the work tree, and a changed dependency file that no test setup reads needs no
 //   action (issues #1180 and #1537).
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
-//   reviewer turn. One post-turn read lists them, with no settle re-read, and a failed read gives
+//   reviewer turn, or in a literal system temporary directory that differs from it during any
+//   child turn. One post-turn read lists them, with no settle re-read, and a failed read gives
 //   none. Diagnostic: the runtime cannot attribute them to the turn, and they create no automatic
-//   open item (issue #1024, issue #1616, ADR 0095).
+//   open item (issue #1024, issue #1616, issue #1713, ADR 0095, ADR 0108).
 // - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
 //   Advisory, like the temporary directory entries (issue #1045).
 // - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the

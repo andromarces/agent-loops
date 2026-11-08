@@ -23,13 +23,16 @@ afterEach(async () => {
   await removePath(temp);
 });
 
-const turn = (roleName, act) =>
+const turn = (roleName, act, options = {}) =>
   runChild({
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
     roleName,
     prompt: "go",
     cwd: repo,
+    // A test names the literal roots, so the churn of the host's `/tmp` stays out of the report.
+    tmpdirLiteralRoots: [],
+    ...options,
   });
 
 // Usefulness: verifies acceptance #1024 — a directory that a reviewer turn leaves directly in the
@@ -60,14 +63,33 @@ test("a reviewer turn that left nothing carries no field", async () => {
   expect(result).not.toHaveProperty("inheritedTmpdirEntries");
 });
 
-// Usefulness: verifies the report is reviewer-only, because the issue covers reviewer probes and a
-// worker legitimately writes to the temporary directory (a PR body file).
-test("a worker turn carries no field", async () => {
+// Usefulness: verifies a worker turn's inherited-directory write stays out of the report, because a
+// worker legitimately writes there (a PR body file), while a literal root entry is reported.
+test("a worker turn carries no inherited-directory entry", async () => {
   const result = await turn("worker", async () => {
     await mkdir(join(temp, "pr-body"));
     return "done";
   });
   expect(result).not.toHaveProperty("inheritedTmpdirEntries");
+});
+
+// Usefulness: verifies the confirmed gap of issue #1713 end to end — a worker write to a literal
+// system temporary directory that differs from the inherited one is reported in the envelope
+// (#1596 observed it on macOS with no field). This is the one real run for that path: the adapter
+// call and the envelope wiring are its behavior, and the read itself is covered in process by
+// `tests/lib/tmpdir-entries.test.mjs` and `tests/lib/turn-evidence-window.test.mjs`.
+test("a worker turn reports a literal system temporary directory entry", async () => {
+  const literal = await mkdtemp(join(temp, "literal-"));
+  const result = await turn(
+    "worker",
+    async () => {
+      await writeFile(join(literal, "x"), "probe");
+      return "done";
+    },
+    { tmpdirLiteralRoots: [literal] },
+  );
+  expect(result.status).toBe("ok");
+  expect(result.inheritedTmpdirEntries).toEqual(["literal-tmp/x"]);
 });
 
 // Usefulness: verifies the runtime never deletes what it cannot attribute (issue #1024).

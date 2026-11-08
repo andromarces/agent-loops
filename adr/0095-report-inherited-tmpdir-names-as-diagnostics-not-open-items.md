@@ -2,7 +2,14 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0108: Report a literal system temporary directory entry in the inherited temporary directory field](0108-report-a-literal-system-temporary-directory-entry-in-the-inherited-tmpdir-field.md):
+
+- Decision 1's scope: the one post-turn read now also reads the literal system temporary directories that differ from the inherited one, and a worker turn carries the field for those roots.
+- Decision 6's sentence that a write with an absolute path does not use the private directory: the write still bypasses it, and on POSIX a write directly in a literal system temporary directory is now reported.
+
+Decisions 2 to 5, the diagnostic contract, the `registered/` hint, the action rules, and the private turn directory work remain in force.
 
 ## Supersedes
 
@@ -72,6 +79,7 @@ Andro Marces
 
 - [Issue #1616](https://github.com/andromarces/agent-loops/issues/1616)
 - [PR #1617](https://github.com/andromarces/agent-loops/pull/1617)
+- Superseded by: [ADR 0108](0108-report-a-literal-system-temporary-directory-entry-in-the-inherited-tmpdir-field.md)
 - Related issues: #1542, #1559, #1569, #1575, #1600
 - [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md)
 - [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md)

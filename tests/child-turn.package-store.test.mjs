@@ -15,6 +15,13 @@ import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 
+// A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
+// #1713).
+vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, literalTmpdirRoots: () => [] };
+});
+
 let repo;
 let store;
 const modulesFile = () => join(repo, "node_modules", ".modules.yaml");

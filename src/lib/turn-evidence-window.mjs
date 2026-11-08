@@ -2,7 +2,11 @@ import { mapInBatches } from "./batches.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
 import { errorLine, readProp } from "./error-message.mjs";
 import { logInfo, logWarn } from "./log.mjs";
-import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./tmpdir-entries.mjs";
+import {
+  appearedInInheritedTmpdir,
+  literalTmpdirRoots,
+  snapshotInheritedTmpdir,
+} from "./tmpdir-entries.mjs";
 import { changedInPackageStore, snapshotPackageStore } from "./package-store-entries.mjs";
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lockfile-change.mjs";
 import { hashCopiedLocalSources } from "./local-file-changes.mjs";
@@ -34,6 +38,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  * @property {string[] | null} lockfilePaths
  * @property {object | null} mainEvidence
  * @property {object | null} tmpdirBefore
+ * @property {string[]} tmpdirLiteralRoots
  * @property {object | null} storeBefore
  * @property {object | null} advisory
  * @property {string[] | null} sharedGitItems
@@ -55,16 +60,23 @@ async function readBeforeTurn(state) {
       state.mainReadDeadlineMs === null
         ? readMainWorkTree(state.cwd)
         : readMainWorkTree(state.cwd, { deadlineMs: state.mainReadDeadlineMs });
-    const [copiedSources, shared, lockfiles, main] = await Promise.all([
+    const [copiedSources, shared, lockfiles, main, tmpdir] = await Promise.all([
       readCopiedSources(state, { signal: state.signal }),
       readShared(state),
       readLockfiles(state.cwd),
       mainRead,
+      // A worker turn reports a literal system temporary directory that differs from the inherited
+      // one, but not the inherited directory itself, which it may legitimately write in (#1713).
+      snapshotInheritedTmpdir({
+        literalRoots: state.tmpdirLiteralRoots,
+        includeInherited: false,
+      }),
     ]);
     state.localSourcesBefore = copiedSources;
     state.sharedBefore = shared;
     state.lockfilesBefore = lockfiles;
     state.mainBefore = main;
+    state.tmpdirBefore = tmpdir;
     // The watch starts before the child call, so an edit that the turn restores still leaves a path.
     state.mainWatch = main
       ? await startMainWorkTreeWatch(main.root, {
@@ -78,7 +90,7 @@ async function readBeforeTurn(state) {
   }
   const [copiedSources, tmpdir, store] = await Promise.all([
     readCopiedSources(state, { signal: state.signal }),
-    snapshotInheritedTmpdir(),
+    snapshotInheritedTmpdir({ literalRoots: state.tmpdirLiteralRoots }),
     snapshotPackageStore({ cwd: state.cwd }),
   ]);
   state.localSourcesBefore = copiedSources;
@@ -244,13 +256,21 @@ async function readLocalSourceChangedInTurn(state) {
 }
 
 /**
- * Names that a reviewer turn left in the inherited temporary directory, or [] when none or unread.
+ * Names that a turn left in the inherited temporary directory, or in a literal system temporary
+ * directory that differs from it, or [] when none or unread. A worker turn reports only the literal
+ * roots, because it may legitimately write in the inherited directory.
  * @param {ChildEvidenceState} state
  */
 async function readInheritedTmpdirEntries(state) {
-  const entries = await appearedInInheritedTmpdir(state.tmpdirBefore);
+  const entries = await appearedInInheritedTmpdir(state.tmpdirBefore, {
+    includeInherited: !state.isWorker,
+  });
   if (entries.length > 0) {
-    logWarn(`reviewer: entries appeared in the inherited temporary directory: ${entries.length}`);
+    logWarn(
+      state.isWorker
+        ? `worker: entries appeared in a literal system temporary directory: ${entries.length}`
+        : `reviewer: entries appeared in the inherited temporary directory or a literal one: ${entries.length}`,
+    );
   }
   return entries;
 }
@@ -318,7 +338,7 @@ async function readFailedTurnEvidence(state) {
  * main work tree watch, which `mainWatch` exposes and `stop` closes; call `stop` on every outcome.
  * @param {{ cwd: string, signal?: AbortSignal, isWorker: boolean, localFilesCopied: string[],
  *   sharedGitReadBoundMs: number, mainWatchDeadlineMs?: number | null,
- *   mainReadDeadlineMs?: number | null }} options
+ *   mainReadDeadlineMs?: number | null, tmpdirLiteralRoots?: string[] }} options
  */
 export function createTurnEvidence({
   cwd,
@@ -328,6 +348,9 @@ export function createTurnEvidence({
   sharedGitReadBoundMs,
   mainWatchDeadlineMs = null,
   mainReadDeadlineMs = null,
+  // The literal system temporary directories to read beside the inherited one. A test names them
+  // so the churn of the host's `/tmp` stays out of the report.
+  tmpdirLiteralRoots = literalTmpdirRoots(),
 }) {
   const state = {
     cwd,
@@ -351,6 +374,7 @@ export function createTurnEvidence({
     // The post-turn main work tree evidence, kept once read so a cancel after the read reuses it.
     mainEvidence: null,
     tmpdirBefore: null,
+    tmpdirLiteralRoots,
     storeBefore: null,
     // The post-turn advisory lists, kept once read so a cancel after the reads reuses them.
     advisory: null,
