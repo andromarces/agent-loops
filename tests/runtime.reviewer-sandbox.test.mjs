@@ -192,8 +192,14 @@ test.each([
     const prompt = calls.find((c) => c.role === "reviewer").prompt;
     expect(prompt).toMatch(pattern);
     if (reviewerSandbox === "workspace-write") {
-      expect(prompt).toMatch(/local binary/);
-      expect(prompt).not.toMatch(/pnpm|vitest|npm|yarn|node_modules/);
+      // Guard 2 of #421 covers the sandbox note, not the whole prompt. The test-slot rule names
+      // pnpm as a Windows .cmd shim example, which is not a sandbox tool choice.
+      const lines = prompt.split("\n");
+      const start = lines.indexOf("Sandbox note, supplied by the runtime:");
+      const end = lines.indexOf("", start);
+      const sandbox = lines.slice(start, end === -1 ? lines.length : end).join("\n");
+      expect(sandbox).toMatch(/local binary/);
+      expect(sandbox).not.toMatch(/pnpm|vitest|npm|yarn|node_modules/);
     }
     expect(prompt).toContain("Do not write to GitHub or any remote");
     expect(prompt).toContain(
