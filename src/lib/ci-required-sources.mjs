@@ -586,7 +586,7 @@ export async function requiredContexts(
   const unparsed = [];
 
   const cached = async (kind, read) => {
-    const key = `${kind} ${base}`;
+    const key = `${kind}\0${base}`;
     if (sourceCache?.has(key)) {
       return sourceCache.get(key);
     }

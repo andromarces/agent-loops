@@ -4,7 +4,7 @@ import { tmpRoot } from "./tmp-root.mjs";
 // overrides the root and its leaf under `<os tmpdir>/agent-loops`. The table is the only place a
 // root name is defined, so a root that a reader resolves is also a root that every child turn
 // inherits through `rootPins`.
-export const ROOTS = {
+const ROOTS = {
   runs: { env: "AGENT_LOOP_RUNS_ROOT", leaf: "runs" },
   testSlots: { env: "AGENT_LOOP_TEST_SLOTS_ROOT", leaf: "test-slots" },
   sessionRecords: { env: "AGENT_LOOP_SESSION_RECORDS_ROOT", leaf: "session-records" },

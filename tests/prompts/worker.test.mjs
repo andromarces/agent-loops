@@ -366,6 +366,18 @@ test("first worker turn routes a test-running hook on a push or commit through t
   expect(reviewerPrompt({ prompt: "check the fix" })).not.toContain("pre-push");
 });
 
+// Usefulness: verifies acceptance #1637: the hook rule renders the Node and CLI paths from
+// slotOptions like the other slot rules, so a test double never mixes the real paths into a prompt.
+test("first worker turn renders the hook rule from slotOptions", () => {
+  const prompt = workerPrompt("do the task", true, null, {
+    execPath: "C:/tools/node.exe",
+    cliPath: "C:/tools/cli.mjs",
+    platform: "win32",
+  });
+  const hook = prompt.split("\n").find((line) => line.includes('test-slot -- "<git command>"'));
+  expect(hook).toContain('"C:/tools/node.exe" "C:/tools/cli.mjs" test-slot -- "<git command>"');
+});
+
 // Usefulness: verifies acceptance #1530: a Claude worker moved its suite to a background shell task
 // when the foreground command could outlive the shell tool bound, then ended its turn with no
 // closing block. The rule keeps the command in the foreground and names the report when it cannot
