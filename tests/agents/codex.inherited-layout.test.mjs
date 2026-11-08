@@ -205,7 +205,7 @@ const INHERITED_SHAPES = [
       // The installer refuses a relative entry that it reads itself. A turn resolves it first.
       directlyInvalid: true,
       // The classifier runs in a child with another working directory, so a raw relative entry
-      // would resolve there and change the verdict.
+      // resolves there and changes the verdict.
       childCwd: true,
     }),
   ],
