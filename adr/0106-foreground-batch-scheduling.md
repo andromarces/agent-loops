@@ -151,8 +151,9 @@ the required checks remain the completion decision.
 
 `--loops` is a per-batch, in-memory limit on live headless runs. A free slot is filled
 automatically from the frozen set, in order, until the set is exhausted or no candidate is
-eligible. A loop holds its slot from launch until it is terminal, interrupted, or
-`needs-owner`.
+eligible. A loop holds its slot from launch until it reaches a terminal status or the batch
+stops for an interruption. A `needs-owner` loop is not terminal in milestone 1, so it keeps
+its slot until the owner resolves the state; milestone 3 adds the release.
 
 The machine-wide test slot is unchanged. Every `--test-cmd` run of a loop goes through the
 runtime and therefore through the test slot, whose default count is 1
@@ -208,18 +209,19 @@ path, work tree, pid, process start stamp, and creation time. It is created atom
 no overwrite, so a contender sees either no file or a complete record. A partial or
 unparseable claim counts as held, and its liveness decides whether it is stale.
 
-A claim exists only from the launch until the loop is terminal, interrupted, or
-`needs-owner`. It is released on `succeeded` after cleanup and on `failed`. It is kept on
-`interrupted` and `needs-owner`, because work may still need to continue. Every release and
-every stale removal runs under the existing lock and liveness rules of
+A claim exists from the launch until the loop is terminal. It is released on `succeeded`
+after cleanup and on `failed`. It is kept while the loop is `interrupted` or `needs-owner`,
+because work may still need to continue. Every release and every stale removal runs under
+the existing lock and liveness rules of
 [ADR 0020](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md).
 
 A claim whose pid and start stamp no longer name a live process is stale, but it is not
 taken over silently. `batch resume` of the owning batch re-checks the recorded owner and
 continues. A different `batch start` reads the owning batch checkpoint: it may remove the
-claim only when that loop is `succeeded` or `failed`; otherwise it refuses the issue and
-names the batch to resume. An abandoned batch therefore does not block an issue forever,
-and an interrupted batch keeps its recovery path.
+claim only when that loop is `failed`; a `succeeded` loop's claim is removed by its own
+cleanup, which also removes the work tree. Otherwise it refuses the issue and names the
+batch to resume. An abandoned batch therefore does not block an issue forever, and an
+interrupted batch keeps its recovery path.
 
 No claim, status, or ownership value is written to GitHub. The batch creates no label,
 comment, issue edit, or pull request. This keeps the claim workable on the repository's
@@ -269,7 +271,7 @@ without the live checks of decisions 11 and 13.
 The first SIGINT stops new launches. The batch forwards SIGINT to each live child loop and
 waits up to 30 seconds for each child to exit, so each headless run writes its transcript
 and records its exit code. A child still live at that bound has its process tree ended, as
-the runtime ends the tree of its own child ([ADR 0028](0028-end-the-windows-process-tree-of-a-child-when-the-runtime-exits.md),
+the runtime ends the tree of its own child ([ADR 0028](0028-end-the-windows-process-tree-when-the-runtime-exits.md),
 [ADR 0033](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md)). The batch then
 writes every loop checkpoint, marks a loop that did not end as `interrupted`, marks the batch
 `interrupted`, keeps every work tree and every claim, and exits 130.
@@ -335,11 +337,16 @@ reads the loop's local and remote state:
 
 The batch then applies these rules:
 
-- **Work tree missing or not the recorded directory:** `needs-owner`. It is not recreated
-  and no branch is checked out over it.
-- **Issue closed and a pull request of this branch merged or linked:** `succeeded`. The work
-  was delivered, whatever the interrupted run's last exit code. It becomes eligible for
-  cleanup.
+- **Work tree missing, not the recorded directory, or on another checked-out branch:**
+  `needs-owner`. It is not recreated, and no branch is checked out over it.
+- **Issue closed and a pull request of this branch is merged, and the local branch has no
+  commit that the pull request head lacks:** `succeeded`. The work was delivered, whatever
+  the interrupted run's last exit code. It becomes eligible for cleanup.
+- **Issue closed and the local branch holds a commit that the merged pull request head
+  lacks:** `needs-owner` with reason `unpushed-local-work`. The new work is not in the
+  merged pull request, so the loop is not successful and its work tree is kept.
+- **Issue closed, and no pull request of this branch is merged:** `needs-owner`. The batch
+  does not treat a manual close or another branch's pull request as this loop's delivery.
 - **A pull request of this branch is closed without a merge:** `needs-owner`. The batch
   never reopens it or opens a replacement on its own.
 - **One open pull request for the branch, its head equals the local head and the remote
@@ -389,16 +396,20 @@ The batch removes a work tree only when its loop is `succeeded` and every one of
 checks passes:
 
 - The path equals the recorded work-tree path, lies under the batch work-tree root, is not
-  the main work tree, and is a linked work tree that `git worktree list --porcelain` names
-  for this repository.
+  the main work tree, is a linked work tree that `git worktree list --porcelain` names for
+  this repository, and has the recorded branch checked out.
 - The directory still has the recorded device and inode, so a replacement path is never
   removed. An identity that does not match, or that the platform cannot report, keeps the
   tree and reports it.
-- The work tree is clean. For an open pull request, the remote branch head equals the local
-  head and the local branch has no commit that the remote lacks. For a merged pull request,
-  the merge commit that `gh pr view` names is reachable from `origin/<base>` after a fetch,
-  which is the push proof even when the remote branch was deleted. A read that cannot settle
-  either case keeps the tree.
+- The work tree is clean, and every local commit is proved pushed. When the remote branch
+  exists after a fetch, the local branch head equals or is an ancestor of
+  `refs/remotes/origin/<branch>`, and `git rev-list --count <branch>..origin/<branch>` is 0,
+  so no commit exists that the remote branch lacks. When the pull request is merged, the
+  local branch head equals or is an ancestor of the pull request head that `gh pr view`
+  names, and the merge commit is reachable from `origin/<base>`; this proof holds when the
+  remote branch was deleted after the merge. A local commit that neither proof covers keeps
+  the tree and is reported as `unpushed-local-work`. A read that cannot settle the proof
+  keeps the tree and reports why.
 - No live process other than this batch holds the loop claim, and no live run lock names the
   work tree ([ADR 0073](0073-lock-the-work-tree-of-an-active-run.md)).
 
@@ -409,10 +420,11 @@ first prove that it holds only directories and links, then delete without follow
 with the same identity check. A real file that remains stops the removal and is reported.
 The batch never removes the main work tree or any work tree outside its own root.
 
-A `failed`, `interrupted`, `needs-owner`, or live loop keeps its work tree. A successful
-loop's local branch, pull request, transcript, log, and checkpoint are kept; only the work
-tree and the claim are removed. The checkpoint directory is the inspection record and is not
-deleted by the batch.
+A `failed`, `interrupted`, `needs-owner`, or live loop keeps its work tree. A `succeeded`
+loop whose push, identity, or lock proof fails, or whose removal fails, also keeps its work
+tree and reports why. When cleanup succeeds, the work tree and the claim are removed; the
+local branch, pull request, transcript, log, and checkpoint are kept. The checkpoint
+directory is the inspection record and is not deleted by the batch.
 
 General system temporary directory cleanup stays out, as
 [ADR 0095](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md) decides. The
@@ -479,8 +491,8 @@ The implementation passes these checks without milestone 2 or 3:
 11. **Reconciliation.** A matching branch and one open pull request resume with `--pr` and
     `--require-ci`. A different head, two open pull requests, a diverging branch, a
     closed-unmerged pull request, a missing work tree, and a failed read each stop the loop
-    as `needs-owner` without a child. A merged pull request is `succeeded` and eligible for
-    cleanup.
+    as `needs-owner` without a child. A merged pull request with no local commit beyond its
+    head is `succeeded` and eligible for cleanup; one with extra local work is `needs-owner`.
 12. **Failure isolation.** One loop at the step limit and one loop that finishes leave the
     finished loop successful; the exhausted loop is not retried and the batch exits 1.
 13. **Cleanup.** A pushed successful work tree is removed after every identity and reachability
@@ -539,7 +551,7 @@ be used alone.
   is removed only after the push is proved.
 - The batch adds no remote state, so its claims, slots, and status are invisible to a second
   host. The existing pull-request declaration and required-check gate still decide
-  completion, and a merged pull request is external evidence that the work landed.
+  completion, and a merged pull request is external evidence that its head landed.
 - The step accounting composes attempts. A loop's budget is spent once, even across a
   resumed session, and the per-invocation prompt reports only that attempt's slice.
 - The accepted hard-kill limit: a transcript that never recorded a step count cannot prove
@@ -627,11 +639,12 @@ Andro Marces
 - [Issue #1711: Release loop slots on owner decisions, resume after owner merges, and notify](https://github.com/andromarces/agent-loops/issues/1711)
 - [Issue #1486: State how to find the issues that open PRs close before a batch selects issues](https://github.com/andromarces/agent-loops/issues/1486)
 - [Issue #1560: Check that a PR body closing keyword reached closingIssuesReferences](https://github.com/andromarces/agent-loops/issues/1560)
+- [PR #1719: Propose the ADR for foreground batch scheduling](https://github.com/andromarces/agent-loops/pull/1719)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - [ADR 0018: Copy untracked local files into a linked run work tree](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)
-- [ADR 0028: End the Windows process tree of a child when the runtime exits](0028-end-the-windows-process-tree-of-a-child-when-the-runtime-exits.md)
+- [ADR 0028: End the Windows process tree of a child when the runtime exits](0028-end-the-windows-process-tree-when-the-runtime-exits.md)
 - [ADR 0033: Cancel a run on SIGINT and escalate on a second SIGINT](0033-cancel-a-run-on-sigint-and-escalate-on-a-second-sigint.md)
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
 - [ADR 0040: Run the test command in a test slot and route child full suites through the wrapper](0040-run-the-test-command-in-a-test-slot.md)
