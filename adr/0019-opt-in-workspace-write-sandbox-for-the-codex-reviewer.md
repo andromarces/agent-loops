@@ -69,6 +69,121 @@ Live probe on the unelevated Windows sandbox, Windows 11 Pro 10.0.26220, codex-c
 
 The headless orchestrator has three guards that this change leaves in place: `readOnly: true` on the first and the repair turn in `decide`, the Codex `read-only` flag that follows from it, and the `withMutationCheck(cwd, "orchestrator", ...)` wrapper in `createOrchestratorAdapter`. The adapter and `runChild` shared one `readOnly` boolean, so the opt-in needs a separate reviewer-only input.
 
+### Read-only child-spawn and denial probes
+
+Moved from `docs/reference/reviewer-safety.md` on 2026-11-08. The sections `Codex read-only child-spawn limit` and `Denial probe (issue #432)` now state the contract and link here.
+
+#### Codex read-only child-spawn limit
+
+- This limit applies to a Codex reviewer in the `read-only` mode, and to Codex orchestrator turns.
+- A reviewer with no sandbox is not limited this way.
+
+- The `read-only` opt-in mode was the reviewer default when the probe ran.
+- On 2026-09-29 a `codex exec` run on Windows 11 with codex-cli 0.159.0-alpha.12 and `-c sandbox_mode="read-only"` observed two results.
+- A child `node` spawn from a Node.js process returned an error.
+- `pnpm test --version` exited 1 with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` (`Access is denied`).
+- That probe did not start Vitest.
+
+- Issue #342 records reports that were not re-observed.
+- The reviewer turns of the #301, #302, #311, and #326 runs used the same CLI version, OS, and the `read-only` mode, then the default.
+- Each reported `Vitest failed at startup (spawn EPERM)`.
+- Some also reported `pnpm` blocked by a store lock and `oxfmt` failing with `spawn EPERM`.
+- Their reviewer `Checks` lines therefore excluded the test suite.
+- The accepts rested on `git diff`, static checks, and in-process probes.
+- `docs/reference/parent-guard.md` records the same class on the `workspace-write` path.
+- The unelevated Windows sandbox blocks a child spawn with `EPERM`.
+
+- On 2026-10-10 a `codex exec` run on macOS with codex-cli 0.163.0-alpha.4 and `-c sandbox_mode="read-only"` ran `pnpm test` in the work tree.
+- It exited 1 in under one second, before any test started.
+- `vp` failed to load `vite.config.mjs` with `EPERM: operation not permitted, mkdir '<repo>/node_modules/.vite-temp'`.
+- The pnpm store lock of the Windows probe did not appear.
+- The work tree stayed clean.
+
+- The same class of failure showed on 2026-10-04 with codex-cli 0.162.0-alpha.9 and `vitest` run directly.
+- A Codex reviewer in the `read-only` mode on macOS therefore cannot run the test suite.
+- A reviewer with no sandbox, the default since [ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md), is not limited this way.
+- A live no-sandbox turn on macOS with codex-cli 0.164.0-alpha.3 ran the full test suite to exit 0 (issue #708, PR #956).
+
+- Not verified: a Codex reviewer in the `read-only` mode on Linux, and a Codex reviewer under the elevated Windows sandbox.
+- Do not assume the test suite runs on either in a sandboxed mode.
+
+#### Denial probe (issue #432)
+
+- The probes ran on 2026-10-05 on macOS, except a cell that names a later date.
+- A probe never wrote to a remote that it did not own.
+- The 2026-10-25 connector probe wrote one comment to a disposable repository that it owned.
+- Network denial used a read of `https://example.com`.
+- Connector denial used tool listings and event streams.
+- A "pass" below is a shell result on this machine for one run.
+
+- **`claude` (2.1.289).**
+  - **Shell network.**
+    - It can deny.
+    - With the runtime flags (`--permission-mode plan`) the fetch returned `200`.
+    - With `--settings '{"sandbox":{"enabled":true,"network":{"allowedDomains":[]}}}'` it failed with `CONNECT tunnel failed, response 403`.
+    - The allowlist works per domain, not per HTTP method.
+  - **Connector or MCP write tools.**
+    - It can deny.
+    - `--disallowedTools mcp__<server>` removed that server's tools from the `system init` tool list (`codegraph`, Google Drive).
+    - `mcp__*` removed every MCP tool.
+    - A rule scoped to write tool names also works.
+    - `--disallowedTools 'mcp__*__merge_pull_request,mcp__*__push_files,mcp__*__create_*,mcp__*__*_write,mcp__*__add_*'` removed 12 GitHub connector tools from the init tool list.
+    - It kept `get_file_contents`, `list_pull_requests`, and `pull_request_read`.
+    - The connector count in the init event varied between runs with connector timing.
+- **`codex` (codex-cli 0.162.0-alpha.14).**
+  - **Shell network.**
+    - `sandbox_mode="read-only"` already denies it.
+    - The Codex orchestrator and a reviewer in the `read-only` or `workspace-write` mode run under that mode.
+    - The fetch failed with `Could not resolve host`.
+    - A user execpolicy rule is an exception. See [Codex read-only network limit](../docs/reference/reviewer-safety.md#codex-read-only-network-limit).
+    - A Codex reviewer with no sandbox, the default since ADR 0038, keeps shell network.
+    - This probe did not cover that mode.
+  - **Connector or MCP write tools.**
+    - The connector is denied in `read-only` and `workspace-write`, not in `danger-full-access`.
+    - The `danger-full-access` result came from codex-cli 0.165.0-alpha.1 on 2026-10-25 on Windows. The [Remote writes](../docs/reference/reviewer-safety.md#remote-writes) section records that connector write probe.
+    - `--disable apps` (`features.apps=false`) removed every connector tool, read and write.
+    - With it, a `read-only` turn and a `danger-full-access` turn each found no GitHub tool.
+    - No comment was posted.
+- **`agy` (1.2.17).**
+  - **Shell network.**
+    - It is not denied.
+    - `--mode plan --sandbox` returned `200`.
+    - The docs say sandboxed shell commands run without network.
+    - The sandbox, `permissions.deny`, and `read_url` come from `~/.gemini/antigravity-cli/settings.json`.
+    - No per-invocation flag sets them.
+  - **Connector or MCP write tools.**
+    - The connector was not probed beyond `agy mcp list`.
+    - That command showed only the user `codegraph` server.
+    - `agy mcp disable <name>` writes the user configuration, so the runtime cannot use it per turn.
+- **`opencode` (v0.0.0-dev-20570).**
+  - **Shell network.**
+    - It can deny by command pattern only.
+    - `OPENCODE_CONFIG_CONTENT` with `{"action":"shell","resource":"curl *","effect":"deny"}` gave `Permission denied: shell`.
+    - `{"action":"bash",...}` did not match in this build, and the fetch returned `200`.
+  - **Connector or MCP write tools.**
+    - It can deny by tool name and keep the read tools (v0.0.0-dev-21800, 2026-10-25, Windows).
+    - A stub MCP server `notes` with `read_note` and `write_note` was added through `OPENCODE_CONFIG_CONTENT`, next to the runtime read-only rules.
+    - The rule `{"action":"notes_write_note","resource":"*","effect":"deny"}` hid `write_note`.
+    - The call failed with `Unknown tool 'notes.write_note'`, the server logged no write, and `read_note` returned its text.
+    - The result held with code mode on (the default, tools called through `execute`) and with `"codemode": false`.
+    - With no rule, both calls ran.
+- **`copilot` (GitHub Copilot CLI 1.0.92-4).**
+  - **Shell network.**
+    - It is partly denied by default, with the exact runtime arguments (`--session-id <id> -s --no-ask-user --output-format json --deny-tool write`, prompt on stdin).
+    - All refusals used `Permission denied because no interactive user response was available`.
+    - It refused `curl` to `https://example.com` (3 of 3 runs).
+    - It refused `gh pr merge --help`, `gh issue comment --help`, and `gh api --help`.
+    - It refused `"node" "<cli>" role wait-checks --pr 489 --timeout 30 --cwd "<tree>"` (2 of 2 runs).
+    - It ran with network: `gh pr checks 489 --required` (3 of 3 runs, including 2 with the exact command).
+    - `git push -h` ended with a failed tool call and no message.
+    - The denial is a Copilot default, not a runtime setting.
+    - The user configuration on this machine sets no tool allow list (`trustedFolders` only).
+    - With `--allow-all-tools` the fetch returned `200`, and `--deny-tool 'shell(curl)'` refused it.
+  - **Connector or MCP write tools.**
+    - The built-in `github-mcp-server` connected, and the model listed only read tools (`get_file_contents`, `search_code`, `search_users`, and two Copilot space reads).
+    - `--disable-builtin-mcps` removed `github-mcp-server` and kept the user `codegraph` server.
+    - `--enable-all-github-mcp-tools` enables write tools.
+
 ## Decision
 
 1. `--reviewer-workspace-write` is an optional boolean run input on both paths that run reviewer turns: a headless option, and an init flag of `agent-loop role`. It is off by default, and a run without it keeps its invocation, prompt, state file, and transcript. It is refused unless `--reviewer codex`, because only the Codex adapter reads the sandbox input, and any other reviewer would run read-only while the prompt said otherwise. The refusal comes at parse time on the headless path and at init on the interactive path, before any state is written.

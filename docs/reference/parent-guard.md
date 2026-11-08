@@ -89,14 +89,16 @@ Surveyed 2026-09-21 against current vendor docs, current binaries, and the insta
 | GitHub Copilot CLI | PascalCase `PreToolUse`, deny supported, `session_id` and `tool_name` in input; user `~/.copilot/hooks/*.json` loads in current CLI | Implemented (user scope)  |
 | OpenCode           | `permission` `evaluate` plugin hook can set `deny`; event carries `PermissionEvaluation.sessionID`                                  | Implemented (user scope)  |
 
-Codex CLI now uses its `PreToolUse` hook with the session id in hook input. Its
-entry point relies on `CODEX_THREAD_ID` from the shell environment, which is not
-documented and can break on upgrade, and on the installed CLI's `harness-check
-codex` command to confirm the running harness. The guard fails open when the
-variable is absent or unusable. Antigravity CLI now has a user-scope skill and
-a global `PreToolUse` group, both keyed on the undocumented
-`ANTIGRAVITY_CONVERSATION_ID`; the guard
-fails open when the variable is absent or unusable.
+Codex CLI uses its `PreToolUse` hook with the session id in hook input. Its
+entry point relies on `CODEX_THREAD_ID` from the shell environment. That
+variable is not documented and can break on upgrade. The entry point also
+relies on the installed CLI's `harness-check codex` command to confirm the
+running harness. The guard fails open when the variable is absent or unusable.
+
+Antigravity CLI has a user-scope skill and a global `PreToolUse` group. Both
+are keyed on the undocumented `ANTIGRAVITY_CONVERSATION_ID`. The guard fails
+open when the variable is absent or unusable.
+
 Copilot uses the documented session-keyed launcher and its user hook file
 described above. OpenCode has both: a command reads
 `CommandInvocation.sessionID`, and the permission hook reads
