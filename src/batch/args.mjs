@@ -19,9 +19,9 @@ const DEFAULT_SETUP_TIMEOUT = 600;
 // The model and effort values that a supported CLI accepts. The adapters pass these through, so a
 // value outside the set is a usage error before any child exists.
 const MODEL_PATTERNS = {
-  claude: /^claude-/i,
+  claude: /^(?:claude-|opus$|sonnet$|haiku$)/i,
   codex: /^(?:gpt-|o\d|codex)/i,
-  copilot: /^(?:gpt-|claude-|o\d|gemini-)/i,
+  copilot: /^(?:gpt-|claude-|o\d|gemini-|opus$|sonnet$|haiku$)/i,
   agy: /^gemini-/i,
   opencode: /^[^\s/]+\/\S+$/,
 };
