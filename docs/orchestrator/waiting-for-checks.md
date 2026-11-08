@@ -90,7 +90,7 @@ A failed read is retried on the next poll, inside the bound, only when the first
 
 A failed 5xx read names its body class in the error: empty, JSON, truncated JSON, unparseable JSON, or other text. The error carries only the status and the class, never the server-supplied text and never a body byte. A 5xx with a truncated JSON body is retried inside the bound. A cut-short JSON value is a GitHub-shaped reply that a transient failure truncated. An unparseable or other-text body stays terminal.
 
-The read stops with an error after 100 pages. Each page read stays inside the wait bound. A real 5xx whose body is HTML or plain text, as a proxy sends, stays terminal. The `--require-ci` gate reads and the ruleset read page the same way, so no read follows a reply-supplied `Link` URL, and no request goes to a target that a reply named. A `Link` target on another host is an error for the gate reads, the ruleset read, and the wait alike, because they share one pager.
+The read stops with an error after 100 pages. Each page read stays inside the wait bound. A real 5xx whose body is HTML or plain text, as a proxy sends, stays terminal. The `--require-ci` gate reads and the ruleset read page the same way, so no read follows a reply-supplied `Link` URL, and no request goes to a target that a reply named. A `Link` target on another host is an error for the gate reads, the ruleset read, and the wait alike.
 
 A gate read that cannot be accounted for page by page is an error, and a ruleset read that cannot is an unknown source, never a pass. The pager hands the ruleset classifier every page it received, empty pages included: a full page of 100 rules followed by an empty page is unknown and refuses. Any other failure also ends the wait at once. That covers another first-line status, such as 501 or a 4xx, whatever its body says. It also covers a failure with no status line, and a body that is unparseable JSON or other text.
 
@@ -139,8 +139,7 @@ your harness applies when that timeout is smaller. `--timeout 0` is refused.
 
 The bound starts at command entry, so no step of the command adds time to it.
 Work-tree validation runs inside the bound, so a slow or hung `git` cannot push
-the command past it; a validation that reaches the bound refuses, because a work
-tree the probe never confirmed is not one this command may read. Every read is
+the command past it; a validation that reaches the bound refuses. Every read is
 limited to the time the command has left, and a read that reaches the limit is
 stopped and then given five seconds to exit. The total bound of the command is
 `--timeout` plus those five seconds, so set `--timeout` at least five seconds

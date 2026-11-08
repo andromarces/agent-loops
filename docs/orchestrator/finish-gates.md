@@ -89,8 +89,7 @@ included. In `review-only`, each flag fails with a clear error.
     missed, and a read the runtime cannot account for every page of is unknown. For classic branch protection it is exactly
     `gh: Branch not protected (HTTP 404)`, one trailing line break aside, which the
     endpoint writes only to a caller that can read protection. No successful
-    classic-protection body proves an absence, because a classic-protected branch can
-    require reviews without requiring a check, so a readable body that names no check
+    classic-protection body proves an absence, so a readable body that names no check
     is unknown. Has-contexts is a reply that named at least one required check, so the
     per-check pass runs and enforces it. Empty is exactly one empty page: a successful
     read that found no rule, which contributes no contexts and is not a positive absence,
@@ -114,8 +113,7 @@ included. In `review-only`, each flag fails with a clear error.
     required names from its stdout whatever the exit status, so a non-zero exit whose
     stdout holds that JSON still contributes names, and only a stdout that is not a
     JSON array of named checks contributes none. It is an independent source.
-  - A rate-limit or SSO 403 fails the run by design, because it matches no unreadable
-    shape and is not read as a source at all. The exception to ruleset readability is
+  - A rate-limit or SSO 403 fails the run by design. The exception to ruleset readability is
     a private repository on the GitHub Free plan, where the plan does not allow the
     rule at all.
   - A Free-plan 403 leaves each endpoint with no required contexts, and it is

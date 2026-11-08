@@ -14,5 +14,4 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     session is active.
 - A later init in the session, while another run is active, writes no file. Pass
   the task with `--task`, or with a `--task-file <path>` that was staged before
-  the first init, and pass the prompt on stdin. Never use `--task-file -` there,
-  because it needs a new `--prompt-file`.
+  the first init, and pass the prompt on stdin. Never use `--task-file -` there.

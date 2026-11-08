@@ -162,7 +162,7 @@ else
 fi
 ```
 
-The two hashes must be equal, and `<target>` is executable exactly when the reviewed mode is `100755`. A deletion is proven only when the diff against `<import commit>` lists `<path>` as deleted; then the block exits 1 when `<target>` remains, because the delivery is complete only when the target is absent. An unreadable revision, a mistyped path, a remaining file, a different hash, or a different executable bit means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
+The two hashes must be equal, and `<target>` is executable exactly when the reviewed mode is `100755`. A deletion is proven only when the diff against `<import commit>` lists `<path>` as deleted; then the block exits 1 when `<target>` remains. An unreadable revision, a mistyped path, a remaining file, a different hash, or a different executable bit means that the delivered state is not the reviewed blob, so report it and do not call the delivery complete.
 
 A headless run cannot run the copy-back. `finish` ends that loop, and every orchestrator turn is read-only. The operator delivers the accepted file there.
 

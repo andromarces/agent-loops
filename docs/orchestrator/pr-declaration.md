@@ -27,8 +27,7 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   other init field. The one exception is `role declare-pr`, below. A state file
   written before this field has no `pr`, and that run keeps the marker-only
   behavior.
-- `review-only` refuses `--pr` at init, because that mode rejects `--require-ci`
-  at finish and the run would refuse every finish. On the headless path every
+- `review-only` refuses `--pr` at init. On the headless path every
   flag arrives on one command line, so `--mode review-only` with `--pr`,
   `--require-accept`, or `--require-ci` is a usage error before the run starts,
   with the same two wordings this section states.
@@ -155,9 +154,8 @@ passed `--pr` and `--require-ci` for that PR.
 
 ### A task whose worker opens the PR
 
-The PR does not exist at init when the task is "address issue N through a PR", and
-the parent cannot open it, because the role rules forbid a parent write to
-GitHub. Declare the PR after the worker opens it:
+The PR does not exist at init when the task is "address issue N through a PR".
+Declare the PR after the worker opens it:
 
 1. Init the run with no `--pr`, and dispatch the worker.
 2. Read the PR number from the worker report.
