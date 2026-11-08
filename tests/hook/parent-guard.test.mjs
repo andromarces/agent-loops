@@ -386,7 +386,8 @@ function runShellHookCommand(command, env, inputJson) {
   });
 }
 // Usefulness: verifies the Claude and Codex hook contracts end to end: deny prints PreToolUse JSON.
-// Every other input stays silent. A silent hook keeps the harness permission flow intact.
+// Every other input stays silent. Unparseable input fails open.
+// A silent hook keeps the harness permission flow intact.
 test("hook script denies with PreToolUse JSON and stays silent otherwise", async () => {
   await setup();
   const repo = await createTempRepo();
