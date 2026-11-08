@@ -7,9 +7,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 The gate is on the turn, not on a report: a turn that ended in an error satisfies
 it, so the finish can carry no report. The runtime checks that all five
 summary keys are non-empty strings. It refuses a finish that holds any other
-key and names each unknown key: the headless action object allows only
-`action`, `summary`, and an optional boolean `unresolvedCompare`, and its
-nested `summary` object allows only the five summary keys. The `role finish`
+key and names each unknown key. The `role finish`
 stdin object allows the five summary keys and an optional boolean
 `unresolvedCompare`. It never compares the summary content with what the
 reviewer returned.
@@ -22,10 +20,6 @@ report.
 - `agent-loop role finish` applies no reviewer-turn rule of its own. Every
   reachable interactive run already has a reviewer turn, because the init
   dispatch is itself that turn.
-- A headless `--mode review-only` run can reach a finish before any reviewer
-  turn. The runtime refuses that finish until a reviewer turn was dispatched. A
-  `run_worker` action ends the headless run on exit 1 with the reason
-  `mode review-only rejects a run_worker action`.
 - Neither path takes `--require-accept` in this mode. `role finish` refuses the
   flag at `finish`, and the headless command refuses it before the run starts.
   Both give this error:
@@ -45,8 +39,7 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
 ```
 
 A finish that records an unresolved PR-head compare instead of aborting sets
-`"unresolvedCompare": true` beside the five keys, the same marker the headless
-finish action carries beside its summary:
+`"unresolvedCompare": true` beside the five keys:
 
 ```bash
 printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","deferred":"...","notDone":"PR head unresolved","open":"PR head unresolved","unresolvedCompare":true}' \
@@ -56,10 +49,8 @@ printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","def
 The value must be a boolean, and the key is not one of the five summary keys:
 `summary` keeps exactly those five. A refused finish keeps the lifecycle,
 `active` or `interrupted`. The stdin object allows only the five
-summary keys and `unresolvedCompare`. The headless finish action object allows
-only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
-object allows only the five summary keys. A finish with any other key in
-either object, such as a misspelled marker, is refused and the refusal names
+summary keys and `unresolvedCompare`. A finish with any other key in
+that object, such as a misspelled marker, is refused and the refusal names
 each unknown key; resend the finish with only the allowed keys (#1021).
 
 The envelope then carries
@@ -96,8 +87,7 @@ absent field from a verified compare. A finish that records the compare under
 notDone and open and omits the field is a verified finish to every machine
 consumer, and the free text is the only trace. `--require-ci` closes the gap in
 both paths, because it resolves the head in the runtime: `agent-loop role finish
---require-ci <pr>` here, and `agent-loop --require-ci <pr>` in the headless loop
-(issue #286, accepted gap; #293). A run with no usable gate, for example one
+--require-ci <pr>` (issue #286, accepted gap; #293). A run with no usable gate, for example one
 that cannot read the required checks, keeps the marker as its only trace.
 
 The conditions that the `--require-accept` and `--require-ci` gates check at

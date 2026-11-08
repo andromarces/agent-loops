@@ -2,16 +2,14 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a `finish` is refused, and before you end a run with `--require-accept` or `--require-ci`.
 
-A marked `role finish` still exits `0`, unlike the headless finish that exits
-`4` for the same marker. The exit code is not the outcome channel of this
+A marked `role finish` still exits `0`. The exit code is not the outcome channel of this
 subcommand: `abort` exits `0` too, and the parent guard reads the state
 lifecycle, not the code. Read the marker in the envelope or the state file.
 
-Two opt-in gates apply to `work-first` and `review-first` only. In the headless
-loop, one refusal names every condition the finish breaks. The interactive `role
+Two opt-in gates apply to `work-first` and `review-first` only. The interactive `role
 finish` names every condition above the `--require-ci` gate, and a later `finish`
 can report a `--require-ci` condition that the first refusal did not name. The
-headless loop collects them in this order: the marker condition, then the `review-only` reviewer-turn condition, then
+conditions are checked in this order: the marker condition, then the `review-only` reviewer-turn condition, then
 `--require-accept`, then the declared-PR gate condition, then `--require-ci`. The
 `role finish` command checks the same conditions in the same order, except the
 `review-only` condition, which it cannot reach, because its init dispatch is
@@ -19,20 +17,10 @@ itself a reviewer turn, and except `--require-ci`, which it checks only after
 every other condition passes. A refusal from `role finish` never lists a
 `--require-ci` condition beside another condition.
 
-The headless loop grants one corrective turn, so a refusal
-that named a single condition would spend it on the condition the next refusal
-names instead, so a headless parent learns every condition from one call. A headless run
-ends when two refusals land with no child turn between them. The marker is
-satisfied on a re-finish, with no child turn; the `review-only` condition and
-`--require-accept` take the same corrective turn, which costs a step, and the
-missing gate of a declared PR run is the one condition no child turn can supply.
 Two things decide whether a refused `finish` reads GitHub, and they are separate.
 The interactive `role finish` command throws as soon as any condition above the
 gate refused, so on that path a refused `finish` never reaches the gate and never
-reads GitHub. The headless loop evaluates every gate it owns,
-so the `--require-ci` gate runs whenever the run carries it and the declared-PR
-condition did not refuse, and a finish the marker, the `review-only` condition, or
-`--require-accept` already refused still runs the gate.
+reads GitHub.
 
 Only the declared-PR gate
 condition skips it, because that condition means no gate for this run's PR.
@@ -69,9 +57,8 @@ and each flag fails with a clear error.
   - A base branch whose
     required-check sources each state that it holds no required check has no check to
     wait for: the gate then passes on the PR head, the clean reviewed tree, and the
-    merge state, and records that no required check exists, in a
-    `no-required-checks` event in a headless run and in `noRequiredChecks` in the
-    envelope and the state file here. The event appears on an accepted finish only, so
+    merge state, and records that no required check exists, in `noRequiredChecks` in the
+    envelope and the state file here. The record appears on an accepted finish only, so
     a refused finish never reports an absence.
   - The rule for that pass is one allowlist, and it fails closed. Each required-check
     configuration source is classified by what its reply proved. A ruleset read the gate
@@ -145,8 +132,7 @@ and each flag fails with a clear error.
     unknown rather than empty, so the empty-union refusal names it. A private GitHub
     Free-plan repository still refuses a declared run under this change, so this does
     not resolve #336 for it, and such a repository must omit `--pr`, which leaves the
-    #286 gap in place. Init with `--pr`, `role declare-pr`, and the headless `--pr`
-    start refuse that case up front (#1092), so the parent does not learn of it at
+    #286 gap in place. Init with `--pr` and `role declare-pr` refuse that case up front (#1092), so the parent does not learn of it at
     `finish`.
   - Repository rulesets are readable with read access on a repository whose plan allows
     the rule, so a token without repository admin still gates through repository rulesets

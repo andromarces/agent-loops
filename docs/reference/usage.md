@@ -64,8 +64,46 @@ A headless finish that records an unresolved PR-head compare sets `"unresolvedCo
 
 A headless orchestrator action allows only these keys. The `run_worker` and `run_reviewer` actions allow only `action` and `prompt`. The `abort` action allows only `action` and `reason`. An action that holds any other key is refused, and the refusal names each unknown key, so a misspelled field is never dropped without a trace. A refused action takes the one repair turn: it dispatches no child and charges no step. A second refused reply ends the run with an error (#1034).
 
+In the headless loop, one refusal names every condition the finish breaks.
+
+The headless loop grants one corrective turn, so a refusal
+that named a single condition would spend it on the condition the next refusal
+names instead, so a headless parent learns every condition from one call. A headless run
+ends when two refusals land with no child turn between them. The marker is
+satisfied on a re-finish, with no child turn; the `review-only` condition and
+`--require-accept` take the same corrective turn, which costs a step, and the
+missing gate of a declared PR run is the one condition no child turn can supply.
+
+The headless loop evaluates every gate it owns,
+so the `--require-ci` gate runs whenever the run carries it and the declared-PR
+condition did not refuse, and a finish the marker, the `review-only` condition, or
+`--require-accept` already refused still runs the gate.
+
+The headless action object allows only `action`, `summary`, and an optional boolean
+`unresolvedCompare`, and its nested `summary` object allows only the five summary keys.
+
 - A run declared with `--pr` ends through `agent-loop --require-ci <pr>`, with the same PR number.
 - The headless path takes both flags on one command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the run starts.
+- A headless `--mode review-only` run can reach a finish before any reviewer turn. The runtime refuses that finish until a reviewer turn was dispatched. A `run_worker` action ends the headless run on exit 1 with the reason `mode review-only rejects a run_worker action`.
+- A headless `--pr` start reads the required-check sources of the PR base once. It refuses when the rulesets read settled nothing, before any state file is written or child spawns.
+- A headless run names the PR number in the task.
+- The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the dispatch, so write it to state the work of that turn.
+
+## Reviewer prompts and result fields
+
+The headless initial prompt tells the orchestrator the mode, and says that its own turns stay read-only.
+
+The headless orchestrator prompt states the same `open` rule.
+
+A headless `--continue-from` run keeps the mode of the earlier run, and a flag that names another mode is refused.
+
+Before init, the interactive parent tells the operator that the reviewer turn keeps the credentials of the user for an out-of-tree system, unless the operator chooses a sandboxed mode. A headless run has no such step: the operator chose the mode in the command.
+
+- Required-check reads with no sandbox: the runtime still supplies the status first. When the orchestrator is `codex`, `copilot`, or unnamed, a headless run with `--require-ci` now tells the orchestrator that the reviewer turns do the wait, because a no-sandbox Codex reviewer keeps shell network. A waiting orchestrator (`claude`, `agy`, `opencode`) still runs `agent-loop role wait-checks`, whatever the reviewer mode. A sandboxed Codex reviewer with a non-waiting orchestrator stays on the gate rule. The `--require-ci` finish gate is the only read that enforces.
+- A headless run that takes only `--require-ci` supplies the status for the gated PR (issue #350).
+- A headless run renders the same status in the result prompt the orchestrator receives after a reviewer turn, as `prChecks` beside the response and the reviewed state, so the orchestrator holds the status and the reviewer Checks line in one prompt.
+- A worker or reviewer turn on a CLI that refuses a tool call can carry `"shellDenied": true` in the headless result prompt.
+- `testRun` also appears in the headless result prompt beside the reviewer response, and a reviewer turn that ends in an error carries it in the transcript.
 
 ## A headless task whose worker opens the PR
 
@@ -192,6 +230,20 @@ applies the same compare at finish. A finish with `unresolvedCompare` is refused
 it, and a closed or merged PR refuses the finish even when its head is unchanged. A continuation does not restore the undeclared PR and resolves it again after its
 own worker turn, and a continuation with no worker turn keeps the marker path.
 
+## Required-check waits
+
+The headless `agent-loop` command runs its own orchestrator and renders its own wait
+prompt ([ADR 0013](https://github.com/andromarces/agent-loops/blob/main/adr/0013-bound-the-headless-required-check-wait.md)). A `role` parent does not follow that prompt. It follows the wait
+rules in [Waiting for required checks](../orchestrator/waiting-for-checks.md), and it runs the wait itself.
+
+The `--all` wait and the `noCheckSource` field are in [Waiting for required checks](../orchestrator/waiting-for-checks.md#waiting-for-required-checks). The headless orchestrator prompt carries the same rule.
+
+## Work tree and delivery
+
+The interactive refused-`--cwd` rule is in [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership). The headless loop states the same rule and cannot act on it: `agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure before the orchestrator can act, and the run keeps no state file. A headless worker turn gets the ownership rule from the same file, because `runChild` builds the worker prompt there for both paths.
+
+A headless run cannot run the copy-back. `finish` ends that loop, and every orchestrator turn is read-only. The operator delivers the accepted file there.
+
 ## Transcript
 
 When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).
@@ -284,6 +336,14 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
   "error": null
 }
 ```
+
+`--transcript <file>` still appends one JSON line per `invocation` and `result` event. It stays a per-call flag and is not the turn history.
+
+A headless run also emits an `inherited-tmpdir` event with `fatal: true` for a fatal error. The transcript keeps that event.
+
+A headless run emits a `package-store` event with `fatal: true` for a fatal error.
+
+A headless run that ends on a fatal error prints the test-command result in its error report on stderr and records it as a `test-run` event in a transcript.
 
 ## Exit codes
 

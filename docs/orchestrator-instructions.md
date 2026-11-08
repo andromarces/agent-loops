@@ -41,7 +41,7 @@ Collect these before the first dispatch:
 - mode: `work-first`, `review-first`, or `review-only` (`--mode`)
 - maximum steps (`--max-steps`)
 - the PR number when the task is PR work (delivered on a pull request); the run
-  supplies it, and a headless run names it in the task
+  supplies it
 - the test command, when the operator names one (`--test-cmd`, with the optional
   `--test-cmd-timeout`); the operator supplies it, and no turn sets it
 - the sandbox of the Codex reviewer (`--reviewer-sandbox read-only` or
@@ -95,8 +95,6 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) reaches each child conversation once, as
   [Init task delivery](orchestrator/task-delivery.md) states.
-  - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
-    dispatch, so write it to state the work of that turn.
 - `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
   [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
@@ -492,13 +490,6 @@ a non-terminal run at that path: a path with no run state is refused with
 who recreates the work tree starts a new run there: a run over an aborted work
 tree is not resumed, and the state file names the work tree, not the work in it.
 
-The headless loop states the same rule and cannot act on it: `agent-loop`
-snapshots its `--cwd` before and after every orchestrator turn, so a work tree in
-any of those three states ends the run on that snapshot failure before the
-orchestrator can act, and the run keeps no state file. A headless worker turn
-gets the ownership rule from the same file, because `runChild` builds the worker
-prompt there for both paths.
-
 ## Reference sections
 
 The files below hold the rules that most turns do not need. Read a file in full when its
@@ -668,8 +659,7 @@ Map the child report fields into the finish summary:
 
 `--pr <pr>` on the init call declares that the run's work is delivered on that
 pull request, so the run can end only through the gate:
-`agent-loop role finish --require-ci <pr>` here, and
-`agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
+`agent-loop role finish --require-ci <pr>`, with the same PR number.
 
 ## Blockers and terminal states
 
