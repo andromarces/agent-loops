@@ -341,8 +341,8 @@ describe("the rendered wait forms run in a real shell", () => {
     });
   });
 
-  // Usefulness: verifies the bash-or-cmd form runs in bash, so a non-Windows host can run it
-  // through bash.
+  // Usefulness: verifies that the Windows bash-or-cmd form runs in Git Bash. Not redundant: the
+  // next test runs the same form in cmd only.
   test.skipIf(!isWindows || !hasBash)("the bash-or-cmd form runs in bash", async () => {
     await withDir(async (cwd, scripts) => {
       const form = waitChecksCommand({ cwd }).find((f) => f.shell === "bash or cmd");
