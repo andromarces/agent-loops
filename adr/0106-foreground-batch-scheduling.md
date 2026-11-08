@@ -403,7 +403,7 @@ checks passes:
   tree and reports it.
 - The work tree is clean, and every local commit is proved pushed. When the remote branch
   exists after a fetch, the local branch head equals or is an ancestor of
-  `refs/remotes/origin/<branch>`, and `git rev-list --count <branch>..origin/<branch>` is 0,
+  `refs/remotes/origin/<branch>`, and `git rev-list --count origin/<branch>..<branch>` is 0,
   so no commit exists that the remote branch lacks. When the pull request is merged, the
   local branch head equals or is an ancestor of the pull request head that `gh pr view`
   names, and the merge commit is reachable from `origin/<base>`; this proof holds when the
