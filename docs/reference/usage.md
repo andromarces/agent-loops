@@ -54,6 +54,43 @@ agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a R
 - The new transcript records `options.continueFrom`, and its `roles` hold the session ids at the end of the continued run, so a run can be continued again.
 - This flag shares no code path with the interactive `agent-loop role` design of issue #361. That path already keeps the session ids and gate state in its state file, so it needs only a raised budget. The headless path keeps neither, so it reads the transcript.
 
+## Loop policy and actions
+
+The headless `--mode` is off by default, so a run without the flag keeps the current behavior.
+
+The headless gate follows turn order only; an edit made outside the loop after a reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same PR gate headlessly, so the runtime resolves the PR head there too (#293). A headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1 when a finish is refused again with no child turn in between, so budget `--max-steps` for a required check that is still pending.
+
+A headless finish that records an unresolved PR-head compare sets `"unresolvedCompare": true` on the action; the run records an `unresolved-compare` transcript event and exits `4` instead of `0`, so the recorded finish stays distinct from a verified one without a transcript (#266, #279).
+
+A headless orchestrator action allows only these keys. The `run_worker` and `run_reviewer` actions allow only `action` and `prompt`. The `abort` action allows only `action` and `reason`. An action that holds any other key is refused, and the refusal names each unknown key, so a misspelled field is never dropped without a trace. A refused action takes the one repair turn: it dispatches no child and charges no step. A second refused reply ends the run with an error (#1034).
+
+## Compare-head and an undeclared PR
+
+A headless run on a repository whose required-check sources are unreadable, for
+example a private repository on the GitHub Free plan (#301), passes
+`--compare-head <pr>` for a PR that exists at start (#1104), and a run without the
+flag resolves a worker-opened PR itself (#1111, ADR 0053). It is the headless form of
+the interactive `--compare-head` in [Finish output](../orchestrator/finish-output.md) and keeps its contract. At finish, the
+runtime reads the PR head and state and refuses unless the PR is open, it equals the
+reviewed head, and the reviewed tree is clean. It reads no required-check source and claims no check
+result, and it does not evaluate the merge state. A pass emits a `head-compare`
+transcript event and the run exits `0`, distinct from `unresolvedCompare` and its
+exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
+`--mode review-only`, and a finish that also sets `unresolvedCompare` is refused
+before any GitHub read.
+
+A continuation of a declared PR refuses the flag before any
+transcript write. The transcript records the flag, but a continuation does not
+restore it: each invocation selects `--compare-head` again, as it selects
+`--require-ci`, and omitting it on a continuation disables the runtime compare and
+leaves the marker path.
+A worker-opened PR is never declared in such a run, because the flag names the PR at
+start. A run without the flag needs none for a PR that the worker opens (#1111, ADR
+0053): the runtime refuses to declare it, records a `pr-undeclared` event, and
+applies the same compare at finish. A finish with `unresolvedCompare` is refused for
+it, and a closed or merged PR refuses the finish even when its head is unchanged. A continuation does not restore the undeclared PR and resolves it again after its
+own worker turn, and a continuation with no worker turn keeps the marker path.
+
 ## Transcript
 
 When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).

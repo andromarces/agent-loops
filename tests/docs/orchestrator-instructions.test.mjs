@@ -1208,15 +1208,14 @@ test("instructions remove the work tree only after an observable terminal state,
 
 // Usefulness: verifies requirement "the instructions state the allowed keys of run_worker,
 // run_reviewer, and abort" (#1034), with the same split as the headless prompt, so a parent never
-// sends a key that the runtime refuses.
-test("instructions state the allowed keys of the dispatch and abort actions", async () => {
-  const instructions = (await readInstructions()).replace(/\s+/g, " ");
-  expectRule(
-    instructions,
-    /`run_worker` and `run_reviewer` actions allow only `action` and `prompt`/,
-  );
-  expectRule(instructions, /`abort` action allows only `action` and `reason`/);
-  expectRule(instructions, /any other key is refused/i, /names each unknown key/i);
+// sends a key that the runtime refuses. The rule applies only to a headless action, so it lives
+// with the headless runs reference (#1693).
+test("the headless runs reference states the allowed keys of the dispatch and abort actions", async () => {
+  const usage = await readFile(join(dirname(instructionsPath), "reference/usage.md"), "utf8");
+  const headless = usage.replace(/\s+/g, " ");
+  expectRule(headless, /`run_worker` and `run_reviewer` actions allow only `action` and `prompt`/);
+  expectRule(headless, /`abort` action allows only `action` and `reason`/);
+  expectRule(headless, /any other key is refused/i, /names each unknown key/i);
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

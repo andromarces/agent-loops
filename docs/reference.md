@@ -33,6 +33,8 @@ version.
   - [Usage](reference/usage.md#usage)
   - [Options](reference/usage.md#options)
   - [Continue a run](reference/usage.md#continue-a-run)
+  - [Loop policy and actions](reference/usage.md#loop-policy-and-actions)
+  - [Compare-head and an undeclared PR](reference/usage.md#compare-head-and-an-undeclared-pr)
   - [Transcript](reference/usage.md#transcript)
   - [Exit codes](reference/usage.md#exit-codes)
   - [Test slot](reference/usage.md#test-slot)

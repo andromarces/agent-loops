@@ -540,9 +540,6 @@ of this file.
   after `finish`.
 - [Removing a work tree](orchestrator/work-tree-removal.md): read it when you remove the work tree
   of a terminal run, before the removal command.
-- [Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md): read it when a
-  headless run passes `--compare-head`, when a run has no usable required-check source, and when
-  a headless run finishes with a worker-opened PR.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
   dispatch several runs in one repository. Two runs can create the same tracking issue or take the
   same sequential identifier, such as an ADR number. Read it before concurrent runs can edit one
@@ -616,40 +613,21 @@ reviewer turn. A worker turn after the review resets the reviewed state, so that
 order avoids an extra reviewer step.
 
 Both paths name the mode with `--mode <mode>`, with the same three values: on the
-`role` init call and on the headless `agent-loop` command. The headless `--mode`
-is off by default, so a run without the flag keeps the current behavior. A
-`review-only` run dispatches no worker, so it takes none of `--pr`,
-`--require-accept`, and `--require-ci`.
+`role` init call and on the headless `agent-loop` command. A `review-only` run
+dispatches no worker, so it takes none of `--pr`, `--require-accept`, and
+`--require-ci`.
 
-The headless gate follows turn order only; an edit made outside the loop after a
-reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
-PR gate headlessly, so the runtime resolves the PR head there too (#293), and
 `--pr <pr>` on either path declares the run PR work, so that run can only end
-through the gate for the same PR (#302). A
-headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1
-when a finish is refused again with no child turn in between, so budget
-`--max-steps` for a required check that is still pending. The gate reads the
-reviewed state, so the reviewer turn is the one that satisfies it; a worker turn
-resets that state to none, so it is needed first only when the condition is about
-the change. A
-headless finish that records an unresolved PR-head compare sets
-`"unresolvedCompare": true` on the action; the run records an
-`unresolved-compare` transcript event and exits `4` instead of `0`, so the
-recorded finish stays distinct from a verified one without a transcript (#266,
-#279). An interactive `role finish` records the same marker in its envelope and
-the state file instead of a transcript event (#281).
+through the gate for the same PR (#302). The gate reads the reviewed state, so the
+reviewer turn is the one that satisfies it; a worker turn resets that state to none,
+so it is needed first only when the condition is about the change. An interactive
+`role finish` records the `unresolvedCompare` marker in its envelope and the state
+file instead of a transcript event (#281).
 
-A headless run on a repository whose required-check sources are unreadable passes
-`--compare-head <pr>` for a PR that exists at start (#1104), and a run without the flag
-resolves a worker-opened PR itself (#1111, ADR 0053).
-
-A headless orchestrator action allows only these keys. The `run_worker` and
-`run_reviewer` actions allow only `action` and `prompt`. The `abort` action
-allows only `action` and `reason`. An action that holds any other key is
-refused, and the refusal names each unknown key, so a misspelled field is never
-dropped without a trace. A refused action takes the one repair turn: it
-dispatches no child and charges no step. A second refused reply ends the run
-with an error (#1034).
+The rules that only a headless run acts on are in
+[Loop policy and actions](reference/usage.md#loop-policy-and-actions): the default of
+`--mode`, the headless gate and its `--max-steps` budget, the action keys, and the
+headless `--compare-head` and undeclared-PR cases.
 
 ## Completion
 
