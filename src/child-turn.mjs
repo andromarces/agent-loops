@@ -657,6 +657,10 @@ export async function runChild(options) {
     return status;
   };
 
+  // Declared before the closing-block repair closure that assigns it, and outside the try so a turn
+  // that fails after the command ran still reports what the runtime saw (ADR 0017, issue #984).
+  let keepReplacedMark = false;
+
   /**
    * Runs the one closing-block repair turn that follows a null report (issue #1615). The turn
    * stays in the same session and asks for formatting only, so it repeats no work. A reviewer
@@ -717,7 +721,6 @@ export async function runChild(options) {
   // reports what the runtime read and the work tree change it saw (ADR 0017), and so a failed
   // worker turn still compares the shared Git state it may have changed (issue #984).
   let testRun = null;
-  let keepReplacedMark = false;
   // The pre-turn baselines and post-turn evidence caches of this turn.
   const evidence = {
     cwd,

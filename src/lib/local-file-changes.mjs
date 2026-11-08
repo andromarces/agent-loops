@@ -282,39 +282,3 @@ export async function refreshLocalFile(
   }
   return source.hash;
 }
-
-/**
- * Names copied files whose content differs from the same name in the main work tree, so a parent
- * sees a stale copy. `names` is the `copied` list, content is compared by SHA-256, and nothing is
- * returned, logged, or written. A copy a turn changed is reported like one the main work tree
- * outgrew. A name differs when it is not a plain relative path, or a link sits on it or a
- * directory above it. A side over 1 MiB, even when both sides are over, or a missing side also
- * differs, and no link is read through. Only a name missing from both sides is not reported, and
- * the result is sorted names, or empty when there is no main work tree.
- * @param {string} cwd
- * @param {string[]} names
- * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
- * @returns {Promise<string[]>}
- */
-export async function findDifferingLocalFiles(cwd, names, { signal, ...hooks } = {}) {
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    readWorkTree(dir, args, { signal, ...options }),
-  );
-  if (located === null) {
-    return [];
-  }
-  const differs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
-    if (!isPlainRelativeName(rel)) {
-      return true;
-    }
-    const [source, copy] = await Promise.all([
-      sha256Of(located.mainReal, rel, hooks),
-      sha256Of(located.rootReal, rel, hooks),
-    ]);
-    return source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy;
-  });
-  return names
-    .filter((_, index) => differs[index])
-    .map(String)
-    .sort();
-}

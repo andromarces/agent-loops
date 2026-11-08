@@ -13,7 +13,7 @@ import { copyLocalFiles, locateLocalFiles } from "../lib/local-files.mjs";
 import { logInfo, logWarn, logWarnFull } from "../lib/log.mjs";
 import { processStartTime } from "../lib/process-identity.mjs";
 import { redactAndClean } from "../lib/redact.mjs";
-import { parseReportBlock, parseVerdict } from "../lib/report.mjs";
+import { parseVerdict } from "../lib/report.mjs";
 import {
   TERMINAL_LIFECYCLES,
   readClaudeSessions,
@@ -707,7 +707,7 @@ function dispatchPayload(roleName, result) {
       ...turnResultFields(result, ["transient", "refusedModel", ...TURN_EVIDENCE_FIELDS]),
     };
   }
-  const report = result.report === undefined ? parseReportBlock(result.response) : result.report;
+  const report = result.report;
   // The fields the dispatch envelope shares with the result prompt. `workTree` is the worker state
   // the runtime read after the turn (#910), not the reviewer `reviewed` field. A reviewer
   // `prChecks` is the status the runtime read for a declared PR (#320). The state file keeps it

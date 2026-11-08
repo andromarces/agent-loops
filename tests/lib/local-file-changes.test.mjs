@@ -33,7 +33,6 @@ vi.mock("execa", async (importOriginal) => {
 });
 
 import {
-  findDifferingLocalFiles,
   findLocalFileChanges,
   hashCopiedLocalFiles,
   refreshLocalFile,
@@ -91,9 +90,10 @@ test("a linked parent directory in the main work tree is reported and not read t
   await symlink(outside, join(main, ".claude"), "junction");
   await mkdir(join(linked, ".claude"));
   await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".claude/settings.json"]);
 
-  expect(await findDifferingLocalFiles(linked, [".claude/settings.json"])).toEqual([
-    ".claude/settings.json",
+  expect(await findLocalFileChanges(linked, [".claude/settings.json"], baseline)).toEqual([
+    { path: ".claude/settings.json", changed: "source" },
   ]);
 });
 
@@ -107,30 +107,26 @@ test("a linked parent directory in the run work tree is reported and not read th
   await mkdir(join(main, ".claude"));
   await writeFile(join(main, ".claude", "settings.json"), "same\n");
   await symlink(outside, join(linked, ".claude"), "junction");
+  const baseline = await hashCopiedLocalFiles(linked, [".claude/settings.json"]);
 
-  expect(await findDifferingLocalFiles(linked, [".claude/settings.json"])).toEqual([
-    ".claude/settings.json",
+  expect(await findLocalFileChanges(linked, [".claude/settings.json"], baseline)).toEqual([
+    { path: ".claude/settings.json", changed: "unknown" },
   ]);
 });
 
-// Usefulness: verifies two different files over the 1 MiB cap are reported, because a skipped
+// Usefulness: verifies two different files over the size cap are reported, because a skipped
 // comparison is not an equal hash.
 // Not redundant: the other comparison tests use small files.
-test("two different files over the size cap are reported as differing", async () => {
+test("two different files over the size cap are reported as unknown", async () => {
   const { main, linked } = await createComparePair();
   const size = 1024 * 1024 + 1;
   await writeFile(join(main, ".env"), Buffer.alloc(size, "a"));
   await writeFile(join(linked, ".env"), Buffer.alloc(size, "b"));
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
 
-  expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([".env"]);
-});
-
-// Usefulness: verifies a name that is missing from both work trees is not reported.
-// Not redundant: it keeps the missing-on-both-sides case apart from a skipped comparison.
-test("a name missing from both work trees is not reported", async () => {
-  const { linked } = await createComparePair();
-
-  expect(await findDifferingLocalFiles(linked, [".env"])).toEqual([]);
+  expect(await findLocalFileChanges(linked, [".env"], baseline)).toEqual([
+    { path: ".env", changed: "unknown" },
+  ]);
 });
 
 // Usefulness: verifies the fail-closed cases of issue #1501: a legacy or malformed init hash
@@ -387,9 +383,10 @@ test("an ancestor swapped for a link before the read is reported and not read th
   await writeFile(join(main, ".claude", "settings.json"), "other\n");
   await mkdir(join(linked, ".claude"));
   await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".claude/settings.json"]);
   let swapped = false;
 
-  const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
+  const changed = await findLocalFileChanges(linked, [".claude/settings.json"], baseline, {
     beforeRead: async (path) => {
       if (!path.startsWith(mainReal) || swapped) {
         return;
@@ -401,7 +398,7 @@ test("an ancestor swapped for a link before the read is reported and not read th
   });
 
   expect(swapped).toBe(true);
-  expect(differing).toEqual([".claude/settings.json"]);
+  expect(changed).toEqual([{ path: ".claude/settings.json", changed: "source" }]);
 });
 
 // Usefulness: verifies a link inserted after the ancestor check is rejected before the file is opened.
@@ -419,10 +416,11 @@ test("a link inserted after the ancestor check is rejected before any read start
   await writeFile(join(main, ".claude", "settings.json"), "other\n");
   await mkdir(join(linked, ".claude"));
   await writeFile(join(linked, ".claude", "settings.json"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".claude/settings.json"]);
   let swapped = false;
   const opened = [];
 
-  const differing = await findDifferingLocalFiles(linked, [".claude/settings.json"], {
+  const changed = await findLocalFileChanges(linked, [".claude/settings.json"], baseline, {
     afterAncestorCheck: async (path) => {
       if (!path.startsWith(mainReal) || swapped) {
         return;
@@ -437,7 +435,7 @@ test("a link inserted after the ancestor check is rejected before any read start
   });
 
   expect(swapped).toBe(true);
-  expect(differing).toEqual([".claude/settings.json"]);
+  expect(changed).toEqual([{ path: ".claude/settings.json", changed: "source" }]);
   expect(opened.filter((path) => path.startsWith(mainReal))).toEqual([]);
 });
 
@@ -448,14 +446,15 @@ test("a file that disappears after the first probe is reported, not treated as m
   const { main, linked } = await createComparePair();
   await writeFile(join(main, ".env"), "same\n");
   await writeFile(join(linked, ".env"), "same\n");
+  const baseline = await hashCopiedLocalFiles(linked, [".env"]);
 
-  const differing = await findDifferingLocalFiles(linked, [".env"], {
+  const changed = await findLocalFileChanges(linked, [".env"], baseline, {
     beforeRead: async (path) => {
       await rm(path);
     },
   });
 
-  expect(differing).toEqual([".env"]);
+  expect(changed).toEqual([{ path: ".env", changed: "both" }]);
 });
 
 // Usefulness: verifies an unchanged file is not reported when `--cwd` is reached through a link to
@@ -468,9 +467,10 @@ test.skipIf(process.platform === "win32")(
     const { main, linked, base } = await createComparePair();
     await writeFile(join(main, ".env"), "same\n");
     await writeFile(join(linked, ".env"), "same\n");
+    const baseline = await hashCopiedLocalFiles(linked, [".env"]);
     const alias = join(base, "alias");
     await symlink(base, alias);
 
-    expect(await findDifferingLocalFiles(join(alias, "linked"), [".env"])).toEqual([]);
+    expect(await findLocalFileChanges(join(alias, "linked"), [".env"], baseline)).toEqual([]);
   },
 );

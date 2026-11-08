@@ -183,7 +183,7 @@ GitHub. Declare the PR after the worker opens it:
   `interrupted`, and leaves the lifecycle as it is.
 - `declare-pr` refuses `review-only`, as init refuses `--pr` there.
 - `declare-pr` is a parent operation. A child role never runs it: the spawn-time
-  marker refuses it, as it refuses `extend`, `finish`, and `abort`. It requires
+  marker refuses it, as it refuses `extend`, `refresh-local`, `set-model`, `finish`, and `abort`. It requires
   `--parent-session` with the stored id, and the id check has the limits that the
   `extend` rules state.
 - The headless loop has no `declare-pr`, because the orchestrator is a child turn

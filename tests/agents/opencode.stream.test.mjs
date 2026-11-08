@@ -6,7 +6,7 @@ import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import {} from "../../src/lib/log.mjs";
 import {
-  isAcceptedReview,
+  acceptanceFailure,
   parseReportBlock,
   parseVerdict,
   parsesOnlyWithBoldLabels,
@@ -881,7 +881,7 @@ test("opencode keeps inline bold field text in the field above", async () => {
     deferred: null,
   });
   expect(parseVerdict(response)).toBe("accept");
-  expect(isAcceptedReview(response)).toBe(false);
+  expect(acceptanceFailure(response)).not.toBeNull();
 });
 
 // The origin/main result for each OpenCode guard fixture: an error line, or a report and verdict.
