@@ -56,16 +56,25 @@ test("lists the post-turn entries with no confirming read or wait", async () => 
 });
 
 // Usefulness: verifies requirement "only the runtime's own turn directories are left out" (issue
-// #1024): the directory that `withTurnTmpdir` created is not reported while it exists, and an
-// unmanaged `al-` directory that a reviewer created is, so the prefix alone hides nothing.
+// #1024): the directory that `withTurnTmpdir` created is not reported while it exists, in the
+// inherited read and in a literal root that is the same directory, and an unmanaged `al-`
+// directory that a reviewer created is, so the prefix alone hides nothing.
 test("leaves out the directory the runtime created and reports an unmanaged al- directory", async () => {
   const before = await snapshotInheritedTmpdir({ literalRoots: [] });
+  const beforeLiteral = await snapshotInheritedTmpdir({
+    literalRoots: [root],
+    includeInherited: false,
+  });
   await mkdir(join(root, "al-probe"));
   const seen = await withTurnTmpdir(async (env) => {
     expect(env).toBeDefined();
-    return appearedInInheritedTmpdir(before);
+    return {
+      inherited: await appearedInInheritedTmpdir(before),
+      literal: await appearedInInheritedTmpdir(beforeLiteral, { includeInherited: false }),
+    };
   });
-  expect(seen).toEqual(["al-probe"]);
+  expect(seen.inherited).toEqual(["al-probe"]);
+  expect(seen.literal).toEqual(["literal-tmp/al-probe"]);
 });
 
 // Usefulness: verifies requirement "a directory the runtime did not remove is reportable" (issue
@@ -158,16 +167,6 @@ test("reports an entry when the literal root is the inherited directory and the 
   expect(await appearedInInheritedTmpdir(before, { includeInherited: false })).toEqual([
     "literal-tmp/x",
   ]);
-});
-
-// Usefulness: verifies the literal read leaves out this process's own turn directory, which lives
-// in the inherited directory and equals the literal root in that configuration.
-test("leaves out this process's turn directory in a literal root", async () => {
-  const before = await snapshotInheritedTmpdir({ literalRoots: [root], includeInherited: false });
-  const seen = await withTurnTmpdir(async () =>
-    appearedInInheritedTmpdir(before, { includeInherited: false }),
-  );
-  expect(seen).toEqual([]);
 });
 
 // Usefulness: verifies a literal root that cannot be read gives no entry instead of a false change.
