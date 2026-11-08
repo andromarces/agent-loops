@@ -41,7 +41,7 @@ Host: macOS 27.3, build 26C5035r, arm64. Node v27.0.0-alpha.0.0.0. Source head `
 - The probe called the real `startMainWorkTreeWatch` export. It followed the turn order: start, wait for the arm inside the start, write once, read the report, stop.
 - Each of 1,000 iterations reopened that one root, wrote `init.txt` once after the start resolved, and waited for the first seen-file report.
 - The bound for one write was 5,000 ms. The bound for the whole run was 540,000 ms.
-- The miss count was 0 of 1,000 writes. The first report took 2.28 ms at the minimum, 12.645 ms at the median, and 53.987 ms at the maximum.
+- The miss count was 0 of 1,000 writes. The first report took 2.28 ms at the minimum, 12.6445 ms at the median, and 53.987 ms at the maximum.
 - The mutant wrote inside `.git`, which the watch skips. The miss counter counted 3 of 3 iterations as a miss.
 - Issue #1544 section 6 recorded 5 misses in 1,000 reopened-root writes. This probe recorded 0 misses in 1,000.
 
