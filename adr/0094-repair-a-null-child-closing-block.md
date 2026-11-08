@@ -34,11 +34,23 @@ This ADR supersedes no earlier decision. It keeps [ADR 0084](0084-charge-no-step
 
 Moved from `docs/reference/architecture.md` on 2026-11-08.
 
-Copilot live checks (issue #653, issue #708). On 2026-11-03 the host was macOS 27.2 (Darwin 27.2.0, arm64), Node v27.0.0-alpha.0.0.0, and GitHub Copilot CLI 1.0.106-5 at source `4dc57ffb`. Each case ran through `role dispatch` with `--worker copilot`, and a `copilot` shim added `--allow-tool 'shell(bash)'` beside the unchanged runtime arguments. The CLI exit code was 0 in both cases.
+- Copilot live checks (issue #653, issue #708).
+- On 2026-11-03 the host was macOS 27.2 (Darwin 27.2.0, arm64), Node v27.0.0-alpha.0.0.0, and GitHub Copilot CLI 1.0.106-5 at source `4dc57ffb`.
+- Each case ran through `role dispatch` with `--worker copilot`.
+- A `copilot` shim added `--allow-tool 'shell(bash)'` beside the unchanged runtime arguments.
+- The CLI exit code was 0 in both cases.
 
-- Background task: `data.arguments.mode` in the `tool.execution_start` event of the `bash` tool was `async`, and `data.arguments.command` began `bash -c`. The `tool.execution_complete` event held `data.success` true and `data.toolTelemetry.properties.executionMode` `async`. One `tool.shell_output` event held `BACKGROUND_DONE`.
-- The same stream held one `system.notification` event with `data.kind.type` `shell_completed` and `data.kind.exitCode` 0. A later `assistant.turn_start` event followed it, so the completion arrived as a separate turn. The last `assistant.message` held the block, and the envelope `report.conclusion` was `background task started.`
-- Late event: the late `assistant.message` held `Noted the late event. LATE_DONE` and no closing block attempt. The envelope `report.conclusion` was `late event probe started.` from the earlier message, so the adapter returned the earlier block.
+- **Background task.**
+  - `data.arguments.mode` in the `tool.execution_start` event of the `bash` tool was `async`, and `data.arguments.command` began `bash -c`.
+  - The `tool.execution_complete` event held `data.success` true and `data.toolTelemetry.properties.executionMode` `async`.
+  - One `tool.shell_output` event held `BACKGROUND_DONE`.
+- **Completion turn.**
+  - The same stream held one `system.notification` event with `data.kind.type` `shell_completed` and `data.kind.exitCode` 0.
+  - A later `assistant.turn_start` event followed it, so the completion arrived as a separate turn.
+  - The last `assistant.message` held the block, and the envelope `report.conclusion` was `background task started.`
+- **Late event.**
+  - The late `assistant.message` held `Noted the late event. LATE_DONE` and no closing block attempt.
+  - The envelope `report.conclusion` was `late event probe started.` from the earlier message, so the adapter returned the earlier block.
 
 ## Consequences
 
