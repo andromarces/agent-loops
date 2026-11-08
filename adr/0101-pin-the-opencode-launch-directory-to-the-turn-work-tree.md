@@ -45,6 +45,7 @@ Andro Marces
 
 - [Issue #1678](https://github.com/andromarces/agent-loops/issues/1678)
 - [Issue #1551](https://github.com/andromarces/agent-loops/issues/1551)
+- [Pull request #1683](https://github.com/andromarces/agent-loops/pull/1683)
 - [ADR 0080](0080-report-a-main-work-tree-change-inside-a-turn-window.md)
 - Implementation: `runOpenCode` in `src/agents/opencode.mjs`
 - Tests: `tests/agents/opencode.args.test.mjs`, `tests/docs/orchestrator-instructions.test.mjs`
