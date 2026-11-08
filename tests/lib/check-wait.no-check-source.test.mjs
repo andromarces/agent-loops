@@ -713,6 +713,8 @@ test("the --all wait returns noCheckSource for tied merged PRs with no check", a
   expect(result.noCheckSource).toBe(true);
 });
 
+// Usefulness: verifies checks on a PR that merged before the latest never keep the wait (issue
+// #1062), because only the latest merged PR can supply the no-check source.
 test("the --all wait ignores the checks of a PR that merged before the latest", async () => {
   const older = { ...TIED_PR, merged_at: "2025-12-31T00:00:00Z" };
   const { result } = await probedWait({ mergedPrs: [MERGED_PR, older], tiedRuns: [BASE_RUN] });

@@ -103,7 +103,7 @@ function expectBoundedCalls(calls, endpoint, pageCount) {
 }
 
 describe("gate reads and the ruleset read page by page number", () => {
-  // Verifies the page-number paging of the check-run read, so no read depends on `--paginate`.
+  // Usefulness: verifies the page-number paging of the check-run read, so no read depends on `--paginate`.
   it("reads every page of the check runs with one request per page", async () => {
     const { gh, calls } = serve({
       [page(RUNS, 1)]: reply({ total_count: 150, check_runs: runs(100) }),
@@ -114,7 +114,7 @@ describe("gate reads and the ruleset read page by page number", () => {
     expectBoundedCalls(calls, RUNS, 2);
   });
 
-  // Verifies the same paging for the commit status read, which has no other covering test.
+  // Usefulness: verifies the same paging for the commit status read, which has no other covering test.
   it("reads every page of the commit statuses with one request per page", async () => {
     const { gh, calls } = serve({
       [page(STATUS, 1)]: reply({ total_count: 101, statuses: statuses(100) }),
@@ -125,7 +125,7 @@ describe("gate reads and the ruleset read page by page number", () => {
     expectBoundedCalls(calls, STATUS, 2);
   });
 
-  // Verifies that a `Link` URL on the request host is never requested either: the runtime sends no
+  // Usefulness: verifies that a `Link` URL on the request host is never requested either: the runtime sends no
   // request that the reply named.
   it("never requests the target that a same-host Link header names", async () => {
     const { gh, calls } = serve({
@@ -136,7 +136,7 @@ describe("gate reads and the ruleset read page by page number", () => {
     expectBoundedCalls(calls, RUNS, 1);
   });
 
-  // Verifies acceptance item 2: a `Link` target on a host other than the request host ends the read
+  // Usefulness: verifies acceptance item 2: a `Link` target on a host other than the request host ends the read
   // with an error, never a pass, and the target is never requested.
   it.each([
     ["a next link", LINK],
@@ -162,6 +162,8 @@ describe("gate reads and the ruleset read page by page number", () => {
     expectBoundedCalls(calls, RUNS, 1);
   });
 
+  // Usefulness: verifies the commit-status read applies the same foreign-host rule as the
+  // check-run read, so no page read follows a reply-supplied target.
   it("ends the commit-status read in an error for a Link header on another host", async () => {
     const { gh } = serve({
       [page(STATUS, 1)]: reply({ total_count: 1, statuses: statuses(1) }, { headers: LINK }),
@@ -169,7 +171,7 @@ describe("gate reads and the ruleset read page by page number", () => {
     await expect(commitStatuses(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
   });
 
-  // Verifies a retryable 5xx reply is judged by its Link header first: a target on another host is a
+  // Usefulness: verifies a retryable 5xx reply is judged by its Link header first: a target on another host is a
   // terminal error that is never marked transient, and the same reply with a same-host target stays
   // retryable.
   const failure503 = (headers) => ({
@@ -180,6 +182,8 @@ ${headers}
     stderr: "gh: HTTP 503",
   });
 
+  // Usefulness: verifies a retryable 5xx is judged by its Link header first: a foreign target is
+  // terminal and never marked transient, on both reads.
   it.each([
     ["check-run", RUNS, (gh) => checkRuns(gh, SLUG, SHA, ".", true)],
     ["commit-status", STATUS, (gh) => commitStatuses(gh, SLUG, SHA, ".", true)],
@@ -194,17 +198,21 @@ ${headers}
     },
   );
 
+  // Usefulness: verifies a 503 with a same-host Link stays retryable, so the foreign-host rule
+  // does not make a genuine server error terminal.
   it("keeps a 503 with a same-host Link retryable", async () => {
     const { gh } = serve({ [page(RUNS, 1)]: failure503(SAME_HOST_LINK) });
     const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
     assert.equal(err.transient, true);
   });
 
-  // Verifies #1242: a failed `--include` read whose stderr is empty names the first-line status of its
+  // Usefulness: verifies #1242: a failed `--include` read whose stderr is empty names the first-line status of its
   // stdout, never the body text, so the parent can tell a 4xx, a terminal 5xx, and a retryable one apart.
   const silent = (stdout) => ({ status: 1, stdout, stderr: "" });
   const SECRET = "server-supplied-text";
 
+  // Usefulness: verifies a failed --include read with empty stderr names the HTTP status from its
+  // stdout, never the body text, so the parent can classify it.
   it.each([
     ["check-run", RUNS, (gh) => checkRuns(gh, SLUG, SHA, ".", true)],
     ["commit-status", STATUS, (gh) => commitStatuses(gh, SLUG, SHA, ".", true)],
@@ -217,6 +225,8 @@ ${headers}
     assert.ok(!err.transient);
   });
 
+  // Usefulness: verifies a terminal 5xx names its status and the body class only, so server text
+  // never reaches the refusal (issue #1025).
   it("names a terminal 5xx status and keeps its body out of the error", async () => {
     const { gh } = serve({
       [page(RUNS, 1)]: silent(`HTTP/2.0 502 Bad Gateway\r\n\r\n<html>${SECRET}</html>`),
@@ -227,6 +237,8 @@ ${headers}
     assert.ok(!err.transient, "a 5xx with a body that is not JSON stays terminal (#1025)");
   });
 
+  // Usefulness: verifies a 503 with a JSON body stays transient and names its status, so the wait
+  // retries it.
   it("keeps a retryable 503 transient and names its status", async () => {
     const { gh } = serve({ [page(RUNS, 1)]: silent("HTTP/2.0 503 Service Unavailable\r\n\r\n{}") });
     const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
@@ -234,6 +246,8 @@ ${headers}
     assert.equal(err.transient, true);
   });
 
+  // Usefulness: verifies a failed read with no status line says so and keeps its body out, so the
+  // parent is not told a status the reply never carried.
   it("says that a failed read with empty stderr and no status line has none", async () => {
     const { gh } = serve({ [page(RUNS, 1)]: silent(SECRET) });
     const err = await checkRuns(gh, SLUG, SHA, ".", true).catch((error) => error);
@@ -241,6 +255,8 @@ ${headers}
     assert.ok(!err.message.includes(SECRET));
   });
 
+  // Usefulness: verifies the ruleset read reports the status of a failed --include reply, so a
+  // ruleset failure is classified like a check read.
   it("names the status of a failed ruleset read with empty stderr", async () => {
     const gh = source([], {
       [page(RULES, 1)]: silent(`HTTP/2.0 500 Internal Server Error\r\n\r\n<b>${SECRET}</b>`),
@@ -252,7 +268,7 @@ ${headers}
     assert.ok(!err.message.includes(SECRET));
   });
 
-  // Verifies #1246: a read without `--include` writes the reply body to stdout, so a body that opens
+  // Usefulness: verifies #1246: a read without `--include` writes the reply body to stdout, so a body that opens
   // with a status line is no status. The default protection read reports its exit status only.
   const PROTECTION_ENDPOINT = `repos/${SLUG}/branches/main/protection`;
   const protectionRead = (protection, options) => {
@@ -260,12 +276,16 @@ ${headers}
     return requiredContexts(gh, SLUG, "main", 42, ".", options).catch((error) => failureOf(error));
   };
 
+  // Usefulness: verifies a read without --include reports only its exit status, because a body that
+  // opens with a status line is not a status (issue #1246).
   it("reports the exit status of a failed read without --include whose body opens with a status line", async () => {
     const err = await protectionRead(silent(`HTTP/1.1 403 Forbidden\r\n\r\n{"x":"${SECRET}"}`));
     assert.match(err.message, /failed: exit 1$/);
     assert.ok(!err.message.includes("403"));
   });
 
+  // Usefulness: verifies the protection read with --include still names its HTTP status, so the two
+  // read shapes do not diverge.
   it("still names the status of a failed --include protection read", async () => {
     const err = await protectionRead(silent(`HTTP/2.0 403 Forbidden\r\n\r\n{}`), {
       retryable: true,
@@ -273,6 +293,8 @@ ${headers}
     assert.match(err.message, /failed: HTTP 403$/);
   });
 
+  // Usefulness: verifies the ruleset read applies the foreign-host rule to a 503, so it cannot
+  // follow a reply-supplied target.
   it("ends the ruleset read in an error for a 503 with a Link on another host", async () => {
     const gh = source([], { [page(RULES, 1)]: failure503(LINK) });
     await expect(
@@ -282,7 +304,7 @@ ${headers}
     ).rejects.toThrow(/Link/);
   });
 
-  // Verifies the host comes from `GH_HOST`, so an enterprise host is not refused for naming itself.
+  // Usefulness: verifies the host comes from `GH_HOST`, so an enterprise host is not refused for naming itself.
   it("accepts a Link header that names the GH_HOST host", async () => {
     process.env.GH_HOST = "ghe.example.com";
     const { gh } = serve({
@@ -294,24 +316,26 @@ ${headers}
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies acceptance item 1 (#1046): with no `GH_HOST`, the host `gh` sends the request to is the
+  // Usefulness: verifies acceptance item 1 (#1046): with no `GH_HOST`, the host `gh` sends the request to is the
   // one host of its configuration, and a Link header that names it is accepted.
   const GHE_LINK = 'Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"\r\n';
   const gheRuns = (auth, headers = GHE_LINK) =>
     serve({ [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }, { headers }) }, auth);
 
+  // Usefulness: verifies the request host falls back to the only host of the gh configuration, so
+  // an enterprise host is not refused for naming itself (#1046).
   it("accepts a Link header that names the only host in the gh configuration", async () => {
     const { gh } = gheRuns(authHosts("ghe.example.com"));
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies acceptance item 2 (#1046): any other host still ends the read with an error.
+  // Usefulness: verifies acceptance item 2 (#1046): any other host still ends the read with an error.
   it("ends the read in an error for a Link header on a host other than the gh default", async () => {
     const { gh } = gheRuns(authHosts("ghe.example.com"), LINK);
     await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
   });
 
-  // Verifies that `gh` falls back to github.com when several hosts are configured, so the
+  // Usefulness: verifies that `gh` falls back to github.com when several hosts are configured, so the
   // configured enterprise host is not accepted then.
   it("reads github.com as the request host when several hosts are configured", async () => {
     const hosts = authHosts("ghe.example.com", "ghe2.example.com");
@@ -320,7 +344,7 @@ ${headers}
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies #1046 acceptance item 1 with a token in the environment: `gh auth status` lists github.com
+  // Usefulness: verifies #1046 acceptance item 1 with a token in the environment: `gh auth status` lists github.com
   // for `GH_TOKEN` or `GITHUB_TOKEN` beside the configured hosts, so the lookup runs with both
   // variables dropped, and the one configured host is then the host `gh` uses. The double answers
   // as `gh` does: github.com is listed unless both variables are dropped.
@@ -332,16 +356,22 @@ ${headers}
         ? authHosts(...configured)
         : authHosts(...configured, ["github.com", "GH_TOKEN"]);
 
+  // Usefulness: verifies the host lookup drops GH_TOKEN and GITHUB_TOKEN, so a token does not add
+  // github.com to the configured hosts (#1046).
   it("accepts the Link header of the one configured host when a token is in the environment", async () => {
     const { gh } = gheRuns(withToken("ghe.example.com"));
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
+  // Usefulness: verifies github.com is not accepted as the request host when the configuration
+  // names one enterprise host, so a token cannot widen the allowlist.
   it("refuses github.com when one host is configured and a token is in the environment", async () => {
     const { gh } = gheRuns(withToken("ghe.example.com"), SAME_HOST_LINK);
     await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
   });
 
+  // Usefulness: verifies two configured hosts plus a token still resolve to github.com, because gh
+  // falls back to it then.
   it("reads github.com as the request host when two hosts are configured and a token is set", async () => {
     const hosts = withToken("ghe.example.com", "ghe2.example.com");
     await expect(checkRuns(gheRuns(hosts).gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
@@ -349,12 +379,14 @@ ${headers}
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
+  // Usefulness: verifies a token with no configured host resolves to github.com, so a plain login
+  // keeps reading its checks.
   it("reads github.com as the request host when only a token is set", async () => {
     const { gh } = gheRuns(withToken(), SAME_HOST_LINK);
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies the lookup is the only call that drops variables, so a page read keeps its token.
+  // Usefulness: verifies the lookup is the only call that drops variables, so a page read keeps its token.
   it("drops no variable from a page read", async () => {
     const seen = [];
     const gh = async (args, cwd, options) => {
@@ -367,12 +399,14 @@ ${headers}
     assert.deepEqual(seen, [undefined]);
   });
 
+  // Usefulness: verifies a login whose source is GH_ENTERPRISE_TOKEN names its host, so an
+  // enterprise token is not mistaken for a token-added github.com.
   it("accepts the one enterprise host when its own login comes from GH_ENTERPRISE_TOKEN", async () => {
     const { gh } = gheRuns(authHosts(["ghe.example.com", "GH_ENTERPRISE_TOKEN"]));
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies #1046 review blocker 2: a reply that is not the documented shape never widens the
+  // Usefulness: verifies #1046 review blocker 2: a reply that is not the documented shape never widens the
   // allowlist, so a host key with no login list names no host.
   it.each([
     ["a null login list", { hosts: { "ghe.example.com": null } }],
@@ -399,7 +433,7 @@ ${headers}
     }
   });
 
-  // Verifies fail-closed handling of a default host that cannot be resolved: no Link target passes.
+  // Usefulness: verifies fail-closed handling of a default host that cannot be resolved: no Link target passes.
   it.each([
     ["a failed gh call", { status: 1, stdout: "", stderr: "gh: boom" }],
     ["output that is not JSON", { status: 0, stdout: "nope", stderr: "" }],
@@ -409,14 +443,14 @@ ${headers}
     await expect(checkRuns(gh, SLUG, SHA, ".", true)).rejects.toThrow(/Link/);
   });
 
-  // Verifies that `GH_HOST` still decides the request host and `gh` is never asked.
+  // Usefulness: verifies that `GH_HOST` still decides the request host and `gh` is never asked.
   it("does not ask gh for its default host when GH_HOST is set", async () => {
     process.env.GH_HOST = "ghe.example.com";
     const { gh } = gheRuns({ status: 1, stdout: "", stderr: "must not be read" });
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
-  // Verifies that a count the pages cannot meet, because the Link-named next page would be needed,
+  // Usefulness: verifies that a count the pages cannot meet, because the Link-named next page would be needed,
   // ends the read with an error and not a pass.
   it("ends a read in an error when a page ends before the total_count", async () => {
     const { gh, calls } = serve({
@@ -433,7 +467,7 @@ ${headers}
     expectBoundedCalls(calls, RUNS, 2);
   });
 
-  // Verifies fail-closed handling of a reply that is not one 2xx exchange.
+  // Usefulness: verifies fail-closed handling of a reply that is not one 2xx exchange.
   it.each([
     ["a 2xx reply with no status block", { status: 0, stdout: '{"total_count":0}', stderr: "" }],
     ["a redirect status", reply({ total_count: 0, check_runs: [] }, { status: 302 })],
@@ -464,7 +498,7 @@ ${headers}
     return wrapped;
   };
 
-  // Verifies that a required-status-check rule on a later ruleset page is found by page number.
+  // Usefulness: verifies that a required-status-check rule on a later ruleset page is found by page number.
   it("finds a required check on a later page of the ruleset read", async () => {
     const seen = [];
     const gh = source(seen, {
@@ -485,7 +519,7 @@ ${headers}
     );
   });
 
-  // Verifies that a Link header on another host ends the ruleset read with an error, not with an
+  // Usefulness: verifies that a Link header on another host ends the ruleset read with an error, not with an
   // unknown source and not with a pass, and that the target is never requested.
   it("ends the ruleset read in an error for a Link header on another host", async () => {
     const seen = [];
@@ -505,7 +539,7 @@ ${headers}
     );
   });
 
-  // Verifies ADR 0012 is unchanged: the pager hands the classifier every page it received, so a
+  // Usefulness: verifies ADR 0012 is unchanged: the pager hands the classifier every page it received, so a
   // full page then an empty page is the sequence the classifier calls unknown, not an absence.
   it("reads a full ruleset page then an empty page as an unknown source", async () => {
     const seen = [];
@@ -523,14 +557,14 @@ ${headers}
     );
   });
 
-  // Verifies a short first page still reads as the complete list and as an absence.
+  // Usefulness: verifies a short first page still reads as the complete list and as an absence.
   it("reads a short ruleset page with no required rule as an absence", async () => {
     const gh = source([], { [page(RULES, 1)]: reply([OTHER]) });
     const found = await requiredContexts(gh, SLUG, "main", 42, ".");
     assert.equal(found.rulesetState, ABSENT);
   });
 
-  // Verifies that a ruleset read the runtime cannot account for is an unknown source, never an absence.
+  // Usefulness: verifies that a ruleset read the runtime cannot account for is an unknown source, never an absence.
   it.each([
     [
       "pages that never end",
@@ -563,14 +597,14 @@ describe("a single read validates its reply as the pager does", () => {
   });
   const single = (served) => serve({ [ENDPOINT]: served }).gh;
 
-  // Verifies the one absence the probe accepts: the exact 404 reply with a valid JSON body and no `Link`.
+  // Usefulness: verifies the one absence the probe accepts: the exact 404 reply with a valid JSON body and no `Link`.
   it("marks the exact 404 reply with a JSON body and no Link target as not found", async () => {
     const read = await readOne(single(failed(404, '{"message":"Not Found"}')), ENDPOINT, ".");
     assert.equal(read.status, 1);
     assert.equal(read.notFound, true);
   });
 
-  // Verifies every other 404 states no absence: a body that is not one JSON value, a `Link` target
+  // Usefulness: verifies every other 404 states no absence: a body that is not one JSON value, a `Link` target
   // on a foreign or the request host, another error text, and a status line that is not 404.
   it.each([
     ["a malformed body", failed(404, "oops")],
@@ -586,7 +620,7 @@ describe("a single read validates its reply as the pager does", () => {
     assert.ok(!read.notFound);
   });
 
-  // Verifies the host check of the pager on a failed reply: a foreign target is a terminal error,
+  // Usefulness: verifies the host check of the pager on a failed reply: a foreign target is a terminal error,
   // never transient, so no absence or retry follows it.
   it("ends on a foreign Link target of a failed reply, never as transient", async () => {
     const read = await readOne(single(failed(502, "{}", { headers: LINK })), ENDPOINT, ".");
@@ -595,7 +629,7 @@ describe("a single read validates its reply as the pager does", () => {
     assert.ok(!read.transient);
   });
 
-  // Verifies the 5xx classification of the pager (#1025): a retryable status with an empty or JSON
+  // Usefulness: verifies the 5xx classification of the pager (#1025): a retryable status with an empty or JSON
   // body is transient, and the same status with another body is not.
   it.each([
     [500, "{}", true],
@@ -611,7 +645,7 @@ describe("a single read validates its reply as the pager does", () => {
     assert.ok(!read.notFound);
   });
 
-  // Verifies a successful reply: the body of one JSON value comes back, and a Link target, a missing
+  // Usefulness: verifies a successful reply: the body of one JSON value comes back, and a Link target, a missing
   // status block, a non-2xx status, and a body of two values are refusals marked unreadable or errors.
   it("returns the body of a successful reply and refuses every other shape", async () => {
     const ok = await readOne(single(reply({ a: 1 })), ENDPOINT, ".");

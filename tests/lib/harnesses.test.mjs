@@ -3,6 +3,8 @@ import { runHarnessCheckCommand } from "../../src/harness-check.mjs";
 import { HARNESS_META, HARNESS_ORDER, harnessForCommand } from "../../src/lib/harnesses.mjs";
 import { harnessForProcessName } from "../../src/lib/process-ancestry.mjs";
 
+// Usefulness: verifies every registered command resolves to its harness in both the process
+// detection and the check, so a registry entry cannot silently fail to identify a running harness.
 test("every registry command resolves to its harness in process detection and the check", async () => {
   for (const harness of HARNESS_ORDER) {
     for (const command of HARNESS_META[harness].commands) {
@@ -17,6 +19,8 @@ test("every registry command resolves to its harness in process detection and th
   process.exitCode = undefined;
 });
 
+// Usefulness: verifies a name outside the registry resolves to no harness, including a prototype
+// name such as constructor, so an unknown process is never misidentified.
 test("a name outside the registry resolves to no harness", () => {
   expect(harnessForCommand("nonexistent")).toBeUndefined();
   expect(harnessForCommand("constructor")).toBeUndefined();

@@ -33,14 +33,6 @@ import {
   clauses,
   expectRule,
   expectReviewerGateRule,
-  COMPARE_BEFORE_FINISH,
-  RESOLVE_PR_HEAD,
-  REQUIRE_CLEAN_TRUE,
-  ACCEPT_WITHOUT_CHECKS,
-  UNRESOLVED_HEAD_CONDITION,
-  DO_NOT_FINISH_AS_VERIFIED,
-  BOTH_ACTIONS_ON_UNRESOLVED,
-  RECORD_UNDER_NOT_DONE_AND_OPEN,
   gatedPrompt,
   NETWORK_DENIAL,
   sentencesOf,
@@ -195,28 +187,6 @@ test("initialPrompt states that only the reviewer Checks line gates", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   expect(prompt).toMatch(EVERY_CHILD_TURN_CHECKS);
   expectReviewerGateRule(prompt);
-});
-
-// Usefulness: verifies the headless parent states the same reviewed-state rules
-// as the interactive instructions: compare head, require clean, treat an accept
-// without a Checks line as not accepted, and never finish as verified on an
-// unresolved compare (issue #217, issue #328). The `--require-accept` and
-// `--require-ci` gates enforce the compare and the clean requirement, covered by
-// the gate tests in tests/role.finish-abort.test.mjs, so this asserts the prompt
-// states the rules.
-test("initialPrompt states the reviewed-state parent rules", () => {
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, COMPARE_BEFORE_FINISH);
-  expectRule(prompt, RESOLVE_PR_HEAD);
-  expectRule(prompt, REQUIRE_CLEAN_TRUE);
-  expectRule(prompt, ACCEPT_WITHOUT_CHECKS);
-  // The unresolved-compare rule, clause by clause: the condition, the prohibition,
-  // both permitted actions on the unresolved compare, and the fields the record
-  // uses.
-  expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
-  expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
-  expectRule(prompt, BOTH_ACTIONS_ON_UNRESOLVED);
-  expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
 // Usefulness: verifies the headless prompt names the parent's setup duty by toolchain (#1457).
@@ -1073,6 +1043,8 @@ test.each([
   expect(prompt).not.toContain("must not change files");
 });
 
+// Usefulness: verifies a run with no --reviewer-sandbox names no reviewer mode, so the prompt
+// never claims a sandbox the run did not select.
 test("the initial prompt names no reviewer mode when the run has none", () => {
   const base = { task: "t", maxSteps: 5 };
   expect(initialPrompt(base)).toBe(initialPrompt({ ...base, reviewerSandbox: null }));

@@ -1506,6 +1506,8 @@ test.each([
   expect(text).toContain(REVIEWER_SCOPE);
 });
 
+// Usefulness: verifies no reviewed surface restates the reviewer rule as a blanket file ban
+// (issue #837), so a reviewer may still write ignored output.
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
