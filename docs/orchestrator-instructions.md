@@ -410,18 +410,18 @@ after you read the result. Never chain it after `finish` or `abort` in one comma
 Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states.
 Never delete it with a recursive delete that follows junctions.
 
-A refused `--cwd` is not the parent's to repair: end the run, name the path and
-the refusal in the reason, and leave the work tree to a maintainer, who decides
-whether to recreate it and start a new run.
+A refused `--cwd` is not the parent's to repair. End the run, name the path and
+the refusal in the reason, and leave the work tree to a maintainer. The maintainer
+decides whether to recreate the work tree and start a new run.
 
 Abort only when a non-terminal run exists at the refused `--cwd`. With no run
 state there, from a refused init or a path that was never this run's, report the
 refusal and do not abort. A run that is already terminal needs no abort.
 
-One rule covers every refused `--cwd`: a path that no longer exists, a path that
-is not inside a Git work tree, and an existing work tree path whose Git metadata
-is lost all report `--cwd must be inside a Git work tree: <path>`, so the reason
-names that path and that message.
+One rule covers every refused `--cwd`. A path that no longer exists reports
+`--cwd must be inside a Git work tree: <path>`. A path that is not inside a Git work
+tree reports the same message. So does an existing work tree path whose Git metadata
+is lost. The reason names that path and that message.
 
 ```bash
 agent-loop role abort --cwd "<work tree>" \
