@@ -271,6 +271,28 @@ test("install refuses a bunx or yarn dlx temporary package root", async () => {
   }
 });
 
+// Usefulness: verifies acceptance #1635 — a package root with a dollar sign, a
+// backtick, a double quote, a percent sign, or a control character cannot be
+// carried by the generated shell commands or the OpenCode plugin string
+// literal, so install refuses before it writes any file or manifest.
+test("install refuses a package root with characters it cannot encode", async () => {
+  const home = await makeHome();
+  const names = ["agent-$-root", "agent-`-root", 'agent-"-root', "agent-%-root", "agent-\n-root"];
+  for (const name of [...names, 'agent-$-`-"root']) {
+    const packageRoot = join(home, name);
+    const error = await install({ harnesses: HARNESS_ORDER, home, packageRoot }).then(
+      () => null,
+      (err) => err,
+    );
+    expect(error, packageRoot).toBeInstanceOf(Error);
+    expect(error.message, packageRoot).toMatch(/^Refusing to install/);
+    expect(error.message, packageRoot).toContain(packageRoot);
+    expect(error.message, packageRoot).toMatch(/cannot encode/);
+    expect(await readdir(home), packageRoot).toEqual([]);
+    expect(existsSync(manifestPath(home)), packageRoot).toBe(false);
+  }
+});
+
 // Usefulness: verifies the negative of acceptance #205 — a path that merely
 // contains a `dlx` segment is a normal install root, so the refusal keys on the
 // npx or dlx cache layout and not on the bare directory name.
