@@ -79,9 +79,10 @@ test("the first reviewer turn shows the init task under its own label and a late
   expect(second).not.toContain("Fix the flaky test.");
 });
 
-// Usefulness: a resume that fails with a missing session reruns the turn as a first turn (ADR 0016),
-// and the new conversation has never seen the task, so each rerun prompt must carry it again.
 for (const role of ["worker", "reviewer"]) {
+  // Usefulness: a resume that fails with a missing session reruns the turn as a first turn
+  // (ADR 0016), and the new conversation has never seen the task, so each rerun prompt must carry
+  // it again.
   test(`a ${role} turn rerun as a first turn after a missing session shows the init task`, async () => {
     const repo = await newCleanRepo();
     const prompts = [];
@@ -119,10 +120,11 @@ for (const role of ["worker", "reviewer"]) {
   });
 }
 
-// Usefulness: a role with no stored session id starts a new child conversation, which also gets the
-// full preamble, so the init task belongs in that turn. This pins the once-per-conversation rule for
-// the only way a real adapter reaches it: a first turn that failed before reporting a session.
 for (const role of ["worker", "reviewer"]) {
+  // Usefulness: a role with no stored session id starts a new child conversation, which also gets
+  // the full preamble, so the init task belongs in that turn. This pins the once-per-conversation
+  // rule for the only way a real adapter reaches it: a first turn that failed before reporting a
+  // session.
   test(`a ${role} turn in a new conversation after a failed first turn shows the init task`, async () => {
     const repo = await newCleanRepo();
     const prompts = [];

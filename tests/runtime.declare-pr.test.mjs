@@ -758,16 +758,15 @@ test("a declared PR with a matching gate runs the gate and nothing else", async 
   }
 });
 
-// Usefulness: verifies a headless declared run finishes on a base branch with no
-// required check and emits a `no-required-checks` event. Thus the recorded run
-// says it verified no check instead of reading as a pass on a checked branch
-// (issue #336).
-
 // `git` is answered from memory, not spawned. Run alone, the test started 34 `git`
 // processes: a repo and the snapshots around its turns. The same cost made the
 // finish tests in role.finish-abort.test.mjs time out under load (issue #385). This
 // test was not observed to fail (issue #399). The behavior under test is the finish
 // gate over the `gh` answers, and the snapshot code has its own tests on real repos.
+// Usefulness: verifies a headless declared run finishes on a base branch with no
+// required check and emits a `no-required-checks` event. Thus the recorded run
+// says it verified no check instead of reading as a pass on a checked branch
+// (issue #336).
 test("a declared PR finishes on a base branch with no required check", async () => {
   const cwd = tmpdir();
   gitDouble.answer = cleanRepoGit;

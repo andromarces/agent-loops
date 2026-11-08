@@ -259,6 +259,8 @@ describe("the store that the work tree recorded", () => {
     return "done";
   };
 
+  // Usefulness: verifies the field names changes in the store that the work tree records, so the
+  // parent knows which store the turn wrote to.
   test("is read when the file names it", async () => {
     await recordStore(join(store, "v11"));
     const result = await turn("reviewer", installed);
@@ -277,6 +279,8 @@ describe("the store that the work tree recorded", () => {
     expect(result.packageStoreEntries).toEqual(INSTALL_NAMES);
   });
 
+  // Usefulness: verifies a store file that is absent, malformed, relative, a directory, or over the
+  // byte cap gives no field, so a read the runtime cannot trust never names a store.
   test.each([
     ["is absent", () => removePath(join(repo, "node_modules"))],
     ["names no store", () => record('{ "layoutVersion": 5 }')],

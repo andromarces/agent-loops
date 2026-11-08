@@ -27,9 +27,9 @@ const CLEAN_OUTPUT = {
   agy: JSON.stringify({ conversation_id: SESSION, response: "done" }),
 };
 
-// Requirement (#587): a cancel that lands after the child exits and before the adapter returns ends
-// the turn as canceled for every adapter. Not redundant: the opencode test covers only its own adapter.
 for (const [kind, stdout] of Object.entries(CLEAN_OUTPUT)) {
+  // Requirement (#587): a cancel that lands after the child exits and before the adapter returns ends
+  // the turn as canceled for every adapter. Not redundant: the opencode test covers only its own adapter.
   test(`${kind} ends a turn as canceled when the signal aborts after the child exits`, async () => {
     const controller = new AbortController();
     vi.mocked(exec).mockImplementationOnce(async () => {
@@ -146,6 +146,8 @@ describe.each(["claude", "agy", "copilot", "opencode"])(
       return { seen, outcome };
     }
 
+    // Requirement (#1178, ADR 0068): a private temporary directory keeps the scratch file of a
+    // turn out of the inherited directory, and the runtime removes it on a clean and a failed turn.
     test.each([true, false])(
       "keeps the scratch file of a turn (ok: %s) out of the inherited directory",
       async (ok) => {

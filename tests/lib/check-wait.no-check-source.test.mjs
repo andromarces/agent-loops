@@ -692,9 +692,9 @@ test.each([
   expect(result.timedOut).toBe(true);
 });
 
+const TIED_PR = { ...MERGED_PR, number: 8, head: { sha: TIED_HEAD } };
 // Usefulness: verifies PRs that share the latest merge time never resolve by list order (issue
 // #1062): every tied head is read, so a check on either one keeps the wait, in either list order.
-const TIED_PR = { ...MERGED_PR, number: 8, head: { sha: TIED_HEAD } };
 test.each([
   ["the first tied head", { mergedPrs: [MERGED_PR, TIED_PR], mergedRuns: [BASE_RUN] }],
   ["the second tied head", { mergedPrs: [MERGED_PR, TIED_PR], tiedRuns: [BASE_RUN] }],

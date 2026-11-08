@@ -965,6 +965,8 @@ test("the result prompt carries no check status without one on the result", () =
 describe("continued run prompt", () => {
   const base = { task: "t", maxSteps: 3 };
 
+  // Usefulness: verifies a continued run's prompt states the budget reset and that no reviewer
+  // accept carries over, while a fresh run states neither.
   test("states the reset only when the run is continued", () => {
     expect(initialPrompt({ ...base, continued: true })).toContain(
       "The runtime carries over no reviewer accept",
@@ -1106,6 +1108,8 @@ describe.each([
   ["read-only", "read-only"],
   ["workspace-write", "workspace-write"],
 ])("the %s orchestrator prompt qualifies every network denial", (_name, reviewerSandbox) => {
+  // Usefulness: verifies every orchestrator, reviewer, and PR combination renders no unqualified
+  // network denial, so the prompt never overstates what the sandbox isolates.
   test.each([
     ["codex", "codex", null],
     ["codex", "codex", 42],
@@ -1122,6 +1126,7 @@ describe.each([
     expect(unqualifiedDenials(prompt)).toEqual([]);
   });
 
+  // Usefulness: verifies the ungated prompt qualifies every network denial too.
   test("the ungated prompt", () => {
     expect(unqualifiedDenials(initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox }))).toEqual(
       [],
@@ -1175,6 +1180,8 @@ describe.each([
   ["read-only", "read-only"],
   ["workspace-write", "workspace-write"],
 ])("the %s runtime prompts state the user-rule exception", (_name, reviewerSandbox) => {
+  // Usefulness: verifies every orchestrator, reviewer, and PR combination states the user-rule
+  // exception after a shell network denial.
   test.each([
     ["codex", "codex", null],
     ["codex", "codex", 42],
@@ -1187,6 +1194,7 @@ describe.each([
     expect(denialsWithoutUserRuleException(prompt)).toEqual([]);
   });
 
+  // Usefulness: verifies the ungated prompt states the user-rule exception too.
   test("the ungated prompt", () => {
     expect(
       denialsWithoutUserRuleException(initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox })),
@@ -1290,6 +1298,8 @@ test("the result prompt carries transient only when the error result has it", ()
 describe("compare-head run prompt", () => {
   const base = { task: "t", maxSteps: 3 };
 
+  // Usefulness: verifies a continued compare-head run is told the flag must be passed again, and a
+  // fresh run is told it disables the runtime compare.
   test("states that a continuation selects the flag again", () => {
     for (const continued of [false, true]) {
       const prompt = initialPrompt({ ...base, compareHead: 42, continued });
@@ -1359,6 +1369,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     return [...new Set(texts.flatMap((text) => matchesIn(text, pattern)))];
   };
 
+  // Usefulness: verifies the shell-only sandbox limit has one wording across every surface that
+  // states it.
   test("the shell-only sandbox limit", () => {
     const surfaces = [
       gated("codex", "codex"),
@@ -1373,6 +1385,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     expect(wordings[0]).toMatch(/model-side tools, such as web search,/);
   });
 
+  // Usefulness: verifies the PR head condition of a finish has one wording across every surface
+  // that states it.
   test("the PR head condition of a finish", () => {
     const surfaces = [
       initialPrompt({ task: "t", maxSteps: 5, compareHead: 7 }),
@@ -1382,6 +1396,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     expect(wordings).toHaveLength(1);
   });
 
+  // Usefulness: verifies the pending required check rule of the gate has one wording across every
+  // surface that states it.
   test("the pending required check rule of the gate", () => {
     const surfaces = [gated("codex", "codex"), gated("copilot", "codex")];
     const wordings = unique(

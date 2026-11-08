@@ -289,10 +289,10 @@ test(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
+const CEILING_MS = 4000;
 // Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not exit
 // silently, or the kill check reads its ceiling exit as a kill. The marker path is a directory, so
 // the write fails; the shim must stay alive past its ceiling and the helper must report it.
-const CEILING_MS = 4000;
 test(
   "expectBoundKillsShim fails when the ceiling marker cannot be written",
   async () => {
