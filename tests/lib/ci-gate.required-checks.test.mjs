@@ -535,13 +535,13 @@ test.each([
   expect((await readOn(HEAD, gh)).status).toBe("unresolved");
 });
 
-// Usefulness: verifies a required-name read that did not succeed reads as
-// unresolved whatever its stdout holds, while the documented exit 1 and exit 8
-// answers that carry a list still read (issue #349).
 const NAMES = '[{"name":"ci (ubuntu-latest)"}]';
 
 const NO_CHECKS = "no required checks reported on the 'main' branch";
 
+// Usefulness: verifies a required-name read that did not succeed reads as
+// unresolved whatever its stdout holds, while the documented exit 1 and exit 8
+// answers that carry a list still read (issue #349).
 test.each([
   ["exit 2 with a JSON list", { status: 2, stdout: NAMES, stderr: "" }, "unresolved"],
   ["exit 1 with an empty JSON list", { status: 1, stdout: "[]", stderr: "" }, "unresolved"],
