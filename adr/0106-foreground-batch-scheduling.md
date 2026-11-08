@@ -13,8 +13,10 @@ The replaced part is its consequence that the headless loop is unchanged and tha
 but the budget of a batch loop spans attempts and a continued attempt spends the remainder,
 so the fixed number of one invocation is a slice of one loop budget.
 
-Decisions 1 to 8 of ADR 0014, the `extend` command, its range and lifecycle checks, its
-parent-session and child guards, its `budgetChanges` record, and its rule that only the
+Decisions 1 to 4 and 6 to 8 of ADR 0014 stay in force. Decision 5 is partially superseded by
+ADR 0084. The `extend` command, its range and lifecycle checks, and its parent-session guard
+stay in force. The `budgetChanges` shape, the live harness check, and every other consequence
+stay in force. The child guard and its rule that only the
 owner authorizes more steps stay in force. A batch recovery spends only the budget that
 `batch start` recorded; it never raises it.
 
