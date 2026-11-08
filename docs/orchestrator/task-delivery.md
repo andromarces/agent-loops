@@ -33,3 +33,7 @@ conversation shows the task under its own `Init task:` label, before `Instructio
 - A cancel in the task-only turn follows the known limit above: it counts as delivered, so the resumed
   reviewer turn does not repeat the task. The cancel keeps the replacement mark, and the dispatch gives no
   verdict.
+
+## Init task in a child prompt
+
+The init task sits in its own `Init task:` block (issue #826, PR #889). A live check of a task that held lines that read as a report label or a `Verdict:` line found no parse defect (issue #710). The check ran on macOS 27.2 with Claude Code 2.1.303 and `codex-cli 0.164.0-alpha.3`. Windows, Linux, and the other CLIs are not verified. The probe log is in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#init-task-block-live-check).

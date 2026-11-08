@@ -76,7 +76,7 @@ no lock and writes nothing.
 If lstat of the home reports ENOENT, `uninstall`
 returns at once without a lock, reports nothing to remove, writes nothing, and
 exits 0, so it never creates the home. This includes a Windows path that cannot
-name a directory, which now reports nothing to remove instead of an error. See [ADR 0025](https://github.com/andromarces/agent-loops/blob/main/adr/0025-lock-the-install-manifest-beside-the-home.md).
+name a directory, which reports nothing to remove and no error. See [ADR 0025](https://github.com/andromarces/agent-loops/blob/main/adr/0025-lock-the-install-manifest-beside-the-home.md).
 
 `install` must run from an install whose package location survives an upgrade: a
 global install, a project install, or a linked clone. It writes the package
@@ -97,12 +97,7 @@ without these characters, then run `install` again. A backslash in a POSIX
 directory name is preserved: a run of two or more backslashes is doubled in the
 shell commands, and the plugin string escapes each backslash.
 
-The `bunx` layout was observed on macOS with bun 1.2.20 and on
-Windows 11 with bun 1.3.8. The `yarn dlx` layout was observed on macOS with yarn
-4.9.2. On Windows 11 with yarn 4.9.2, only the `%TEMP%\xfs-<hex>\dlx-<pid>`
-part was observed. The `<package>.zip\node_modules\<package>` suffix was not
-observed on Windows. Yarn 1.22.22 on macOS has no `dlx` command. On macOS, its
-`create` command installed a probe package into the stable global directory.
+The `bunx` layout is observed on macOS with bun 1.2.20 and on Windows 11 with bun 1.3.8. The `yarn dlx` layout is observed on macOS with yarn 4.9.2. The Windows `yarn dlx` suffix, the `dlx` command of yarn 1.22.22, and Linux are not verified. The probe logs are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#package-root-layout-probes).
 
 Linux (#707) and a `%TEMP%` that is an 8.3 short path or a junction (#709) are
 not verified. Inside an adapter turn, `install` also checks the temporary
@@ -134,38 +129,7 @@ package have no version in their root and render unchanged, and so does any layo
 with no link that resolves to the package. See [Upgrade](#upgrade) for the step
 after an upgrade.
 
-The pnpm 12 project layout was checked end to end on Windows 11 with pnpm 12.8.1 and
-a temporary `AGENT_LOOP_HOME` and store (#340):
-
-- `pnpm add <0.5.0 tarball>`, then `pnpm exec agent-loop install --harness claude --yes`,
-  rendered `node "<project>\node_modules\@andromarces\agent-loops\src\hook\parent-guard.mjs"`.
-  No store path appears in it.
-- `pnpm add <0.5.1 tarball>` replaced the store entry, and `pnpm store prune` removed
-  the old one. The rendered hook path still existed and ran with exit code 0, and a
-  second `install` reported `noop` for every file.
-
-The macOS check used Darwin 27.2.0, pnpm 12.10.1, Node v26.11.1, a temporary `HOME` and
-`AGENT_LOOP_HOME`, and a scratch store. Every pnpm command that reads or writes a store
-passed `--store-dir`. Only `pnpm --version` ran without it. A `pnpm store path` check
-confirmed the scratch store before the prune (#340):
-
-- `pnpm add @andromarces/agent-loops@0.5.0`, then `pnpm exec agent-loop install --harness claude --yes`,
-  rendered `node "<project>/node_modules/@andromarces/agent-loops/src/hook/parent-guard.mjs"`.
-  No store path appears in it. The hook file existed and the hook exited with code 0.
-- Version 0.4.0, which predates the project link, rendered
-  `node "<project>/node_modules/.pnpm/@andromarces+agent-loops@0.4.0/node_modules/@andromarces/agent-loops/src/hook/parent-guard.mjs"`.
-- `pnpm add <0.5.1 tarball>` moved the project link to a new `node_modules/.pnpm` entry.
-  `pnpm store prune` then reported `Removed 382 files (2183484 bytes)` and
-  `Removed 21 packages`. The rendered hook path still existed and exited with code 0.
-  A second `install` reported `noop` for both files.
-
-Not verified:
-
-- Linux: the check ran on macOS only.
-- A project on a UNC share: `pnpm add` fails there before `install` can run.
-  Over `\\localhost\C$`, pnpm 12.8.1 reports `Failed to symlink
-  "@andromarces/agent-loops" for importer "."` with `Access is denied. (os error 5)`.
-  The render on a UNC share stays covered by the fallback test only.
+The pnpm 12 project layout is verified end to end on Windows 11 with pnpm 12.8.1 and on macOS 27.2 with pnpm 12.10.1 (issue #340). Linux and a project on a UNC share are not verified. The probe logs are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#package-root-layout-probes).
 
 Install the entry points for two harnesses without a prompt, then remove them:
 

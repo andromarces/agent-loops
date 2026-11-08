@@ -18,8 +18,7 @@ version.
     - [`copilot`: resume after a kill](reference/session-resume.md#copilot-resume-after-a-kill)
     - [OpenCode](reference/session-resume.md#opencode)
       - [Current contract](reference/session-resume.md#current-contract)
-      - [Probe history](reference/session-resume.md#probe-history)
-  - [Init task in a child prompt](reference/session-resume.md#init-task-in-a-child-prompt)
+      - [OpenCode error evidence](reference/session-resume.md#opencode-error-evidence)
   - [Reviewer replacement and the task-only turn](reference/session-resume.md#reviewer-replacement-and-the-task-only-turn)
 - [Installation](reference/install.md)
   - [Requirements](reference/install.md#requirements)
@@ -67,6 +66,8 @@ Other documents:
 - [Orchestrator instructions](orchestrator-instructions.md): the role rules for an
   interactive parent session. The core names the reference sections under
   `orchestrator/` and when to read each.
+- [Init task delivery](orchestrator/task-delivery.md#init-task-in-a-child-prompt): when
+  the init task reaches a child conversation, and the live check of its `Init task:` block.
 - [Parent guard details](reference/parent-guard.md): every guard target and matcher.
   - [Pre-tool hook availability by harness](reference/parent-guard.md#pre-tool-hook-availability-by-harness)
 - [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md).
