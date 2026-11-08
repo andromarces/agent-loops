@@ -15,6 +15,10 @@ import { harnessForCommand, isHarness } from "./lib/harnesses.mjs";
  */
 export const HARNESS_MISMATCH_EXIT = 3;
 
+/**
+ * Runs `agent-loop harness-check` for the named harness. It sets exit code 0 on a match and 1 when
+ * the check cannot run or finds no harness ancestor. A mismatch sets 3, and a cancel sets 130.
+ */
 export async function runHarnessCheckCommand(argv, { lookup = nearestHarness, signal } = {}) {
   const requested = argv[0];
   if (!requested) {

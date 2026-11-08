@@ -1,3 +1,7 @@
+/**
+ * Parses `text` as JSON for `description`. A parse failure throws with up to 2000 characters of
+ * `text` in the message.
+ */
 export function parseJson(text, description) {
   try {
     return JSON.parse(text);

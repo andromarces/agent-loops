@@ -187,6 +187,10 @@ function commandStreams(io = {}) {
   };
 }
 
+/**
+ * Runs `agent-loop install`. Without `--harness`, it prompts on a TTY stdin and refuses otherwise.
+ * It sets `process.exitCode` to 1 for a refusal or a failed install.
+ */
 export async function runInstallCommand(argv, io = {}) {
   const options = parseCommand(argv, [
     "Usage: agent-loop install [--harness <list>] [--yes] [--dry-run] [--verbose]",
@@ -243,6 +247,11 @@ export async function runInstallCommand(argv, io = {}) {
   printReports(reports, options.dryRun);
 }
 
+/**
+ * Runs `agent-loop uninstall`. Without `--harness` and `--yes`, it reads the manifest and prompts on
+ * a TTY stdin. It sets `process.exitCode` to 1 for a refusal, an unreadable manifest, or a failed
+ * removal.
+ */
 export async function runUninstallCommand(argv, io = {}) {
   const options = parseCommand(argv, [
     "Usage: agent-loop uninstall [--harness <list>] [--yes] [--dry-run] [--verbose]",

@@ -171,6 +171,10 @@ async function assertInstallRootUsable(home) {
   }
 }
 
+/**
+ * Reads the install manifest for `home`, or an empty manifest when absent. It throws on invalid
+ * JSON, an unexpected shape, or an unsupported version.
+ */
 export async function readManifest(home) {
   const path = manifestPath(home);
   const text = await readTextOrNull(path);
