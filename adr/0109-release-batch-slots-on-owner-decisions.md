@@ -239,6 +239,7 @@ Andro Marces
 ## Links
 
 - [Issue #1711: Release loop slots on owner decisions, resume after owner merges, and notify](https://github.com/andromarces/agent-loops/issues/1711)
+- [PR #1732: Release batch loop slots on owner decisions, resume after merges, and notify](https://github.com/andromarces/agent-loops/pull/1732)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
