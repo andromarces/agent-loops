@@ -32,6 +32,22 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
+// A partial mock keeps the real filesystem and fails `rename` on demand. The Windows read-only
+// tests use it to prove the failed-rename cleanup.
+const fsControl = vi.hoisted(() => ({ failRename: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    rename: async (...args) => {
+      if (fsControl.failRename) {
+        throw Object.assign(new Error("rename failed"), { code: "EPERM" });
+      }
+      return real.rename(...args);
+    },
+  };
+});
+
 import {
   findLocalFileChanges,
   hashCopiedLocalFiles,
@@ -43,6 +59,7 @@ const created = [];
 
 afterEach(async () => {
   gitDouble.answer = null;
+  fsControl.failRename = false;
   vi.restoreAllMocks();
   for (const dir of created.splice(0)) {
     await removePath(dir);
@@ -217,6 +234,54 @@ test.skipIf(process.platform === "win32")("a refresh keeps a 0640 copy at 0640",
 
   expect((await stat(join(linked, ".env"))).mode & 0o777).toBe(0o640);
 });
+
+// Usefulness: verifies a read-only run copy is refreshed on Windows, so the documented refresh
+// replaces its bytes instead of refusing with EPERM.
+// Not redundant: it is the only refresh test that sets the Windows read-only attribute.
+test.skipIf(process.platform !== "win32")(
+  "a refresh replaces a read-only copy and keeps the read-only attribute",
+  async () => {
+    const { main, linked } = await createComparePair();
+    const source = join(main, ".env");
+    const copy = join(linked, ".env");
+    await writeFile(source, "KEY=NEW\n");
+    await writeFile(copy, "KEY=OLD\n");
+    await chmod(copy, 0o444);
+    const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+
+    await refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] });
+
+    expect(await readFile(copy, "utf8")).toBe("KEY=NEW\n");
+    expect((await stat(copy)).mode & 0o200).toBe(0);
+    expect(await readdir(linked)).toEqual([".env"]);
+  },
+);
+
+// Usefulness: verifies a failed rename restores the read-only attribute, keeps the old bytes, and
+// leaves no temporary file, so a refused refresh loses no data and leaves no residue.
+// Not redundant: it is the only refresh test that fails the rename of a read-only copy.
+test.skipIf(process.platform !== "win32")(
+  "a failed rename keeps the read-only copy and leaves no temporary file",
+  async () => {
+    const { main, linked } = await createComparePair();
+    const source = join(main, ".env");
+    const copy = join(linked, ".env");
+    await writeFile(source, "KEY=NEW\n");
+    await writeFile(copy, "KEY=OLD\n");
+    await chmod(copy, 0o444);
+    const baseline = await hashCopiedLocalFiles(linked, [".env"]);
+    fsControl.failRename = true;
+
+    await expect(
+      refreshLocalFile(linked, ".env", { expectedCopyHash: baseline[".env"] }),
+    ).rejects.toThrow("the copy failed");
+
+    fsControl.failRename = false;
+    expect(await readFile(copy, "utf8")).toBe("KEY=OLD\n");
+    expect((await stat(copy)).mode & 0o200).toBe(0);
+    expect(await readdir(linked)).toEqual([".env"]);
+  },
+);
 
 // Usefulness: verifies a failed exclusive create leaves an entry the command did not make.
 // Not redundant: it forces the temporary create to fail on an existing entry.

@@ -2,7 +2,7 @@
 // compared by SHA-256 and never returned, logged, or written to a report.
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { sha256 } from "./hash.mjs";
@@ -222,6 +222,8 @@ function changedSide(rel, source, copy, hashes) {
  * Copies one source file over its run copy and returns the hash of the bytes written.
  * Reads the source once, then writes those bytes through a temporary file and a rename.
  * The temporary file starts at 0600, then takes the copy's prior mode on the open handle.
+ * On Windows, a read-only target is cleared for the rename and takes the prior mode back from
+ * the temporary file; a failed rename restores the target mode before the cleanup.
  * Refuses before any write when a side is missing or unreadable, a link sits on the path, or the
  * copy differs from `expectedCopyHash`. Content and hashes never reach a log line or an error text.
  * @param {string} cwd
@@ -264,6 +266,7 @@ export async function refreshLocalFile(
   // Remove the temporary path only after this call creates it.
   let created = false;
   let handle = null;
+  let clearedReadOnly = false;
   try {
     handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
     created = true;
@@ -272,9 +275,18 @@ export async function refreshLocalFile(
     await handle.chmod(copy.mode);
     await handle.close();
     handle = null;
+    // A Windows rename over a read-only target fails with EPERM. Clear the attribute before the
+    // rename; the temporary file carries the prior copy mode, so the rename brings it back.
+    if (process.platform === "win32") {
+      await chmod(target, copy.mode | 0o200);
+      clearedReadOnly = true;
+    }
     await rename(temp, target);
   } catch (err) {
     await handle?.close().catch(() => {});
+    if (clearedReadOnly) {
+      await chmod(target, copy.mode).catch(() => {});
+    }
     if (created) {
       await rm(temp, { force: true }).catch(() => {});
     }
