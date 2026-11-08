@@ -344,7 +344,9 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   const prompt = workerPrompt("do the task", true);
   expect(prompt).toMatch(/Run a targeted test file through the test slot wrapper with --if-held/);
   expect(prompt).toContain("or rely on the required CI checks");
-  const match = prompt.match(/"([^"]+)" "([^"]+)" test-slot -- "<full suite command>"/);
+  const match = prompt.match(
+    /"([^"]+)" "([^"]+)" test-slot -- <suite command as separate arguments>/,
+  );
   expect(match).not.toBeNull();
   expect(match[1]).toBe(process.execPath.replaceAll("\\", "/"));
   await access(match[2]);

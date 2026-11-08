@@ -181,7 +181,7 @@ const TARGETED_RUN_BOUND =
 // The wrapper command of a full suite. Both slot rules branch on whether it can be quoted, so the
 // direct fallback of ADR 0044 covers the red run too (ADR 0096).
 const slotCommandForms = (options) =>
-  cliCommandForms(() => 'test-slot -- "<full suite command>"', options);
+  cliCommandForms(() => "test-slot -- <suite command as separate arguments>", options);
 
 /**
  * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
@@ -191,9 +191,10 @@ const slotCommandForms = (options) =>
  * the `test-slot` wrapper of this process with `--if-held`, which runs directly while all slots are
  * free. While any slot is held, the wrapper waits for a slot. Any broader run is a full suite and
  * runs only through the plain wrapper, or the required CI checks stand in for it. A path that cannot
- * be quoted leaves a direct targeted run, and a broader run relies on the CI checks. The rule also
- * names the platform shell that runs the quoted command, so a Git Bash child wraps the command or
- * uses absolute paths.
+ * be quoted leaves a direct targeted run, and a broader run relies on the CI checks. The rule names
+ * the argument-vector form as the default from Git Bash on Windows, so the child passes the suite
+ * command without a quoting step, and states the Windows executable limit. The one-string form
+ * stays, and the rule names the platform shell that runs it.
  */
 export function testSlotRule(options) {
   const forms = slotCommandForms(options);
@@ -201,7 +202,7 @@ export function testSlotRule(options) {
     return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths. ${NO_LOAD_GENERATORS}`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
-  return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as one quoted argument: ${commands}. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and the targeted command in the quotes. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
+  return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as an argument vector after --: ${commands}. Two or more arguments after -- form an argument vector that runs without a shell, so no shell quoting applies. From Git Bash on Windows, use this argument-vector form as the default. On Windows, the vector must start with a real executable such as node, not a .cmd or .bat shim. One argument after -- keeps the shell-string form. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and pass the targeted command as the same vector. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
 }
 
 // A held test slot made two workers skip or reorder the TDD red run, and no report recorded it
