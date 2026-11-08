@@ -52,7 +52,7 @@ Collect these before the first dispatch:
 
 The command blocks below call `agent-loop` directly. Install and link steps are in
 the reference sections [Install](reference/install.md#install) and
-[From a clone (development)](reference/development.md#from-a-clone-development).
+[From a clone](reference/development.md#from-a-clone-development).
 
 If `agent-loop` does not resolve on PATH, replace it with
 `node "<repo>/src/cli.mjs"` and quote the repository path, so a path with spaces
