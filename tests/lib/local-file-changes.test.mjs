@@ -283,6 +283,41 @@ test.skipIf(process.platform !== "win32")(
   },
 );
 
+// Usefulness: verifies the Windows read-only clear does not act through an ancestor junction that
+// replaces the target directory after the temporary file is prepared, so no outside file changes.
+// Not redundant: it is the only refresh test that swaps an ancestor before the attribute clear.
+test.skipIf(process.platform !== "win32")(
+  "an ancestor junction before the read-only clear is refused and leaves the outside file alone",
+  async () => {
+    const { base, main, linked } = await createComparePair();
+    const outside = join(base, "outside");
+    const rel = ".vscode/settings.json";
+    await mkdir(join(main, ".vscode"), { recursive: true });
+    await mkdir(join(linked, ".vscode"));
+    await mkdir(outside);
+    await writeFile(join(main, rel), "KEY=NEW\n");
+    await writeFile(join(linked, rel), "KEY=OLD\n");
+    await writeFile(join(outside, "settings.json"), "KEY=OUTSIDE\n");
+    await chmod(join(linked, rel), 0o444);
+    await chmod(join(outside, "settings.json"), 0o444);
+    const baseline = await hashCopiedLocalFiles(linked, [rel]);
+
+    await expect(
+      refreshLocalFile(linked, rel, {
+        expectedCopyHash: baseline[rel],
+        beforeReadOnlyClear: async () => {
+          await rename(join(linked, ".vscode"), join(linked, ".vscode-real"));
+          await symlink(outside, join(linked, ".vscode"), "junction");
+        },
+      }),
+    ).rejects.toThrow("refresh-local is refused");
+
+    expect(await readFile(join(outside, "settings.json"), "utf8")).toBe("KEY=OUTSIDE\n");
+    expect((await stat(join(outside, "settings.json"))).mode & 0o200).toBe(0);
+    expect(await readdir(outside)).toEqual(["settings.json"]);
+  },
+);
+
 // Usefulness: verifies a failed exclusive create leaves an entry the command did not make.
 // Not redundant: it forces the temporary create to fail on an existing entry.
 test("a failed exclusive create leaves the existing temporary entry", async () => {
