@@ -1,10 +1,10 @@
 import { errorLine } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { gitRead, stripLf } from "./git-read.mjs";
-import { mainWorkTreePath } from "./local-files.mjs";
 import { logWarn } from "./log.mjs";
 import { snapshot } from "./snapshot.mjs";
 import { withTimeBound } from "./time-bound.mjs";
+import { mainWorkTreePath } from "./work-tree-layout.mjs";
 
 // Whole-read bound, including main work tree resolution and content hashing.
 const READ_BOUND_MS = 10_000;
@@ -17,38 +17,49 @@ const READ_BOUND_MS = 10_000;
  * The result is null when `cwd` is the main work tree, the layout has none, or the read fails or
  * passes its bound. A failed read warns, and an absent result then proves nothing.
  * @param {string} cwd
- * @param {{ deadlineMs?: number, since?: object | null }} [options]
+ * @param {{ deadlineMs?: number, since?: object | null, main?: string | null, error?: Error }} [options]
  * @returns {Promise<object | null>}
  */
-export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since = null } = {}) {
+export async function readMainWorkTree(
+  cwd,
+  { deadlineMs = READ_BOUND_MS, since = null, main, error } = {},
+) {
   try {
     return await withTimeBound(
       deadlineMs,
       `the main work tree read took over ${deadlineMs} ms`,
       async ({ signal, stopped }) => {
-        const main = await Promise.race([mainWorkTreePath(cwd, { signal }), stopped]);
-        if (main === null) return null;
+        // A dispatch passes the layout that it already read, or its failed read.
+        if (error) throw error;
+        const mainReal =
+          main !== undefined
+            ? main
+            : await Promise.race([mainWorkTreePath(cwd, { signal }), stopped]);
+        if (mainReal === null) return null;
         // The read takes no optional Git lock, so it never writes the main work tree index.
         const bound = { signal, timeoutMs: deadlineMs };
         const [snap, branch] = await Promise.all([
-          Promise.race([snapshot(main, { ...bound, env: { GIT_OPTIONAL_LOCKS: "0" } }), stopped]),
-          Promise.race([readBranch(main, bound), stopped]),
+          Promise.race([
+            snapshot(mainReal, { ...bound, env: { GIT_OPTIONAL_LOCKS: "0" } }),
+            stopped,
+          ]),
+          Promise.race([readBranch(mainReal, bound), stopped]),
         ]);
         // root lets the turn watch the work tree that the before read resolved.
         const state = {
-          root: main,
+          root: mainReal,
           entries: new Map(snap.workTree.map((entry) => [entry.path, stateOf(entry)])),
           head: snap.head,
           branch,
         };
         if (since && (since.head !== state.head || since.branch !== state.branch)) {
           state.commitPaths = await Promise.race([
-            readCommitPaths(main, since.head, state.head, bound),
+            readCommitPaths(mainReal, since.head, state.head, bound),
             stopped,
           ]);
           // The deadline race keeps the commit paths above.
           state.fastForward = await readFastForwardWithinDeadline(
-            main,
+            mainReal,
             since,
             state,
             bound,

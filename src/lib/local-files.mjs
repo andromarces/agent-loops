@@ -3,23 +3,19 @@
 // `copyFile` and `COPYFILE_EXCL`, so an existing file is never replaced or
 // deleted. The module never prints, logs, or returns file content: every report
 // is a path name.
-import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
+import { basename, isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { canonicalPath } from "./canonical-path.mjs";
-import {
-  gitRead,
-  gitReadError,
-  parseWorkTreeList,
-  readTopLevel,
-  stripLf,
-  WORK_TREE_READ_TIMEOUT_MS,
-} from "./git-read.mjs";
-import { sha256 } from "./hash.mjs";
-import { isJsonObject } from "./json.mjs";
+import { gitRead, gitReadError, readTopLevel, WORK_TREE_READ_TIMEOUT_MS } from "./git-read.mjs";
 import { logInfo, logWarn } from "./log.mjs";
+import {
+  hasControlCharacter,
+  locateWorkTrees,
+  lstatOrNull,
+  readWorkTrees,
+} from "./work-tree-layout.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
 // three conditions apply to each file inside it.
@@ -40,7 +36,7 @@ const LOCAL_FILE_PATHS = [
 ];
 
 // Names that one batch of file reads handles at once, so a long list never opens every file at once.
-const READ_BATCH_SIZE = 32;
+export const READ_BATCH_SIZE = 32;
 
 // Where Claude Code creates work trees. Other work tree paths come from
 // `git worktree list` and from a nested `.git` entry.
@@ -54,7 +50,7 @@ const isClaudeLockFile = (rel) =>
 
 // A configuration file is small. A larger file is a cache, a log, or a session
 // store, so it is skipped and named instead of duplicated into every run.
-const MAX_FILE_BYTES = 1024 * 1024;
+export const MAX_FILE_BYTES = 1024 * 1024;
 
 // Bounds the walk of one listed directory, counting every entry read under it,
 // nested directories included. A listed directory that holds more than this is
@@ -113,17 +109,6 @@ function isExcludedRel(rel) {
   );
 }
 
-async function lstatOrNull(path, options) {
-  try {
-    return await lstat(path, options);
-  } catch (err) {
-    if (err.code === "ENOENT" || err.code === "ENOTDIR") {
-      return null;
-    }
-    throw err;
-  }
-}
-
 /**
  * The ancestor verdicts of one copy call, per blocked set. `true` is a blocked directory, `false` a
  * plain one, and `null` a missing one. Only the pre-filter passes read it, because `copyOne` checks
@@ -139,7 +124,7 @@ const newAncestorCache = () => ({ source: new Map(), target: new Map() });
  * verdicts of one copy call for the pre-filter passes only, because the copy checks again before
  * `copyFile`.
  */
-async function hasBlockedAncestor(base, rel, blocked, create = false, cache = null) {
+export async function hasBlockedAncestor(base, rel, blocked, create = false, cache = null) {
   let current = base;
   for (const part of rel.split("/").slice(0, -1)) {
     current = join(current, part);
@@ -175,107 +160,6 @@ async function hasBlockedAncestor(base, rel, blocked, create = false, cache = nu
     }
   }
   return false;
-}
-
-/** True when `path` holds a control character: a line feed, a carriage return, a tab, and so on. */
-const hasControlCharacter = (path) =>
-  Array.from(path, (character) => character.codePointAt(0)).some(
-    (code) => code < 0x20 || code === 0x7f,
-  );
-
-/**
- * Reads `git worktree list --porcelain -z` into entries, in Git's order. A Git that rejects `-z`
- * fails the command, which fails the init.
- */
-async function readWorkTrees(root, read) {
-  const { stdout } = await read(root, ["worktree", "list", "--porcelain", "-z"]);
-  return parseWorkTreeList(stdout);
-}
-
-const isInsideByText = (parent, child) => {
-  const rel = relative(parent, child);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-};
-
-/**
- * Returns `{ main }` with the canonical path of the main work tree, `{ main: null }` when there
- * is none for this copy, or `{ refused }` with the name of a path that holds a control
- * character (decision 10 of ADR 0018). The main work tree is the first entry of
- * `git worktree list --porcelain -z`, taken only when all three hold: the entry is
- * not marked `bare`, its path is an existing directory, and its canonical path is
- * neither the common Git directory (`git rev-parse --git-common-dir`) nor inside
- * it. Every other layout has none: a bare repository, a plain separate Git
- * directory, and a submodule, where Git lists the Git directory first. A Git
- * command that fails throws. The caller copies nothing for `{ refused }`.
- */
-async function findMainWorkTree(root, entries, read) {
-  const first = entries[0];
-  if (first === undefined || first.bare || !(await lstatOrNull(first.path))?.isDirectory()) {
-    return { main: null };
-  }
-  const common = stripLf((await read(root, ["rev-parse", "--git-common-dir"])).stdout);
-  const commonReal = await realpath(resolve(root, common));
-  const main = await realpath(first.path);
-  if (hasControlCharacter(common) || hasControlCharacter(commonReal)) {
-    return { refused: "the common Git directory path" };
-  }
-  if (hasControlCharacter(main)) {
-    return { refused: "the main work tree path" };
-  }
-  return { main: isInsideByText(commonReal, main) ? null : main };
-}
-
-/**
- * Resolves the work trees of a copy or a comparison: returns `{ entries, mainReal, rootReal }`
- * (the registered work trees, and the canonical paths of the main and the linked work tree), or
- * null, with the reason logged, when nothing can be read from or written to: a path holds a
- * control character, there is no main work tree for this copy, or `cwd` is the main work tree.
- * The `quiet` option suppresses its log line.
- */
-async function locateWorkTrees(cwd, read, { quiet = false } = {}) {
-  // A path with a control character is not trusted to survive a round trip through
-  // Git's output or a path comparison, so the copy refuses it and copies nothing.
-  const refuse = (what) => {
-    if (!quiet) logInfo(`local files: ${what} holds a control character, so nothing is copied`);
-    return null;
-  };
-  if (hasControlCharacter(cwd)) {
-    return refuse("--cwd");
-  }
-  const top = (await readTopLevel(cwd, { read })).stdout;
-  if (hasControlCharacter(top)) {
-    return refuse("the work tree path");
-  }
-  // The operator's own `--cwd` names the work tree when Git names the same
-  // directory, so a Git echo of the path is not what the later commands run in.
-  const root = (await realpath(cwd)) === (await realpath(top)) ? cwd : top;
-  const entries = await readWorkTrees(root, read);
-  if (entries.some((entry) => hasControlCharacter(entry.path))) {
-    return refuse("a registered work tree path");
-  }
-  const found = await findMainWorkTree(root, entries, read);
-  if (found.refused !== undefined) {
-    return refuse(found.refused);
-  }
-  if (found.main === null) {
-    if (!quiet) logInfo("local files: no main work tree found, so nothing is copied");
-    return null;
-  }
-  const rootReal = await realpath(root);
-  return found.main === rootReal ? null : { entries, mainReal: found.main, rootReal };
-}
-
-/**
- * Returns the canonical path of the main work tree for a linked `cwd`. The result is null when `cwd`
- * is the main work tree or the layout has none. The resolution matches the local-file copy.
- */
-export async function mainWorkTreePath(cwd, { signal } = {}) {
-  const located = await locateWorkTrees(
-    cwd,
-    (dir, args, options) => git(dir, args, { signal, ...options }),
-    { quiet: true },
-  );
-  return located?.mainReal ?? null;
 }
 
 /**
@@ -499,6 +383,15 @@ async function collect(ctx, rel, abs) {
 }
 
 /**
+ * Resolves the work tree layout of a copy for a dispatch, or null when nothing is copied.
+ * `signal` ends a running `git` read, and the caller passes the result to `copyLocalFiles`.
+ */
+export async function locateLocalFiles(cwd, { signal } = {}) {
+  const read = (dir, args, options) => git(dir, args, { signal, ...options });
+  return locateWorkTrees(cwd, read);
+}
+
+/**
  * Copies each untracked local file of the main work tree that is ignored in
  * `cwd`'s work tree into it, once, at init. A file is copied only when all three
  * hold: it exists in the main work tree, it is untracked there, and `git
@@ -542,7 +435,7 @@ async function collect(ctx, rel, abs) {
 export async function copyLocalFiles(
   cwd,
   hooks = {},
-  { signal, maxEntries = MAX_WALKED_ENTRIES, extraPaths = [] } = {},
+  { signal, maxEntries = MAX_WALKED_ENTRIES, extraPaths = [], located } = {},
 ) {
   if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > MAX_WALKED_ENTRIES) {
     throw new RangeError(
@@ -551,10 +444,11 @@ export async function copyLocalFiles(
   }
   const extra = [...new Set(extraPaths.map(normalizeLocalPath))];
   const read = (dir, args, options) => git(dir, args, { signal, ...options });
-  const located = await locateWorkTrees(cwd, read);
+  // `located` is a layout that a dispatch already read; a direct call reads its own.
+  const found = located === undefined ? await locateWorkTrees(cwd, read) : located;
   // The operator paths are checked before anything is copied, and also when nothing is, so a
   // refused path fails the init for a `--cwd` that is the main work tree too.
-  const tree = located ?? (extra.length > 0 ? await ownWorkTree(cwd, read) : null);
+  const tree = found ?? (extra.length > 0 ? await ownWorkTree(cwd, read) : null);
   if (tree === null) {
     return null;
   }
@@ -572,7 +466,7 @@ export async function copyLocalFiles(
       ancestors,
     );
   }
-  if (located === null) {
+  if (found === null) {
     return null;
   }
   const listed = [...new Set([...LOCAL_FILE_PATHS, ...extra])];
@@ -668,7 +562,7 @@ async function canonOfTracked(mainReal, listed, trackedNames) {
   return new Set(canons);
 }
 
-const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
+export const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
 
 /**
  * True when the path `path` still resolves to the canonical path `canon` that the
@@ -680,7 +574,7 @@ const sameFile = (a, b) => a.dev === b.dev && a.ino === b.ino;
  * two directories that differ only in case are different directories. No guess
  * about the file system is needed.
  */
-async function namesFile(path, canon, opened) {
+export async function namesFile(path, canon, opened) {
   const [resolved, named] = await Promise.all([realpath(path), lstat(path, { bigint: true })]);
   return resolved === canon && named.isFile() && sameFile(opened, named);
 }
@@ -726,294 +620,4 @@ async function copyOne({ rel, src, canon }, rootReal, blocked, hooks) {
   } finally {
     await source?.close();
   }
-}
-
-const MISSING = Symbol("missing");
-const NOT_COMPARABLE = Symbol("not comparable");
-
-/** True for a non-empty relative path with no `..` segment and no empty segment. */
-const isPlainRelativeName = (rel) =>
-  typeof rel === "string" &&
-  rel !== "" &&
-  !isAbsolute(rel) &&
-  !rel.split("/").some((part) => part === ".." || part === "");
-
-/**
- * Reads the regular file `rel` under `base` and returns `{ bytes, hash, mode }`.
- * It returns `MISSING` when no file exists, or `NOT_COMPARABLE` when the path cannot be proven safe.
- * The caller never counts `NOT_COMPARABLE` as equal, even when both sides return it.
- * The checks follow the order marked in the body, and any error after the first probe is not comparable.
- * known-limit: a swap that is made and undone between two checks is not detected.
- * A swap that stays in place needs local write access and is caught before the read.
- */
-async function readGuardedFile(base, rel, { beforeRead, afterAncestorCheck } = {}) {
-  // Resolve and stat first, so only a proven absence is MISSING.
-  const path = join(base, rel);
-  let canon;
-  let named;
-  try {
-    canon = await realpath(path);
-    named = await lstat(path, { bigint: true });
-  } catch (err) {
-    if (err.code === "ENOENT" || err.code === "ENOTDIR") {
-      return MISSING;
-    }
-    throw err;
-  }
-  let handle = null;
-  try {
-    // Require the canonical path to equal the requested path and every ancestor to be plain.
-    if (
-      canon !== path ||
-      !named.isFile() ||
-      named.size > BigInt(MAX_FILE_BYTES) ||
-      (await hasBlockedAncestor(base, rel, new Set()))
-    ) {
-      return NOT_COMPARABLE;
-    }
-    await afterAncestorCheck?.(path);
-    if ((await realpath(path)) !== canon) {
-      return NOT_COMPARABLE;
-    }
-    await beforeRead?.(path);
-    // Open without a final link, then require the handle identity and path to match the first stat.
-    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const opened = await handle.stat({ bigint: true });
-    if (
-      !opened.isFile() ||
-      opened.size > BigInt(MAX_FILE_BYTES) ||
-      !sameFile(opened, named) ||
-      !(await namesFile(path, canon, opened))
-    ) {
-      return NOT_COMPARABLE;
-    }
-    // Read from the handle only.
-    const bytes = await handle.readFile();
-    // Recheck the path and ancestors, so a swap during the read is not comparable.
-    if (
-      (await hasBlockedAncestor(base, rel, new Set())) ||
-      !(await namesFile(path, canon, opened))
-    ) {
-      return NOT_COMPARABLE;
-    }
-    return { bytes, hash: sha256(bytes), mode: Number(named.mode & 0o777n) };
-  } catch (err) {
-    // A file that vanished, a link met by `O_NOFOLLOW`, or a path that cannot be opened after the
-    // first probe is not comparable, never "missing": an absence after the probe is not proven.
-    if (["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM"].includes(err.code)) {
-      return NOT_COMPARABLE;
-    }
-    throw err;
-  } finally {
-    await handle?.close();
-  }
-}
-
-/** The SHA-256 from `readGuardedFile`, or its `MISSING` or `NOT_COMPARABLE` symbol. */
-async function sha256Of(base, rel, hooks) {
-  const read = await readGuardedFile(base, rel, hooks);
-  return typeof read === "object" ? read.hash : read;
-}
-
-/**
- * Hashes each named file of the copy root. `names` is the `copied` list of the init copy.
- * Returns a plain object of path to SHA-256 hex, or an empty object when there is no main work
- * tree. A name that cannot be hashed is left out, so the later compare fails closed for it.
- * Content is never returned or logged. `afterAncestorCheck` and `beforeRead` are test seams.
- * @param {string} cwd
- * @param {string[]} names
- * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
- * @returns {Promise<Record<string, string>>}
- */
-export async function hashCopiedLocalFiles(cwd, names, { signal, ...hooks } = {}) {
-  return hashCopiedNames(cwd, names, { signal, ...hooks }, (located) => located.rootReal);
-}
-
-/**
- * Hashes each named source file in the main work tree of a linked `cwd`. The result shape and the
- * failure rules match `hashCopiedLocalFiles`. A turn window compares two results to name the
- * sources that a turn changed.
- * @param {string} cwd
- * @param {string[]} names
- * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
- * @returns {Promise<Record<string, string>>}
- */
-export async function hashCopiedLocalSources(cwd, names, { signal, ...hooks } = {}) {
-  return hashCopiedNames(cwd, names, { signal, ...hooks }, (located) => located.mainReal);
-}
-
-async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf) {
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    git(dir, args, { signal, ...options }),
-  );
-  if (located === null) {
-    return {};
-  }
-  const base = baseOf(located);
-  const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
-    if (!isPlainRelativeName(rel)) {
-      return null;
-    }
-    const hash = await sha256Of(base, rel, hooks);
-    return typeof hash === "string" ? [rel, hash] : null;
-  });
-  return Object.fromEntries(pairs.filter(Boolean));
-}
-
-/**
- * Names the copied local files whose source or copy differs from the stored hash.
- * A parent uses the result to tell a stale copy from a turn edit.
- * `changed` is `source`, `copy`, `both`, or `unknown`, and the result is a list of `{path, changed}` entries.
- * `unknown` covers a legacy or malformed init hash, and a side with an absent stored hash reports `unknown`.
- * A missing or unreadable side counts as changed on that side.
- * Nothing is written, and content is never returned or logged.
- */
-export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...hooks } = {}) {
-  // The result is sorted by path, or empty when there is no main work tree.
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    git(dir, args, { signal, ...options }),
-  );
-  if (located === null) {
-    return [];
-  }
-  const hashes = isJsonObject(initHashes) ? initHashes : null;
-  // `afterAncestorCheck` and `beforeRead` are test seams on the guarded read.
-  const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
-    if (!isPlainRelativeName(rel)) {
-      return { rel, source: NOT_COMPARABLE, copy: NOT_COMPARABLE };
-    }
-    const [source, copy] = await Promise.all([
-      sha256Of(located.mainReal, rel, hooks),
-      sha256Of(located.rootReal, rel, hooks),
-    ]);
-    return { rel, source, copy };
-  });
-  return pairs
-    .map(({ rel, source, copy }) => {
-      const changed = changedSide(rel, source, copy, hashes);
-      return changed === null ? null : { path: String(rel), changed };
-    })
-    .filter(Boolean)
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-}
-
-/** The side that the stored hash proves changed, or `unknown` when it proves none. */
-function changedSide(rel, source, copy, hashes) {
-  if (hashes === null || !Object.hasOwn(hashes, rel)) {
-    return "unknown";
-  }
-  const init = hashes[rel];
-  if (typeof init !== "string" || !/^[0-9a-f]{64}$/.test(init)) {
-    return "unknown";
-  }
-  const sourceChanged = source === MISSING || source === NOT_COMPARABLE || source !== init;
-  const copyChanged = copy === MISSING || copy === NOT_COMPARABLE || copy !== init;
-  if (sourceChanged && copyChanged) {
-    return "both";
-  }
-  return sourceChanged ? "source" : copyChanged ? "copy" : null;
-}
-
-/**
- * Copies one source file over its run copy and returns the hash of the bytes written.
- * Reads the source once, then writes those bytes through a temporary file and a rename.
- * The temporary file starts at 0600, then takes the copy's prior mode on the open handle.
- * Refuses before any write when a side is missing or unreadable, a link sits on the path, or the
- * copy differs from `expectedCopyHash`. Content and hashes never reach a log line or an error text.
- * @param {string} cwd
- * @param {string} rel
- * @param {{ signal?: AbortSignal, expectedCopyHash?: string, beforeWrite?: (path: string) => Promise<void>, beforeTempCreate?: (path: string) => Promise<void> }} [options]
- * @returns {Promise<string>} the new SHA-256 of the copy
- * @throws {Error} with a message that starts `refresh-local`
- */
-export async function refreshLocalFile(
-  cwd,
-  rel,
-  { signal, expectedCopyHash, beforeWrite, beforeTempCreate } = {},
-) {
-  const refuse = (why) => new Error(`refresh-local is refused: ${why}`);
-  if (!isPlainRelativeName(rel)) {
-    throw refuse("the path must stay inside the work tree");
-  }
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    git(dir, args, { signal, ...options }),
-  );
-  if (located === null) {
-    throw refuse("there is no main work tree to refresh from");
-  }
-  const { mainReal, rootReal } = located;
-  const source = await readGuardedFile(mainReal, rel);
-  if (typeof source !== "object") {
-    throw refuse("the source is missing or unreadable");
-  }
-  const copy = await readGuardedFile(rootReal, rel);
-  if (typeof copy !== "object") {
-    throw refuse("the copy is missing or unreadable");
-  }
-  if (expectedCopyHash !== undefined && copy.hash !== expectedCopyHash) {
-    throw refuse("the copy changed after init, so a turn changed it");
-  }
-  const target = join(rootReal, rel);
-  await beforeWrite?.(target);
-  const temp = join(dirname(target), `.refresh-${randomUUID()}.tmp`);
-  await beforeTempCreate?.(temp);
-  // Remove the temporary path only after this call creates it.
-  let created = false;
-  let handle = null;
-  try {
-    handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-    created = true;
-    await handle.writeFile(source.bytes);
-    // Set the prior copy mode on the handle, so the umask cannot widen it.
-    await handle.chmod(copy.mode);
-    await handle.close();
-    handle = null;
-    await rename(temp, target);
-  } catch (err) {
-    await handle?.close().catch(() => {});
-    if (created) {
-      await rm(temp, { force: true }).catch(() => {});
-    }
-    throw refuse(`the copy failed (${err.code ?? "error"})`);
-  }
-  return source.hash;
-}
-
-/**
- * Names the copied local files whose content differs from the file of the same name in the main
- * work tree, so a parent can see a stale copy. `names` is the `copied` list of the init copy.
- * Content is compared by SHA-256 and is never returned or logged. Nothing is written: a copy that
- * a turn changed is reported like one that the main work tree outgrew. A name that is not a plain
- * relative path, a link on the file or on any directory above it (in either work tree), a file
- * over 1 MiB (even when both sides are over), and a file missing from one side count as differing,
- * and no link is read through. Only a name that is missing from both sides is not reported.
- * Returns sorted path names, or an empty list when there is no main work tree.
- * @param {string} cwd
- * @param {string[]} names
- * `afterAncestorCheck` and `beforeRead` are test seams that run with the absolute path after the
- * ancestor check and just before the file is opened.
- * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
- * @returns {Promise<string[]>}
- */
-export async function findDifferingLocalFiles(cwd, names, { signal, ...hooks } = {}) {
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    git(dir, args, { signal, ...options }),
-  );
-  if (located === null) {
-    return [];
-  }
-  const differs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
-    if (!isPlainRelativeName(rel)) {
-      return true;
-    }
-    const [source, copy] = await Promise.all([
-      sha256Of(located.mainReal, rel, hooks),
-      sha256Of(located.rootReal, rel, hooks),
-    ]);
-    return source === NOT_COMPARABLE || copy === NOT_COMPARABLE || source !== copy;
-  });
-  return names
-    .filter((_, index) => differs[index])
-    .map(String)
-    .sort();
 }

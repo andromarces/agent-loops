@@ -6,11 +6,16 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 // Answers `git` from memory for every case (see `cutLinkedReads` below). A case then starts no
 // process for the shared Git and lockfile reads of the linked work tree.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
+// Counts each `git worktree list` read, which one layout lookup performs exactly once.
+const layoutReads = vi.hoisted(() => ({ count: 0 }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
     execa: (command, args, options) => {
+      if (command === "git" && args[0] === "worktree" && args[1] === "list") {
+        layoutReads.count += 1;
+      }
       const answer =
         gitDouble.answer && command === "git" ? gitDouble.answer(command, args, options) : null;
       return answer ?? real.execa(command, args, options);
@@ -33,7 +38,7 @@ import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";
 
 // The main work tree resolution fails or stalls only in the tests that set these flags.
 const resolution = vi.hoisted(() => ({ fail: false, stall: false }));
-vi.mock("../src/lib/local-files.mjs", async (importOriginal) => {
+vi.mock("../src/lib/work-tree-layout.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -53,12 +58,14 @@ beforeEach(async () => {
   // work tree is created for it. The main work tree stays real, so its snapshot stays real.
   tree = await createLinkedWorkTree({ linkedWorkTree: false });
   tree.mainReal = await realpath(tree.main);
+  layoutReads.count = 0;
   gitDouble.answer = cutLinkedReads;
 });
 afterEach(async () => {
   gitDouble.answer = null;
   resolution.fail = false;
   resolution.stall = false;
+  layoutReads.count = 0;
   if (tree) await removePath(tree.base);
   tree = undefined;
 });
@@ -149,6 +156,30 @@ test("a worker turn that writes a tracked main work tree file reports its path",
     await writeFile(join(tree.main, "init.txt"), "changed\n");
   });
   expect(result.mainWorkTreeChanged).toEqual(["init.txt"]);
+});
+
+// Usefulness: verifies a worker turn reads the layout once before the turn and twice after it.
+// Not redundant: no other test counts the layout reads of one turn.
+test("a worker turn reads the layout once before and twice after the turn", async () => {
+  const realTree = await createLinkedWorkTree({ ignore: [".env"] });
+  try {
+    await writeFile(join(realTree.main, ".env"), "A=1\n");
+    layoutReads.count = 0;
+
+    const result = await runChild({
+      agents: { fake: scripted([async () => {}]) },
+      role: { kind: "fake", sessionId: null },
+      roleName: "worker",
+      prompt: "go",
+      cwd: realTree.linked,
+      localFilesCopied: [".env"],
+    });
+
+    expect(result).not.toHaveProperty("mainWorkTreeChanged");
+    expect(layoutReads.count).toBe(3);
+  } finally {
+    await removePath(realTree.base);
+  }
 });
 
 // Usefulness: verifies a setup that did not finish leaves the cleanup without a TypeError. A

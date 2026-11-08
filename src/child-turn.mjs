@@ -10,7 +10,7 @@ import { appearedInInheritedTmpdir, snapshotInheritedTmpdir } from "./lib/tmpdir
 import { changedInPackageStore, snapshotPackageStore } from "./lib/package-store-entries.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import { diffLockfiles, readLockfiles, reportedLockfilePaths } from "./lib/lockfile-change.mjs";
-import { hashCopiedLocalSources } from "./lib/local-files.mjs";
+import { hashCopiedLocalSources } from "./lib/local-file-changes.mjs";
 import {
   diffMainWorkTree,
   diffMainWorkTreeInTurn,
@@ -26,6 +26,7 @@ import {
 import { isFatalTurnError, reviewedState, snapshot, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
 import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
+import { mainWorkTreePath } from "./lib/work-tree-layout.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { closingBlockRepairPrompt } from "./prompts/rules.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -133,11 +134,13 @@ export async function runProbeTurn({
  */
 async function readBeforeTurn(state) {
   if (state.isWorker) {
+    // One layout read serves the copied-source hash and the main work tree baseline.
+    const mainPath = readMainPath(state);
     const [copiedSources, shared, lockfiles, main] = await Promise.all([
-      readCopiedSources(state, { signal: state.signal }),
+      mainPath.then((path) => readCopiedSources(state, { signal: state.signal, mainPath: path })),
       readShared(state),
       readLockfiles(state.cwd),
-      readMainWorkTree(state.cwd),
+      mainPath.then((path) => readMainWorkTree(state.cwd, path)),
     ]);
     state.localSourcesBefore = copiedSources;
     state.sharedBefore = shared;
@@ -165,18 +168,36 @@ async function readBeforeTurn(state) {
 }
 
 /**
+ * Reads the main work tree path once for the copied-source hash and the main work tree baseline.
+ * Returns `{ main }` or `{ error }`, and throws on a cancel.
+ * @param {ChildEvidenceState} state
+ */
+async function readMainPath(state) {
+  try {
+    return { main: await mainWorkTreePath(state.cwd, { signal: state.signal }) };
+  } catch (err) {
+    if (readProp(err, "isCanceled")) throw err;
+    return { error: err };
+  }
+}
+
+/**
  * Hashes the copied sources in the main work tree, or null when the read failed. A turn window
  * compares the pre-turn and post-turn results. A source that cannot be hashed is left out, so the
  * compare reports no path it cannot prove.
  * @param {ChildEvidenceState} state
- * @param {{ signal?: AbortSignal }} [bound]
+ * @param {{ signal?: AbortSignal, mainPath?: { main?: string | null, error?: Error } }} [bound]
  */
-async function readCopiedSources(state, { signal } = {}) {
+async function readCopiedSources(state, { signal, mainPath } = {}) {
   if (state.localFilesCopied.length === 0) {
     return {};
   }
   try {
-    return await hashCopiedLocalSources(state.cwd, state.localFilesCopied, { signal });
+    if (mainPath?.error) throw mainPath.error;
+    return await hashCopiedLocalSources(state.cwd, state.localFilesCopied, {
+      signal,
+      ...(mainPath ? { main: mainPath.main } : {}),
+    });
   } catch (err) {
     if (readProp(err, "isCanceled")) throw err;
     logWarn(`local files: the copied source read failed (${err.code ?? "error"})`);
