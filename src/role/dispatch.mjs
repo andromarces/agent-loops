@@ -430,9 +430,8 @@ function refundModelRefusalStep(state, roleName) {
 }
 
 /**
- * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, the
- * reviewer temporary names, and the role session. It then writes the state and emits the `result`
- * event.
+ * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, and the
+ * role session. It then writes the state and emits the `result` event.
  */
 async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
   state.lifecycle = lifecycle;

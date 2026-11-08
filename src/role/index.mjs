@@ -355,7 +355,6 @@ async function setModel(args) {
       if (!Array.isArray(state.modelChanges)) {
         state.modelChanges = [];
       }
-      // The change is appended to `modelChanges`.
       state.modelChanges.push({
         role: roleName,
         from: previousModel,

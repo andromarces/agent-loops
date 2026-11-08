@@ -49,6 +49,10 @@ export function buildCopilotInvocation(task, sessionId) {
   };
 }
 
+/**
+ * Starts interactive Copilot with the task as one prompt line and inherited stdio, so the child
+ * owns the terminal.
+ */
 export async function main(argv = process.argv.slice(2)) {
   const task = argv.join(" ").trim();
   const invocation = buildCopilotInvocation(task, randomUUID());
