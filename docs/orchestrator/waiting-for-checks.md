@@ -9,8 +9,7 @@ PR head to complete before you dispatch the reviewer. When a reviewer turn
 reports a pending required check in `Checks`, wait for those checks to complete
 before you call `finish`.
 
-The wait is the status read the role rule excepts, and it changes nothing. The
-runtime owns the bound:
+The wait changes nothing. The runtime owns the bound:
 
 ```bash
 agent-loop role wait-checks --cwd <dir> --pr <n> --head <sha> --timeout <seconds>
@@ -31,7 +30,7 @@ be inside a Git work tree, as it is for `dispatch`:
 ```
 
 `head` names the commit that `checks` describe. The wait never takes a check state
-from `gh pr checks`, which queries by PR identity and names no commit. Each poll
+from `gh pr checks`. Each poll
 reads the PR head `<sha>`, runs `gh pr checks` for its exit-code outcome, and then
 reads every state from the check runs and commit statuses of `<sha>` itself, every
 page, by SHA.
@@ -80,7 +79,7 @@ with `status: "error"` (a server error of that read is retried, below) before an
 answers that the branch has no required check. A listed
 failure still settles the wait in that case, as `prFailures`. The `--all` wait reads no
 source. A commit read that fails, or that returns a reply the wait fails to parse or order,
-is an error too, with one exception. The commit reads are the gate's own reads, and no read of the wait or the gate uses `gh --paginate`: each sends one `gh api --include` request per page, for the documented page number (`?per_page=100&page=N`), and never follows the `Link` header.
+is an error too, with one exception. No read of the wait or the gate uses `gh --paginate` or follows the `Link` header.
 
 The read does look at the `Link` header of every reply, a retryable 5xx included and before its status is judged, only to reject it: a target on a host other than the request host (`GH_HOST`, else the default host of `gh`, and its API host) or a target that is not a URL ends the read with an error, never a pass, and is never requested. Such a reply is terminal even when its status is 500, 502, 503, or 504: it is never retried. Each `gh` output then holds exactly one exchange, and `gh` writes the status line of that request first, followed by the headers, a blank line, and the body. The default host of `gh` is the one host of its configuration, or github.com for none or several. The read takes it from `gh auth status --json hosts`, run once per read for a reply that carries a `Link` target, with `GH_TOKEN` and `GITHUB_TOKEN` removed from that one call. A failed call and a reply of another shape name no host, so every target is then refused.
 
@@ -204,8 +203,7 @@ continues to judge that check:
 }
 ```
 
-It is not a read error and not a pass. There is
-nothing required to wait for, so do not run the required wait again. On
+It is not a read error and not a pass. Do not run the required wait again. On
 `noRequiredChecks`, run `agent-loop role wait-checks --all` once, then dispatch the
 reviewer, which reads the CI status of the PR head itself, and never record the CI
 status as passed from the `noRequiredChecks` envelope. The `--require-ci` gate still decides the finish; it reads the same
@@ -216,7 +214,7 @@ PR holds a required check, so it refuses with exit 1 and `status: "error"`. The 
 says that a source `settled nothing`, that a source `could not be read`, or that a source
 `did not state that it holds no required check`, and that the required checks of the PR
 are unresolved. The 403 of a private repository on the GitHub Free plan is that
-case. It is no required-check read, so do not run the required wait again. Run the
+case. Do not run the required wait again. Run the
 `--all` wait below once, as after `noRequiredChecks`, then dispatch the reviewer, which
 reads the CI status of the PR head itself.
 
@@ -258,8 +256,8 @@ listed failing check is settled, and every other exit 1 is unresolved with
 '<branch>' branch` is the exception, as in the required wait: no check has
 reported yet, so the wait continues. At the bound with only that reply, `--all`
 returns `timedOut: true` and an empty `checks`, which is never a pass. A
-repository with no CI workflow therefore waits the full `--timeout` before it
-returns, unless `noCheckSource` ends the wait, as stated below.
+repository with no CI workflow waits the full `--timeout` before it
+returns, unless `noCheckSource` ends the wait.
 
 Every poll of both waits reads the head and the merge state in one `gh pr view` reply.
 When GitHub reports that head as conflicting, the wait returns at once with
@@ -310,8 +308,7 @@ When all three conditions hold, the wait returns at once with `noCheckSource: tr
   `push`, `merge_group`, `workflow_run`, or `check_suite`. The command scans the text
   of each file, so a name in a comment or a step keeps the wait. A file with a
   backslash or a control character, or one that is not valid UTF-8 or valid base64,
-  keeps the wait. A reusable
-  workflow inherits the events of its caller, and the callers are files of the same
+  keeps the wait. A reusable workflow inherits the events of a caller in the same
   directory.
   - A file that names a trigger is passed over only when the
     whole file is one well-formed YAML document, every event under its `on` key is

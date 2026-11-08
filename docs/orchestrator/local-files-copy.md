@@ -44,9 +44,7 @@ file or a parent component. It also refuses a copy that differs from its stored 
 run, and a child role. A refused refresh writes nothing. It reports the path only, never the content
 or a hash.
 
-For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`. The first action checks
-whether the main work tree holds a newer rule file, such as `AGENTS.md`. Never read, print, or
-quote the file to decide.
+For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`.
 
 Each worker and reviewer turn also hashes every copied source before and after its window. A
 source that changed inside the window is reported on that turn's envelope as

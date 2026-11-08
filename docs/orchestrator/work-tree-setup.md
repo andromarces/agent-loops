@@ -33,9 +33,8 @@ line on the latest changed state. Add `--require-accept` where it applies. Compa
 `unresolvedCompare`: each one concerns a PR head, and this run has none.
 
 A run on an existing pull request, such as a review or a correction of PR #N, must
-run on the PR head branch. Then the worker pushes to that branch, and
-`reviewed.head` can equal the PR head. Create the work tree on that branch from the
-remote branch:
+run on the PR head branch. Then the worker pushes to that branch. Create the work
+tree on that branch from the remote branch:
 
 ```bash
 git fetch origin <pr branch>

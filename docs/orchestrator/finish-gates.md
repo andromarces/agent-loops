@@ -101,7 +101,7 @@ included. In `review-only`, each flag fails with a clear error.
   - A Free-plan 403 leaves each endpoint with no required contexts, and it is
     classified unknown rather than empty, so the empty-union refusal names it. A private GitHub
     Free-plan repository still refuses a declared run, so such a repository must omit
-    `--pr`, which leaves the #286 gap in place. Init with `--pr` and `role declare-pr` refuse that case up front.
+    `--pr`. Init with `--pr` and `role declare-pr` refuse that case up front.
   - Repository rulesets are readable with read access on a repository whose plan allows
     the rule, so a token without repository admin still gates through repository rulesets
     and through `gh pr checks --required` while the classic-protection source stays

@@ -28,8 +28,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     item for it by itself.
   - The runtime cannot attribute an entry to a turn, so the parent cannot prove ownership. The
     parent deletes no entry that `inheritedTmpdirEntries` names, and removal stays with the user. A
-    `Notes` line from a reviewer never makes an entry safe to delete. The directory is shared with the user and with other
-    processes.
+    `Notes` line from a reviewer never makes an entry safe to delete.
   - Every reviewer turn that read the directory before it started carries the field. The turns
     are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
     canceled turn.

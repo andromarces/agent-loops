@@ -121,7 +121,7 @@ else
 fi
 ```
 
-Use bash, not a PowerShell version. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was. A failed delivery removes only the empty parent directories that it created for an added path, deepest first. `stat -c %a` reads the mode of a modified target on GNU, and `stat -f %Lp` reads it on BSD.
+Use bash, not a PowerShell version. `mktemp` creates the temporary file beside the target. The block refuses a path in neither commit, a failed lookup, a target that changed, and a path that matches more than one file. Each refusal exits 1 and leaves the target as it was. A failed delivery removes only the empty parent directories that it created for an added path, deepest first.
 
 After the copy, check the delivered state. When `reviewed.head` holds `<path>`, compare the content hash of the delivered file with the blob, and compare the executable bit of the target with the reviewed mode:
 
