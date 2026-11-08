@@ -50,9 +50,13 @@ Collect these before the first dispatch:
 
 ## Resolving the CLI
 
-The command blocks call `agent-loop` directly. The link and PATH steps, the
-`node "<repo>/src/cli.mjs"` fallback, and the `pnpm agent-loop` form are in
+The command blocks below call `agent-loop` directly. Install and link steps are in
+the reference sections [Install](reference/install.md#install) and
 [From a clone (development)](reference/install.md#from-a-clone-development).
+
+If `agent-loop` does not resolve on PATH, replace it with
+`node "<repo>/src/cli.mjs"` and quote the repository path, so a path with spaces
+works. Or run `pnpm agent-loop` from the repository root.
 
 ## Starting a run
 
@@ -121,8 +125,6 @@ printf '%s' "<prompt>" | agent-loop role dispatch --role worker --cwd "<work tre
 printf '%s' "<prompt>" | agent-loop role dispatch --role reviewer --cwd "<work tree>"
 ```
 
-A run that set `--test-cmd` at init passes the same `--test-cmd "<command>"` on
-every reviewer dispatch, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 A run that set `--reviewer-sandbox` at init needs no flag on a later
 dispatch: the state file holds the mode. A later dispatch that names another
 mode is refused.
@@ -575,9 +577,22 @@ Exclude every issue that a commit message closes. The commits endpoint returns a
 
 ## Several runs at once
 
-The session entries, the interleave and background orders, the shared test slot
-table, and the cross-run rules are in
-[Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md#several-runs-at-once).
+- Interleave: dispatch one turn per run in turn, and read each envelope before
+  the next dispatch. This works in every harness.
+- Background: run each dispatch as a background shell command where the harness
+  supports it, and read each envelope when it completes.
+
+Every command for a run passes that run's `--cwd`. Each run ends with its own
+`finish` or `abort`, and the guard releases only after every run is terminal.
+
+Runs on one host share the test slot table, whose default count is 1 (ADR 0046).
+A targeted test run with `--if-held` waits while any slot is held (ADR 0044). A
+reviewer turn can then wait behind a full suite of another run. That wait, or
+exit 75 from the wrapper, can leave a reviewer turn with no local test run. The
+required CI checks are then its only test evidence, as
+[Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
+A parent that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the
+first dispatch, but 2 slots overloaded both measured hosts (ADR 0046).
 
 Workers of runs in one repository can also edit the body of the same issue at once, which drops an
 item when two writes overlap. Put the read-write-read rule of
@@ -601,8 +616,7 @@ Both paths name the mode with `--mode <mode>`, with the same three values: on th
 `role` init call and on the headless `agent-loop` command. The headless `--mode`
 is off by default, so a run without the flag keeps the current behavior. A
 `review-only` run dispatches no worker, so it takes none of `--pr`,
-`--require-accept`, and `--require-ci`. The Completion section states the finish
-rule.
+`--require-accept`, and `--require-ci`.
 
 The headless gate follows turn order only; an edit made outside the loop after a
 reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
@@ -624,9 +638,7 @@ the state file instead of a transcript event (#281).
 
 A headless run on a repository whose required-check sources are unreadable passes
 `--compare-head <pr>` for a PR that exists at start (#1104), and a run without the flag
-resolves a worker-opened PR itself (#1111, ADR 0053). The rules, the refusals, and the
-exit codes are in
-[Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md).
+resolves a worker-opened PR itself (#1111, ADR 0053).
 
 A headless orchestrator action allows only these keys. The `run_worker` and
 `run_reviewer` actions allow only `action` and `prompt`. The `abort` action
@@ -638,8 +650,6 @@ with an error (#1034).
 
 ## Completion
 
-Completion is completion of the requested work, not code acceptance.
-
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
   checks that passed.
@@ -648,9 +658,7 @@ Completion is completion of the requested work, not code acceptance.
   `--require-accept` in this mode.
 
 `finish` reads a five-key summary as JSON on stdin and is accepted only from the
-`active` lifecycle. Before you call `finish`, read
-[Finish output](orchestrator/finish-output.md) when you need the exact summary
-shape or the `unresolvedCompare` marker, or when a `finish` is refused. A pending
+`active` lifecycle. A pending
 or failing check goes into `notDone` or blocks the finish.
 
 Map the child report fields into the finish summary:
@@ -674,6 +682,13 @@ Map the child report fields into the finish summary:
   items go into `deferred`. `deferred` holds out-of-scope items in every mode;
   `open` holds unresolved in-scope findings.
 
+## PR declaration
+
+`--pr <pr>` on the init call declares that the run's work is delivered on that
+pull request, so the run can end only through the gate:
+`agent-loop role finish --require-ci <pr>` here, and
+`agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
+
 ## Blockers and terminal states
 
 - Blocker or `interrupted` lifecycle: call
@@ -694,9 +709,8 @@ Map the child report fields into the finish summary:
   in [Turn history and the step budget](orchestrator/run-history.md). `extend` works from `active`, `dispatched`, and `interrupted`, leaves
   the lifecycle as it is, and refuses a terminal run. An `interrupted` run still
   needs `abort` or `dispatch --resume-interrupted`.
-- `declare-pr` sets the run PR once after init, as
-  [Declaring a PR run](orchestrator/pr-declaration.md) states. The caller must pass the
-  stored `--parent-session` id, as for `extend`.
+- `declare-pr` sets the run PR once after init, as the section on declaring a PR
+  run states. The caller must pass the stored `--parent-session` id, as for `extend`.
 - A CLI refuses a role model on the first turn of that role (for example `The 'gpt-6.1' model is not supported`): do not abort. Run `agent-loop role set-model --cwd "<work tree>" --parent-session "<parent session id>" --reviewer-model <valid model>` (or `--worker-model`), then dispatch again. It needs an `active` run and a role with no `ok` turn. Ask the user for the valid model.
 - `halted` lifecycle (reviewer mutation or snapshot error): the run is already
   terminal and the subcommand rejects further operations, including `abort`.
@@ -705,7 +719,6 @@ Map the child report fields into the finish summary:
   `halted`. The parent-edit guard (#57, Claude Code, Codex CLI, Copilot CLI,
   OpenCode, and Antigravity CLI) releases on any of them. Every `agent-loop role`
   init requires `--parent-session`, so the guard always has a parent to match.
-  The headless `agent-loop` command is the explicit unguarded path.
 
 ## Repeated rejects of one finding class
 
@@ -728,6 +741,3 @@ dispatch. From `interrupted`, the parent aborts; only a maintainer may decide
 to resume with `dispatch --resume-interrupted`.
 `dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the
 Claude session of the role. Do not end that process. The maintainer ends it or waits for it.
-
-A run keeps the `--parent-session` of the session that started it. How each subcommand treats the
-flag after init is in [Parent session id after init](orchestrator/parent-session-guard.md).
