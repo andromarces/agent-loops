@@ -161,8 +161,8 @@ export async function readState(stateFile) {
   let value;
   try {
     value = JSON.parse(text);
-  } catch (err) {
-    throw new Error(`State file is not valid JSON: ${stateFile}`, { cause: err });
+  } catch {
+    throw new Error(`State file is not valid JSON: ${stateFile}`);
   }
   if (!isJsonObject(value)) {
     throw new Error(`State file is not a JSON object: ${stateFile}`);
