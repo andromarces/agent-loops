@@ -959,9 +959,10 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
   const [rule] = REFUSED_CWD_RULE;
   const [, second] = REFUSED_CWD_RULE;
   const RECOVERY_INSTRUCTION = "Recreate the work tree at the refused path before you abort.";
-  // The first sentence of the earlier pin, the first text after the rule block, and the structural start.
+  // A sentence inside the rule block, the first text after the block, and the structural start.
   const BEFORE_OLD_PIN = {
-    instructions: "it can damage the shared pnpm store.",
+    instructions:
+      "Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states. Never delete it with a recursive delete that follows junctions.",
     prompt: "- In review-only mode,",
   };
   const AFTER_RULE_BLOCK = { instructions: " ## Reference sections", prompt: " User Task:" };
@@ -990,7 +991,7 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
     "a negation dropped": (text) =>
       text.replace("is not the parent's to repair", "is the parent's to repair"),
     "a removed rule": (text) => text.replace(rule, ""),
-    "an instruction directly before the first sentence of the old pin": (text, key) =>
+    "an instruction directly before the last sentences of the block": (text, key) =>
       text.replace(BEFORE_OLD_PIN[key], `${RECOVERY_INSTRUCTION} ${BEFORE_OLD_PIN[key]}`),
     "an instruction directly before the next section": (text, key) =>
       text.replace(AFTER_RULE_BLOCK[key], `${RECOVERY_INSTRUCTION} ${AFTER_RULE_BLOCK[key]}`),
