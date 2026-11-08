@@ -222,6 +222,25 @@ test("the argument-vector form runs without a shell and keeps the exit code", as
   expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
 });
 
+// Usefulness: issue #1673 review — on Windows, a vector that starts with a `.cmd` or `.bat` shim
+// must fail as a wrapper failure instead of letting execa run it through cmd.exe, because ADR 0104
+// promises no shell for the vector form.
+test.skipIf(process.platform !== "win32")(
+  "a .cmd shim in the vector fails instead of running through a shell",
+  async () => {
+    const ctx = await setup({
+      "shim.cmd": "@echo off\r\necho ran>shim-ran.txt\r\nexit /b 0\r\n",
+    });
+    const { done } = wrapper(
+      ["--slots", "1", "--wait", "10", "--", join(ctx.cwd, "shim.cmd"), "unused"],
+      ctx,
+    );
+    expect((await done).code).toBe(1);
+    expect(existsSync(join(ctx.cwd, "shim-ran.txt"))).toBe(false);
+    expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
+  },
+);
+
 // Usefulness: acceptance (#847) — a nested wrapper inside a wrapped command runs at once
 // instead of waiting on the slot its parent holds, so it cannot deadlock.
 test("a nested wrapper inside a wrapped command runs without waiting", async () => {

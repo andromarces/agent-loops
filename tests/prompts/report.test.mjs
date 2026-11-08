@@ -111,16 +111,16 @@ test("the rule names the platform shell that runs the quoted suite command", () 
 
 // Usefulness: issue #1673 — the rule names the argument-vector form as the default from Git Bash
 // on Windows and states the Windows executable limit, so a child passes separate arguments and
-// never a .cmd shim that the OS cannot spawn without a shell. No other test pins this text.
+// never a .cmd or .bat shim that the OS cannot spawn without a shell. It names no tool, so the
+// reviewer prompt still fits any repository. No other test pins this text.
 test("the rule names the argument-vector form as the default from Git Bash on Windows", () => {
   const rule = testSlotRule();
   expect(rule).toMatch(
     /Two or more arguments after -- form an argument vector that runs without a shell/,
   );
   expect(rule).toMatch(/From Git Bash on Windows, use this argument-vector form as the default/);
-  expect(rule).toMatch(
-    /must start with a real executable such as node, not a \.cmd shim such as pnpm/,
-  );
+  expect(rule).toMatch(/must start with a real executable such as node, not a \.cmd or \.bat shim/);
+  expect(rule).not.toMatch(/pnpm|vitest|npm|yarn|node_modules/);
   expect(rule).toContain("test-slot -- <suite command as separate arguments>");
 });
 

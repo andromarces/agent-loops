@@ -1,6 +1,8 @@
 // The `agent-loop test-slot` command (#847, ADR 0039). It parses its arguments, then runs one
 // command only while it holds a machine-wide slot through `test-slot.mjs`.
+import { accessSync, constants as fsConstants } from "node:fs";
 import { constants } from "node:os";
+import { delimiter, extname, join } from "node:path";
 import { killLiveTrees } from "./exec-tree.mjs";
 import { execBounded } from "./exec.mjs";
 import { logError, logInfo, setLogsToStderr } from "./log.mjs";
@@ -23,8 +25,9 @@ platform shell (/bin/sh -c, or cmd.exe on Windows) in the current directory, as
 --test-cmd runs its command. Quote it as one argument for the calling shell.
 Two or more arguments after -- form an argument vector, spawned without a
 shell, so no shell quoting applies. On Windows the vector must start with a
-real executable such as node, not a .cmd shim such as pnpm, which the OS cannot
-spawn without a shell. stdout and stderr pass through, and stdin is closed.
+real executable such as node. The wrapper accepts only a directly executable
+.exe or .com, and refuses a .cmd or .bat shim such as pnpm, or a script that
+needs an interpreter. stdout and stderr pass through, and stdin is closed.
 
 Options:
 
@@ -135,14 +138,54 @@ export function parseTestSlotArgs(argv, env = process.env) {
 
 const signalExit = (name) => 128 + (constants.signals[name] ?? 0);
 
+// On Windows, execa runs a `.cmd` or `.bat`, or a shebang script, through a shell even with
+// `shell: false`. The vector form promises no shell, so it resolves the first element to a
+// directly executable `.exe` or `.com` and refuses anything else. The resolution follows the
+// current directory, PATH, and PATHEXT, as the OS and execa do. Synchronous, so the slot's
+// wait-bound check stays the last await before the command starts.
+function resolveWindowsCommand(command) {
+  if (process.platform !== "win32") {
+    return command;
+  }
+  const extension = extname(command).toLowerCase();
+  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const directories =
+    command.includes("/") || command.includes("\\")
+      ? [""]
+      : [process.cwd(), ...(process.env.PATH ?? "").split(delimiter).filter(Boolean)];
+  const candidates =
+    extension !== ""
+      ? [command]
+      : directories.flatMap((directory) => {
+          const base = directory === "" ? command : join(directory, command);
+          return [base, ...extensions.map((ext) => `${base}${ext.toLowerCase()}`)];
+        });
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, fsConstants.F_OK);
+    } catch {
+      continue;
+    }
+    return /\.(?:com|exe)$/i.test(candidate) ? candidate : null;
+  }
+  return null;
+}
+
 // Runs the command with the `--test-cmd` runner semantics: a shell string in the platform shell,
 // or an argument vector spawned without a shell, and a tree that `killLiveTrees` ends. A top-level
 // run leads a process group of its own on POSIX. A nested run (`ownGroup` false) stays in the
 // group of the outer wrapper's command, so the outer kill reaches it. The command text is never
 // logged.
 async function runCommand({ command, args }, { env, ownGroup }) {
+  const executable = args === undefined ? command : resolveWindowsCommand(command);
+  if (executable === null) {
+    logError(
+      "test slot command did not start: the argument vector must start with a real executable such as node, not a .cmd, .bat, or script that needs an interpreter",
+    );
+    return 1;
+  }
   logInfo("test slot command started");
-  const result = await execBounded(command, args ?? [], {
+  const result = await execBounded(executable, args ?? [], {
     shell: args === undefined,
     stdin: "ignore",
     stdout: "inherit",
