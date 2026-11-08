@@ -285,7 +285,8 @@ test("a timestamp-preserving change in the start millisecond reports no candidat
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   let reported = false;
-  for (let attempt = 0; attempt < 20 && !reported; attempt++) {
+  let failed = false;
+  for (let attempt = 0; attempt < 20 && !reported && !failed; attempt++) {
     // A copy that preserves times completes immediately before the watch starts.
     await writeFile(file, "copied\n");
     await writeFile(file, "hello\n");
@@ -303,7 +304,9 @@ test("a timestamp-preserving change in the start millisecond reports no candidat
     });
     const result = await handle.take();
     reported = result.candidates.includes("init.txt");
+    failed = result.failed;
   }
+  expect(failed).toBe(false);
   expect(reported).toBe(false);
 });
 
