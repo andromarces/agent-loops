@@ -339,8 +339,8 @@ The parent creates the run's work tree and owns it. Keep that work tree in place
 for the whole run, and never tell a worker to remove it.
 
 When a worker report says its edit landed in another checkout, stop the run,
-report the paths under `open` in the finish summary, and leave that checkout to
-the user: `mainWorkTreeChangedInTurn` stays report-only: the runtime cannot
+and leave that checkout to the user. Report the paths under `open` in the finish
+summary. `mainWorkTreeChangedInTurn` stays report-only: the runtime cannot
 attribute the edit to one run.
 
 Create the work tree with no upstream:
