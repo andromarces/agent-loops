@@ -6,9 +6,9 @@ partially-superseded
 
 Partially superseded by [ADR 0086: Leave out a read-only access whose modification time predates the turn window](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md). It replaces decision 3's confirmation rule, which reports a candidate only by its equal pre-turn and post-turn state, and the consequence that a write and a restore before the event is delivered can be missed.
 
-Partially superseded by [ADR 0100: Arm the main work tree watch before the child turn](0100-arm-the-main-work-tree-watch-before-the-child-turn.md). It replaces decision 1's start rule with a start rule that waits for the stream to arm before the child call.
+Partially superseded by [ADR 0100: Arm the main work tree watch before the child turn](0100-arm-the-main-work-tree-watch-before-the-child-turn.md). It replaces decision 1's start rule with a start rule that waits for the watch `ready` promise before the child call.
 
-Decision 2, decision 3's rule that a path which still differs stays in `mainWorkTreeChanged` only, decisions 4 to 8, and every other consequence remain in force.
+Decision 2, decision 3's rule, decisions 4 to 8, and every other consequence remain in force. A path that still differs stays in `mainWorkTreeChanged` only.
 
 ## Date
 

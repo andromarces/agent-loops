@@ -16,11 +16,11 @@ afterEach(async () => {
   dir = undefined;
 });
 
-// Usefulness: verifies requirement "a write after a reopened watch is reported before the stream
-// arms" (issue #1628). A dropped first event leaves the restored path out of the field.
-test("a write before a reopened watch arms is reported", async () => {
+// Usefulness: verifies requirement "a write after a reopened watch is reported" (issue #1628).
+// A dropped first event leaves the restored path out of the field.
+test("a write after a reopened watch is reported", async () => {
   dir = await createTempRepo();
-  // The first watch models the stream that the previous turn closed.
+  // The first watch models the watch that the previous turn closed.
   const first = await startMainWorkTreeWatch(dir);
   await first.take();
   const fake = createArmingWatch();
@@ -31,9 +31,9 @@ test("a write before a reopened watch arms is reported", async () => {
   expect(result).toEqual({ candidates: ["one.txt"], failed: false });
 });
 
-// Usefulness: verifies requirement "a cancel during the readiness wait reports no field" (issue
-// #1628). A cancel must end the wait and close the stream without a path.
-test("a cancel during the readiness wait returns no handle", async () => {
+// Usefulness: verifies requirement "a cancel during the ready wait reports no field" (issue
+// #1628). A cancel must end the wait and close the watch without a path.
+test("a cancel during the ready wait returns no handle", async () => {
   dir = await createTempRepo();
   const fake = createControlledWatch();
   const abort = new AbortController();
@@ -48,7 +48,7 @@ test("a cancel during the readiness wait returns no handle", async () => {
 
 // Usefulness: verifies requirement "a watch error before ready reports no field and warns" (issue
 // #1628). A silent error reads as no main work tree change.
-test("a watch error before the stream arms reports no field and warns", async () => {
+test("a watch error before ready reports no field and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
   const fake = createControlledWatch();
@@ -62,8 +62,8 @@ test("a watch error before the stream arms reports no field and warns", async ()
 });
 
 // Usefulness: verifies requirement "a watch close before ready reports no field and warns" (issue
-// #1628). A stream that ends before the turn read it must not report a path.
-test("a watch close before the stream arms reports no field and warns", async () => {
+// #1628). A watch that ends before the turn read it must not report a path.
+test("a watch close before ready reports no field and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
   const fake = createControlledWatch();
@@ -77,7 +77,7 @@ test("a watch close before the stream arms reports no field and warns", async ()
 });
 
 // Usefulness: verifies requirement "a missed arm deadline reports no field and warns" (issue
-// #1628). A stream that never arms must not hold the turn or report a path.
+// #1628). A `ready` promise that never resolves must not hold the turn or report a path.
 test("a missed arm deadline reports no field and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
@@ -91,14 +91,14 @@ test("a missed arm deadline reports no field and warns", async () => {
 });
 
 // Usefulness: verifies requirement "a turn that writes nothing reports no candidate" (issue
-// #1628). The arm wait must not need a write or turn an idle turn into a failure.
+// #1628). The ready wait must not need a write or turn an idle turn into a failure.
 test("a turn that writes nothing reports no candidate", async () => {
   dir = await createTempRepo();
   const handle = await startMainWorkTreeWatch(dir);
   await expect(handle.take()).resolves.toEqual({ candidates: [], failed: false });
 });
 
-/** A fake watch whose stream never arms, so only a failure, close, or cancel ends the wait. */
+/** A fake watch whose `ready` never resolves, so only a failure, close, or cancel ends the wait. */
 function createControlledWatch() {
   const watcher = new EventEmitter();
   let closed = false;
@@ -117,7 +117,7 @@ function createControlledWatch() {
   };
 }
 
-/** A fake watch whose stream drops every event that arrives before it arms on the next turn. */
+/** A fake watch that drops every event until its `ready` resolves on the next turn. */
 function createArmingWatch() {
   let fake;
   const factory = (_root, onEvent) => {

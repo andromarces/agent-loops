@@ -11,7 +11,7 @@ import { logWarn } from "./log.mjs";
 const IGNORE_READ_BOUND_MS = 10_000;
 // Milliseconds that the end-of-turn drain runs before the watch reports no path (1000).
 export const DRAIN_DEADLINE_MS = 1_000;
-// Milliseconds that the macOS FSEvents stream gets to arm before the watch reports no path (1000).
+// Milliseconds that the macOS watch `ready` promise gets before the watch reports no path (1000).
 const ARM_DEADLINE_MS = 1_000;
 // Keys that one event-grown structure keeps before the watch gives up the field (500).
 const MAX_KEYS = 500;
@@ -27,10 +27,10 @@ const FILE_BATCH_SIZE = 32;
 const MTIME_MARGIN_MS = 2_000;
 
 /**
- * Starts a recursive watch and returns it with a promise for the arming of its stream. On macOS
- * the FSEvents stream starts on a separate thread after `watch` returns, so one event-loop turn
- * lets it arm before the child call can write (issue #1628). The other platforms start the
- * watch before `watch` returns, so their `ready` is null.
+ * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the
+ * saved probe, a write right after `watch` missed 1 in 10,000. One event-loop turn missed 0 in
+ * 5,000, so the macOS `ready` resolves after one turn. The other platforms return no `ready`, so
+ * their event handling does not change.
  * @param {string} root
  * @param {(type: string, filename: string | Buffer) => void} onEvent
  * @returns {{ watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }}
@@ -43,8 +43,8 @@ function watchRecursive(root, onEvent) {
 }
 
 /**
- * Waits for the watch stream to arm under one monotonic deadline. A missed deadline fails the
- * watch, and a turn abort ends the wait. The promise never rejects.
+ * Waits for the `ready` promise under one monotonic deadline. A missed deadline fails the watch,
+ * and a turn abort ends the wait. The promise never rejects.
  * @param {Promise<void> | null} ready
  * @param {{ armDeadlineMs: number, signal: AbortSignal | null, armWait: Promise<void>, fail: (err: unknown) => void }} bound
  */
@@ -85,8 +85,8 @@ async function arm(ready, { armDeadlineMs, signal, armWait, fail }) {
 }
 
 /**
- * Watches the main work tree of a linked run for the turn window. One `Map` holds every pending
- * path, with its merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
+ * Watches the main work tree of a linked run for the turn window, with one `Map` of pending paths
+ * and merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
  * records a file, and the `.git` directory stays out. A recorded file whose end modification time
  * is older than the window start is a read-only access, and stays out. `take()` returns the
  * candidates and then stops the watch on every outcome. A failed watch, read, or bound returns
@@ -128,7 +128,7 @@ export async function startMainWorkTreeWatch(
   const reads = new Set();
   const controller = new AbortController();
   let resolveArm = null;
-  // Resolves when the stream arms, or when the watch fails, stops, or closes before it arms.
+  // Resolves when `ready` settles, or when the watch fails, stops, or closes.
   const armWait = new Promise((resolve) => {
     resolveArm = resolve;
   });
@@ -151,7 +151,7 @@ export async function startMainWorkTreeWatch(
     } catch {}
   };
 
-  /** Reports a stream that closed before the turn read it, and ends the arming wait. */
+  /** Reports a watch that closed before the turn read it, and ends the `ready` wait. */
   const onWatcherClose = () => {
     resolveArm();
     if (watcherClosed || failed || done) return;
@@ -423,7 +423,7 @@ export async function startMainWorkTreeWatch(
     closeWatcher();
     return null;
   }
-  // A write that lands before the stream is live is lost, so the child call waits for the arm.
+  // In the saved probe a write right after `watch` missed, so the child call waits for `ready`.
   await arm(ready, { armDeadlineMs, signal, armWait, fail });
   if (signal?.aborted) {
     closeWatcher();
