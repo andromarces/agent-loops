@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vite-plus/test";
 import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
-import { GUARD_DENY_REASON, decideParentGuard } from "../../src/hook/decision.mjs";
+import { GUARD_DENY_REASON, decideParentGuard, hookDecision } from "../../src/hook/decision.mjs";
+import { ANTIGRAVITY_GUARD } from "../../src/hook/antigravity-guarded-tools.mjs";
 import { createParentGuardPlugin, EDIT_ACTIONS } from "../../src/hook/opencode-plugin.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
@@ -384,9 +385,8 @@ function runShellHookCommand(command, env, inputJson) {
     child.stdin.end(inputJson);
   });
 }
-// Usefulness: verifies the Claude and Codex hook contracts end to end — deny prints
-// one PreToolUse JSON decision on stdout, an unguarded session prints nothing,
-// and unparseable input fails open.
+// Usefulness: verifies the Claude and Codex hook contracts end to end — deny prints one
+// PreToolUse JSON decision on stdout, and every other input stays silent.
 
 test("hook script denies with PreToolUse JSON and stays silent otherwise", async () => {
   await setup();
@@ -397,39 +397,36 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
   );
 
-  for (const toolName of ["Edit", "apply_patch"]) {
-    const denied = await runHookScript(
-      JSON.stringify({ session_id: "parent-sess-1", tool_name: toolName }),
-    );
-    expect(denied.code, toolName).toBe(0);
-    const decision = JSON.parse(denied.stdout);
-    expect(decision.hookSpecificOutput).toMatchObject({
+  // Process: one run covers the hook entry point, which reads its JSON payload from stdin.
+  const denied = await runHookScript(
+    JSON.stringify({ session_id: "parent-sess-1", tool_name: "Edit" }),
+  );
+  expect(denied.code).toBe(0);
+  const decision = JSON.parse(denied.stdout);
+  expect(decision.hookSpecificOutput).toMatchObject({
+    hookEventName: "PreToolUse",
+    permissionDecision: "deny",
+    permissionDecisionReason: GUARD_DENY_REASON,
+  });
+
+  // In process: the same decision and every fail-open path, with no second hook process.
+  const claudeDeny = (reason) => ({
+    hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: GUARD_DENY_REASON,
-    });
-  }
-
-  const allowed = await runHookScript(JSON.stringify({ session_id: "other", tool_name: "Write" }));
-  expect(allowed.code).toBe(0);
-  expect(allowed.stdout).toBe("");
-
-  const unparseable = await runHookScript("not json");
-  expect(unparseable.code).toBe(0);
-  expect(unparseable.stdout).toBe("");
-
-  // A malformed session id throws inside the real lookup (runstate rejects
-  // path separators); the hook must still exit 0 with no output, not leak the
-  // error into the session.
-  const malformed = await runHookScript(
-    JSON.stringify({ session_id: "../../etc/passwd", tool_name: "Edit" }),
+      permissionDecisionReason: reason,
+    },
+  });
+  const guard = (input) => hookDecision(input, claudeDeny);
+  expect(await guard({ session_id: "parent-sess-1", tool_name: "apply_patch" })).toEqual(
+    claudeDeny(GUARD_DENY_REASON),
   );
-  expect(malformed.code).toBe(0);
-  expect(malformed.stdout).toBe("");
-
-  const nullSession = await runHookScript(JSON.stringify({ session_id: null, tool_name: "Write" }));
-  expect(nullSession.code).toBe(0);
-  expect(nullSession.stdout).toBe("");
+  expect(await guard({ session_id: "other", tool_name: "Write" })).toBeNull();
+  // Unparseable input reaches the guard as null, as tryParseJson returns null.
+  expect(await guard(null)).toBeNull();
+  // A malformed session id throws inside the real lookup; the guard still allows.
+  expect(await guard({ session_id: "../../etc/passwd", tool_name: "Edit" })).toBeNull();
+  expect(await guard({ session_id: null, tool_name: "Write" })).toBeNull();
 });
 
 // Usefulness: covers the exact `command` string the installer renders into the
@@ -449,6 +446,7 @@ test("installed Claude hook command runs the guard through a shell", async () =>
   const targets = await buildTargets("claude", { home: PACKAGE_ROOT, packageRoot: PACKAGE_ROOT });
   const command = targets.settings[0].entry.hooks[0].command;
 
+  // Process: one shell run proves the registered command string imports and runs the guard.
   const denied = await runShellHookCommand(
     command,
     {},
@@ -461,13 +459,8 @@ test("installed Claude hook command runs the guard through a shell", async () =>
     permissionDecisionReason: GUARD_DENY_REASON,
   });
 
-  const allowed = await runShellHookCommand(
-    command,
-    {},
-    JSON.stringify({ session_id: "other", tool_name: "Write" }),
-  );
-  expect(allowed.code).toBe(0);
-  expect(allowed.stdout).toBe("");
+  // In process: the same command's allow path, with no second shell.
+  expect(await hookDecision({ session_id: "other", tool_name: "Write" }, () => ({}))).toBeNull();
 });
 
 // Usefulness: verifies the Copilot command-hook contract — the PascalCase
@@ -482,6 +475,7 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
   );
 
+  // Process: one run covers the Copilot hook entry point and its stdin payload channel.
   const denied = await runCopilotHookScript(
     JSON.stringify({
       hook_event_name: "PreToolUse",
@@ -496,34 +490,37 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
     permissionDecisionReason: expect.stringMatching(/orchestrator/),
   });
 
-  const allowed = await runCopilotHookScript(
-    JSON.stringify({
+  // In process: the same flat deny shape and every fail-open path, with no second hook process.
+  const copilotDeny = (reason) => ({
+    permissionDecision: "deny",
+    permissionDecisionReason: reason,
+  });
+  const guard = (input) => hookDecision(input, copilotDeny);
+  expect(await guard({ session_id: "parent-sess-1", tool_name: "Write" })).toEqual(
+    copilotDeny(GUARD_DENY_REASON),
+  );
+  expect(
+    await guard({
       hook_event_name: "PreToolUse",
       session_id: "unrelated-session",
       tool_name: "Write",
     }),
-  );
-  expect(allowed.code).toBe(0);
-  expect(allowed.stdout).toBe("");
-
-  const malformed = await runCopilotHookScript("not json");
-  expect(malformed.code).toBe(0);
-  expect(malformed.stdout).toBe("");
+  ).toBeNull();
+  // Unparseable input reaches the guard as null, as tryParseJson returns null.
+  expect(await guard(null)).toBeNull();
 
   const finish = await executeRoleCommand(parseRoleArgs(["finish", "--cwd", repo]), {
     agents: INIT_AGENTS,
     stdin: async () => FINISH_SUMMARY,
   });
   expect(finish.exitCode).toBe(0);
-  const afterFinish = await runCopilotHookScript(
-    JSON.stringify({
+  expect(
+    await guard({
       hook_event_name: "PreToolUse",
       session_id: "parent-sess-1",
       tool_name: "Edit",
     }),
-  );
-  expect(afterFinish.code).toBe(0);
-  expect(afterFinish.stdout).toBe("");
+  ).toBeNull();
 
   await initRunAt(repo);
   const abort = await executeRoleCommand(
@@ -531,15 +528,13 @@ test("Copilot hook denies the matching session with its PreToolUse JSON shape", 
     { agents: INIT_AGENTS },
   );
   expect(abort.exitCode).toBe(0);
-  const afterAbort = await runCopilotHookScript(
-    JSON.stringify({
+  expect(
+    await guard({
       hook_event_name: "PreToolUse",
       session_id: "parent-sess-1",
       tool_name: "Edit",
     }),
-  );
-  expect(afterAbort.code).toBe(0);
-  expect(afterAbort.stdout).toBe("");
+  ).toBeNull();
 });
 
 // Renders the Antigravity targets through the installer, so the behavioral
@@ -566,59 +561,54 @@ test("Antigravity hook denies guarded tools from the parent and stays silent oth
   const guarded = group.PreToolUse[0].matcher.split("|");
   expect(guarded.length).toBeGreaterThan(0);
 
-  for (const tool of guarded) {
-    const denied = await runAntigravityHookScript(
-      JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
-    );
-    expect(denied.code, tool).toBe(0);
-    expect(JSON.parse(denied.stdout), tool).toEqual({
-      decision: "deny",
-      reason: GUARD_DENY_REASON,
+  // Process: one run covers the Antigravity hook entry point and its stdin payload channel.
+  const denied = await runAntigravityHookScript(
+    JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: guarded[0] } }),
+  );
+  expect(denied.code).toBe(0);
+  expect(JSON.parse(denied.stdout)).toEqual({
+    decision: "deny",
+    reason: GUARD_DENY_REASON,
+  });
+
+  // In process: every registered tool, every allow path, and both terminal lifecycles.
+  const guard = (input) =>
+    hookDecision(input, ANTIGRAVITY_GUARD.deny, {
+      readSessionId: ANTIGRAVITY_GUARD.readSessionId,
+      isGuarded: ANTIGRAVITY_GUARD.isGuarded,
     });
+  for (const tool of guarded) {
+    expect(
+      await guard({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
+      tool,
+    ).toEqual({ decision: "deny", reason: GUARD_DENY_REASON });
   }
 
   // `manage_subagents` stays allowed so the parent can still list and terminate
   // a child; an unregistered tool is never the adapter's concern.
   for (const tool of ["manage_subagents", "run_command"]) {
-    const allowed = await runAntigravityHookScript(
-      JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
-    );
-    expect(allowed.code, tool).toBe(0);
-    expect(allowed.stdout, tool).toBe("");
+    expect(
+      await guard({ conversationId: "parent-sess-1", toolCall: { name: tool } }),
+      tool,
+    ).toBeNull();
   }
 
-  const otherSession = await runAntigravityHookScript(
-    JSON.stringify({ conversationId: "unrelated-session", toolCall: { name: "write_to_file" } }),
-  );
-  expect(otherSession.code).toBe(0);
-  expect(otherSession.stdout).toBe("");
-
-  const malformed = await runAntigravityHookScript("not json");
-  expect(malformed.code).toBe(0);
-  expect(malformed.stdout).toBe("");
-
-  const missingId = await runAntigravityHookScript(
-    JSON.stringify({ toolCall: { name: "write_to_file" } }),
-  );
-  expect(missingId.code).toBe(0);
-  expect(missingId.stdout).toBe("");
-
-  const nullId = await runAntigravityHookScript(
-    JSON.stringify({ conversationId: null, toolCall: { name: "write_to_file" } }),
-  );
-  expect(nullId.code).toBe(0);
-  expect(nullId.stdout).toBe("");
+  expect(
+    await guard({ conversationId: "unrelated-session", toolCall: { name: "write_to_file" } }),
+  ).toBeNull();
+  // Unparseable input reaches the guard as null, as tryParseJson returns null.
+  expect(await guard(null)).toBeNull();
+  expect(await guard({ toolCall: { name: "write_to_file" } })).toBeNull();
+  expect(await guard({ conversationId: null, toolCall: { name: "write_to_file" } })).toBeNull();
 
   const finish = await executeRoleCommand(parseRoleArgs(["finish", "--cwd", repo]), {
     agents: INIT_AGENTS,
     stdin: async () => FINISH_SUMMARY,
   });
   expect(finish.exitCode).toBe(0);
-  const afterFinish = await runAntigravityHookScript(
-    JSON.stringify({ conversationId: "parent-sess-1", toolCall: { name: "write_to_file" } }),
-  );
-  expect(afterFinish.code).toBe(0);
-  expect(afterFinish.stdout).toBe("");
+  expect(
+    await guard({ conversationId: "parent-sess-1", toolCall: { name: "write_to_file" } }),
+  ).toBeNull();
 });
 
 // Usefulness: verifies the installer registers a runnable guard command without a
@@ -637,6 +627,7 @@ test("Antigravity hook entry runs the shim without a quoted path", async () => {
 // file URL and stays silent with exit 0 when that URL is stale, because
 // Antigravity blocks a tool call on a non-zero exit and the guard must fail
 // open for every session.
+// Process: each run loads the shim in a fresh process, which is the import behavior under test.
 test("Antigravity shim loads the guard and fails open on a stale URL", async () => {
   await setup();
   await initRunForParent();

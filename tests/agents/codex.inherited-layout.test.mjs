@@ -6,6 +6,8 @@ import { expect, test, vi } from "vite-plus/test";
 import { stateRoot } from "../../src/lib/runstate.mjs";
 import { sessionRecordsRoot } from "../../src/lib/session-record.mjs";
 import { slotsRoot } from "../../src/lib/root-pins.mjs";
+import { INHERITED_TMPDIR_ENV } from "../../src/lib/inherited-tmpdir.mjs";
+import { isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import { OK_EVENTS, withInheritedTmp, fakeCodex, runTurn } from "./codex-tmpdir-helpers.mjs";
 
@@ -65,12 +67,14 @@ async function rootsSeenByChild(overrides = {}) {
 
 // Usefulness: verifies a child of a Codex turn shares the test-slot directory, the runs root, and
 // the session records with its parent, so the private temporary directory splits no host state.
+// Process: the child resolves the roots from its own environment, which a child process reports.
 test("a child of a codex turn resolves the same machine-wide roots as the parent", async () => {
   const { parentRoots, childRoots } = await rootsSeenByChild();
   expect(childRoots).toEqual(parentRoots);
 });
 
 // Usefulness: verifies a user value of a root override still wins in the child of a Codex turn.
+// Process: the child resolves the roots from its own environment, which a child process reports.
 test("a user root override wins in the child of a codex turn", async () => {
   const mine = join(tmpdir(), "my-roots");
   const { childRoots } = await rootsSeenByChild({
@@ -85,11 +89,28 @@ test("a user root override wins in the child of a codex turn", async () => {
   });
 });
 
-const CLASSIFY_ROOTS = (layouts) => `
-const { isEphemeralPackageRoot } = await import(${JSON.stringify(
-  new URL("../../src/install/package-root.mjs", import.meta.url).href,
-)});
-console.log(JSON.stringify(${JSON.stringify(layouts)}.map((root) => isEphemeralPackageRoot(root))));`;
+// The environment names that the installer classification reads. Every case sets TMPDIR, TEMP, and
+// TMP to the same directory, so the platform's own choice among them reaches one temporary root.
+const CLASSIFY_ENV = ["TMPDIR", "TEMP", "TMP", INHERITED_TMPDIR_ENV];
+
+// Classifies root layouts in this process with the temporary environment of a child turn, so a
+// case needs no classifier process. `os.tmpdir()` reads the live environment, which a replaced
+// `process.env` object does not update.
+function classifyWithEnv(env, layouts) {
+  const saved = CLASSIFY_ENV.map((name) => [name, process.env[name]]);
+  try {
+    for (const [name] of saved) {
+      if (env[name] === undefined) delete process.env[name];
+      else process.env[name] = env[name];
+    }
+    return layouts.map((layout) => isEphemeralPackageRoot(layout));
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
 
 // Usefulness: verifies the installer refusal of an ephemeral package-runner root holds inside a
 // Codex turn, so the private temporary directory cannot turn an inherited `yarn dlx` launcher
@@ -106,17 +127,11 @@ test("a child of a codex turn classifies package-runner roots as the parent does
     await mkdir(layouts[3], { recursive: true });
     let childAnswer;
     fakeCodex(async (_home, env) => {
-      const { stdout } = await execa(
-        process.execPath,
-        ["--input-type=module", "-e", CLASSIFY_ROOTS(layouts)],
-        { env },
-      );
-      childAnswer = JSON.parse(stdout);
+      childAnswer = classifyWithEnv(env, layouts);
       return { stdout: OK_EVENTS, stderr: "" };
     });
-    const { isEphemeralPackageRoot } = await import("../../src/install/package-root.mjs");
     const parentAnswer = await withInheritedTmp(root, async () => {
-      const answer = layouts.map((layout) => isEphemeralPackageRoot(layout));
+      const answer = classifyWithEnv({ ...process.env }, layouts);
       await runTurn();
       return answer;
     });
@@ -137,21 +152,13 @@ test("a delimiter in an inherited temporary path keeps the installer refusal in 
   );
   try {
     const layout = (base) => join(base, "xfs-abc123", "dlx-4242", "node_modules", "pkg");
-    const classify = async (env, layouts) =>
-      JSON.parse(
-        (
-          await execa(process.execPath, ["--input-type=module", "-e", CLASSIFY_ROOTS(layouts)], {
-            env,
-          })
-        ).stdout,
-      );
     const answers = {};
     fakeCodex(async (home, env) => {
-      answers.outer = await classify(env, [layout(root)]);
+      answers.outer = classifyWithEnv(env, [layout(root)]);
       // The nested turn runs in a process that inherited the environment of the outer turn.
       Object.assign(process.env, env);
       fakeCodex(async (_nestedHome, nestedEnv) => {
-        answers.nested = await classify(nestedEnv, [layout(root), layout(home)]);
+        answers.nested = classifyWithEnv(nestedEnv, [layout(root), layout(home)]);
         return { stdout: OK_EVENTS, stderr: "" };
       });
       await runTurn();
@@ -222,15 +229,13 @@ const INHERITED_SHAPES = [
 
 // Usefulness: verifies the installer refuses every root that it refuses outside a turn, for every
 // shape of the inherited list, in a child turn and in a nested turn. A malformed value fails
-// closed, and a relative entry gets one meaning for every child working directory.
+// closed, and a relative entry is forwarded as an absolute path, so no child directory moves it.
 test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, build) => {
   const root = await mkdtemp(join(tmpdir(), "codex-tmp-"));
-  const other = join(root, "other-cwd");
   const saved = Object.fromEntries(
     ["TMPDIR", "TEMP", "TMP", INHERITED].map((name) => [name, process.env[name]]),
   );
   try {
-    await mkdir(other);
     const { raw, ancestors, invalid = false, directlyInvalid = invalid } = await build(root);
     const unrelated = join(root, "unrelated");
     const layouts = [root, ...ancestors, unrelated].map(yarnLayout);
@@ -238,23 +243,14 @@ test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, 
     await mkdir(stable, { recursive: true });
     layouts.push(stable);
     const expected = layouts.map((_, i) => (invalid ? true : i <= ancestors.length));
-    const classify = async (env) =>
-      JSON.parse(
-        (
-          await execa(process.execPath, ["--input-type=module", "-e", CLASSIFY_ROOTS(layouts)], {
-            env,
-            cwd: other,
-          })
-        ).stdout,
-      );
     const seen = {};
     fakeCodex(async (home, env) => {
       seen.childEnv = env;
-      seen.child = await classify(env);
+      seen.child = classifyWithEnv(env, layouts);
       // The nested turn runs in a process that inherited the environment of the outer turn.
       Object.assign(process.env, env);
       fakeCodex(async (_nestedHome, nestedEnv) => {
-        seen.nested = await classify(nestedEnv);
+        seen.nested = classifyWithEnv(nestedEnv, layouts);
         return { stdout: OK_EVENTS, stderr: "" };
       });
       await runTurn();
@@ -263,7 +259,7 @@ test.each(INHERITED_SHAPES)("the installer refusal holds for %s", async (_name, 
     await withInheritedTmp(root, async () => {
       if (raw === undefined) delete process.env[INHERITED];
       else process.env[INHERITED] = raw;
-      seen.direct = await classify({ ...process.env });
+      seen.direct = classifyWithEnv({ ...process.env }, layouts);
       await runTurn();
     });
     expect(seen.direct.at(-1)).toBe(directlyInvalid);

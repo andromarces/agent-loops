@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
+import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../src/lib/exec.mjs";
 import { statePaths, writeState } from "../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
@@ -197,9 +197,7 @@ test("set-model refuses an OpenCode model variant that conflicts with the stored
 // Usefulness: verifies a spawned child of the run cannot change the model, as it cannot run extend.
 test("set-model refuses a child caller of the run", async () => {
   const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"] });
-  const script = `console.log(process.env.${SPAWNED_RUN_ENV})`;
-  const spawned = await exec(process.execPath, ["-e", script], { role: "worker", cwd: repo });
-  vi.stubEnv(SPAWNED_RUN_ENV, spawned.stdout.trim());
+  vi.stubEnv(SPAWNED_RUN_ENV, spawnedRunMarker(repo));
   const refused = await setModel(repo, "--reviewer-model", "gpt-6.1-sol");
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("child role");
