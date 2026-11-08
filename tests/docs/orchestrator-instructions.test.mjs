@@ -1487,13 +1487,13 @@ test.each([
   expect(text).toContain("workspace-write");
 });
 
+const REVIEWER_SCOPE =
+  "must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed";
+
 // Usefulness: verifies requirement "every surface that states the reviewer file-change rule states
 // the scoped rule, not a blanket ban" (issue #837). A reviewer or an operator reading the README,
 // the architecture reference, or the orchestrator role list is then not told that a test run with
 // ignored output is forbidden. A restored blanket phrase fails here.
-const REVIEWER_SCOPE =
-  "must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed";
-
 test.each([
   ["README.md", () => readRepoFile("README.md")],
   ["docs/reference/architecture.md", () => readRepoFile("docs/reference/architecture.md")],
@@ -1506,6 +1506,8 @@ test.each([
   expect(text).toContain(REVIEWER_SCOPE);
 });
 
+// Usefulness: verifies no reviewed surface restates the reviewer rule as a blanket file ban
+// (issue #837), so a reviewer may still write ignored output.
 test.each([
   ["the user docs", readUserDocs],
   ["docs/orchestrator-instructions.md", () => readInstructions()],

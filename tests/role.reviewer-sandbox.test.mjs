@@ -213,6 +213,8 @@ const PATHS = [
 // a refusal that names the field, no reviewer turn, and no state change. `null` was read as the
 // legacy fallback before, so a probe with it passed the check.
 describe.each(PATHS)("%s with an invalid recorded mode", (_name, call) => {
+  // Usefulness: verifies an invalid recorded mode is refused on each state-reading path with a
+  // named field, no reviewer turn, and no state change.
   test.each(INVALID_MODES)("refuses %j", async (value) => {
     const { repo, reviewer, agents } = await start();
     await corrupt(repo, value);
@@ -259,6 +261,8 @@ describe("abort over an invalid recorded mode", () => {
   // timeout. A case never calls `cleanup`: only `afterEach` does, so a case that outlives its
   // timeout cannot delete the repo or runs root of the next case.
   const ABORT_FLAGS = [[], [FLAG, "read-only"], [ALIAS]];
+  // Usefulness: verifies each invalid recorded value still ends through abort with lifecycle
+  // aborted, with or without a mode flag.
   test.each(INVALID_MODES.flatMap((value) => ABORT_FLAGS.map((flags) => [value, flags])))(
     "ends a run that records %j with flags %j",
     async (value, flags) => {
@@ -274,6 +278,8 @@ describe("abort over an invalid recorded mode", () => {
     },
   );
 
+  // Usefulness: verifies abort still ends a run whose reviewer is not Codex, so the refusal of
+  // other operations cannot strand it.
   test("ends the run of a reviewer that is not Codex", async () => {
     const repo = await newRunRepo();
     const other = INIT.map((v) => (v === "codex" ? "fake2" : v));

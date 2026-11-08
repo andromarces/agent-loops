@@ -175,10 +175,10 @@ test("records the absence when no page names a required-status rule", async () =
   expect(result).toEqual({ ok: true, commit: HEAD, noRequiredChecks: true });
 });
 
-// An empty page beside a page that holds rules settles nothing, because GitHub
-// stops paginating when there is no next page, so a partial read must not be
-// classified from the pages that did arrive (issue #336 review). The page-number read hands the
-// classifier every page it received, so a full page then an empty page keeps this class (#1033).
+// Usefulness: verifies an empty ruleset page beside a page that holds rules settles nothing
+// (issue #336 review), because GitHub stops paginating when there is no next page. A partial read
+// must not be classified from the pages that did arrive, so a full page then an empty page keeps
+// this class (#1033).
 test("refuses the empty union when a ruleset page is empty beside a page with rules", async () => {
   const result = await checkCi({
     pr: 42,

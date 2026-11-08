@@ -1595,8 +1595,12 @@ const expectMutationLoggedOnce = async (action) => {
   }
 };
 
+// Usefulness: verifies a reviewer mutation is logged once, so a duplicate line does not hide a
+// second mutation or drown the first.
 test("mutation by the reviewer is logged exactly once", () =>
   expectMutationLoggedOnce("run_reviewer"));
 
+// Usefulness: verifies an orchestrator mutation is logged once, so the shared mutation check
+// reports one line per detection.
 test("mutation by the orchestrator is logged exactly once", () =>
   expectMutationLoggedOnce("run_worker"));

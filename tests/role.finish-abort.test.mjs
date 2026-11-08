@@ -223,12 +223,15 @@ describe("finish refusal for a summary that is not valid JSON", () => {
     return result.payload.error.slice(PREFIX.length);
   }
 
+  // Usefulness: verifies a malformed escape reports the parser diagnosis and position without
+  // echoing the input.
   test("a malformed escape names the parser diagnosis and position without echoing the input", async () => {
     const diagnosis = await refuse(String.raw`{"changed":"C:\x"}`);
     expect(diagnosis).toMatch(/^Bad escaped character at position \d+/);
     expect(diagnosis).not.toContain("changed");
   });
 
+  // Usefulness: verifies each malformed JSON shape reports the parser diagnosis and position.
   test.each([
     ['{"a":"b', "Unterminated string"],
     ['{"a":1 "b":2}', "Expected ',' or '}' after property value"],
@@ -238,22 +241,26 @@ describe("finish refusal for a summary that is not valid JSON", () => {
     expect(await refuse(text)).toMatch(new RegExp(`^${phrase} at position \\d+`));
   });
 
+  // Usefulness: verifies an empty summary reports the end-of-input diagnosis.
   test("an empty summary names the end-of-input diagnosis", async () => {
     expect(await refuse("")).toBe("Unexpected end of JSON input");
   });
 
+  // Usefulness: verifies a bare token gets a non-empty diagnosis and is not echoed.
   test("a bare token is not echoed", async () => {
     const diagnosis = await refuse("Q");
     expect(diagnosis.length).toBeGreaterThan(0);
     expect(diagnosis).not.toContain("Q");
   });
 
+  // Usefulness: verifies an undefined or NaN text gets a non-empty diagnosis and is not echoed.
   test.each(["undefined", "NaN"])("%s still gets a non-empty diagnosis", async (text) => {
     const diagnosis = await refuse(text);
     expect(diagnosis.trim().length).toBeGreaterThan(0);
     expect(diagnosis).not.toContain(text);
   });
 
+  // Usefulness: verifies a secret-looking string with a syntax error is not echoed in the diagnosis.
   test("a secret-looking string with a syntax error is not echoed", async () => {
     const diagnosis = await refuse('{"token":"sk-live-abc123SECRET" oops}');
     expect(diagnosis.length).toBeGreaterThan(0);

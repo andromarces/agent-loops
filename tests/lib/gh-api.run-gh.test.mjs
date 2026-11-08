@@ -47,6 +47,8 @@ describe("the gh runner against the installed execa", () => {
     }
   });
 
+  // Usefulness: verifies the installed execa accepts every option the gh runner passes, so a real
+  // read does not fail on an option name that a unit stub would accept.
   test("the installed execa accepts the options the gh runner passes", async () => {
     vi.stubEnv("PATH", bin);
     vi.stubEnv("PATHEXT", ".EXE");

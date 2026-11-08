@@ -599,8 +599,8 @@ test.each(["--version", "-V"])("%s prints the package version", async (flag) => 
   }
 });
 
-// Process-level smoke test: starts the CLI entry point, so `--help` must print to the real stdout
-// and exit 0. The help text itself is checked in process below.
+// Usefulness: verifies the CLI entry point prints --help to the real stdout and exits 0, so a
+// spawn of the installed binary shows its flags. The help text itself is checked in process below.
 test("--help lists --version and role --help", async () => {
   const result = await execa(process.execPath, [CLI, "--help"]);
   expect(result.exitCode).toBe(0);

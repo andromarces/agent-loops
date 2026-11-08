@@ -146,6 +146,8 @@ describe("validateAction rejections", () => {
     expect(result.error).toBe("finish requires a summary object.");
   });
 
+  // Usefulness: verifies each required summary key is refused when blank, so a finish cannot record
+  // an empty field as done.
   test.each(["changed", "verified", "deferred", "notDone", "open"])(
     "rejects finish when %s summary field is missing or empty",
     (key) => {
@@ -184,8 +186,6 @@ describe("validateAction rejections", () => {
     },
   );
 
-  // Usefulness: verifies requirement "a finish with an unknown key is refused, not dropped" (#1021):
-  // a misspelled unresolvedCompare marker must not read as a verified finish.
   const FULL_SUMMARY = {
     changed: "all",
     verified: "tests",
@@ -193,6 +193,8 @@ describe("validateAction rejections", () => {
     notDone: "none",
     open: "none",
   };
+  // Usefulness: verifies requirement "a finish with an unknown key is refused, not dropped" (#1021):
+  // a misspelled unresolvedCompare marker must not read as a verified finish.
   test.each(["notNotDone", "unresolvedcompare", "unresolved_compare"])(
     "rejects finish with unknown summary key %s and names it",
     (key) => {
@@ -261,6 +263,8 @@ describe("validateAction rejections", () => {
 describe("actionFormats", () => {
   const formats = actionFormats({ worker: "w", reviewer: "r", summary: "s", reason: "x" });
 
+  // Usefulness: verifies every rendered action format parses as JSON that validateAction accepts,
+  // so a format line and the validator cannot drift.
   test("renders every action format as JSON that validateAction accepts", () => {
     const lines = [
       formats.runWorker,
@@ -274,10 +278,12 @@ describe("actionFormats", () => {
     }
   });
 
+  // Usefulness: verifies the finish format carries one summary key per SUMMARY_KEYS entry, in order.
   test("renders one summary key per SUMMARY_KEYS entry, in order", () => {
     expect(Object.keys(JSON.parse(formats.finish).summary)).toEqual(SUMMARY_KEYS);
   });
 
+  // Usefulness: verifies the unresolved finish format adds only the unresolvedCompare marker.
   test("adds only the unresolvedCompare marker to the finish format", () => {
     expect(JSON.parse(formats.finishUnresolved)).toEqual({
       ...JSON.parse(formats.finish),

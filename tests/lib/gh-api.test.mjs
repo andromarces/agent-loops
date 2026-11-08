@@ -35,6 +35,8 @@ describe("isTransportFailure", () => {
     expect(isTransportFailure(failed('Post "https://api.github.com/graphql": EOF'))).toBe(true);
   });
 
+  // Usefulness: verifies a status line, a reply body, or unknown text stays terminal, so the wait
+  // never retries a failure it cannot classify as a transport failure (issue #1312).
   it("refuses a text with an HTTP status, a reply body, or no known transport wording", () => {
     expect(
       isTransportFailure(failed(`HTTP 502: Bad Gateway (https://x): ${CONNECTION_RESET}`)),

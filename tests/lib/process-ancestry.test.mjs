@@ -68,6 +68,8 @@ test("nearestHarness resolves the running harness and fails closed when absent",
   expect(await nearestHarness({ startPid: 0, readProcesses })).toBe(null);
 });
 
+// Usefulness: verifies the binary-name mapping accepts each harness binary and rejects a
+// non-harness name, so process detection cannot attribute a shell to a harness.
 test("harnessForProcessName maps harness binaries and rejects others", () => {
   expect(harnessForProcessName("codex.exe")).toBe("codex");
   expect(harnessForProcessName("C:\\tools\\opencode.cmd")).toBe("opencode");

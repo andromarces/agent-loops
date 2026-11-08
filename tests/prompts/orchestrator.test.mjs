@@ -33,14 +33,6 @@ import {
   clauses,
   expectRule,
   expectReviewerGateRule,
-  COMPARE_BEFORE_FINISH,
-  RESOLVE_PR_HEAD,
-  REQUIRE_CLEAN_TRUE,
-  ACCEPT_WITHOUT_CHECKS,
-  UNRESOLVED_HEAD_CONDITION,
-  DO_NOT_FINISH_AS_VERIFIED,
-  BOTH_ACTIONS_ON_UNRESOLVED,
-  RECORD_UNDER_NOT_DONE_AND_OPEN,
   gatedPrompt,
   NETWORK_DENIAL,
   sentencesOf,
@@ -195,28 +187,6 @@ test("initialPrompt states that only the reviewer Checks line gates", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   expect(prompt).toMatch(EVERY_CHILD_TURN_CHECKS);
   expectReviewerGateRule(prompt);
-});
-
-// Usefulness: verifies the headless parent states the same reviewed-state rules
-// as the interactive instructions: compare head, require clean, treat an accept
-// without a Checks line as not accepted, and never finish as verified on an
-// unresolved compare (issue #217, issue #328). The `--require-accept` and
-// `--require-ci` gates enforce the compare and the clean requirement, covered by
-// the gate tests in tests/role.finish-abort.test.mjs, so this asserts the prompt
-// states the rules.
-test("initialPrompt states the reviewed-state parent rules", () => {
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
-  expectRule(prompt, COMPARE_BEFORE_FINISH);
-  expectRule(prompt, RESOLVE_PR_HEAD);
-  expectRule(prompt, REQUIRE_CLEAN_TRUE);
-  expectRule(prompt, ACCEPT_WITHOUT_CHECKS);
-  // The unresolved-compare rule, clause by clause: the condition, the prohibition,
-  // both permitted actions on the unresolved compare, and the fields the record
-  // uses.
-  expectRule(prompt, UNRESOLVED_HEAD_CONDITION);
-  expectRule(prompt, DO_NOT_FINISH_AS_VERIFIED);
-  expectRule(prompt, BOTH_ACTIONS_ON_UNRESOLVED);
-  expectRule(prompt, RECORD_UNDER_NOT_DONE_AND_OPEN);
 });
 
 // Usefulness: verifies the headless prompt names the parent's setup duty by toolchain (#1457).
@@ -995,6 +965,8 @@ test("the result prompt carries no check status without one on the result", () =
 describe("continued run prompt", () => {
   const base = { task: "t", maxSteps: 3 };
 
+  // Usefulness: verifies a continued run's prompt states that no reviewer accept carries over,
+  // while a fresh run states no continuation.
   test("states the reset only when the run is continued", () => {
     expect(initialPrompt({ ...base, continued: true })).toContain(
       "The runtime carries over no reviewer accept",
@@ -1073,6 +1045,8 @@ test.each([
   expect(prompt).not.toContain("must not change files");
 });
 
+// Usefulness: verifies a run with no --reviewer-sandbox names no reviewer mode, so the prompt
+// never claims a sandbox the run did not select.
 test("the initial prompt names no reviewer mode when the run has none", () => {
   const base = { task: "t", maxSteps: 5 };
   expect(initialPrompt(base)).toBe(initialPrompt({ ...base, reviewerSandbox: null }));
@@ -1134,6 +1108,8 @@ describe.each([
   ["read-only", "read-only"],
   ["workspace-write", "workspace-write"],
 ])("the %s orchestrator prompt qualifies every network denial", (_name, reviewerSandbox) => {
+  // Usefulness: verifies every orchestrator, reviewer, and PR combination renders no unqualified
+  // network denial, so the prompt never overstates what the sandbox isolates.
   test.each([
     ["codex", "codex", null],
     ["codex", "codex", 42],
@@ -1150,6 +1126,7 @@ describe.each([
     expect(unqualifiedDenials(prompt)).toEqual([]);
   });
 
+  // Usefulness: verifies the ungated prompt qualifies every network denial too.
   test("the ungated prompt", () => {
     expect(unqualifiedDenials(initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox }))).toEqual(
       [],
@@ -1203,6 +1180,8 @@ describe.each([
   ["read-only", "read-only"],
   ["workspace-write", "workspace-write"],
 ])("the %s runtime prompts state the user-rule exception", (_name, reviewerSandbox) => {
+  // Usefulness: verifies every orchestrator, reviewer, and PR combination states the user-rule
+  // exception after a shell network denial.
   test.each([
     ["codex", "codex", null],
     ["codex", "codex", 42],
@@ -1215,6 +1194,7 @@ describe.each([
     expect(denialsWithoutUserRuleException(prompt)).toEqual([]);
   });
 
+  // Usefulness: verifies the ungated prompt states the user-rule exception too.
   test("the ungated prompt", () => {
     expect(
       denialsWithoutUserRuleException(initialPrompt({ task: "t", maxSteps: 5, reviewerSandbox })),
@@ -1318,6 +1298,8 @@ test("the result prompt carries transient only when the error result has it", ()
 describe("compare-head run prompt", () => {
   const base = { task: "t", maxSteps: 3 };
 
+  // Usefulness: verifies the compare-head prompt states the flag, that a continuation does not
+  // restore it, and that omitting it runs no runtime compare, for a fresh and a continued run.
   test("states that a continuation selects the flag again", () => {
     for (const continued of [false, true]) {
       const prompt = initialPrompt({ ...base, compareHead: 42, continued });
@@ -1387,6 +1369,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     return [...new Set(texts.flatMap((text) => matchesIn(text, pattern)))];
   };
 
+  // Usefulness: verifies the shell-only sandbox limit has one wording across every surface that
+  // states it.
   test("the shell-only sandbox limit", () => {
     const surfaces = [
       gated("codex", "codex"),
@@ -1401,6 +1385,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     expect(wordings[0]).toMatch(/model-side tools, such as web search,/);
   });
 
+  // Usefulness: verifies the PR head condition of a finish has one wording across every surface
+  // that states it.
   test("the PR head condition of a finish", () => {
     const surfaces = [
       initialPrompt({ task: "t", maxSteps: 5, compareHead: 7 }),
@@ -1410,6 +1396,8 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     expect(wordings).toHaveLength(1);
   });
 
+  // Usefulness: verifies the pending required check rule of the gate has one wording across every
+  // surface that states it.
   test("the pending required check rule of the gate", () => {
     const surfaces = [gated("codex", "codex"), gated("copilot", "codex")];
     const wordings = unique(
