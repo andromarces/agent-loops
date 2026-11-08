@@ -27,6 +27,19 @@ export class SnapshotError extends Error {
 export const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
 
 /**
+ * Reads the work tree top level of `cwd` and removes the one line feed that Git prints. A path that
+ * ends in a carriage return or a space stays whole. Returns the read result. `read` is the
+ * `gitRead`-shaped function to call.
+ */
+export async function readTopLevel(cwd, { read = gitRead, ...options } = {}) {
+  const result = await read(cwd, ["rev-parse", "--show-toplevel"], {
+    ...options,
+    stripFinalNewline: false,
+  });
+  return { ...result, stdout: stripLf(result.stdout) };
+}
+
+/**
  * Parses `git worktree list --porcelain -z` into `{ path, bare, locked, reason }` entries, in Git's
  * order. Git ends every field with NUL, so a path that holds a newline arrives whole. A record is a
  * run of `<label> <value>` fields closed by an empty field. `locked` alone is a lock with no

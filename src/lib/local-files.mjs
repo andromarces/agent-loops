@@ -12,6 +12,7 @@ import {
   gitRead,
   gitReadError,
   parseWorkTreeList,
+  readTopLevel,
   stripLf,
   WORK_TREE_READ_TIMEOUT_MS,
 } from "./git-read.mjs";
@@ -239,7 +240,7 @@ async function locateWorkTrees(cwd, read, { quiet = false } = {}) {
   if (hasControlCharacter(cwd)) {
     return refuse("--cwd");
   }
-  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  const top = (await readTopLevel(cwd, { read })).stdout;
   if (hasControlCharacter(top)) {
     return refuse("the work tree path");
   }
@@ -351,7 +352,7 @@ async function ignoredNames(read, root, names) {
  * path that Git could print cut short is not checked.
  */
 async function ownWorkTree(cwd, read) {
-  const top = stripLf((await read(cwd, ["rev-parse", "--show-toplevel"])).stdout);
+  const top = (await readTopLevel(cwd, { read })).stdout;
   if (hasControlCharacter(cwd) || hasControlCharacter(top)) {
     throw new Error(
       "--copy-local-path cannot be checked: the work tree path holds a control character",

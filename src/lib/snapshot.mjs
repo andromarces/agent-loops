@@ -4,7 +4,7 @@ import { lstat, open, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { GIT_READ_TIMEOUT_MS, gitRead, SnapshotError } from "./git-read.mjs";
+import { GIT_READ_TIMEOUT_MS, gitRead, readTopLevel, SnapshotError } from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
@@ -140,11 +140,11 @@ const gitIn = (cwd, args, bound) => gitRead(cwd, args, { ...bound, allowExit: [0
 
 /** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
 export async function workTreeRoot(cwd, bound) {
-  const rootResult = await gitRead(cwd, ["rev-parse", "--show-toplevel"], bound);
+  const rootResult = await readTopLevel(cwd, bound);
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
-  return rootResult.stdout.trim();
+  return rootResult.stdout;
 }
 
 // Files that one snapshot hashes at a time, so a large work tree never opens every file at once.

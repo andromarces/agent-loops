@@ -3,7 +3,12 @@
 // precondition of the command that takes or drops it.
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { gitRead, parseWorkTreeList, stripLf, WORK_TREE_READ_TIMEOUT_MS } from "./git-read.mjs";
+import {
+  gitRead,
+  parseWorkTreeList,
+  readTopLevel,
+  WORK_TREE_READ_TIMEOUT_MS,
+} from "./git-read.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 
 /** The Git lock reason of one run, as the removal step and a maintainer read it. */
@@ -38,7 +43,17 @@ async function canonicalPath(path) {
  * lock state. `main` is true for the main work tree, which Git refuses to lock.
  */
 async function locate(cwd, readGit, signal) {
-  const root = stripLf(await readOutput(cwd, ["rev-parse", "--show-toplevel"], readGit, signal));
+  const rootResult = await readTopLevel(cwd, {
+    read: readGit,
+    signal,
+    timeoutMs: WORK_TREE_READ_TIMEOUT_MS,
+  });
+  if (rootResult.exitCode !== 0) {
+    throw Object.assign(new Error("git rev-parse failed"), {
+      exitCode: rootResult.exitCode,
+    });
+  }
+  const root = rootResult.stdout;
   if (root === "") {
     throw new Error("cwd has no work tree root");
   }
