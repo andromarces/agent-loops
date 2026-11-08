@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
 
@@ -64,15 +64,15 @@ function blocksOf(text) {
 }
 
 /** Returns the problems of every ADR link in a supersede relation. */
-function adrLinkProblems(adr, relations, names) {
+function adrLinkProblems(adr, relations, byPath) {
   const problems = new Set();
   for (const link of [...relations.supersedes, ...relations.supersededBy]) {
-    if (!names.has(link.fileName)) {
-      problems.add(`ADR ${adr.number} supersede link targets ${link.fileName}, not an ADR file`);
-    }
-    if (link.displayed && link.fileNumber && link.displayed !== link.fileNumber) {
+    const target = byPath.get(link.path);
+    if (!target) {
+      problems.add(`ADR ${adr.number} supersede link targets ${link.destination}, not an ADR file`);
+    } else if (link.displayed && link.displayed !== target.number) {
       problems.add(
-        `ADR ${adr.number} link text names ADR ${link.displayed} but links ${link.fileName}`,
+        `ADR ${adr.number} link text names ADR ${link.displayed} but links ${target.name}`,
       );
     }
   }
@@ -109,13 +109,14 @@ function sentencesOf(line) {
   return line.split(/(?<=[.!?])\s+/);
 }
 
-/** Resolves one Markdown link to its destination ADR file name and displayed ADR number. */
+/** Resolves one Markdown link against the ADR directory and reads its displayed ADR number. */
 function linkParts(match) {
   const destination = match[2].trim().split("#")[0].split("?")[0];
-  const fileName = destination.split("/").pop();
+  const path = resolve(adrDir, destination);
   return {
-    fileName,
-    fileNumber: /^\d{4}-.+\.md$/.test(fileName) ? fileName.slice(0, 4) : null,
+    destination,
+    path,
+    fileName: basename(path),
     displayed: match[1].match(/\bADR (\d{4})\b/)?.[1] ?? null,
     index: match.index,
   };
@@ -185,17 +186,18 @@ test("the ADR index and supersede links follow the ADR rules", async () => {
     }
   }
 
-  const names = new Set(adrs.map((adr) => adr.name));
-  const byName = new Map(adrs.map((adr) => [adr.name, adr]));
+  const byPath = new Map(adrs.map((adr) => [join(adrDir, adr.name), adr]));
   const relations = new Map(adrs.map((adr) => [adr.number, relationsOf(adr)]));
   for (const adr of adrs) {
     const adrRelations = relations.get(adr.number);
-    for (const problem of adrLinkProblems(adr, adrRelations, names)) problems.add(problem);
+    for (const problem of adrLinkProblems(adr, adrRelations, byPath)) problems.add(problem);
     for (const link of adrRelations.supersededBy) {
-      const target = byName.get(link.fileName);
+      const target = byPath.get(link.path);
       if (!target) continue;
       const targetRelations = relations.get(target.number);
-      if (!targetRelations.supersedes.some((backlink) => backlink.fileName === adr.name)) {
+      if (
+        !targetRelations.supersedes.some((backlink) => backlink.path === join(adrDir, adr.name))
+      ) {
         problems.add(`ADR ${target.number} has no Supersedes backlink to ADR ${adr.number}`);
       }
     }
@@ -211,7 +213,11 @@ test("an ADR supersede link must target an existing ADR file", () => {
     name: "0068-example.md",
     text: "## Status\n\nsuperseded\n\nSuperseded by [ADR 0076](0076-no-such-adr.md) and [ADR 0076](0076-notes.txt).\n",
   };
-  const problems = adrLinkProblems(adr, relationsOf(adr), new Set(["0068-example.md"]));
+  const problems = adrLinkProblems(
+    adr,
+    relationsOf(adr),
+    new Map([[join(adrDir, "0068-example.md"), { number: "0068", name: "0068-example.md" }]]),
+  );
   expect(problems).toHaveLength(2);
 });
 
@@ -235,6 +241,21 @@ test("a plain paragraph under Supersedes counts as a backlink", () => {
   };
   const links = relationsOf(adr).supersedes.map((link) => link.fileName);
   expect(links).toEqual(["0081-example.md"]);
+});
+
+// Usefulness: resolves links against the ADR directory, so a wrong directory or parent path fails.
+test("an ADR link resolves against the ADR directory", () => {
+  const adr = {
+    number: "0068",
+    name: "0068-example.md",
+    text: "## Status\n\nsuperseded\n\nSuperseded by [ADR 0076](0076-example.md), [ADR 0076](adr/0076-example.md), and [ADR 0076](../0076-example.md).\n",
+  };
+  const byPath = new Map([
+    [join(adrDir, "0068-example.md"), { number: "0068", name: "0068-example.md" }],
+    [join(adrDir, "0076-example.md"), { number: "0076", name: "0076-example.md" }],
+  ]);
+  const problems = adrLinkProblems(adr, relationsOf(adr), byPath);
+  expect(problems).toHaveLength(2);
 });
 
 // Usefulness: verifies ADR 0095 supersedes each temporary directory reporting rule and keeps the safety rules (issue #1616).
