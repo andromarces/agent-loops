@@ -49,8 +49,8 @@ composes those rules and changes only the slot, blocking, answer, and notificati
 
 Every transition that ADR 0106 records as `needs-owner` now creates a pending decision. The
 decision holds a unique id, the issue, the reason, the evidence, two or more option keys, and one
-recommended option. The id is `<batch id>-issue-<issue>-<attempt>-<nonce>`, so it is unique
-across batches and never reused.
+recommended option. The id is `<batch id>-issue-<issue>-<attempt>-<reason hash>`, so it is
+unique across batches and stable for one state.
 
 The loop checkpoint keeps the decision id in `decision`. A later `needs-owner` transition with
 the same reason reuses that pending decision. A changed reason creates a new decision, because the
@@ -217,11 +217,11 @@ The implementation passes these checks:
    that stalls the batch, and the issue asks for the release.
 2. **Answer through a GitHub comment or label.** Rejected. The repository forbids a new label
    without authorization, and a remote write is not atomic.
-3. **Poll every blocked issue in the launch path.** Rejected. A failed read would pause the whole
+3. **Poll every blocked issue in the launch path.** Rejected. A failed read pauses the whole
    queue. The waiting poll keeps the queue live and retries its own read.
 4. **Run a detached notifier.** Rejected. It can outlive the command. One bounded child is enough.
 5. **Interpolate notification text into the script.** Rejected. A quote or a shell metacharacter
-   would change the command. An argument vector and an environment value carry the text safely.
+   changes the command. An argument vector and an environment value carry the text safely.
 6. **Resolve a merge wait with a new start command.** Rejected. The issue asks for automatic
    continuation in the running batch, with no new start.
 

@@ -58,6 +58,8 @@ See [Architecture Decision Records](https://github.com/andromarces/agent-loops/b
 
 `agent-loop batch start` is one foreground supervisor for an explicit set of issues. It creates a linked work tree and branch per issue, runs `--setup-cmd` once in each, and then launches one headless child `node <cli> --cwd <work tree>` per issue, at most `--loops` live. The child is the same headless runtime, so the review gate, the required-check gate, and the test slot are unchanged. The supervisor records local claims in `<runs root>/batches/claims/` and one checkpoint per loop under `<runs root>/batches/<batch id>/`, resumes an interrupted batch with the remaining step budget, reconciles an uncertain GitHub state before a repeat, and removes only a work tree whose push is proved. It creates no label, comment, issue edit, or pull request. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
 
+A `needs-owner` loop becomes a pending decision and releases its slot. A blocked issue waits on a monotonic poll and launches after its blockers close. `agent-loop batch answer` binds one option to one decision through an exclusive file. A pending decision and a merge wait survive `batch resume`. The supervisor sends bounded desktop notifications on macOS and Windows. [ADR 0109](https://github.com/andromarces/agent-loops/blob/main/adr/0109-release-batch-slots-on-owner-decisions.md) is the design of those parts.
+
 ## Supported agents
 
 The controller supports these CLI names:
