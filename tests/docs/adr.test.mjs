@@ -15,27 +15,6 @@ const INDEX_ENTRY = /^- (\d{4}) — \[[^\]]+\]\(([^)]+)\) — (\S+) — /;
 const ADR_LINK = /\[([^\]]*)\]\(([^)]+)\)/g;
 const SUPERSEDED_BY = /\b(?:partially )?superseded by\b/i;
 const SUPERSEDES_STATEMENT = /^(?:this adr(?: also)? |it(?: also)? )?(?:partially )?supersedes\b/i;
-const CLAUSE_LIST_WORDS = new Set([
-  "a",
-  "all",
-  "also",
-  "an",
-  "any",
-  "each",
-  "every",
-  "its",
-  "of",
-  "or",
-  "part",
-  "partially",
-  "parts",
-  "some",
-  "the",
-  "their",
-  "these",
-  "this",
-  "those",
-]);
 
 /** Removes a list marker or bold wrapper before a supersede statement is matched. */
 function statementText(sentence) {
@@ -132,12 +111,18 @@ function sentencesOf(line) {
 
 /**
  * Returns the index where the clause that a leading supersede phrase governs ends.
- * A conjunction followed by a new predicate, or a semicolon, ends that clause.
+ * A conjunction that does not introduce a link, or a semicolon, ends that clause.
+ * Text inside a link is not a clause boundary.
  */
 function supersedeClauseEnd(sentence) {
-  const breakPattern = /;|[,;]?\s+(?:and|but|while|whereas|although|yet)\s+([a-z][a-z-]*)/gi;
+  const links = [...sentence.matchAll(ADR_LINK)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+  const breakPattern = /;|[,;]?\s+(?:and|but|while|whereas|although|yet)\s+(\S)/gi;
   for (const match of sentence.matchAll(breakPattern)) {
-    if (!CLAUSE_LIST_WORDS.has(match[1]?.toLowerCase())) return match.index;
+    if (links.some((link) => match.index >= link.start && match.index < link.end)) continue;
+    if (match[1] !== "[") return match.index;
   }
   return sentence.length;
 }
@@ -275,6 +260,17 @@ test("a related citation in a supersede sentence is not a backlink", () => {
     number: "0100",
     name: "0100-example.md",
     text: "## Status\n\naccepted\n\nPartially supersedes [ADR 0069: Example](0069-example.md) and cites [ADR 0068: Example](0068-example.md) as related background.\n",
+  };
+  const links = relationsOf(adr).supersedes.map((link) => link.fileName);
+  expect(links).toEqual(["0069-example.md"]);
+});
+
+// Usefulness: an adverb before a new predicate still ends the governed clause, so the later link is not a backlink (issue #1662).
+test("an adverb before a new predicate still ends the supersede clause", () => {
+  const adr = {
+    number: "0100",
+    name: "0100-example.md",
+    text: "## Status\n\naccepted\n\nPartially supersedes [ADR 0069: Example](0069-example.md) and also cites [ADR 0068: Example](0068-example.md) as related background.\n",
   };
   const links = relationsOf(adr).supersedes.map((link) => link.fileName);
   expect(links).toEqual(["0069-example.md"]);
