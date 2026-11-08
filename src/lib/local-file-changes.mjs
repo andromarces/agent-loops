@@ -2,7 +2,7 @@
 // compared by SHA-256 and never returned, logged, or written to a report.
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { sha256 } from "./hash.mjs";
@@ -219,21 +219,50 @@ function changedSide(rel, source, copy, hashes) {
 }
 
 /**
+ * Sets the mode of `target` when it is still the regular file at `rel` under `base` and no link
+ * sits at the file or an ancestor. Returns false when that cannot be proven.
+ * known-limit: a swap between the last check and `chmod` is not detected. The window is the one
+ * path-based `chmod` shares with `rename`, so it is not wider than the rename window.
+ */
+async function chmodPlain(base, rel, target, mode) {
+  let plain = false;
+  try {
+    const [resolved, named, blocked] = await Promise.all([
+      realpath(target),
+      lstat(target, { bigint: true }),
+      hasBlockedAncestor(base, rel, new Set()),
+    ]);
+    plain = resolved === target && named.isFile() && !blocked;
+  } catch (err) {
+    if (!["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM"].includes(err.code)) {
+      throw err;
+    }
+  }
+  if (!plain) {
+    return false;
+  }
+  await chmod(target, mode);
+  return true;
+}
+
+/**
  * Copies one source file over its run copy and returns the hash of the bytes written.
  * Reads the source once, then writes those bytes through a temporary file and a rename.
  * The temporary file starts at 0600, then takes the copy's prior mode on the open handle.
+ * On Windows, a read-only target is cleared for the rename and takes the prior mode back from
+ * the temporary file; a failed rename restores the target mode before the cleanup.
  * Refuses before any write when a side is missing or unreadable, a link sits on the path, or the
  * copy differs from `expectedCopyHash`. Content and hashes never reach a log line or an error text.
  * @param {string} cwd
  * @param {string} rel
- * @param {{ signal?: AbortSignal, expectedCopyHash?: string, beforeWrite?: (path: string) => Promise<void>, beforeTempCreate?: (path: string) => Promise<void> }} [options]
+ * @param {{ signal?: AbortSignal, expectedCopyHash?: string, beforeWrite?: (path: string) => Promise<void>, beforeTempCreate?: (path: string) => Promise<void>, beforeReadOnlyClear?: (path: string) => Promise<void> }} [options]
  * @returns {Promise<string>} the new SHA-256 of the copy
  * @throws {Error} with a message that starts `refresh-local`
  */
 export async function refreshLocalFile(
   cwd,
   rel,
-  { signal, expectedCopyHash, beforeWrite, beforeTempCreate } = {},
+  { signal, expectedCopyHash, beforeWrite, beforeTempCreate, beforeReadOnlyClear } = {},
 ) {
   const refuse = (why) => new Error(`refresh-local is refused: ${why}`);
   if (!isPlainRelativeName(rel)) {
@@ -264,6 +293,7 @@ export async function refreshLocalFile(
   // Remove the temporary path only after this call creates it.
   let created = false;
   let handle = null;
+  let clearedReadOnly = false;
   try {
     handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
     created = true;
@@ -272,9 +302,23 @@ export async function refreshLocalFile(
     await handle.chmod(copy.mode);
     await handle.close();
     handle = null;
+    // A Windows rename over a read-only target fails with EPERM. Clear the attribute before the
+    // rename; the temporary file carries the prior copy mode, so the rename brings it back.
+    // Re-check the path just before the clear. A swap after that check and before `chmod` can still
+    // redirect it, in the same path-based window that the following rename has.
+    if (process.platform === "win32") {
+      await beforeReadOnlyClear?.(target);
+      if (!(await chmodPlain(rootReal, rel, target, copy.mode | 0o200))) {
+        throw Object.assign(new Error("a link sits on the path"), { code: "ELOOP" });
+      }
+      clearedReadOnly = true;
+    }
     await rename(temp, target);
   } catch (err) {
     await handle?.close().catch(() => {});
+    if (clearedReadOnly) {
+      await chmodPlain(rootReal, rel, target, copy.mode).catch(() => {});
+    }
     if (created) {
       await rm(temp, { force: true }).catch(() => {});
     }

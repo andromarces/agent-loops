@@ -39,7 +39,7 @@ For `source`, the main work tree changed after init. Run
 `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored
 `--parent-session` id when no `localSourceChangedInTurn` entry names it. The command writes the
 source bytes over the copy and stores their hash, so later envelopes stop reporting the path until
-a side changes again.
+a side changes again. The copy keeps its prior mode, including the read-only attribute on Windows.
 
 The command refuses a path that init did not copy, a missing or unreadable side, and a link at the
 file or a parent component. It also refuses a copy that differs from its stored hash, a terminal
