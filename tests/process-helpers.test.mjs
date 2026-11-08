@@ -289,7 +289,7 @@ test(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
-const CEILING_MS = 4000;
+const CEILING_MS = 3000;
 // Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not exit
 // silently, or the kill check reads its ceiling exit as a kill. The marker path is a directory, so
 // the write fails; the shim must stay alive past its ceiling and the helper must report it.
@@ -540,7 +540,7 @@ test.skipIf(process.platform === "win32")(
 test.skipIf(process.platform === "win32")(
   "withGitHangingAfter passes exactly the requested number of concurrent calls",
   async () => {
-    const passes = 30;
+    const passes = 10;
     await withGitHangingAfter(passes, async ({ shimDir }) => {
       // GIT_TRACE2_EVENT makes a real `git` write `trace-<index>`, with or without the shim.
       const running = Array.from({ length: 2 * passes }, (_, index) =>

@@ -94,7 +94,7 @@ export const KILL_GRACE_MS = 10_000;
 /**
  * Waits for `subprocess` like `await subprocess`, with two added bounds that never change a run
  * that ends on its own.
- * - `STDIO_DRAIN_GRACE_MS` after the child exits, and after each later read, the call checks the
+ * - `drainGraceMs` after the child exits, and after each later read, the call checks the
  *   pipes of the child. An open, idle pipe that no slow consumer holds back is held by another
  *   process. The call then sends SIGKILL to the process group it owns (POSIX) and ends the read
  *   of that pipe. The descendant no longer holds the call. Output that the child wrote stays in
@@ -108,7 +108,13 @@ export const KILL_GRACE_MS = 10_000;
  */
 function settleWithin(
   subprocess,
-  { timeoutMs = 0, signal = null, label, killGraceMs = KILL_GRACE_MS },
+  {
+    timeoutMs = 0,
+    signal = null,
+    label,
+    killGraceMs = KILL_GRACE_MS,
+    drainGraceMs = STDIO_DRAIN_GRACE_MS,
+  },
 ) {
   const child = subprocess.nodeChildProcess ?? subprocess;
   const timers = new Set();
@@ -124,7 +130,7 @@ function settleWithin(
   let drainTimer;
   const armDrain = () => {
     clearTimeout(drainTimer);
-    drainTimer = setTimeout(onDrainIdle, STDIO_DRAIN_GRACE_MS);
+    drainTimer = setTimeout(onDrainIdle, drainGraceMs);
   };
   const onRead = () => exited && armDrain();
   const endPipes = () => {
@@ -152,7 +158,7 @@ function settleWithin(
     if (held.length === 0) return;
     if (held.some((stream) => stream.isPaused() || stream.readableLength > 0)) return armDrain();
     logWarn(
-      `${label}: a process holds the output open ${STDIO_DRAIN_GRACE_MS}ms after the child exit; ending the process group and the read`,
+      `${label}: a process holds the output open ${drainGraceMs}ms after the child exit; ending the process group and the read`,
     );
     // Reaches the process group on POSIX. Nothing reaches a descendant of an exited child on Windows.
     subprocess.kill?.("SIGKILL");
@@ -260,6 +266,7 @@ export function execFailureCause(command, failure, timeout) {
  * never changes the outcome of the child.
  * `options.treeEnd` ends the child and its descendants at a parent SIGTERM or SIGINT (POSIX only,
  * ADR 0071). It reaches a descendant that left the child's process group.
+ * `options.drainGraceMs` overrides the idle pipe bound; production keeps the 3000 ms default.
  */
 export async function exec(command, args = [], options = {}) {
   const {
@@ -273,6 +280,7 @@ export async function exec(command, args = [], options = {}) {
     onSpawn,
     treeEnd,
     forceKillAfterDelay,
+    drainGraceMs,
   } = options;
 
   const label = role ? `${role}: ${command}` : command;
@@ -336,6 +344,7 @@ export async function exec(command, args = [], options = {}) {
     timeoutMs: execaOptions.timeout,
     signal,
     label,
+    drainGraceMs,
   });
   await hook;
 
@@ -411,6 +420,7 @@ export function execBounded(
     signal = null,
     killBound = null,
     killGraceMs = KILL_GRACE_MS,
+    drainGraceMs,
     ...execaOptions
   } = {},
 ) {
@@ -430,6 +440,7 @@ export function execBounded(
     signal: killBound?.signal ?? signal,
     label: `${command} (bounded)`,
     killGraceMs,
+    drainGraceMs,
   });
   for (const method of ["then", "catch", "finally"]) {
     subprocess[method] = (...callbacks) => settled[method](...callbacks);
