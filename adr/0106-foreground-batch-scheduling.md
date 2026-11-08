@@ -289,11 +289,12 @@ for each non-terminal loop:
    its liveness and not its output, then reconciles it from the transcript it wrote. It never
    signals a process that it did not start. A process identity that cannot be read is
    `needs-owner`; no second process starts.
-2. **Establishes the steps used.** It reads the segment of the loop transcript after the last
-   `continued` event, or the whole file on a first attempt. The highest `result` event's
-   `stepsUsed` is the count after that turn. A trailing `run_worker` or `run_reviewer` action
-   with no result counts one more, because the runtime charges a step before the child
-   starts. It adds that count to the checkpoint's cumulative count of earlier attempts. A
+2. **Establishes the steps used.** It reads the loop transcript and splits it into segments
+   at each `continued` event. The highest `result` event's `stepsUsed` in a segment is that
+   attempt's count. A trailing `run_worker` or `run_reviewer` action with no result in the
+   last segment counts one more, because the runtime charges a step before the child starts.
+   The total is the sum of the segment counts. The checkpoint's cumulative count is a
+   cross-check, and the larger of the two is used, so a stale checkpoint cannot undercount. A
    transcript that cannot establish a count is `needs-owner` with reason `unverified-steps`;
    the batch does not guess a budget.
 3. **Computes the remainder.** `remaining = maxSteps at start - steps used across every
