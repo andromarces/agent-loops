@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { mapInBatches } from "./batches.mjs";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { isTurnTmpdirName } from "./turn-tmpdir.mjs";
@@ -22,7 +22,7 @@ export async function snapshotInheritedTmpdir() {
   try {
     return new Set(await readdir(tmpdir()));
   } catch (err) {
-    logWarn(`inherited temporary directory not read: ${firstErrorLine(readableErrorText(err))}`);
+    logWarn(`inherited temporary directory not read: ${errorLine(err)}`);
     return null;
   }
 }

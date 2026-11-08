@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import { stateRoot } from "./runstate.mjs";
 
@@ -28,7 +28,7 @@ export async function registerTurnTmpdir(name, stat) {
     await writeFile(join(registryDir(), name), `${stat.dev}:${stat.ino}`);
   } catch (err) {
     logWarn(
-      `turn temporary directory not registered, a concurrent report can list it: ${name}: ${firstErrorLine(readableErrorText(err))}`,
+      `turn temporary directory not registered, a concurrent report can list it: ${name}: ${errorLine(err)}`,
     );
   }
 }

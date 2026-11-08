@@ -2,7 +2,7 @@ import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
 import { mapInBatches } from "./lib/batches.mjs";
 import { reportedEntryNames } from "./lib/entry-report.mjs";
-import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
+import { errorLine, firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { readRequiredChecks } from "./lib/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
@@ -198,7 +198,7 @@ async function readShared(state, bound = { signal: state.signal }) {
     return await readSharedGit(state.cwd, bound);
   } catch (err) {
     if (readProp(err, "isCanceled")) throw err;
-    logWarn(`worker: the shared Git state read failed: ${firstErrorLine(readableErrorText(err))}`);
+    logWarn(`worker: the shared Git state read failed: ${errorLine(err)}`);
     return null;
   }
 }
@@ -215,7 +215,7 @@ async function readWorkTree(state) {
     return { head, clean };
   } catch (err) {
     if (readProp(err, "isCanceled")) throw err;
-    logWarn(`worker: the work tree state read failed: ${firstErrorLine(readableErrorText(err))}`);
+    logWarn(`worker: the work tree state read failed: ${errorLine(err)}`);
     return null;
   }
 }
@@ -568,9 +568,7 @@ export async function runChild(options) {
         if (readProp(err, "isCanceled")) {
           throw err;
         }
-        logWarn(
-          `worker: the preamble turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
-        );
+        logWarn(`worker: the preamble turn in the new conversation failed: ${errorLine(err)}`);
       }
     }
     return response;
@@ -609,10 +607,9 @@ export async function runChild(options) {
       if (isFatalTurnError(err)) {
         throw err;
       }
-      throw new Error(
-        `the task turn in the new conversation failed: ${firstErrorLine(readableErrorText(err))}`,
-        { cause: err },
-      );
+      throw new Error(`the task turn in the new conversation failed: ${errorLine(err)}`, {
+        cause: err,
+      });
     }
     preamblePending = false;
     if (role.sessionId !== verdictSession) {
@@ -679,9 +676,7 @@ export async function runChild(options) {
       if (isFatalTurnError(err)) throw err;
       // A cancel that lands with a handled repair failure still ends the turn as a cancel.
       throwIfCanceled(signal, roleName);
-      logWarn(
-        `${roleName}: the closing-block repair turn failed: ${firstErrorLine(readableErrorText(err))}`,
-      );
+      logWarn(`${roleName}: the closing-block repair turn failed: ${errorLine(err)}`);
       return null;
     }
     throwIfCanceled(signal, roleName);

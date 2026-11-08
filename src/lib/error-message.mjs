@@ -80,6 +80,11 @@ export function firstErrorLine(text) {
   return text.split("\n")[0];
 }
 
+/** The first line of `readableErrorText(err)`, for a log line or a reason. */
+export function errorLine(err) {
+  return firstErrorLine(readableErrorText(err));
+}
+
 /** Reads `err[key]`, and returns `undefined` when the read throws, so a hostile getter never escapes an error path. */
 export function readProp(err, key) {
   try {

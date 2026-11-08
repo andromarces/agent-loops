@@ -195,7 +195,7 @@ export async function runCopilot(state, prompt, options = {}) {
 }
 
 function findResultEvent(events) {
-  return events.filter((event) => event?.type === "result").at(-1);
+  return events.findLast((event) => event?.type === "result");
 }
 
 function readAssistantMessage(event) {

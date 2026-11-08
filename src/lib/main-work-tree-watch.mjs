@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import { mapInBatches } from "./batches.mjs";
 import { execBounded } from "./exec.mjs";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 
 // Milliseconds that one ignore read waits before the watch reports no path (10_000).
@@ -137,7 +137,7 @@ export async function startMainWorkTreeWatch(
     if (failed) return;
     failed = true;
     pending.clear();
-    logWarn(`worker: the main work tree watch failed: ${firstErrorLine(readableErrorText(err))}`);
+    logWarn(`worker: the main work tree watch failed: ${errorLine(err)}`);
     closeWatcher();
     resolveArm();
   };
@@ -412,9 +412,7 @@ export async function startMainWorkTreeWatch(
     watcher = started.watcher;
     ready = started.ready ?? null;
   } catch (err) {
-    logWarn(
-      `worker: the main work tree watch failed to start: ${firstErrorLine(readableErrorText(err))}`,
-    );
+    logWarn(`worker: the main work tree watch failed to start: ${errorLine(err)}`);
     return null;
   }
   watcher.on("error", fail);

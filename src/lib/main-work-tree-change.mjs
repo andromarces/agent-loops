@@ -1,4 +1,4 @@
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
 import { gitRead, stripLf } from "./git-read.mjs";
 import { mainWorkTreePath } from "./local-files.mjs";
@@ -59,9 +59,7 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
       },
     );
   } catch (err) {
-    logWarn(
-      `worker: the main work tree state read failed: ${firstErrorLine(readableErrorText(err))}`,
-    );
+    logWarn(`worker: the main work tree state read failed: ${errorLine(err)}`);
     return null;
   }
 }

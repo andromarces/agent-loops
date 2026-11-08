@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { entryCarrier, reportedPathNames } from "./entry-report.mjs";
 import { gitRead } from "./git-read.mjs";
 import { logWarn } from "./log.mjs";
@@ -136,7 +136,7 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
       ]);
     } catch (err) {
       logWarn(
-        `worker: the lockfile read failed: ${firstErrorLine(readableErrorText(err))}; reporting every lockfile as changed`,
+        `worker: the lockfile read failed: ${errorLine(err)}; reporting every lockfile as changed`,
       );
       return failedRecord();
     }

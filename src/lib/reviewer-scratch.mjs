@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { lstat, mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { firstErrorLine, readableErrorText } from "./error-message.mjs";
+import { errorLine } from "./error-message.mjs";
 import { logDebug, logWarn } from "./log.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
 
@@ -24,9 +24,7 @@ export async function createReviewerScratch(cwd, { signal } = {}) {
     logDebug(`reviewer scratch folder created: ${dir}`);
     return dir;
   } catch (err) {
-    logWarn(
-      `reviewer scratch folder not created, the turn runs without it: ${firstErrorLine(readableErrorText(err))}`,
-    );
+    logWarn(`reviewer scratch folder not created, the turn runs without it: ${errorLine(err)}`);
     return null;
   }
 }
@@ -76,9 +74,7 @@ export async function removeReviewerScratch(dir) {
     await rm(dir, { recursive: true, force: true });
     logDebug(`reviewer scratch folder removed: ${dir}`);
   } catch (err) {
-    logWarn(
-      `reviewer scratch folder not removed, delete it by hand: ${dir}: ${firstErrorLine(readableErrorText(err))}`,
-    );
+    logWarn(`reviewer scratch folder not removed, delete it by hand: ${dir}: ${errorLine(err)}`);
     return;
   }
   // `rmdir` fails on a folder that still holds an entry, so another turn's folder stays.

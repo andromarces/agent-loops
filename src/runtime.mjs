@@ -6,7 +6,7 @@ import {
   REVIEW_ONLY_WORKER_REFUSAL,
   unreadableGateRefusal,
 } from "./lib/gate-refusal.mjs";
-import { firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
+import { errorLine, readProp } from "./lib/error-message.mjs";
 import { unreadableGateReason } from "./lib/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
 import { evaluateFinish } from "./finish-gate.mjs";
@@ -276,7 +276,7 @@ export async function runLoop(options) {
     } catch (err) {
       if (readProp(err, "name") !== "MutationError") {
         // A MutationError is already logged at the detection site in withMutationCheck.
-        logError(`orchestrator turn failed: ${firstErrorLine(readableErrorText(err))}`);
+        logError(`orchestrator turn failed: ${errorLine(err)}`);
       }
       throw err;
     }
