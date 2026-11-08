@@ -17,7 +17,7 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { SPAWNED_RUN_ENV, exec } from "../src/lib/exec.mjs";
+import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../src/lib/exec.mjs";
 import { snapshot } from "../src/lib/snapshot.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
@@ -167,9 +167,7 @@ test("declare-pr refuses a terminal run", async () => {
 // a worker cannot choose the PR that gates its own run. The same call without a marker works.
 test("declare-pr refuses a child caller of the run", async () => {
   const { repo } = await startRun();
-  const script = `console.log(process.env.${SPAWNED_RUN_ENV})`;
-  const spawned = await exec(process.execPath, ["-e", script], { role: "worker", cwd: repo });
-  vi.stubEnv(SPAWNED_RUN_ENV, spawned.stdout.trim());
+  vi.stubEnv(SPAWNED_RUN_ENV, spawnedRunMarker(repo));
   const refused = await declare(repo, 42);
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("child role");

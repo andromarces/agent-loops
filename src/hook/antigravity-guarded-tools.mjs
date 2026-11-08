@@ -11,3 +11,11 @@ export const ANTIGRAVITY_GUARDED_TOOLS = new Set([
   "invoke_subagent",
   "send_message",
 ]);
+
+/** The Antigravity payload mapping and flat deny shape, shared with the hook and its tests. */
+export const ANTIGRAVITY_GUARD = {
+  deny: (reason) => ({ decision: "deny", reason }),
+  readSessionId: (input) =>
+    typeof input?.conversationId === "string" ? input.conversationId : null,
+  isGuarded: (input) => ANTIGRAVITY_GUARDED_TOOLS.has(input?.toolCall?.name),
+};

@@ -10,6 +10,21 @@ import { stateRoot } from "../../src/lib/runstate.mjs";
 import { slotsRoot } from "../../src/lib/root-pins.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
+// Captures the spawn options that `exec` passes to execa for a case that asserts only the child
+// environment, so the case starts no child process. Every other call reaches the real execa.
+const execaCapture = vi.hoisted(() => ({ active: false, options: null }));
+vi.mock("execa", async (importActual) => {
+  const actual = await importActual();
+  return {
+    ...actual,
+    execa: (command, args, options) => {
+      if (!execaCapture.active) return actual.execa(command, args, options);
+      execaCapture.options = options;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    },
+  };
+});
+
 afterEach(() => {
   setVerbose(false);
   vi.restoreAllMocks();
@@ -17,6 +32,7 @@ afterEach(() => {
 });
 
 // Usefulness: verifies successful execution returns stdout and stderr.
+// Process: the output comes from a real child.
 test("exec returns stdout on successful command", async () => {
   const result = await exec(process.execPath, ["-e", 'console.log("hello")']);
   expect(result.stdout.trim()).toBe("hello");
@@ -24,6 +40,7 @@ test("exec returns stdout on successful command", async () => {
 });
 
 // Usefulness: verifies stdin input is passed to the process.
+// Process: stdin must reach a real child.
 test("exec passes input on stdin", async () => {
   const result = await exec(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], {
     input: "stdin data",
@@ -32,6 +49,7 @@ test("exec passes input on stdin", async () => {
 });
 
 // Usefulness: verifies an env option reaches the child while the parent environment stays inherited.
+// Process: the inherited environment is what a real child reads.
 test("exec merges env into the inherited child environment", async () => {
   const result = await exec(
     process.execPath,
@@ -42,6 +60,7 @@ test("exec merges env into the inherited child environment", async () => {
 });
 
 // Usefulness: verifies only a worker or reviewer spawn carries the run marker, so a headless orchestrator process, whose descendants include a nested parent, never holds it (issue #392).
+// Process: the marker is asserted from inside the real child, across four roles.
 test("exec marks a worker or reviewer spawn and leaves every other spawn unmarked", async () => {
   vi.stubEnv(SPAWNED_RUN_ENV, "");
   const script = `console.log(process.env.${SPAWNED_RUN_ENV} || "none")`;
@@ -55,6 +74,7 @@ test("exec marks a worker or reviewer spawn and leaves every other spawn unmarke
 });
 
 // Usefulness: verifies non-zero exit code throws ExecError with fields.
+// Process: the exit code and stderr come from a real child.
 test("exec throws ExecError on failure", async () => {
   await expect(
     exec(process.execPath, ["-e", 'console.error("err_msg"); process.exit(42);']),
@@ -71,19 +91,23 @@ test("exec throws ExecError on failure", async () => {
   }
 });
 
-// Usefulness: verifies timeout aborts execution and sets timedOut flag on ExecError.
-test("exec sets timedOut when execution exceeds timeout", async () => {
+// Usefulness: verifies timeout aborts, sets timedOut, and names the cause not an exit code (#20).
+// Process: a real child must keep running past the bound, so the timeout path is process-level.
+test("exec sets timedOut and names the cause when execution exceeds timeout", async () => {
   try {
     await exec(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { timeout: 0.1 });
     expect.unreachable("should have thrown ExecError");
   } catch (err) {
     expect(err).toBeInstanceOf(ExecError);
     expect(err.timedOut).toBe(true);
+    expect(err.message).toContain("timed out");
+    expect(err.message).not.toContain("undefined");
   }
 });
 
-// Usefulness: verifies cancel signal aborts execution and sets isCanceled flag on ExecError.
-test("exec sets isCanceled when signal aborts", async () => {
+// Usefulness: verifies cancel aborts, sets isCanceled, and names the cause not an exit code (#20).
+// Process: a real child must keep running until the cancel, so the cancel path is process-level.
+test("exec sets isCanceled and names the cause when signal aborts", async () => {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 100);
 
@@ -95,31 +119,6 @@ test("exec sets isCanceled when signal aborts", async () => {
   } catch (err) {
     expect(err).toBeInstanceOf(ExecError);
     expect(err.isCanceled).toBe(true);
-  }
-});
-
-// Usefulness: verifies a timed-out command names the cause instead of an exit code (issue #20).
-test("exec timeout message contains timed out", async () => {
-  try {
-    await exec(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { timeout: 0.1 });
-    expect.unreachable("should have thrown ExecError");
-  } catch (err) {
-    expect(err.message).toContain("timed out");
-    expect(err.message).not.toContain("undefined");
-  }
-});
-
-// Usefulness: verifies a canceled command names the cause instead of an exit code (issue #20).
-test("exec cancel message contains canceled", async () => {
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), 100);
-
-  try {
-    await exec(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
-      signal: controller.signal,
-    });
-    expect.unreachable("should have thrown ExecError");
-  } catch (err) {
     expect(err.message).toContain("canceled");
     expect(err.message).not.toContain("undefined");
   }
@@ -128,6 +127,7 @@ test("exec cancel message contains canceled", async () => {
 // Usefulness: verifies a signal-killed command names the signal instead of
 // "exited with code undefined" (issue #20 POSIX case). execa cannot detect
 // signal termination on Windows, so this only runs on POSIX.
+// Process: only a real child can end by a signal.
 test.skipIf(process.platform === "win32")(
   "exec terminated message contains signal on POSIX",
   async () => {
@@ -149,6 +149,7 @@ test.skipIf(process.platform === "win32")(
 // Usefulness: verifies a command that cannot be spawned names the cause
 // instead of "exited with code undefined" (issue #40 POSIX case). Windows
 // reports exit code 1 for spawn failures, so this only runs on POSIX.
+// Process: a spawn failure needs a real spawn attempt.
 test.skipIf(process.platform === "win32")(
   "exec spawn failure message contains failed to start on POSIX",
   async () => {
@@ -165,6 +166,7 @@ test.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: verifies descendant kill when canceling a process tree.
+// Process: it verifies a real process tree, including a detached grandchild on Windows.
 test("exec terminates descendants when canceled", async () => {
   const controller = new AbortController();
   const dir = await mkdtemp(join(tmpdir(), "agent-loop-exec-"));
@@ -251,6 +253,7 @@ async function readPidFile(path) {
 
 // Usefulness: verifies issue #26 — each agent invocation logs start and successful stop with
 // the command name, duration, and exit code at info level.
+// Process: the log lines describe a real child invocation.
 test("exec logs start and stop with command name, duration, and exit code", async () => {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -269,6 +272,7 @@ test("exec logs start and stop with command name, duration, and exit code", asyn
 // Usefulness: verifies issue #26 — a failing command still produces a terminating invocation
 // line at the exec boundary, so no exec caller is left with a start line and no end. The caller
 // owns the error level, so this diagnostic detail rides at debug (visible with --verbose).
+// Process: the log lines describe a real failing child.
 test("exec logs a debug failure line with duration and cause when the command throws", async () => {
   setVerbose(true);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -303,9 +307,25 @@ const ROOT_ENV = [
   "AGENT_LOOP_TEST_SLOTS_ROOT",
   "AGENT_LOOP_SESSION_RECORDS_ROOT",
 ];
-const PRINT_ROOTS = `console.log(JSON.stringify(${JSON.stringify(ROOT_ENV)}.map((name) => process.env[name] || null)))`;
-const rootsOf = async (options) =>
-  JSON.parse((await exec(process.execPath, ["-e", PRINT_ROOTS], options)).stdout);
+// The child environment that `exec` gives execa for `options`, with no child process. Only the
+// environment cases use it; they assert the same environment that the child received.
+async function execOptionsFor(options) {
+  execaCapture.active = true;
+  execaCapture.options = null;
+  try {
+    await exec(process.execPath, ["-e", ""], options);
+    const captured = execaCapture.options;
+    const env =
+      captured.extendEnv === false ? (captured.env ?? {}) : { ...process.env, ...captured.env };
+    return { ...captured, env };
+  } finally {
+    execaCapture.active = false;
+  }
+}
+const rootsOf = async (options) => {
+  const { env } = await execOptionsFor(options);
+  return ROOT_ENV.map((name) => env[name] || null);
+};
 
 // Usefulness: verifies a worker or reviewer child gets the three machine-wide roots that the parent resolves, so no adapter leaves them to a child `TMP` override (issue #970); other spawns stay unpinned.
 test("exec pins the machine-wide roots for a worker or reviewer spawn only", async () => {
@@ -327,6 +347,7 @@ test("exec keeps a user-set root for a worker spawn", async () => {
 });
 
 // Usefulness: verifies a worker child that moves TMP, TEMP, and TMPDIR still resolves the slot directory of the parent.
+// Process: the child resolves its roots after it moves its own environment.
 test("a worker child that overrides TMP resolves the parent slot directory", async () => {
   vi.stubEnv("AGENT_LOOP_TEST_SLOTS_ROOT", "");
   const other = await mkdtemp(join(tmpdir(), "other-tmp-"));
@@ -356,10 +377,13 @@ test("exec replaces an empty root value for a worker spawn", async () => {
 });
 
 const NPM_LOG_NAME = /^npm_config_logs[_-](dir|max)$/i;
-const PRINT_NPM_LOG = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => ${NPM_LOG_NAME}.test(name)).map(([name, value]) => [name.toLowerCase(), value])))`;
 // The npm log settings that the child sees, one entry per spelling, names lower-cased.
-const npmLogOf = async (options) =>
-  JSON.parse((await exec(process.execPath, ["-e", PRINT_NPM_LOG], options)).stdout);
+const npmLogOf = async (options) => {
+  const { env } = await execOptionsFor(options);
+  return Object.entries(env)
+    .filter(([name]) => NPM_LOG_NAME.test(name))
+    .map(([name, value]) => [name.toLowerCase(), value]);
+};
 const clearNpmLog = () => {
   for (const name of Object.keys(process.env).filter((key) => NPM_LOG_NAME.test(key))) {
     vi.stubEnv(name, undefined);
@@ -426,10 +450,13 @@ test("exec leaves one spelling of a user-set npm log setting for a worker spawn"
 });
 
 const PNPM_DEPS_CHECK = /^pnpm_config_verify_deps_before_run$/i;
-const PRINT_PNPM_DEPS_CHECK = `console.log(JSON.stringify(Object.entries(process.env).filter(([name]) => ${PNPM_DEPS_CHECK}.test(name)).map(([name, value]) => [name.toLowerCase(), value])))`;
 // The pnpm dependency check settings that the child sees, one entry per spelling, names lower-cased.
-const pnpmDepsCheckOf = async (options) =>
-  JSON.parse((await exec(process.execPath, ["-e", PRINT_PNPM_DEPS_CHECK], options)).stdout);
+const pnpmDepsCheckOf = async (options) => {
+  const { env } = await execOptionsFor(options);
+  return Object.entries(env)
+    .filter(([name]) => PNPM_DEPS_CHECK.test(name))
+    .map(([name, value]) => [name.toLowerCase(), value]);
+};
 const clearPnpmDepsCheck = () => {
   for (const name of Object.keys(process.env).filter((key) => PNPM_DEPS_CHECK.test(key))) {
     vi.stubEnv(name, undefined);
@@ -467,6 +494,7 @@ test.each(["worker", "reviewer"])(
 
 // Usefulness: verifies the spawn hook gets the pid of the child while it runs, and that a hook which
 // rejects never changes the outcome of the child.
+// Process: the hook receives a real child pid.
 test("exec hands the child pid to onSpawn and ignores a rejecting hook", async () => {
   const pids = [];
   const result = await exec(process.execPath, ["-e", 'console.log("ran")'], {

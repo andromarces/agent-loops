@@ -28,6 +28,11 @@ export function isSpawnedByRun(key) {
   return (process.env[SPAWNED_RUN_ENV] ?? "").split(",").includes(key);
 }
 
+/** The `SPAWNED_RUN_ENV` value that a child spawned in `cwd` receives. */
+export function spawnedRunMarker(cwd = process.cwd()) {
+  return markerFor(cwdHash(cwd));
+}
+
 // `exec` adds no marker for the orchestrator or any other spawn. A process keeps a marker it
 // inherited.
 const MARKED_ROLES = new Set(["worker", "reviewer"]);
@@ -299,7 +304,7 @@ export async function exec(command, args = [], options = {}) {
     const childEnv = {
       ...(marked && rootPins()),
       ...env,
-      ...(marked && { [SPAWNED_RUN_ENV]: markerFor(cwdHash(cwd ?? process.cwd())) }),
+      ...(marked && { [SPAWNED_RUN_ENV]: spawnedRunMarker(cwd) }),
     };
     if (marked) {
       const markedEnv = withNpmLogSettings({ ...process.env, ...childEnv }, env);
