@@ -64,6 +64,24 @@ Subcommands:
                                 command's code, 75 when no slot was won within the wait,
                                 64 on a usage error, 130 or 143 on SIGINT or SIGTERM.
                                 See agent-loop test-slot --help.
+  agent-loop batch start        Run one foreground batch: one headless loop per selected
+                                issue, each in its own work tree, at most --loops at once.
+                                Requires --repo <main work tree>, --issue <n> (repeatable),
+                                --orchestrator, --worker, --reviewer, --loops <1-64>, and
+                                --max-steps. Accepts --base, --work-tree-root,
+                                --task-template, --setup-cmd, --setup-timeout, --test-cmd,
+                                --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
+                                --<role>-model and --<role>-effort flags. A linked --repo, a
+                                duplicate issue, an unknown task placeholder, or a
+                                work-tree root inside a Git work tree is refused with exit 2
+                                before any claim, work tree, checkpoint, or child exists.
+  agent-loop batch status       Read a batch and write nothing. --batch <id> names one
+                                batch; with no id it lists the local batches, newest first.
+  agent-loop batch resume       Continue an interrupted batch with the remaining step
+                                budget. Requires --batch <id>. A live owner is never
+                                restarted. Exits 0 when every issue succeeded or was
+                                skipped, 1 when a loop failed or needs an owner or the queue
+                                paused, 2 for a refused setting, and 130 on SIGINT.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no

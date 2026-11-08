@@ -380,3 +380,99 @@ agent-loop test-slot --if-held -- "pnpm exec vp test run tests/foo.test.mjs"
 | 75           | No slot was won within the wait bound. The command did not run.                                                                                                                          |
 | 130, 143     | SIGINT or SIGTERM reached the wrapper, at any nesting level.                                                                                                                             |
 | 1            | Any other wrapper failure, such as a slot directory that cannot be written or a failed release of the acquisition lock. The command did not run, and a slot taken in that pass is freed. |
+
+## Batch runs
+
+`agent-loop batch start` owns one batch of independent issues for its whole life. It runs in the foreground, prints progress on stderr, and returns one JSON summary on stdout when every selected issue is terminal or the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
+
+### Commands and settings
+
+```bash
+agent-loop batch start --repo <main work tree> --issue 1709 --issue 1710 \
+  --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
+agent-loop batch status --batch <id>
+agent-loop batch resume --batch <id>
+```
+
+`start` requires `--repo` (the main work tree, never a linked one), at least one `--issue` (launch order, duplicates refused), `--orchestrator`, `--worker`, `--reviewer`, `--loops` (1 to 64), and `--max-steps`. It accepts `--base`, `--work-tree-root`, `--task-template`, `--setup-cmd`, `--setup-timeout`, `--test-cmd`, `--test-cmd-timeout`, `--timeout`, `--reviewer-sandbox`, and the `--<role>-model` and `--<role>-effort` flags. The remaining values keep their headless defaults, and every supplied value goes through the headless parser.
+
+`--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused. The task template accepts `{issue}`, `{title}`, `{branch}`, and `{repo}`; an unknown placeholder or a template without `{issue}` is a usage error. The default template names the issue, the branch push, and the closing pull request.
+
+`--max-steps` is required. A model outside the supported set for its agent, an effort outside that agent's set, a duplicate or conflicting sandbox flag, and a runs root inside any Git work tree are also refused. `--timeout 0` passes no timeout to each headless child.
+
+Every refusal happens before a claim, work tree, checkpoint, or child exists, and exits 2.
+
+### Selection and eligibility
+
+The runtime selects no issue. The skill resolves the request into explicit issue numbers, and that set is frozen at `start`. A later resume reads the same set; an issue opened after `start` is never added, and an issue removed from the set is not replaced.
+
+Before each launch the batch refreshes one issue and skips it with one named reason:
+
+- `closed`: the issue is not `OPEN`.
+- `blocked`: an open issue blocks it; the skip names the blocking numbers.
+- `claimed`: a live local claim of another batch holds it; the skip names that batch.
+- `closed-by-open-pr`: an open pull request closes it, through `closingIssuesReferences` or a closing keyword in a commit message. A pull request commit read that reaches the 250-commit page stops the queue for the owner's decision.
+- `not-specified`: the body has no `## Acceptance` heading with a list item, or has neither `## Problem` nor `## Scope`.
+- `eligibility-unverified`: the read failed, or returned an unreadable value.
+
+A failed batch-wide read pauses the queue, leaves the unread issues `queued`, and resumes them on the next `batch resume`. The skip report is part of the summary and the checkpoint.
+
+### Loop slots and test slots
+
+`--loops` bounds live headless runs of one batch. It is not machine-wide. A free slot is filled from the frozen set in order. A run holds its slot until it is terminal or the batch stops. A `needs-owner` loop keeps its slot in milestone 1.
+
+Every `--test-cmd` run still passes through the machine-wide test slot, whose default count is 1. Two loops can therefore run together while their full suites serialize.
+
+### Claims and checkpoints
+
+The local claim of one repository and issue is `<runs root>/batches/claims/<repo key>/<issue>.json`, where the repo key is the first 12 hex characters of the SHA-256 of the canonical main work tree path with the Windows drive letter lowercased. It is created atomically with no overwrite, and a partial or unparseable claim counts as held. A claim exists from launch until the loop is terminal. A `failed` loop releases it; an `interrupted` or `needs-owner` loop keeps it.
+
+The batch store is `<runs root>/batches/<batch id>/`: `batch.json` holds the frozen set, settings, and batch status; `loops/issue-<n>.json` holds one checkpoint; `transcripts/issue-<n>.json` holds the headless transcript; `logs/issue-<n>.<attempt>.log` holds the child output. The runs root is `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. Set it to a stable path when a checkpoint must survive a reboot.
+
+Checkpoints are written on an event only: at `start`, at a launch, at a skip, at a child exit, at a reconciliation result that changes the loop, and at the final batch status. There is no heartbeat and no periodic write. `batch status` writes nothing, and a resume with nothing to do writes nothing.
+
+### Loop statuses and the summary
+
+A loop is `queued`, `running`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action.
+
+`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue: loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, and cleanup result.
+
+Exit codes:
+
+- `0`: every selected issue ended `succeeded` or `skipped`.
+- `1`: a loop ended `failed` or `needs-owner`, or the queue paused.
+- `2`: a refused setting, or a refusal before any state write.
+- `130`: SIGINT ended the batch.
+
+### Interruption and resume
+
+The first SIGINT stops new launches, forwards SIGINT to each live child, and waits up to 30 seconds for each to exit. Each child writes its transcript and exit code. The batch then writes every checkpoint, marks unfinished loops `interrupted`, keeps every work tree and claim, and exits 130. A second SIGINT ends the child trees without waiting. A hard kill runs no handler; the next `batch resume` checks process ownership before anything else.
+
+`batch resume` runs each non-terminal loop in order:
+
+1. A checkpoint whose process still lives is not restarted. The resume waits for that process and reconciles it from its transcript. An identity that cannot be read stops the loop as `needs-owner`.
+2. The steps used are the sum of the transcript's segments split at each `continued` event: the highest `result` count of each segment, plus one for a trailing dispatched turn with no result. The checkpoint count is a cross-check, and the larger value wins. A transcript that cannot prove a count stops as `needs-owner` with reason `unverified-steps`.
+3. `remaining = --max-steps at start - steps used`. Zero marks the loop `failed` with reason `step-budget-exhausted`; a positive remainder becomes the next attempt's `--max-steps`.
+4. GitHub is reconciled before any repeat (below).
+5. The attempt continues the same transcript with `--continue-from <transcript> --transcript <same path> --max-steps <remaining>`. A matching open pull request is supplied as both `--pr <n>` and `--require-ci <n>`.
+
+### GitHub reconciliation
+
+Before a resumed attempt, and before any launch that follows an uncertain exit, the batch reads the work tree head and status, the fetched remote branch, the pull requests for the branch, the issue state, and the commit count. It then applies these rules:
+
+- A missing or replaced work tree, or another branch checked out, is `needs-owner`.
+- A merged pull request of this branch that holds every local commit, on a closed issue, is `succeeded` and eligible for cleanup.
+- A merged pull request that lacks a local commit is `needs-owner` with `unpushed-local-work`.
+- A closed issue with no merged pull request, or a closed-unmerged pull request, is `needs-owner`.
+- One open pull request whose head equals the local and remote heads on a clean tree resumes with `--pr` and `--require-ci`.
+- Another open head, more than one open pull request, a remote head that differs, or a diverged branch is `needs-owner`.
+
+The batch never force-pushes, resets, merges, reopens, or deletes a branch to make a state fit.
+
+### Failure isolation and cleanup
+
+A loop that ends on a nonzero headless exit, a failed setup (`setup-failed`), a refused finish, or a child error is `failed` with its reason. It is not retried, and its failure stops neither another loop nor the queue. It releases its claim and keeps its work tree, branch, transcript, and log.
+
+Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes: the path is the recorded path under the batch root and not the main work tree, `git worktree list` names it, the recorded branch is checked out, the device and inode still match, the tree is clean, every local commit is pushed or merged, no other live process holds the claim, and no live run lock names the tree. A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed; the branch, pull request, transcript, log, and checkpoint stay.
+
+The batch never removes the main work tree or any path outside its own root. General system temporary directory cleanup stays out of scope. A hard-killed session leaves a checkpoint that the next session resumes, but a transcript that never recorded a step count cannot prove the remainder, so that loop stops as `needs-owner`.
