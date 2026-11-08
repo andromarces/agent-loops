@@ -52,15 +52,12 @@ refusal names each unknown key; resend the finish with only the allowed keys.
 
 The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
-`summary`, so a recorded unresolved compare never reads the same as a verified
-finish. A finish with the
+`summary`. A finish with the
 field absent, or set to `false`, is a verified finish. The marker cannot be
-combined with `--require-ci`: that gate resolves the PR head itself. A run that cannot use `--require-ci`,
-for example one whose base branch requires a check this credential cannot read,
+combined with `--require-ci`. A run that cannot use `--require-ci`, for example one whose base branch requires a check this credential cannot read,
 finishes with `--compare-head <pr>`, or records the marker when it cannot
 read the PR head. A base branch whose required-check sources each state that it
-holds no required check can use the gate, which verifies the PR head, the clean
-reviewed tree, and the merge state.
+holds no required check can use the gate.
 
 A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a repository
 whose required-check sources are unreadable. The runtime reads the PR head and
@@ -77,12 +74,7 @@ the checks showed. A finish that also sets `unresolvedCompare` is refused. Dispa
 command and the `headCompare` record are in
 [Finish with --compare-head](finish-compare-head.md).
 
-A finish that records the compare under
-notDone and open and omits the field is a verified finish to every machine
-consumer, and the free text is the only trace. `--require-ci` closes the gap in
-both paths: `agent-loop role finish
---require-ci <pr>`. A run with no usable gate, for example one
-that cannot read the required checks, keeps the marker as its only trace.
+A run that can use the gate finishes with `agent-loop role finish --require-ci <pr>`.
 
 The conditions that the `--require-accept` and `--require-ci` gates check at
 `finish` are in [Finish gates](finish-gates.md).

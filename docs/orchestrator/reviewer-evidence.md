@@ -4,8 +4,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 ## Reviewer prompts
 
-The reviewer prompt sets the task scope; the fixed review scope and closing
-block wrap it on every turn. Name the guards and contracts that the change puts at risk. Do not
+Name the guards and contracts that the change puts at risk. Do not
 restate the spec as the pass condition.
 
 The init task reaches each role once. Restate every operator decision made after
@@ -52,9 +51,8 @@ The `--require-ci` finish gate stays the enforcement point.
 
 ## The runtime supplies the required-check status
 
-A Codex reviewer with no sandbox (the default) keeps shell network, and its own
-read is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
-knows the pull request before the first turn. So the runtime reads the
+A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
+knows the pull request before the first turn. The runtime reads the
 required-check status for that PR head and supplies it to every reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
 
@@ -75,9 +73,8 @@ finish gate re-reads GitHub and enforces the condition. The runtime reports the
 status it read beside the reviewer result, so compare it with the reviewer Checks
 line.
 
-The reviewer's own read is never removed, and the head matters. A supplied status
-is evidence for that turn, not a gate: it is a snapshot taken before the turn, so
-a check that starts or finishes later is not in it, and a failed read is an
+The reviewer's own read is never removed. A supplied status
+is evidence for that turn, not a gate: a failed read is an
 unresolved status rather than a turn failure. The runtime reports the
 status it read beside the reviewer result, in the dispatch envelope and in the
 state file, so compare it with the reviewer Checks line and act on a
@@ -90,11 +87,10 @@ a check that the turn claims may not have run. Run the validation yourself, or
 choose another worker CLI, before you rely on it. A turn with no denial carries
 no field, and an orchestrator turn never carries it.
 
-The runtime reads the PR head and compares it with the local reviewed head, so a
-status is reported only for the head it describes. A read whose PR head
+The runtime reads the PR head and compares it with the local reviewed head. A read whose PR head
 differs from the local head, and a read with no local head to compare, are
-unresolved, and the prompt never reports a pass for a head the reviewer is not
-looking at. Every supplied status states the head it describes.
+unresolved. The prompt never reports a pass for a head the reviewer is not
+looking at, and every supplied status states the head it describes.
 
 The runtime reads the check runs and commit statuses by SHA, every page of each, for
 the commit the gate evaluates (the test merge commit when it carries a check,
@@ -144,8 +140,7 @@ the flag is unchanged.
   pass a command that a turn produced.
 - The command goes to the platform shell as one string: `/bin/sh -c` on POSIX
   and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the environment of the runtime.
-- The command runs inside a machine-wide test slot (`agent-loop test-slot`), so
-  runs that share a host do not run their suites beyond the slot count. The default is 1 slot on every CPU count, and
+- The command runs inside a machine-wide test slot (`agent-loop test-slot`). The default is 1 slot on every CPU count, and
   `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
   1800 seconds, read on each reviewer dispatch and separate from `--test-cmd-timeout`, which starts once the slot is
   held.
@@ -187,19 +182,7 @@ the flag is unchanged.
     carries no `testRun`.
 - Every worker and reviewer turn states the test-run rule: run a
   targeted test file through the test slot wrapper with `--if-held`, and run a full
-  suite only through the plain wrapper, or rely on the required CI checks. With
-  `--if-held`, the run stays direct while all slots are free and waits for a slot
-  while any slot is held. A targeted run that starts while all slots are free holds no slot. A targeted run covers the test
-  files that mirror the changed source files first, then the test files that import
-  a changed source file directly, then the test files of the direct importers of a
-  changed source file, then the test files that name the path or file name of a
-  changed file that is not an importable module, for example a script or a config
-  file, at most 10 test files in total, never a whole directory.
-  - Any broader run is a full suite and goes through the plain wrapper. A run whose
-    paths cannot be quoted keeps a direct targeted run, and a broader run relies on
-    the required CI checks. The rule renders the wrapper command from the Node binary
-    and the CLI script of the run. A run with or without `--test-cmd` gives the same
-    rule.
+  suite only through the plain wrapper, or rely on the required CI checks.
   - Exit code 75 from the wrapper means that the suite did not run, which a child
     reports as unresolved. The rule also bars a CPU or memory load generator, a busy
     loop, and a detached or background process that can outlive the turn. The

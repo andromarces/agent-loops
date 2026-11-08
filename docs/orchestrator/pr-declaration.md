@@ -26,9 +26,7 @@ through the gate: `agent-loop role finish --require-ci <pr>`, with the same PR n
   behavior.
 - `review-only` refuses `--pr` at init.
 - A base branch with no required check does not refuse `--pr` when every
-  required-check source stated that it holds none. The gate passes on the PR head,
-  the clean reviewed tree, and the merge state, and the run records it, so a
-  declared run on such a branch ends and never keeps the #286 gap. A base branch
+  required-check source stated that it holds none. A base branch
   whose required checks this credential cannot read still refuses every finish, and
   the refusal names the source it could not read.
 - Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
@@ -43,10 +41,6 @@ through the gate: `agent-loop role finish --require-ci <pr>`, with the same PR n
     `reviewed.head` in the runtime and requires the PR to be open.
   - Use the `"unresolvedCompare": true` marker only
     when the PR head itself cannot be read.
-
-A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
-an omitted marker still reads as a verified finish. The declaration closes the
-gap for a run that states its PR.
 
 The conditions that the `--require-accept` and `--require-ci` gates check at `finish` are in
 [Finish gates](finish-gates.md).
@@ -73,8 +67,7 @@ Declare the PR after the worker opens it:
   marker refuses it, as it refuses `extend`, `refresh-local`, `set-model`, `finish`, and `abort`. It requires
   `--parent-session` with the stored id, and the id check has the limits that the
   `extend` rules state.
-- Declare the PR before the first reviewer turn that follows the worker turn, so
-  that turn already carries the status. A reviewer turn that ran earlier read the
+- Declare the PR before the first reviewer turn that follows the worker turn. A reviewer turn that ran earlier read the
   checks itself.
 - A repository whose rulesets the gate does not get refuses every finish
   of a declared run, so do not declare the PR there. `declare-pr` reads the

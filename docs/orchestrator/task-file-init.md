@@ -4,8 +4,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 - `--task-file <path>` can replace `--task` on the init call, and the two cannot
   be combined. `--task-file -` reads the task from stdin, which also carries the
-  prompt here. Stdin carries only one input, so pass `--prompt-file` for the
-  prompt with `--task-file -`. Init refuses `--task-file -` without it.
+  prompt here. Pass `--prompt-file` for the prompt with `--task-file -`. Init refuses `--task-file -` without it.
   - Stage that file before the first init call of the session, in the system
     temporary directory outside every work tree. No run of the session is active then. Write the file with the normal file-write
     tool of the harness. After that init, never write a file: the guard
