@@ -374,8 +374,8 @@ test.skipIf(IS_WINDOWS)(
         timeout: 4_000,
         interval: 100,
       });
-      // The tree writes 1 s after the signal if it survives the parent.
-      await sleep(2_500);
+      // The tree writes the orphan file 1 s after its start if it survives the parent. The pid
+      // check above proves the shell is gone, so no write can land.
       expect(await readFile(orphanFile, "utf8").catch(() => null)).toBe(null);
     } finally {
       endProcess(treePid);

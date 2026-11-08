@@ -39,6 +39,15 @@ test("exec returns stdout on successful command", async () => {
   expect(result.stderr).toBe("");
 });
 
+// Usefulness: verifies an invalid drain grace is rejected, so a typo cannot shorten the bound to zero.
+test("exec rejects a drainGraceMs that is not a finite number of 0 or more", async () => {
+  for (const value of [Number.NaN, -1, Number.POSITIVE_INFINITY, "500"]) {
+    await expect(exec(process.execPath, ["-e", ""], { drainGraceMs: value })).rejects.toThrow(
+      /drainGraceMs/,
+    );
+  }
+});
+
 // Usefulness: verifies stdin input is passed to the process.
 // Process: stdin must reach a real child.
 test("exec passes input on stdin", async () => {

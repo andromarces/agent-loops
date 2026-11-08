@@ -42,7 +42,7 @@ const runChild = (lines, options = {}, placement = "detached") =>
 // A normal-exit path with no timeout is the case no timer can rescue (issue #1302).
 test("exec returns the output after the child exits while a grandchild holds the pipe", async () => {
   const startedAt = Date.now();
-  const result = await runChild(500);
+  const result = await runChild(500, { drainGraceMs: 500 });
   expect(result.stdout.split("\n")).toHaveLength(500);
   expect(result.stdout).toContain("line 499");
   expect(Date.now() - startedAt).toBeLessThan(10_000);
@@ -52,7 +52,7 @@ test("exec returns the output after the child exits while a grandchild holds the
 // pipe. The timeout kill reaches nothing in that case (issue #1302).
 test("exec rejects with timedOut when the timeout passes and a grandchild holds the pipe", async () => {
   const startedAt = Date.now();
-  const failure = await runChild(3, { timeout: 1 }).catch((err) => err);
+  const failure = await runChild(3, { timeout: 1, drainGraceMs: 2000 }).catch((err) => err);
   expect(failure.timedOut).toBe(true);
   expect(Date.now() - startedAt).toBeLessThan(10_000);
 }, 20_000);
@@ -63,7 +63,7 @@ test("exec rejects with timedOut when the timeout passes and a grandchild holds 
 test.skipIf(process.platform === "win32")(
   "exec ends a same-group descendant that holds the pipe when it stops waiting",
   async () => {
-    await runChild(3, {}, "same-group");
+    await runChild(3, { drainGraceMs: 500 }, "same-group");
     const pid = Number(await readFile(pidFile, "utf8"));
     await vi.waitFor(() => expect(processExists(pid)).toBe(false), { timeout: 3000 });
   },
@@ -74,11 +74,14 @@ test.skipIf(process.platform === "win32")(
 // yet. This holds when the reader waits longer than the drain bound (review of PR #1306).
 test("execBounded keeps the output of an exited child that a paused reader takes late", async () => {
   const script = 'process.stdout.write("x".repeat(40000) + "\\n")';
-  const subprocess = execBounded(process.execPath, ["-e", script], { buffer: false });
+  const subprocess = execBounded(process.execPath, ["-e", script], {
+    buffer: false,
+    drainGraceMs: 500,
+  });
   let received = 0;
   subprocess.stdout.on("data", (chunk) => (received += chunk.length));
   subprocess.stdout.pause();
-  await new Promise((resolve) => setTimeout(resolve, 4500));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   subprocess.stdout.resume();
   await subprocess;
   expect(received).toBe(40001);
