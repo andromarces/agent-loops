@@ -54,6 +54,195 @@ agent-loop --orchestrator codex --worker claude --reviewer agy   --task "Add a R
 - The new transcript records `options.continueFrom`, and its `roles` hold the session ids at the end of the continued run, so a run can be continued again.
 - This flag shares no code path with the interactive `agent-loop role` design of issue #361. That path already keeps the session ids and gate state in its state file, so it needs only a raised budget. The headless path keeps neither, so it reads the transcript.
 
+## Loop policy and actions
+
+The headless `--mode` is off by default, so a run without the flag keeps the current behavior.
+
+The headless gate follows turn order only; an edit made outside the loop after a reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same PR gate headlessly, so the runtime resolves the PR head there too (#293). A headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1 when a finish is refused again with no child turn in between, so budget `--max-steps` for a required check that is still pending.
+
+A headless finish that records an unresolved PR-head compare sets `"unresolvedCompare": true` on the action; the run records an `unresolved-compare` transcript event and exits `4` instead of `0`, so the recorded finish stays distinct from a verified one without a transcript (#266, #279).
+
+A headless orchestrator action allows only these keys. The `run_worker` and `run_reviewer` actions allow only `action` and `prompt`. The `abort` action allows only `action` and `reason`. An action that holds any other key is refused, and the refusal names each unknown key, so a misspelled field is never dropped without a trace. A refused action takes the one repair turn: it dispatches no child and charges no step. A second refused reply ends the run with an error (#1034).
+
+In the headless loop, one refusal names every condition the finish breaks.
+
+The headless loop grants one corrective turn, so a refusal
+that named a single condition would spend it on the condition the next refusal
+names instead, so a headless parent learns every condition from one call. A headless run
+ends when two refusals land with no child turn between them. The marker is
+satisfied on a re-finish, with no child turn; the `review-only` condition and
+`--require-accept` take the same corrective turn, which costs a step, and the
+missing gate of a declared PR run is the one condition no child turn can supply.
+
+The headless loop evaluates every gate it owns,
+so the `--require-ci` gate runs whenever the run carries it and the declared-PR
+condition did not refuse, and a finish the marker, the `review-only` condition, or
+`--require-accept` already refused still runs the gate.
+
+The headless action object allows only `action`, `summary`, and an optional boolean
+`unresolvedCompare`, and its nested `summary` object allows only the five summary keys.
+
+- A run declared with `--pr` ends through `agent-loop --require-ci <pr>`, with the same PR number.
+- The headless path takes both flags on one command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the run starts.
+- A headless `--mode review-only` run can reach a finish before any reviewer turn. The runtime refuses that finish until a reviewer turn was dispatched. A `run_worker` action ends the headless run on exit 1 with the reason `mode review-only rejects a run_worker action`.
+- A headless `--pr` start reads the required-check sources of the PR base once. It refuses when the rulesets read settled nothing, before any state file is written or child spawns.
+- A headless run names the PR number in the task.
+
+## Reviewer prompts and result fields
+
+The headless initial prompt tells the orchestrator the mode, and says that its own turns stay read-only.
+
+The headless orchestrator prompt states the same `open` rule.
+
+A headless `--continue-from` run keeps the mode of the earlier run, and a flag that names another mode is refused.
+
+Before init, the interactive parent tells the operator that the reviewer turn keeps the credentials of the user for an out-of-tree system, unless the operator chooses a sandboxed mode. A headless run has no such step: the operator chose the mode in the command.
+
+- Required-check reads with no sandbox: the runtime still supplies the status first. When the orchestrator is `codex`, `copilot`, or unnamed, a headless run with `--require-ci` now tells the orchestrator that the reviewer turns do the wait, because a no-sandbox Codex reviewer keeps shell network. A waiting orchestrator (`claude`, `agy`, `opencode`) still runs `agent-loop role wait-checks`, whatever the reviewer mode. A sandboxed Codex reviewer with a non-waiting orchestrator stays on the gate rule. The `--require-ci` finish gate is the only read that enforces.
+- A headless run that takes only `--require-ci` supplies the status for the gated PR (issue #350).
+- A headless run renders the same status in the result prompt the orchestrator receives after a reviewer turn, as `prChecks` beside the response and the reviewed state, so the orchestrator holds the status and the reviewer Checks line in one prompt.
+- A worker or reviewer turn on a CLI that refuses a tool call can carry `"shellDenied": true` in the headless result prompt.
+- `testRun` also appears in the headless result prompt beside the reviewer response, and a reviewer turn that ends in an error carries it in the transcript.
+
+## A headless task whose worker opens the PR
+
+Read this when a headless run declares its PR itself.
+
+A headless run with neither `--pr` nor `--require-ci` has no PR input at start.
+After each worker turn that ends `ok`, the runtime looks for the PR that the
+worker opened. It declares that PR once, and the run then behaves as one that
+passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
+
+- The runtime reads Git and GitHub state only. It reads the checked-out branch
+  and the URL of the branch remote. It reads the work tree head that it read
+  after the turn. It reads `gh pr list --head <branch> --state open`. A worker report, a task text, and an orchestrator
+  action never choose or change the PR.
+- The runtime declares the PR only when one open PR comes from that branch. Its
+  base repository must be the repository of the branch remote. Its URL must end
+  in its number. Its head commit must equal the work tree head.
+- The work tree head must equal that head before and after the `gh` read. The
+  branch and the remote repository must be unchanged by the read. A change
+  leaves the run undeclared.
+- The branch remote is `branch.<branch>.remote`, or `origin` when none is set.
+  The PR URL gives the base repository, because `GH_REPO` can redirect `gh`.
+- These states leave the run undeclared: no match, several matches, a PR from a
+  fork, a PR for another base repository, and a detached head. A head that
+  differs from the turn head does the same. So does a branch or remote that
+  changes during the read. A failed `gh` read, an unparseable reply, and any
+  malformed entry also leave the run undeclared.
+- The runtime logs a warning for each of those states except no match. The next
+  worker turn tries again.
+- A declaration emits one `pr-declared` event with `pr` and `stepsUsed`. The
+  result prompt of that worker turn carries `declaredPr` and states the finish
+  rule. Every later reviewer prompt carries the required-check status for that PR.
+- The declaration is one way and happens once. A run with `--pr` or
+  `--require-ci` at start never resolves a PR. No later turn changes the PR.
+- The runtime applies the `--require-ci` gate to the PR that it declared, as if
+  the run had passed `--require-ci <pr>` (ADR 0045). A finish passes only after
+  a reviewer turn on the current state, with the PR head equal to the reviewed
+  commit, a clean reviewed tree, a merge state the gate accepts, and every
+  required check passed. A finish is refused while a required check fails or is
+  pending, and a refusal names the check. A finish with `unresolvedCompare` is
+  refused, because the gate resolves that compare. The missing-gate refusal and
+  the abort-only outcome apply only to `--pr` with no `--require-ci`.
+- `--continue-from` keeps a declared PR. The continued run restores it from the
+  `pr-declared` events of the earlier transcript. It emits a `pr-declared` event
+  with `restored: true` for every continuation of a declared run, whatever flags
+  it passes. A later continuation of that transcript keeps the PR.
+- The declared PR is an init field of the continued run. `--pr` or `--require-ci`
+  for another PR is refused before any turn. A flag for the same PR is accepted.
+- A continuation refuses `--mode review-only` for a declared PR. It also refuses
+  a malformed `pr-declared` record, such as a `pr` that is not a positive integer.
+- A continued run applies the same gate to the restored PR. A `--pr` for that PR
+  adds no refusal, because the PR was declared by the runtime.
+- Before the runtime declares the PR, it reads the required-check sources of the
+  PR base once, as the start of a `--pr` run does (#1092). When the rulesets read
+  settles nothing, such as the Free-plan 403 (#301), the run stays undeclared and the
+  runtime logs a warning that names the reason. The runtime then records the PR in
+  a `pr-undeclared` transcript event and compares its head at finish, as
+  `--compare-head` does (#1111, [ADR 0053](https://github.com/andromarces/agent-loops/blob/main/adr/0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)): see the headless compare
+  below. A finish with `unresolvedCompare` is refused, because the compare resolves
+  that head. A read that fails for another reason, such as a transport failure, warns
+  and still declares the PR (#1097).
+- A continued run that restored its PR reads no required-check source at start,
+  because the earlier run read at the start of its own `--pr` run or before it
+  declared a worker-opened PR (#1092, #1097). Its orchestrator prompt states no
+  start read. A continuation that declares a new PR makes the read.
+- A repository whose required-check sources are unreadable refuses `--pr <n>` and
+  `--require-ci <n>` at start or at finish, so a headless run for an existing PR there
+  passes `--compare-head <n>` (#1104). At finish, the runtime reads the PR head of
+  `<n>`, refuses unless the PR is open, it equals the reviewed head, and the reviewed tree is clean,
+  reads no required-check source, and claims no check result. A pass emits a
+  `head-compare` transcript event and the run exits `0`, where
+  `unresolvedCompare` exits `4`. The flag is refused with `--pr`, `--require-ci`,
+  and `--mode review-only` before the run starts, with a continuation of a declared
+  PR, which is refused before any transcript write or turn. A finish that also sets
+  `unresolvedCompare` is refused before any GitHub read. The transcript records the
+  flag, but a continuation does not restore it: each invocation selects the flag
+  again, as it selects `--require-ci`, and omitting it on a continuation disables
+  the runtime compare and leaves the marker path.
+  - The runtime declares no worker-opened
+    PR in such a run. The flag names a PR that exists at start.
+- A PR that the worker opens on such a repository needs no flag (#1111). The runtime
+  refuses to declare it, records it in a `pr-undeclared` event with `pr` and
+  `stepsUsed`, and applies the same compare at finish with no operator choice: a
+  verified compare when the PR is open, its head equals the reviewed head, and the
+  reviewed tree is clean, a refused finish when the heads differ or the PR is closed
+  or merged. A pass emits `head-compare` and
+  the run exits `0`. A run with `--pr`, `--require-ci`, or `--compare-head` never
+  records one. A later worker turn that declares a PR clears the undeclared PR, and
+  one that refuses another PR replaces it. A PR that leaves the open list keeps
+  its place, and the compare refuses it as closed or merged.
+  - A continuation does not restore the
+    undeclared PR: it restores a PR from a `pr-declared` record only, so the
+    continuation resolves the worker-opened PR again after its own worker turn, and a
+    continuation with no worker turn keeps the marker path.
+- To gate a PR that exists at start, pass `--require-ci <n>`.
+- The headless `--require-ci` with no `--pr` declares nothing, so the start does not read it and its gate refuses at finish.
+- The headless loop has no `declare-pr`, because the orchestrator is a child turn
+  and never chooses the PR. The runtime resolves it instead, as this section states.
+
+## Compare-head and an undeclared PR
+
+A headless run on a repository whose required-check sources are unreadable, for
+example a private repository on the GitHub Free plan (#301), passes
+`--compare-head <pr>` for a PR that exists at start (#1104), and a run without the
+flag resolves a worker-opened PR itself (#1111, ADR 0053). It is the headless form of
+the interactive `--compare-head` in [Finish output](../orchestrator/finish-output.md) and keeps its contract. At finish, the
+runtime reads the PR head and state and refuses unless the PR is open, it equals the
+reviewed head, and the reviewed tree is clean. It reads no required-check source and claims no check
+result, and it does not evaluate the merge state. A pass emits a `head-compare`
+transcript event and the run exits `0`, distinct from `unresolvedCompare` and its
+exit `4`. The command refuses the flag with `--pr`, `--require-ci`, and
+`--mode review-only`, and a finish that also sets `unresolvedCompare` is refused
+before any GitHub read.
+
+A continuation of a declared PR refuses the flag before any
+transcript write. The transcript records the flag, but a continuation does not
+restore it: each invocation selects `--compare-head` again, as it selects
+`--require-ci`, and omitting it on a continuation disables the runtime compare and
+leaves the marker path.
+A worker-opened PR is never declared in such a run, because the flag names the PR at
+start. A run without the flag needs none for a PR that the worker opens (#1111, ADR
+0053): the runtime refuses to declare it, records a `pr-undeclared` event, and
+applies the same compare at finish. A finish with `unresolvedCompare` is refused for
+it, and a closed or merged PR refuses the finish even when its head is unchanged. A continuation does not restore the undeclared PR and resolves it again after its
+own worker turn, and a continuation with no worker turn keeps the marker path.
+
+## Required-check waits
+
+The headless `agent-loop` command runs its own orchestrator and renders its own wait
+prompt ([ADR 0013](https://github.com/andromarces/agent-loops/blob/main/adr/0013-bound-the-headless-required-check-wait.md)). A `role` parent does not follow that prompt. It follows the wait
+rules in [Waiting for required checks](../orchestrator/waiting-for-checks.md), and it runs the wait itself.
+
+The `--all` wait and the `noCheckSource` field are in [Waiting for required checks](../orchestrator/waiting-for-checks.md#waiting-for-required-checks). The headless orchestrator prompt carries the same rule.
+
+## Work tree and delivery
+
+The interactive refused-`--cwd` rule is in [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership). The headless loop states the same rule and cannot act on it: `agent-loop` snapshots its `--cwd` before and after every orchestrator turn, so a work tree in any of those three states ends the run on that snapshot failure before the orchestrator can act, and the run keeps no state file. A headless worker turn gets the ownership rule from the same file, because `runChild` builds the worker prompt there for both paths.
+
+A headless run cannot run the copy-back. `finish` ends that loop, and every orchestrator turn is read-only. The operator delivers the accepted file there.
+
 ## Transcript
 
 When `--transcript <file>` is specified, a JSON transcript is written upon process exit (except when argv parsing fails).
@@ -146,6 +335,12 @@ Other adapters emit `invocation` events without `usage` until their CLI output i
   "error": null
 }
 ```
+
+A headless run also emits an `inherited-tmpdir` event with `fatal: true` for a fatal error. The transcript keeps that event.
+
+A headless run emits a `package-store` event with `fatal: true` for a fatal error.
+
+A headless run that ends on a fatal error prints the test-command result in its error report on stderr and records it as a `test-run` event in a transcript.
 
 ## Exit codes
 

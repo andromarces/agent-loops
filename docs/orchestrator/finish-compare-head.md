@@ -2,7 +2,7 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you finish with `--compare-head <pr>`, and when a finish with it is refused. The core rules of that finish are in [Finish output](finish-output.md).
 
-`--compare-head <pr>` makes the PR-head half of the gate and nothing else (#301, #1098):
+`--compare-head <pr>` makes the PR-head half of the gate and nothing else:
 
 ```bash
 printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}'   | agent-loop role finish --cwd "<work tree>" --compare-head <pr>

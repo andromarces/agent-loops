@@ -14,26 +14,23 @@ conversation shows the task under its own `Init task:` label, before `Instructio
 - A resumed turn that ran in a replacement conversation carries no task, so it records nothing. A task-only
   turn in the same dispatch then delivers it: the preamble-only turn for a worker, and a turn with the
   `Init task:` block and no review for a reviewer.
-- A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again, as before.
+- A cancel never repeats the task. After a cancel, the next worker turn sends the preamble again.
   It leaves the task out when the record names the session that it resumes.
-- Every adapter (Claude Code, Codex, Copilot, opencode, agy) fails a turn that reports no session id. A
-  successful turn therefore always stores one.
 - Known limit: a canceled turn that carried the task counts as delivered. The CLI can drop that prompt. That
   conversation then never sees the task.
 - A hard kill of the dispatch records no delivery, so the next turn can send the task again.
-- The task-only reviewer turn costs one extra child turn in the same dispatch. It runs under its own
-  read-only check, apart from the review turn, so a write in either turn halts the run. The replacement has
-  the task before the verdict counts toward a finish.
+- The task-only reviewer turn runs under its own read-only check, apart from the
+  review turn, so a write in either turn halts the run. The replacement has the task
+  before the verdict counts toward a finish.
 - A task-only reviewer turn that fails, other than by a cancel, records no delivery, and the whole reviewer
   dispatch is an error result with no verdict. `finish --require-accept` then refuses, and the next reviewer
   turn shows the task.
 - A task-only turn that runs in yet another conversation delivers the task there and records that
-  conversation, so the next turn does not repeat it. The dispatch is an error result with no verdict,
-  because the conversation that gave the verdict never had the task.
+  conversation, so the next turn does not repeat it. The dispatch is an error result with no verdict.
 - A cancel in the task-only turn follows the known limit above: it counts as delivered, so the resumed
   reviewer turn does not repeat the task. The cancel keeps the replacement mark, and the dispatch gives no
   verdict.
 
 ## Init task in a child prompt
 
-The init task sits in its own `Init task:` block (issue #826, PR #889). A live check of a task that held lines that read as a report label or a `Verdict:` line found no parse defect (issue #710). The check ran on macOS 27.2 with Claude Code 2.1.303 and `codex-cli 0.164.0-alpha.3`. Windows, Linux, and the other CLIs are not verified. The probe log is in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#init-task-block-live-check).
+The init task sits in its own `Init task:` block.

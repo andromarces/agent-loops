@@ -1,12 +1,6 @@
 # Orchestrator instructions (harness-neutral)
 
-You are the parent orchestrator for an `agent-loop role` run. Per-harness entry
-points (the Claude Code, Codex CLI, and Antigravity CLI skills, the OpenCode
-plugin command, and the Copilot launcher) include this file instead of copying
-it. The headless prompt in `src/prompts/orchestrator.mjs` states the same role
-rules in JSON-action form; this file is the source for shared rules. Work tree
-ownership below is stated in that prompt as well, and the two state the same
-rule.
+You are the parent orchestrator for an `agent-loop role` run.
 
 The rules that only some turns need are in the reference files under `orchestrator/`. The
 Reference sections list below names each file and when to read it.
@@ -21,7 +15,7 @@ Reference sections list below names each file and when to read it.
   not a review, not a test, and not an edit, and `agent-loop role wait-checks` is
   the only command it covers.
 - The other exception is the copy-back of a target outside any Git repository
-  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run, like the merge or hand-off of a no-remote run.
+  after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states. It is the delivery step of that run.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception. They change nothing, and the remote-write rule below stands.
 - Never write to GitHub or any remote: do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
@@ -41,7 +35,7 @@ Collect these before the first dispatch:
 - mode: `work-first`, `review-first`, or `review-only` (`--mode`)
 - maximum steps (`--max-steps`)
 - the PR number when the task is PR work (delivered on a pull request); the run
-  supplies it, and a headless run names it in the task
+  supplies it
 - the test command, when the operator names one (`--test-cmd`, with the optional
   `--test-cmd-timeout`); the operator supplies it, and no turn sets it
 - the sandbox of the Codex reviewer (`--reviewer-sandbox read-only` or
@@ -55,14 +49,13 @@ the reference sections [Install](reference/install.md#install) and
 [From a clone](reference/development.md#from-a-clone-development).
 
 If `agent-loop` does not resolve on PATH, replace it with
-`node "<repo>/src/cli.mjs"` and quote the repository path, so a path with spaces
-works. Or run `pnpm agent-loop` from the repository root.
+`node "<repo>/src/cli.mjs"` and quote the repository path. Or run
+`pnpm agent-loop` from the repository root.
 
 ## Starting a run
 
 The first dispatch carries the init flags, including the required
-`--parent-session`. The subcommand refuses an init without it, so an interactive
-run is never left unguarded:
+`--parent-session`. The subcommand refuses an init without it:
 
 ```bash
 printf '%s' "<first child prompt>" | agent-loop role dispatch \
@@ -78,31 +71,28 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
 
 - The first role matches the mode: `worker` in `work-first`, `reviewer` in
   `review-first` and `review-only`. The subcommand refuses only `--role worker`
-  in `review-only`; it accepts either role at a `review-first` init, so the Loop
-  policy section sets the order.
+  in `review-only`; it accepts either role at a `review-first` init.
 - `--worker` is required in `work-first` and `review-first` and optional in
   `review-only`, which never dispatches the worker. `--worker-model` and
   `--worker-effort` are always optional, and require `--worker`. An OpenCode
   `--<role>-effort` also requires an explicit `--<role>-model`.
-- Always pass `--cwd`. It defaults to the current directory, which for an
-  interactive parent is normally not the target work tree.
+- Always pass `--cwd`. It defaults to the current directory.
 - Pass every child prompt on stdin, from a shell heredoc or an equivalent such as
   `printf`. The exception is an init with `--task-file -`, which takes
   `--prompt-file`. While a run is active, the parent guard denies the file-edit
   tools of the parent for every path, including a scratch path outside the work
-  tree, so a later prompt never goes through a file. A piped `cat <file>` of a
+  tree. A piped `cat <file>` of a
   file that was never written gives an empty stdin, and `dispatch` refuses it:
   `Prompt on stdin is empty. Pipe a prompt or use --prompt-file.`
 - The init task (`--task` or `--task-file`) reaches each child conversation once, as
   [Init task delivery](orchestrator/task-delivery.md) states.
-  - The headless loop passes its task the same way. The `Instructions:` text is still the prompt of the
-    dispatch, so write it to state the work of that turn.
+  - The `Instructions:` text is still the prompt of the dispatch, so write it to
+    state the work of that turn.
 - `--task-file <path>` can replace `--task` on init. Before you stage that file or init with it, read
   [Init with a task file](orchestrator/task-file-init.md).
 - A parent session can drive several runs at once, one per work tree. Init
-  registers each run under the session as its own entry keyed by the work tree,
-  so a second run in a different work tree does not replace the first. A new
-  task in the same work tree starts a new run only after that work tree's
+  registers each run under the session as its own entry keyed by the work tree.
+  A new task in the same work tree starts a new run only after that work tree's
   previous run is terminal; the subcommand archives that work tree's previous
   state file and rejects init over a non-terminal run there.
 - Later dispatches read the configuration from the state file. Do not repeat
@@ -161,8 +151,7 @@ The example below is indented for display only. Example reviewer envelope:
   event of the turn was a provider capacity reply, a provider outage and not a reviewer
   fault. A turn is not marked when its last failure event carries another
   cause. Consecutive capacity failures stay marked. The runtime
-  ignores a malformed or truncated final line, so an earlier capacity event stays
-  decisive then. The turn charged its step and gave no review result.
+  ignores a malformed or truncated final line. The turn charged its step and gave no review result.
   - Dispatch the same turn again, after a short wait, without reading the `error` text. Raise the budget with `extend`
     when no step is left. An error with no `transient` field is not known to be
     transient.
@@ -172,8 +161,8 @@ The example below is indented for display only. Example reviewer envelope:
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
 - When the closing block cannot be parsed, the runtime takes one repair turn in
-  the same session. If it fails, `report` is null and `raw` carries the response,
-  so no text the block held is lost. Treat it as not accepted. When a required
+  the same session. If it fails, `report` is null and `raw` carries the response.
+  Treat it as not accepted. When a required
   label is missing, `reportMissingLabels` names each missing label, for example
   `["Why"]`, and holds no response text. A child turn whose adapter returns a
   missing or non-string response ends `status: "error"`, not `ok` with
@@ -189,8 +178,8 @@ The example below is indented for display only. Example reviewer envelope:
   [Closing block list rules](orchestrator/closing-block.md).
 
 A reviewer envelope carries `reviewed`, the runtime-owned identity of the state
-the reviewer saw. The runtime writes these fields from the snapshot taken at the
-start of the turn, so the child cannot misreport them: `head` is the commit,
+the reviewer saw. The runtime writes these fields from the snapshot taken at the start of the
+turn: `head` is the commit,
 `clean` is true when the work tree has no uncommitted entries, `exact` is true
 when every entry has a content hash or is a deletion, and `digest` identifies the
 uncommitted state (it is exhaustive only when `exact` is true; ignored files are
@@ -198,9 +187,7 @@ out of scope).
 
 A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
-branch and pushes it, so the PR head equals the reviewed head. The run supplies
-the PR number, and the head commit comes from that PR. In a headless run, the
-task names the PR number.
+branch and pushes it, so the PR head equals the reviewed head. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
 
 After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
@@ -238,13 +225,11 @@ Apply these parent rules:
   - The read covers the global config, the local (shared) scope, the run work tree's own worktree
     scope, and the main work tree's worktree scope. A `core.worktree` change in the linked work
     tree's own file reports a field without affecting the main work tree. A watched key in the
-    main work tree's worktree config names only that key. A global change affects every repository
-    of the user.
+    main work tree's worktree config names only that key.
   - The field reports a change observed between the two reads. It does not prove the turn made the
     change. Another process or another run on the host can cause a change.
   - A `sharedGitChanged` entry for `core.bare`, `core.worktree`, or an identity or signing key needs
-    action before the next dispatch. Such a key can change the author or signing of every later
-    commit. It can break the main work tree or every later commit at once.
+    action before the next dispatch. Such a key can change the author or signing of every later commit.
     - Dispatch a worker to read that key in the shared config and report its current state. From
       that report, name the turn whose report says it changed it and ask the user whether to
       restore it.
@@ -266,9 +251,8 @@ Apply these parent rules:
   - An edit that the turn restores before it ends appears as `mainWorkTreeChangedInTurn`, by path
     only, at most 20, and never content. A failed or canceled worker turn carries the field too.
     Report it under `open` in the finish summary. The user or another process can cause the change
-    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only
-    access moves only the access time, so it names no path.
-  - An absent path does not prove that no in-window edit happened. ADR 0086 states both limits.
+    too. A path that still differs at the end appears in `mainWorkTreeChanged` only. A read-only access moves only the access time, so it names no path.
+  - An absent path does not prove that no in-window edit happened.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or
     bound failure reports no field, so the absent field proves nothing.
   - At the turn end the watch closes first, then drains the queue and settlement under a 1000 ms
@@ -295,18 +279,15 @@ Apply these parent rules:
   a non-Node dependency file by its root-relative path. A dependency file whose read fails before or
   after the turn counts as changed.
   - When the runtime cannot read the work tree root, the field names every lockfile. That list can
-    include a lockfile that does not exist: reinstall anyway (issue #1225). The worker
-    never installs, so the installed dependencies no longer match
-    the lockfile. When the runtime cannot read the dependency file list, the field names every
-    lockfile and every non-Node path known from the other read. See issues #1225 and #1457.
+    include a lockfile that does not exist: reinstall anyway. When the runtime cannot read the dependency file list, the field names every
+    lockfile and every non-Node path known from the other read.
   - When the field appears, run only the dependency setup, such as the Node lockfile install, before
     the next reviewer dispatch. The dependency setup is the one that the repository documents for
     the tests in the work tree.
   - For a non-Node file, run only the setup that its toolchain documents for those tests in the
     work tree before the next reviewer dispatch. A changed dependency file that no test setup reads
     needs no action: record that judgment under `open`. Never install outside the work tree. A
-    failed worker turn carries the field too. A turn that changed none carries no field. See issues
-    #1180, #1457, and #1537.
+    failed worker turn carries the field too. A turn that changed none carries no field.
   - The field covers `requirements*.txt`, `constraints*.txt`, `Pipfile.lock`, `poetry.lock`,
     `pdm.lock`, `uv.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, and `composer.lock` at any depth.
     Ignored paths are never read.
@@ -318,7 +299,7 @@ Apply these parent rules:
   never their content, at most 20. It is a diagnostic: the directory is shared with other
   processes, the runtime cannot attribute an entry to the turn, and it does not delete one. The
   runtime reads the directory once after the turn, with no re-read and no wait. The field creates
-  no `open` item by itself, and it never refuses a finish (issue #1616, ADR 0095). Field rules:
+  no `open` item by itself, and it never refuses a finish. Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
   - Turn directories that this process created are left out, and every other name of that one
     read is listed, an `al-` name too.
@@ -332,21 +313,19 @@ Apply these parent rules:
   - Every reviewer turn that read the directory before it started carries the field, a failed,
     halted, or canceled turn too. The parent never deletes an entry that `inheritedTmpdirEntries`
     names: it leaves removal to the user, and a reviewer `Notes` line never makes an entry safe to
-    delete, because another process can hold a matching name (issue #1529).
+    delete.
 - A reviewer envelope carries `packageStoreEntries` only when entries changed during the turn in
   the pnpm package store that the work tree records as `storeDir`. It is advisory: the runtime
   cannot attribute a change to the turn, and it does not revert one. Report it in the finish
-  summary under `open`, and do not treat it as a reason to reject (issue #1045). Field rules:
+  summary under `open`, and do not treat it as a reason to reject. Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
 - Treat an accept without a Checks line as not accepted. Only the reviewer
   Checks line is a gate input, so a worker Checks line is reported evidence and
   never an accept.
 - When the PR head cannot be resolved, do not finish as verified. Abort, or record the unresolved
   compare under notDone and open in the finish summary. A recorded compare also
-  sets the marker described in [Finish output](orchestrator/finish-output.md), so the record never reads the
-  same as a verified finish. That marker is the only machine-readable record of
-  the compare, and nothing else in the run distinguishes an omitted marker from a
-  verified finish, so always set it.
+  sets the marker described in [Finish output](orchestrator/finish-output.md). That marker is the only
+  machine-readable record of the compare, so always set it.
 
 ## Check waits
 
@@ -363,43 +342,21 @@ The hold ignores a workflow that runs only on `push`. That workflow never holds 
 ## Work tree ownership
 
 The parent creates the run's work tree and owns it. Keep that work tree in place
-for the whole run, and never tell a worker to remove it: a worker turn pushes its
-branch and stops there, because every later dispatch of that run targets the same
-`--cwd`.
-
-The worker preamble states the work tree edit rule. Edit, create, and delete
-files only under the run work tree. Before an edit with an absolute path, check
-that the path starts with the work tree root. A path that a tool returns for
-another checkout maps to the same relative path in the run work tree.
-
-The worker preamble also states the report-and-stop rule. If an edit lands in
-another checkout, report the paths in the closing block and stop. Never restore
-or discard a file there, because a restore can discard an uncommitted change of
-the user.
+for the whole run, and never tell a worker to remove it.
 
 When a worker report says its edit landed in another checkout, stop the run,
 report the paths under `open` in the finish summary, and leave that checkout to
-the user: `mainWorkTreeChangedInTurn` stays report-only, because a concurrent run
-can report the same path, so the runtime cannot attribute the edit to one run
-(ADR 0080).
+the user: `mainWorkTreeChangedInTurn` stays report-only: a concurrent run can report
+the same path, so the runtime cannot attribute the edit to one run.
 
-Create the work tree with no upstream, so a plain `git push` of a worker cannot
-reach the default branch:
+Create the work tree with no upstream:
 
 ```bash
 git worktree add --no-track -b <branch> <work tree> origin/<default>
 ```
 
-Without `--no-track`, the new branch gets the upstream `origin/<default>` when
-`branch.autoSetupMerge` is at its default.
 The worker sets the upstream to its own remote branch on the first push, with
 `git push -u origin <branch>`.
-
-The no-upstream rule guards a plain `git push` only when `push.default` follows
-the upstream. With `push.default=matching`, a plain `git push` pushes every
-local branch that has a remote branch of the same name. A linked work tree
-shares its local branches with the main checkout. So a local default branch that
-is ahead of `origin/<default>` is pushed too.
 
 Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or
 `git push -u origin <pr branch>` for an existing PR branch. Never let the worker
@@ -492,13 +449,6 @@ a non-terminal run at that path: a path with no run state is refused with
 who recreates the work tree starts a new run there: a run over an aborted work
 tree is not resumed, and the state file names the work tree, not the work in it.
 
-The headless loop states the same rule and cannot act on it: `agent-loop`
-snapshots its `--cwd` before and after every orchestrator turn, so a work tree in
-any of those three states ends the run on that snapshot failure before the
-orchestrator can act, and the run keeps no state file. A headless worker turn
-gets the ownership rule from the same file, because `runChild` builds the worker
-prompt there for both paths.
-
 ## Reference sections
 
 The files below hold the rules that most turns do not need. Read a file in full when its
@@ -524,8 +474,7 @@ of this file.
   Read it when a required check fails on a known flaky test. Read it when `wait-checks` returns an
   error, `noRequiredChecks`, or `noCheckSource`.
 - [Declaring a PR run](orchestrator/pr-declaration.md): read it before you pass `--pr`, when a
-  declared run refuses a finish, when the PR does not exist at init, or when a headless run
-  declares its PR itself.
+  declared run refuses a finish, or when the PR does not exist at init.
 - [Finish output](orchestrator/finish-output.md): read it before you call `finish`, when you need
   the exact summary shape or the `unresolvedCompare` marker, or when a `finish` is refused.
 - [Finish gates](orchestrator/finish-gates.md): read it when a `finish` is refused, and before you
@@ -540,9 +489,6 @@ of this file.
   after `finish`.
 - [Removing a work tree](orchestrator/work-tree-removal.md): read it when you remove the work tree
   of a terminal run, before the removal command.
-- [Headless compare-head and undeclared PR](orchestrator/headless-compare-head.md): read it when a
-  headless run passes `--compare-head`, when a run has no usable required-check source, and when
-  a headless run finishes with a worker-opened PR.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
   dispatch several runs in one repository. Two runs can create the same tracking issue or take the
   same sequential identifier, such as an ADR number. Read it before concurrent runs can edit one
@@ -581,21 +527,21 @@ Exclude every issue that a commit message closes. The commits endpoint returns a
 ## Several runs at once
 
 - Interleave: dispatch one turn per run in turn, and read each envelope before
-  the next dispatch. This works in every harness.
+  the next dispatch.
 - Background: run each dispatch as a background shell command where the harness
   supports it, and read each envelope when it completes.
 
 Every command for a run passes that run's `--cwd`. Each run ends with its own
 `finish` or `abort`, and the guard releases only after every run is terminal.
 
-Runs on one host share the test slot table, whose default count is 1 (ADR 0046).
-A targeted test run with `--if-held` waits while any slot is held (ADR 0044). A
+Runs on one host share the test slot table, whose default count is 1.
+A targeted test run with `--if-held` waits while any slot is held. A
 reviewer turn can then wait behind a full suite of another run. That wait, or
 exit 75 from the wrapper, can leave a reviewer turn with no local test run. The
 required CI checks are then its only test evidence, as
 [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 A parent that starts concurrent runs can raise `AGENT_LOOP_TEST_SLOTS` before the
-first dispatch, but 2 slots overloaded both measured hosts (ADR 0046).
+first dispatch.
 
 Workers of runs in one repository can also edit the body of the same issue at once, which drops an
 item when two writes overlap. Put the read-write-read rule of
@@ -616,40 +562,21 @@ reviewer turn. A worker turn after the review resets the reviewed state, so that
 order avoids an extra reviewer step.
 
 Both paths name the mode with `--mode <mode>`, with the same three values: on the
-`role` init call and on the headless `agent-loop` command. The headless `--mode`
-is off by default, so a run without the flag keeps the current behavior. A
-`review-only` run dispatches no worker, so it takes none of `--pr`,
-`--require-accept`, and `--require-ci`.
+`role` init call and on the headless `agent-loop` command. A `review-only` run
+dispatches no worker, so it takes none of `--pr`, `--require-accept`, and
+`--require-ci`.
 
-The headless gate follows turn order only; an edit made outside the loop after a
-reviewer accept is not detected. `agent-loop --require-ci <pr>` applies the same
-PR gate headlessly, so the runtime resolves the PR head there too (#293), and
 `--pr <pr>` on either path declares the run PR work, so that run can only end
-through the gate for the same PR (#302). A
-headless gate refusal is satisfied by a reviewer turn, and the run ends on exit 1
-when a finish is refused again with no child turn in between, so budget
-`--max-steps` for a required check that is still pending. The gate reads the
-reviewed state, so the reviewer turn is the one that satisfies it; a worker turn
-resets that state to none, so it is needed first only when the condition is about
-the change. A
-headless finish that records an unresolved PR-head compare sets
-`"unresolvedCompare": true` on the action; the run records an
-`unresolved-compare` transcript event and exits `4` instead of `0`, so the
-recorded finish stays distinct from a verified one without a transcript (#266,
-#279). An interactive `role finish` records the same marker in its envelope and
-the state file instead of a transcript event (#281).
+through the gate for the same PR (#302). The gate reads the reviewed state, so the
+reviewer turn is the one that satisfies it; a worker turn resets that state to none,
+so it is needed first only when the condition is about the change. An interactive
+`role finish` records the `unresolvedCompare` marker in its envelope and the state
+file instead of a transcript event (#281).
 
-A headless run on a repository whose required-check sources are unreadable passes
-`--compare-head <pr>` for a PR that exists at start (#1104), and a run without the flag
-resolves a worker-opened PR itself (#1111, ADR 0053).
-
-A headless orchestrator action allows only these keys. The `run_worker` and
-`run_reviewer` actions allow only `action` and `prompt`. The `abort` action
-allows only `action` and `reason`. An action that holds any other key is
-refused, and the refusal names each unknown key, so a misspelled field is never
-dropped without a trace. A refused action takes the one repair turn: it
-dispatches no child and charges no step. A second refused reply ends the run
-with an error (#1034).
+The rules that only a headless run acts on are in
+[Loop policy and actions](reference/usage.md#loop-policy-and-actions): the default of
+`--mode`, the headless gate and its `--max-steps` budget, the action keys, and the
+headless `--compare-head` and undeclared-PR cases.
 
 ## Completion
 
@@ -691,8 +618,7 @@ Map the child report fields into the finish summary:
 
 `--pr <pr>` on the init call declares that the run's work is delivered on that
 pull request, so the run can end only through the gate:
-`agent-loop role finish --require-ci <pr>` here, and
-`agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
+`agent-loop role finish --require-ci <pr>`, with the same PR number.
 
 ## Blockers and terminal states
 
@@ -721,14 +647,14 @@ pull request, so the run can end only through the gate:
   terminal and the subcommand rejects further operations, including `abort`.
   Report the failure and the modified paths from the envelope, then stop.
 - Every run ends in exactly one terminal lifecycle: `finished`, `aborted`, or
-  `halted`. The parent-edit guard (#57, Claude Code, Codex CLI, Copilot CLI,
+  `halted`. The parent-edit guard (Claude Code, Codex CLI, Copilot CLI,
   OpenCode, and Antigravity CLI) releases on any of them. Every `agent-loop role`
-  init requires `--parent-session`, so the guard always has a parent to match.
+  init requires `--parent-session`.
   The unguarded path is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
 
 ## Repeated rejects of one finding class
 
-After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer. The bar: a failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope. Never narrow the bar for a weakened existing guard or a regression on an input in normal use. The fixed review scope carries the same bar, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states (issue #1194).
+After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer. The bar: a failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope. Never narrow the bar for a weakened existing guard or a regression on an input in normal use. The fixed review scope carries the same bar, as [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md) states.
 
 ## Recovery after compaction or restart
 
@@ -737,7 +663,7 @@ Read the state file at
 is `<os tmpdir>/agent-loops/runs` by default and the `AGENT_LOOP_RUNS_ROOT`
 environment variable overrides it. The directory name is the first 12 hex
 characters of the sha256 of the resolved `--cwd`, with the Windows drive letter
-lowercased before hashing, so `c:\repo` and `C:\repo` share one directory.
+lowercased before hashing.
 This state-file read is the one exception to the stdout-envelope rule. Honor
 the state file's `mode` and `lifecycle`, and continue from `stepsUsed` and
 `lastResult`.
