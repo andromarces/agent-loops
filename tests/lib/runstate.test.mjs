@@ -416,6 +416,23 @@ test("readState throws on a state file that is not a JSON object", async () => {
   }
 });
 
+// Usefulness: verifies an invalid-JSON state file names the file and keeps the file text out of the error; no other test reaches this path.
+test("readState names the state file without exposing its invalid JSON text", async () => {
+  const dir = await tempDir();
+  const stateFile = join(dir, "state.json");
+  const marker = "zqx1";
+  await writeFile(stateFile, `{"${marker}": bad}`);
+
+  const err = await readState(stateFile).catch((error) => error);
+  expect(err).toBeInstanceOf(Error);
+  expect(err.message).toBe(`State file is not valid JSON: ${stateFile}`);
+  expect(err.message).not.toContain(marker);
+  expect(String(err.cause ?? "")).not.toContain(marker);
+  for (const key of Object.getOwnPropertyNames(err)) {
+    expect(String(err[key])).not.toContain(marker);
+  }
+});
+
 // Usefulness: verifies the state directory name stays the first 12 hex digits of
 // the SHA-256 of the canonical cwd, so existing run state stays reachable.
 test("statePaths names the state directory by the cwd SHA-256 prefix", () => {
