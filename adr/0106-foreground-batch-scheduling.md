@@ -2,7 +2,23 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[ADR 0109](0109-release-batch-slots-on-owner-decisions.md) partially supersedes this ADR.
+These parts are replaced:
+
+- Decision 1's return rule. The command also returns with status `waiting` for a pending decision.
+- Decision 5's sentence that a `needs-owner` loop keeps its slot.
+- Decision 6's `blocked` skip, which becomes a waiting poll.
+- Decision 16's in-batch decision request, slot release, owner-merge continuation, and desktop
+  notifications.
+- The consequence and the milestone 1 standalone sentence that a `needs-owner` loop holds one
+  slot.
+
+Every other decision, consequence, and acceptance check stays in force. The batch still never
+merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 
 ## Supersedes
 
