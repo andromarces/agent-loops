@@ -18,31 +18,34 @@ A copy that preserves times, a `touch -r` restore, and a rename away and back al
 
 A write, a rename, a `chmod`, and an explicit `utimes` move the change time (`ctime`) on Windows, macOS, and Linux. A read moves only the access time. The change time therefore separates a read-only access from a write that restores the modification time.
 
-A change time is recent after any change, so a timestamp-preserving change made just before the turn also leaves a recent value. A rule that treats any recent change time as a write would report a read-only access of such a path. The change time must instead be compared with the window start itself: only a value at or after the window start marks a write in the turn.
+A change time is recent after any change, so a timestamp-preserving change made just before the turn also leaves a recent value. A rule that treats any recent change time as a write would report a read-only access of such a path. The change time must instead be compared with the window start itself: only a value strictly later than the one-millisecond guard after it marks a write in the turn.
+
+The file system stamps the change time at sub-millisecond precision. `Date.now()` steps in whole milliseconds and can lag that stamp by more than a millisecond, so a change completed before the start can carry a change time that looks later than a whole-millisecond start. The start therefore comes from `performance.timeOrigin + performance.now()`, which matches the file system stamp, and the change time must pass a one-millisecond guard after it.
 
 ## Decision
 
-1. **Confirmation.** A candidate is reported when its pre-turn and post-turn state are equal, as ADR 0080 states, and either its modification time is not earlier than the window start minus the margin, or its change time is not earlier than the window start.
-2. **Read-only access.** A read moves only the access time, so its modification time and its change time both stay before the window, and it is still dropped.
-3. **Two windows.** The margin of ADR 0086 stays 2000 ms and applies to the modification time only. The change time has no margin and compares with the window start, so a timestamp-preserving change made before the window reports no path.
-4. **Limit.** A write that also restores the change time is not reported. The supported platforms give user code no way to set the change time, so this limit needs no instruction text.
-5. **Unchanged.** The window start, the content state test, the caps, the close-then-drain order, the drain deadline, and the arm rule of ADR 0080 and ADR 0100 stay in force.
+1. **Confirmation.** A candidate is reported when its pre-turn and post-turn state are equal, as ADR 0080 states, and either its modification time is not earlier than the window start minus the margin, or its change time is strictly later than the window start plus a one-millisecond guard.
+2. **Read-only access.** A read moves only the access time, so its modification time and its change time both stay before the guard, and it is still dropped.
+3. **Two windows.** The margin of ADR 0086 stays 2000 ms and applies to the modification time only. The window start comes from the performance clock's wall time, and the change time has a one-millisecond guard. A timestamp-preserving change made before the window, including one in the start millisecond, reports no path.
+4. **Limit.** An in-window restore inside the one-millisecond guard after the start is not reported. A write that also restores the change time is not reported either. The supported platforms give user code no way to set the change time, so the instruction text needs no new limit.
+5. **Unchanged.** The content state test, the caps, the close-then-drain order, the drain deadline, and the arm rule of ADR 0080 and ADR 0100 stay in force.
 
 ## Consequences
 
 - A restored edit that preserves the modification time is reported, such as a copy that preserves times, a `touch -r` restore, or a rename away and back.
 - A `chmod` and its restore are reported.
 - A read-only access still reports no path, including one whose path a timestamp-preserving change touched just before the window.
-- A change time that a negative clock skew places before the window start can still hide a times-preserving restore. A normal write keeps the modification time and the margin, so that case stays reported.
+- A times-preserving restore that ends inside the one-millisecond guard after the start is not reported.
 - The end `lstat` that the watch already takes supplies both times, so the rule reads no file content.
 
 ## Alternatives
 
 1. **Keep the modification-time rule.** Rejected. It leaves the confirmed gap that issue #1712 records.
 2. **Compare the change time with the margin too.** Rejected. A timestamp-preserving change made just before the window then reports a read-only access, which weakens the read-only contract.
-3. **Compare the change time only.** Rejected. A coarse file system clock and a small skew still need the modification time and its margin; the rule keeps both signals.
-4. **Read every candidate twice, before and after the turn.** Rejected. The watch exists to avoid a full read of the main work tree on every turn.
-5. **Stop the run on the field.** Rejected in ADR 0101 decision 3. A concurrent run can report the same path, so the runtime cannot attribute the edit to one run.
+3. **Compare the change time with a whole-millisecond `Date.now()` start.** Rejected. The file system stamp can lead `Date.now()` by more than a millisecond, so a change completed before the start can still report a read-only access.
+4. **Compare the change time only.** Rejected. A coarse file system clock and a small skew still need the modification time and its margin; the rule keeps both signals.
+5. **Read every candidate twice, before and after the turn.** Rejected. The watch exists to avoid a full read of the main work tree on every turn.
+6. **Stop the run on the field.** Rejected in ADR 0101 decision 3. A concurrent run can report the same path, so the runtime cannot attribute the edit to one run.
 
 ## Authors
 
