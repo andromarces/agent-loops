@@ -10,10 +10,9 @@ needed: the subcommand records each dispatched turn itself.
 - The state file's `turns` array holds one entry per dispatched turn, in order, and
   each entry survives every later dispatch that overwrites `lastDispatch` and
   `lastResult`. A first turn that a recognized Codex model refusal ends charges no
-  step but still records its entry, so a later refusal charges one (issue #1565,
-  ADR 0084). A state written before this version has no `turnsComplete` mark, so a
-  refusal on it charges a step even if a later write recreates a history that holds
-  no entry for the role.
+  step but still records its entry, so a later refusal charges one. A state with
+  no `turnsComplete` mark charges a step for a refusal even if a later write
+  recreates a history that holds no entry for the role.
 - Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
   ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
   otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
@@ -23,10 +22,8 @@ needed: the subcommand records each dispatched turn itself.
   recorded for it, so its verdict and head are `null`. The call that marks the
   run `interrupted` records it, so the history stays complete across recovery.
 - The one closing-block repair turn after a null child report runs inside the
-  step that the original turn already charged, so it adds no entry and no charge
-  (issue #1615, [ADR 0094](https://github.com/andromarces/agent-loops/blob/main/adr/0094-repair-a-null-child-closing-block.md)).
-  No refund path exists, and ADR 0084 keeps its narrow first-turn model-refusal
-  scope.
+  step that the original turn already charged, so it adds no entry and no charge. No refund path exists, and the refund keeps
+  its narrow first-turn model-refusal scope.
 - Size bound: exactly one entry per dispatched turn, and a dispatch past `maxSteps`
   is refused before it runs, so `turns` holds at most `maxSteps` entries plus one
   refunded first-turn refusal for each role. The recovery call runs no child,
@@ -39,7 +36,7 @@ needed: the subcommand records each dispatched turn itself.
   the rule that [Blockers and terminal states](../orchestrator-instructions.md#blockers-and-terminal-states)
   states is refused and the state file stays unchanged. The call prints
   `{"status": "ok", "lifecycle": "active", "maxSteps": 40, "stepsUsed": 20}`. It shows after
-  which turn the budget changed (ADR 0014). A run never extended has no `budgetChanges`.
+  which turn the budget changed. A run never extended has no `budgetChanges`.
   Because `maxSteps` only grows, a run with no refunded first-turn refusal still holds at
   most `maxSteps` entries; each refunded refusal adds one entry for its role.
 - Accepted `--max-steps` range: 1 to 9007199254740991 (`Number.MAX_SAFE_INTEGER`).
@@ -55,7 +52,7 @@ needed: the subcommand records each dispatched turn itself.
   over a non-terminal run, so `abort` is the only route to a terminal lifecycle
   for such a run. A new init then starts normally and archives the old state
   file. No field has to be hand-corrected.
-- `abort` is not subject to the recorded reviewer sandbox mode check either (ADR 0038). `dispatch`,
+- `abort` is not subject to the recorded reviewer sandbox mode check either. `dispatch`,
   `--resume-interrupted`, `extend`, and `finish` refuse a state file whose
   `reviewerSandbox` is present but not `none`, `read-only`, or `workspace-write`. `abort` runs
   no reviewer turn, so it ends such a run, and it ignores a `--reviewer-sandbox` flag that it

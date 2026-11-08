@@ -55,17 +55,13 @@ printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","def
 
 The value must be a boolean, and the key is not one of the five summary keys:
 `summary` keeps exactly those five. A refused finish keeps the lifecycle,
-`active` or `interrupted`. The stdin object allows only the five
-summary keys and `unresolvedCompare`. The headless finish action object allows
-only `action`, `summary`, and `unresolvedCompare`, and its nested `summary`
-object allows only the five summary keys. A finish with any other key in
-either object, such as a misspelled marker, is refused and the refusal names
-each unknown key; resend the finish with only the allowed keys (#1021).
+`active` or `interrupted`. A finish with any other key is refused and the
+refusal names each unknown key; resend the finish with only the allowed keys.
 
 The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
 `summary`, so a recorded unresolved compare never reads the same as a verified
-finish, which keeps the current envelope and state (#281). A finish with the
+finish, which keeps the current envelope and state. A finish with the
 field absent, or set to `false`, is a verified finish. The marker cannot be
 combined with `--require-ci`: that gate resolves the PR head itself, so a
 compare it verified is not unresolved. A run that cannot use `--require-ci`,
@@ -76,7 +72,7 @@ holds no required check can use the gate, which verifies the PR head, the clean
 reviewed tree, and the merge state.
 
 A run that cannot use `--require-ci` finishes with `--compare-head <pr>`, for a repository
-whose required-check sources are unreadable (#301, #1098). The runtime reads the PR head and
+whose required-check sources are unreadable. The runtime reads the PR head and
 state and refuses the finish unless the PR is open, its head equals `reviewed.head`, and the
 reviewed tree is clean. A closed or merged PR refuses even when its head is unchanged.
 
@@ -96,8 +92,7 @@ absent field from a verified compare. A finish that records the compare under
 notDone and open and omits the field is a verified finish to every machine
 consumer, and the free text is the only trace. `--require-ci` closes the gap in
 both paths, because it resolves the head in the runtime: `agent-loop role finish
---require-ci <pr>` here, and `agent-loop --require-ci <pr>` in the headless loop
-(issue #286, accepted gap; #293). A run with no usable gate, for example one
+--require-ci <pr>` here, and `agent-loop --require-ci <pr>` in the headless loop. A run with no usable gate, for example one
 that cannot read the required checks, keeps the marker as its only trace.
 
 The conditions that the `--require-accept` and `--require-ci` gates check at

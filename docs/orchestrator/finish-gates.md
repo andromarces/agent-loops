@@ -2,10 +2,8 @@
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a `finish` is refused, and before you end a run with `--require-accept` or `--require-ci`.
 
-A marked `role finish` still exits `0`, unlike the headless finish that exits
-`4` for the same marker. The exit code is not the outcome channel of this
-subcommand: `abort` exits `0` too, and the parent guard reads the state
-lifecycle, not the code. Read the marker in the envelope or the state file.
+A marked `role finish` still exits `0`. Read the marker in the envelope or the
+state file.
 
 Two opt-in gates apply to `work-first` and `review-first` only. In the headless
 loop, one refusal names every condition the finish breaks. The interactive `role
@@ -19,10 +17,7 @@ itself a reviewer turn, and except `--require-ci`, which it checks only after
 every other condition passes. A refusal from `role finish` never lists a
 `--require-ci` condition beside another condition.
 
-The headless loop grants one corrective turn, so a refusal
-that named a single condition would spend it on the condition the next refusal
-names instead, so a headless parent learns every condition from one call. A headless run
-ends when two refusals land with no child turn between them. The marker is
+A headless run ends when two refusals land with no child turn between them. The marker is
 satisfied on a re-finish, with no child turn; the `review-only` condition and
 `--require-accept` take the same corrective turn, which costs a step, and the
 missing gate of a declared PR run is the one condition no child turn can supply.
@@ -36,8 +31,7 @@ condition did not refuse, and a finish the marker, the `review-only` condition, 
 
 Only the declared-PR gate
 condition skips it, because that condition means no gate for this run's PR.
-Running the gate is not the same as reading GitHub: the gate checks its own local
-conditions first, and only then reads. Those local conditions are exactly two.
+Those local conditions are exactly two.
 
 The gate refuses with no GitHub call when the latest reviewer turn has no reviewed
 state. That case includes a worker turn after the last review. The gate also
@@ -125,8 +119,7 @@ and each flag fails with a clear error.
     prints nothing, which is the same silence as a read failure. The gate takes
     required names from its stdout whatever the exit status, so a non-zero exit whose
     stdout holds that JSON still contributes names, and only a stdout that is not a
-    JSON array of named checks contributes none. It is an independent source and its
-    Free-plan reply was not measured.
+    JSON array of named checks contributes none. It is an independent source.
   - The observed replies for the two configuration sources are `Not Found` (404) for a
     token without repository admin, `Branch not protected` (404) for an admin on a
     branch with no classic protection,
@@ -137,16 +130,12 @@ and each flag fails with a clear error.
     The exception to ruleset readability is a private repository on the GitHub Free
     plan, where the plan does not allow the rule at all.
   - The Free-plan 403, `Upgrade
-    to GitHub Pro or make this repository public to enable this feature.`, was measured
-    on the classic protection, branch rules, and rulesets endpoints with an admin
-    classic PAT and an admin fine-grained PAT, and a read-capable collaborator was not
-    tested, so whether a non-admin sees the same 403 is unverified. That reply
-    leaves each measured endpoint with no required contexts, and it is classified
-    unknown rather than empty, so the empty-union refusal names it. A private GitHub
-    Free-plan repository still refuses a declared run under this change, so this does
-    not resolve #336 for it, and such a repository must omit `--pr`, which leaves the
-    #286 gap in place. Init with `--pr`, `role declare-pr`, and the headless `--pr`
-    start refuse that case up front (#1092), so the parent does not learn of it at
+    to GitHub Pro or make this repository public to enable this feature.`, leaves
+    each endpoint with no required contexts, and it is classified unknown rather
+    than empty, so the empty-union refusal names it. A private GitHub
+    Free-plan repository still refuses a declared run, so such a repository must omit
+    `--pr`, which leaves the #286 gap in place. Init with `--pr`, `role declare-pr`, and the headless `--pr`
+    start refuse that case up front, so the parent does not learn of it at
     `finish`.
   - Repository rulesets are readable with read access on a repository whose plan allows
     the rule, so a token without repository admin still gates through repository rulesets
@@ -158,6 +147,4 @@ and each flag fails with a clear error.
     failed condition. The gate cannot tell a missing check from an unmet
     review or another required rule, so a repository with required approvals also
     refuses until they are met, and a branch that states it has no required check still
-    refuses while its merge state is blocked. GitHub computes the merge state lazily,
-    so a retry shortly after a push can clear an `unknown` state. This gate needs the
-    `gh` CLI.
+    refuses while its merge state is blocked. This gate needs the `gh` CLI.

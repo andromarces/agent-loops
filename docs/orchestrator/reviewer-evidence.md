@@ -20,15 +20,14 @@ contract that it changes, so the reviewer still tests the change.
 The fixed review scope also sets what a blocker is. A weakened existing guard or
 documented contract stays a blocker. A finding that is not a defect against the
 task, not a weakened existing guard or documented contract, and not a regression
-from the base branch is hardening: it goes in `Notes`, not in `Blockers`
-(issue #1073).
+from the base branch is hardening: it goes in `Notes`, not in `Blockers`.
 
-A blocker needs a concrete failure scenario. A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in `Notes`, not in `Blockers`, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers (issue #1194).
+A blocker needs a concrete failure scenario. A blocker's failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in `Notes`, not in `Blockers`, unless the task states adversarial inputs as in scope. A weakened existing guard and a regression on an input in normal use stay blockers.
 
 The fixed review scope also bars contact with a host or service that the task
 does not name. GitHub reads that the rules allow stay allowed. A local process
 or loopback server that a check starts stays allowed. A check that needs such a
-contact goes in `Checks` as unverified and in `Deferred` (issue #1522).
+contact goes in `Checks` as unverified and in `Deferred`.
 
 The fixed review scope also carries the required-check rule. The rule text is in
 every reviewer prompt. It applies only when the task names a pull request, and
@@ -55,13 +54,13 @@ rule below belongs to that one condition, so the prompt nests them under it:
 
 The `--require-ci` finish gate stays the enforcement point. The rule only lets
 the reviewer see a failure before the gate refuses, so the run needs no extra
-worker turn and no extra reviewer turn for that failure (issues #313 and #317).
+worker turn and no extra reviewer turn for that failure.
 
 ## The runtime supplies the required-check status
 
-A reviewer turn whose shell commands cannot reach the network, for example a
-Codex reviewer in a sandboxed mode, only reported the status as unresolved before. The user-rule exception of ADR 0019 applies to such a turn. A Codex reviewer with no sandbox (the default, ADR 0038) keeps shell network, so its own read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
-knows the pull request before the first turn (issues #320 and #350). So the
+A Codex reviewer with no sandbox (the default) keeps shell network, so its own
+read can succeed, and it is the fallback of the second line below. A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
+knows the pull request before the first turn. So the
 runtime reads the required-check status for that PR head and supplies it to every
 reviewer prompt. The prompt adds two lines inside the required-check group, so
 they apply only under the pull request condition:
@@ -112,7 +111,7 @@ the commit the gate evaluates (the test merge commit when it carries a check,
 otherwise the head), so a PR head that moves away and back during the read cannot
 put the checks of another commit in the status. The required checks come from the
 same resolution the `--require-ci` gate uses, and a status never passes a state the
-gate refuses (issue #349).
+gate refuses.
 
 The envelope field is `prChecks`:
 `{ pr, head, status, checks, summary, advisory }`, where `status` is `pass`,
@@ -136,7 +135,7 @@ behind, conflicting, or unknown).
 A run that names no PR reads no status, and the reviewer keeps its own read.
 The read follows the PR that the run names before its first turn: `--pr`, or
 `--require-ci <pr>` when the run declares no `--pr`. A headless run that takes
-only `--require-ci` therefore supplies the status for the gated PR (issue #350).
+only `--require-ci` therefore supplies the status for the gated PR.
 The interactive path receives `--require-ci` only at `finish`, so only `--pr`
 supplies the status there, declared at init or with `role declare-pr`
 (see [Declaring a PR run](pr-declaration.md)).
@@ -160,9 +159,8 @@ the flag is unchanged.
   and `cmd.exe` on Windows. The runtime adds no quoting. It runs with the
   environment of the runtime, so the operator keeps secrets out of the command
   text.
-- The command runs inside a machine-wide test slot (`agent-loop test-slot`, ADR
-  0039, ADR 0040), so runs that share a host do not run their suites beyond the
-  slot count. The default is 1 slot on every CPU count (ADR 0046), and
+- The command runs inside a machine-wide test slot (`agent-loop test-slot`), so
+  runs that share a host do not run their suites beyond the slot count. The default is 1 slot on every CPU count, and
   `AGENT_LOOP_TEST_SLOTS` overrides it. The slot wait has its own bound, `AGENT_LOOP_TEST_SLOT_WAIT` or
   1800 seconds, read on each reviewer dispatch and separate from `--test-cmd-timeout`, which starts once the slot is
   held.
@@ -172,7 +170,7 @@ the flag is unchanged.
     command and reports `status: "error"`. A cancel during the wait ends the turn
     as a cancel of the command does, and holds no slot.
 - `--test-cmd-timeout <seconds>` bounds one run and defaults to 600. At the
-  bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit (repository owner, 2026-10-04, ADR 0017): an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows.
+  bound, and on a cancel, the runtime kills the command (it kills no process that it does not own) and every descendant that stays in its process group on POSIX, and the tree through `taskkill /T /F` on Windows, and reports `timed-out` with `exitCode: null`, whatever code the killed command exits with. A timed-out result is neither a pass nor a failure. Approved limit: an orphan that leaves the process group, for example through `setsid`, can survive on POSIX, and an orphan whose parent exited can survive on Windows.
   - A canceled run reports `status: "canceled"`, and the after-command snapshot still runs after the first cancel. A second cancel during that snapshot sets `workTreeChanged` and `changedCount` to `null`, which means not captured. A headless run that ends on a fatal error prints the result in its error report on stderr and records it as a `test-run` event in a transcript.
 - A command that no kill ends settles 10 s after the bound or the cancel, with the same `timed-out` or `canceled` result fields.
 - The runtime keeps the last 8 KiB of the output and reports `truncated` when it
@@ -203,7 +201,7 @@ the flag is unchanged.
     in an error still carries it, in the envelope, `lastResult`, and the transcript. Compare it with the
     reviewer `Checks` line and act on a disagreement. A turn with no command
     carries no `testRun`.
-- Every worker and reviewer turn states the test-run rule (ADR 0044, ADR 0099): run a
+- Every worker and reviewer turn states the test-run rule: run a
   targeted test file through the test slot wrapper with `--if-held`, and run a full
   suite only through the plain wrapper, or rely on the required CI checks. With
   `--if-held`, the run stays direct while all slots are free and waits for a slot
@@ -213,8 +211,7 @@ the flag is unchanged.
   a changed source file directly, then the test files of the direct importers of a
   changed source file, then the test files that name the path or file name of a
   changed file that is not an importable module, for example a script or a config
-  file, at most 10 test files in total, never a whole directory
-  (issue #1078, issue #1492, issue #1611).
+  file, at most 10 test files in total, never a whole directory.
   - Any broader
     run is a full suite and goes through the plain wrapper. A run whose paths cannot
     be quoted keeps a direct targeted run, and a broader run relies on the required CI checks. The rule renders the wrapper command from the Node
@@ -224,7 +221,7 @@ the flag is unchanged.
   - Exit code 75 from the wrapper means that the suite
     did not run, which a child reports as unresolved. The rule also bars a CPU or
     memory load generator, a busy loop, and a detached or background process that
-    can outlive the turn (issue #934). The required CI checks are the evidence under
+    can outlive the turn. The required CI checks are the evidence under
     load.
 - A reviewer in a sandboxed mode sees the result of the whole command only. It
   cannot run a targeted test, unless the run set `--reviewer-sandbox
@@ -237,7 +234,7 @@ macOS. A child spawn fails, or `vp` cannot write its temporary directory. A
 reviewer with no sandbox is not limited this way, and the `workspace-write` mode
 probably is on the unelevated Windows sandbox. The reference section
 [Codex read-only child-spawn limit](../reference/reviewer-safety.md#codex-read-only-child-spawn-limit)
-holds the probes. Linux and the elevated Windows sandbox are not verified.
+holds the probes.
 
 When a reviewer `Checks` line shows that tests did not run, for any reason, the
 reviewer accept is not test evidence. Use the required CI checks for test

@@ -10,9 +10,7 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 `agent-loop --require-ci <pr>` in the headless loop, with the same PR number.
 
 - A `finish` with no `--require-ci` is refused, and a `finish` whose
-  `--require-ci` names another PR is refused without reading GitHub. That refusal
-  is the only way the interactive path can catch a wrong number, because its
-  `--require-ci` arrives at `finish`. The headless path takes both flags on one
+  `--require-ci` names another PR is refused without reading GitHub. The headless path takes both flags on one
   command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the
   run starts.
 - A `finish` that sets `"unresolvedCompare": true` is refused, because the gate
@@ -43,7 +41,7 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
   because the gate cannot establish the absence, and the refusal names the source
   it could not read.
 - Omit `--pr` when the repository rulesets of the PR base branch are unreadable to
-  the gate, for example a private repository on the GitHub Free plan (#301), because
+  the gate, for example a private repository on the GitHub Free plan, because
   a declared run there refuses every finish and can end only through `abort`.
   Init with `--pr`, `role declare-pr`, and the headless start read the required-check
   sources of the PR base once. They refuse when the rulesets read settled nothing,
@@ -62,7 +60,7 @@ through the gate: `agent-loop role finish --require-ci <pr>` here, and
 
 A run that declares no PR keeps the accepted gap: the runtime has no PR input, so
 an omitted marker still reads as a verified finish. The declaration closes the
-gap for a run that states its PR (issue #302). A headless run that takes neither
+gap for a run that states its PR. A headless run that takes neither
 `--pr` nor `--require-ci` can also gain its PR from the runtime, as the next
 section states.
 
@@ -74,7 +72,7 @@ The conditions that the `--require-accept` and `--require-ci` gates check at `fi
 A headless run with neither `--pr` nor `--require-ci` has no PR input at start.
 After each worker turn that ends `ok`, the runtime looks for the PR that the
 worker opened. It declares that PR once, and the run then behaves as one that
-passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
+passed `--pr` and `--require-ci` for that PR.
 
 - The runtime reads Git and GitHub state only. It reads the checked-out branch
   and the URL of the branch remote. It reads the work tree head that it read
@@ -101,7 +99,7 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
 - The declaration is one way and happens once. A run with `--pr` or
   `--require-ci` at start never resolves a PR. No later turn changes the PR.
 - The runtime applies the `--require-ci` gate to the PR that it declared, as if
-  the run had passed `--require-ci <pr>` (ADR 0045). A finish passes only after
+  the run had passed `--require-ci <pr>`. A finish passes only after
   a reviewer turn on the current state, with the PR head equal to the reviewed
   commit, a clean reviewed tree, a merge state the gate accepts, and every
   required check passed. A finish is refused while a required check fails or is
@@ -119,21 +117,21 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
 - A continued run applies the same gate to the restored PR. A `--pr` for that PR
   adds no refusal, because the PR was declared by the runtime.
 - Before the runtime declares the PR, it reads the required-check sources of the
-  PR base once, as the start of a `--pr` run does (#1092). When the rulesets read
-  settles nothing, such as the Free-plan 403 (#301), the run stays undeclared and the
+  PR base once, as the start of a `--pr` run does. When the rulesets read
+  settles nothing, such as the Free-plan 403, the run stays undeclared and the
   runtime logs a warning that names the reason. The runtime then records the PR in
   a `pr-undeclared` transcript event and compares its head at finish, as
-  `--compare-head` does (#1111, [ADR 0053](https://github.com/andromarces/agent-loops/blob/main/adr/0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)): see the headless compare
+  `--compare-head` does: see the headless compare
   below. A finish with `unresolvedCompare` is refused, because the compare resolves
   that head. A read that fails for another reason, such as a transport failure, warns
-  and still declares the PR (#1097).
+  and still declares the PR.
 - A continued run that restored its PR reads no required-check source at start,
   because the earlier run read at the start of its own `--pr` run or before it
-  declared a worker-opened PR (#1092, #1097). Its orchestrator prompt states no
+  declared a worker-opened PR. Its orchestrator prompt states no
   start read. A continuation that declares a new PR makes the read.
 - A repository whose required-check sources are unreadable refuses `--pr <n>` and
   `--require-ci <n>` at start or at finish, so a headless run for an existing PR there
-  passes `--compare-head <n>` (#1104). At finish, the runtime reads the PR head of
+  passes `--compare-head <n>`. At finish, the runtime reads the PR head of
   `<n>`, refuses unless the PR is open, it equals the reviewed head, and the reviewed tree is clean,
   reads no required-check source, and claims no check result. A pass emits a
   `head-compare` transcript event and the run exits `0`, where
@@ -146,7 +144,7 @@ passed `--pr` and `--require-ci` for that PR (ADR 0043, ADR 0045).
   the runtime compare and leaves the marker path.
   - The runtime declares no worker-opened
     PR in such a run. The flag names a PR that exists at start.
-- A PR that the worker opens on such a repository needs no flag (#1111). The runtime
+- A PR that the worker opens on such a repository needs no flag. The runtime
   refuses to declare it, records it in a `pr-undeclared` event with `pr` and
   `stepsUsed`, and applies the same compare at finish with no operator choice: a
   verified compare when the PR is open, its head equals the reviewed head, and the
@@ -192,7 +190,7 @@ GitHub. Declare the PR after the worker opens it:
 - Declare the PR before the first reviewer turn that follows the worker turn, so
   that turn already carries the status. A reviewer turn that ran earlier read the
   checks itself.
-- A repository whose rulesets the gate does not get (#301) refuses every finish
+- A repository whose rulesets the gate does not get refuses every finish
   of a declared run, so do not declare the PR there. `declare-pr` reads the
   required-check sources once and refuses there, leaving the run unchanged. A read
   that fails for another reason warns and does not refuse. The recovery and the

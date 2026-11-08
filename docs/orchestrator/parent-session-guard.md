@@ -16,7 +16,7 @@ each subcommand treats `--parent-session` as follows:
   id.
 - `wait-checks`: reads no run state and ignores the flag.
 
-A run that a new session resumes is therefore unguarded for that session (issue #435). No
+A run that a new session resumes is therefore unguarded for that session. No
 call moves the stored id to the new session. The new session can run `dispatch`,
 `finish`, and `abort` by omitting `--parent-session`. It can run `extend`,
 `declare-pr`, `refresh-local`, and `set-model` only by passing the stored id. All four compare the id only, so that call succeeds for
@@ -25,4 +25,4 @@ any parent-side caller that holds the id, and it gives no guard coverage.
 A child
 role never runs `extend`, `declare-pr`, `refresh-local`, or `set-model`: the spawn-time marker refuses it, and the prompt rule
 backs the marker. To get a guard, call `abort` and start a new run with
-the new session id. A new run starts every role on a new session (ADR 0021).
+the new session id. A new run starts every role on a new session.
