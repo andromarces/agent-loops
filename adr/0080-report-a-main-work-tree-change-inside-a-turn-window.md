@@ -6,7 +6,9 @@ partially-superseded
 
 Partially superseded by [ADR 0086: Leave out a read-only access whose modification time predates the turn window](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md). It replaces decision 3's confirmation rule, which reports a candidate only by its equal pre-turn and post-turn state, and the consequence that a write and a restore before the event is delivered can be missed.
 
-Decisions 1, 2, and 4 to 8, decision 3's rule that a path which still differs stays in `mainWorkTreeChanged` only, and every other consequence remain in force.
+Partially superseded by [ADR 0100: Arm the main work tree watch before the child turn](0100-arm-the-main-work-tree-watch-before-the-child-turn.md). It replaces decision 1's start rule with a start rule that waits for the watch `ready` promise before the child call.
+
+Decision 2, decision 3's rule, decisions 4 to 8, and every other consequence remain in force. A path that still differs stays in `mainWorkTreeChanged` only.
 
 ## Date
 
@@ -61,4 +63,5 @@ Andro Marces
 - Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`, `diffMainWorkTreeInTurn` in `src/lib/main-work-tree-change.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`
 - Documented in the [orchestrator instructions](../docs/orchestrator-instructions.md) and the headless prompt in `src/prompts/orchestrator.mjs`
 - [ADR 0075](0075-report-a-copied-source-that-changed-inside-a-turn-window.md) reports the same window for a copied source
+- [ADR 0100](0100-arm-the-main-work-tree-watch-before-the-child-turn.md)
 - [ADR Index](README.md)

@@ -11,6 +11,8 @@ import { logWarn } from "./log.mjs";
 const IGNORE_READ_BOUND_MS = 10_000;
 // Milliseconds that the end-of-turn drain runs before the watch reports no path (1000).
 export const DRAIN_DEADLINE_MS = 1_000;
+// Milliseconds that the macOS watch `ready` promise gets before the watch reports no path (1000).
+const ARM_DEADLINE_MS = 1_000;
 // Keys that one event-grown structure keeps before the watch gives up the field (500).
 const MAX_KEYS = 500;
 // Reads in flight that one turn keeps before the watch gives up the field (500).
@@ -25,18 +27,76 @@ const FILE_BATCH_SIZE = 32;
 const MTIME_MARGIN_MS = 2_000;
 
 /**
- * Watches the main work tree of a linked run for the turn window. One `Map` holds every pending
- * path, with its merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
+ * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the
+ * saved probe, a write right after `watch` missed 1 in 10,000. One event-loop turn missed 0 in
+ * 5,000, so the macOS `ready` resolves after one turn. The other platforms return no `ready`, so
+ * their event handling does not change.
+ * @param {string} root
+ * @param {(type: string, filename: string | Buffer) => void} onEvent
+ * @returns {{ watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }}
+ */
+function watchRecursive(root, onEvent) {
+  const watcher = watch(root, { recursive: true }, onEvent);
+  const ready =
+    process.platform === "darwin" ? new Promise((resolve) => setImmediate(resolve)) : null;
+  return { watcher, ready };
+}
+
+/**
+ * Waits for the `ready` promise under one monotonic deadline. A missed deadline fails the watch,
+ * and a turn abort ends the wait. The promise never rejects.
+ * @param {Promise<void> | null} ready
+ * @param {{ armDeadlineMs: number, signal: AbortSignal | null, armWait: Promise<void>, fail: (err: unknown) => void }} bound
+ */
+async function arm(ready, { armDeadlineMs, signal, armWait, fail }) {
+  if (ready === null || ready === undefined) return;
+  const deadlineAt = performance.now() + armDeadlineMs;
+  let timer = null;
+  let onAbort = null;
+  const waits = [
+    Promise.resolve(ready).catch((err) => fail(err)),
+    new Promise((resolve) => {
+      timer = setTimeout(
+        () => {
+          fail(new Error(`the main work tree watch did not arm within ${armDeadlineMs} ms`));
+          resolve();
+        },
+        Math.max(0, deadlineAt - performance.now()),
+      );
+      timer.unref?.();
+    }),
+    armWait,
+  ];
+  if (signal !== null) {
+    waits.push(
+      new Promise((resolve) => {
+        onAbort = resolve;
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    );
+  }
+  try {
+    await Promise.race(waits);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+    if (onAbort !== null) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * Watches the main work tree of a linked run for the turn window, with one `Map` of pending paths
+ * and merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
  * records a file, and the `.git` directory stays out. A recorded file whose end modification time
  * is older than the window start is a read-only access, and stays out. `take()` returns the
  * candidates and then stops the watch on every outcome. A failed watch, read, or bound returns
  * `failed: true` and logs a warning, so the caller reports no path. The options lower the bounds
  * and hold the ignore input, for a test.
  * @param {string} root absolute main work tree root
- * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
- * @returns {{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null}
+ * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, armDeadlineMs?: number, signal?: AbortSignal, watchFactory?: (root: string, onEvent: (type: string, filename: string | Buffer) => void) => { watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
+ * @returns {Promise<{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null>}
  */
-export function startMainWorkTreeWatch(
+export async function startMainWorkTreeWatch(
   root,
   {
     maxPending = MAX_KEYS,
@@ -44,8 +104,11 @@ export function startMainWorkTreeWatch(
     maxCandidates = MAX_KEYS,
     maxReads = MAX_READS,
     drainDeadlineMs = DRAIN_DEADLINE_MS,
+    armDeadlineMs = ARM_DEADLINE_MS,
+    signal = null,
     beforeIgnoreInputEnds = null,
     beforeFileKind = null,
+    watchFactory = watchRecursive,
   } = {},
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
@@ -64,6 +127,11 @@ export function startMainWorkTreeWatch(
   const ignoredPrefixes = new Set();
   const reads = new Set();
   const controller = new AbortController();
+  let resolveArm = null;
+  // Resolves when `ready` settles, or when the watch fails, stops, or closes.
+  const armWait = new Promise((resolve) => {
+    resolveArm = resolve;
+  });
 
   const fail = (err) => {
     if (failed) return;
@@ -71,6 +139,7 @@ export function startMainWorkTreeWatch(
     pending.clear();
     logWarn(`worker: the main work tree watch failed: ${firstErrorLine(readableErrorText(err))}`);
     closeWatcher();
+    resolveArm();
   };
 
   /** Closes the watcher, so no later event joins the queue. */
@@ -82,12 +151,20 @@ export function startMainWorkTreeWatch(
     } catch {}
   };
 
+  /** Reports a watch that closed before the turn read it, and ends the `ready` wait. */
+  const onWatcherClose = () => {
+    resolveArm();
+    if (watcherClosed || failed || done) return;
+    fail(new Error("the main work tree watch closed before the turn read it"));
+  };
+
   /** True once the end-of-turn drain passes its deadline. */
   const expired = () => performance.now() >= deadlineAt;
 
   /** Stops the watch and waits for every read in flight to settle. Never throws. */
   const stop = async () => {
     closeWatcher();
+    resolveArm();
     if (!done && !failed) {
       fail(new Error("the watch stopped before the turn read it"));
     }
@@ -329,8 +406,11 @@ export function startMainWorkTreeWatch(
   };
 
   let watcher;
+  let ready = null;
   try {
-    watcher = watch(root, { recursive: true }, onEvent);
+    const started = watchFactory(root, onEvent);
+    watcher = started.watcher;
+    ready = started.ready ?? null;
   } catch (err) {
     logWarn(
       `worker: the main work tree watch failed to start: ${firstErrorLine(readableErrorText(err))}`,
@@ -338,6 +418,17 @@ export function startMainWorkTreeWatch(
     return null;
   }
   watcher.on("error", fail);
+  watcher.on("close", onWatcherClose);
+  if (signal?.aborted) {
+    closeWatcher();
+    return null;
+  }
+  // In the saved probe a write right after `watch` missed, so the child call waits for `ready`.
+  await arm(ready, { armDeadlineMs, signal, armWait, fail });
+  if (signal?.aborted) {
+    closeWatcher();
+    return null;
+  }
 
   return {
     async take() {

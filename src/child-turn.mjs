@@ -145,10 +145,12 @@ async function readBeforeTurn(state) {
     state.mainBefore = main;
     // The watch starts before the child call, so an edit that the turn restores still leaves a path.
     state.mainWatch = main
-      ? startMainWorkTreeWatch(
-          main.root,
-          state.mainWatchDeadlineMs === null ? {} : { drainDeadlineMs: state.mainWatchDeadlineMs },
-        )
+      ? await startMainWorkTreeWatch(main.root, {
+          ...(state.mainWatchDeadlineMs === null
+            ? {}
+            : { drainDeadlineMs: state.mainWatchDeadlineMs }),
+          signal: state.signal,
+        })
       : null;
     return;
   }

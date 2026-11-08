@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,12 +16,138 @@ afterEach(async () => {
   dir = undefined;
 });
 
+// Usefulness: verifies requirement "a write after a reopened watch is reported" (issue #1628).
+// A dropped first event leaves the restored path out of the field.
+test("a write after a reopened watch is reported", async () => {
+  dir = await createTempRepo();
+  // The first watch models the watch that the previous turn closed.
+  const first = await startMainWorkTreeWatch(dir);
+  await first.take();
+  const fake = createArmingWatch();
+  const handle = await startMainWorkTreeWatch(dir, { watchFactory: fake.factory });
+  writeFileSync(join(dir, "one.txt"), "written\n");
+  fake.deliver("change", "one.txt");
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: ["one.txt"], failed: false });
+});
+
+// Usefulness: verifies requirement "a cancel during the ready wait reports no field" (issue
+// #1628). A cancel must end the wait and close the watch without a path.
+test("a cancel during the ready wait returns no handle", async () => {
+  dir = await createTempRepo();
+  const fake = createControlledWatch();
+  const abort = new AbortController();
+  const starting = startMainWorkTreeWatch(dir, {
+    watchFactory: fake.factory,
+    signal: abort.signal,
+  });
+  abort.abort();
+  await expect(starting).resolves.toBeNull();
+  expect(fake.closed()).toBe(true);
+});
+
+// Usefulness: verifies requirement "a watch error before ready reports no field and warns" (issue
+// #1628). A silent error reads as no main work tree change.
+test("a watch error before ready reports no field and warns", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  dir = await createTempRepo();
+  const fake = createControlledWatch();
+  const starting = startMainWorkTreeWatch(dir, { watchFactory: fake.factory });
+  fake.emitError(new Error("stream failed"));
+  const handle = await starting;
+  await expect(handle.take()).resolves.toEqual({ candidates: [], failed: true });
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
+    true,
+  );
+});
+
+// Usefulness: verifies requirement "a watch close before ready reports no field and warns" (issue
+// #1628). A watch that ends before the turn read it must not report a path.
+test("a watch close before ready reports no field and warns", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  dir = await createTempRepo();
+  const fake = createControlledWatch();
+  const starting = startMainWorkTreeWatch(dir, { watchFactory: fake.factory });
+  fake.emitClose();
+  const handle = await starting;
+  await expect(handle.take()).resolves.toEqual({ candidates: [], failed: true });
+  expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
+    true,
+  );
+});
+
+// Usefulness: verifies requirement "a missed arm deadline reports no field and warns" (issue
+// #1628). A `ready` promise that never resolves must not hold the turn or report a path.
+test("a missed arm deadline reports no field and warns", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  dir = await createTempRepo();
+  const fake = createControlledWatch();
+  const handle = await startMainWorkTreeWatch(dir, {
+    watchFactory: fake.factory,
+    armDeadlineMs: 20,
+  });
+  await expect(handle.take()).resolves.toEqual({ candidates: [], failed: true });
+  expect(warn.mock.calls.some((call) => /arm/i.test(String(call[0])))).toBe(true);
+});
+
+// Usefulness: verifies requirement "a turn that writes nothing reports no candidate" (issue
+// #1628). The ready wait must not need a write or turn an idle turn into a failure.
+test("a turn that writes nothing reports no candidate", async () => {
+  dir = await createTempRepo();
+  const handle = await startMainWorkTreeWatch(dir);
+  await expect(handle.take()).resolves.toEqual({ candidates: [], failed: false });
+});
+
+/** A fake watch whose `ready` never resolves, so only a failure, close, or cancel ends the wait. */
+function createControlledWatch() {
+  const watcher = new EventEmitter();
+  let closed = false;
+  watcher.close = () => {
+    closed = true;
+  };
+  const ready = new Promise(() => {});
+  return {
+    factory: (_root, onEvent) => {
+      watcher.on("change", onEvent);
+      return { watcher, ready };
+    },
+    closed: () => closed,
+    emitError: (err) => watcher.emit("error", err),
+    emitClose: () => watcher.emit("close"),
+  };
+}
+
+/** A fake watch that drops every event until its `ready` resolves on the next turn. */
+function createArmingWatch() {
+  let fake;
+  const factory = (_root, onEvent) => {
+    const watcher = new EventEmitter();
+    watcher.close = () => {};
+    watcher.on("change", onEvent);
+    let armed = false;
+    const ready = new Promise((resolve) => {
+      setImmediate(() => {
+        armed = true;
+        resolve();
+      });
+    });
+    fake = {
+      watcher,
+      deliver: (type, filename) => {
+        if (armed) watcher.emit("change", type, filename);
+      },
+    };
+    return { watcher, ready };
+  };
+  return { factory, deliver: (type, filename) => fake.deliver(type, filename) };
+}
+
 // Usefulness: verifies requirement "a watch that fails to start reports no field and warns" (issue
 // #1556). A silent start failure reads as no main work tree change.
 test("a watch that fails to start warns and returns no handle", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await mkdtemp(join(tmpdir(), "main-watch-"));
-  const handle = startMainWorkTreeWatch(join(dir, "missing"));
+  const handle = await startMainWorkTreeWatch(join(dir, "missing"));
   expect(handle).toBeNull();
   expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
     true,
@@ -31,7 +159,7 @@ test("a watch that fails to start warns and returns no handle", async () => {
 test("a pending overflow reports no candidates and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await mkdtemp(join(tmpdir(), "main-watch-"));
-  const handle = startMainWorkTreeWatch(dir, { maxPending: 0 });
+  const handle = await startMainWorkTreeWatch(dir, { maxPending: 0 });
   await vi.waitFor(
     async () => {
       await writeFile(join(dir, "one.txt"), "one\n");
@@ -47,7 +175,7 @@ test("a pending overflow reports no candidates and warns", async () => {
 test("a seen-file overflow reports no candidates and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir, { maxSeenFiles: 0 });
+  const handle = await startMainWorkTreeWatch(dir, { maxSeenFiles: 0 });
   await vi.waitFor(
     async () => {
       await writeFile(join(dir, "one.txt"), "one\n");
@@ -63,7 +191,7 @@ test("a seen-file overflow reports no candidates and warns", async () => {
 test("a candidate overflow reports no candidates and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir, { maxCandidates: 0 });
+  const handle = await startMainWorkTreeWatch(dir, { maxCandidates: 0 });
   await writeUntilQueued(handle, join(dir, "one.txt"));
   const result = await handle.take();
   expect(result).toEqual({ candidates: [], failed: true });
@@ -75,7 +203,7 @@ test("a candidate overflow reports no candidates and warns", async () => {
 test("a read overflow reports no candidates and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir, { maxReads: 0 });
+  const handle = await startMainWorkTreeWatch(dir, { maxReads: 0 });
   await vi.waitFor(
     async () => {
       await writeFile(join(dir, "one.txt"), "one\n");
@@ -101,7 +229,7 @@ async function writeUntilQueued(handle, path) {
 // (issue #1556). An in-window read saw the file, so its path belongs in the field.
 test("a file created and removed inside the window is reported", async () => {
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
+  const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
   await writeUntilQueued(handle, join(dir, "scratch.txt"));
   await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 2_000 });
   await rm(join(dir, "scratch.txt"), { force: true });
@@ -114,7 +242,7 @@ test("a file created and removed inside the window is reported", async () => {
 test("a direct stop before take reports a failure and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir);
+  const handle = await startMainWorkTreeWatch(dir);
   await writeUntilQueued(handle, join(dir, "one.txt"));
   await handle.stop();
   const result = await handle.take();
@@ -132,7 +260,7 @@ test("a read-only access of a watched file reports no candidate", async () => {
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
-  const handle = startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
+  const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
   await vi.waitFor(
     async () => {
       // Windows updates an access time older than one hour, and changes it on a read.
@@ -151,7 +279,7 @@ test("a read-only access of a watched file reports no candidate", async () => {
 test("repeated events for one path queue one read", async () => {
   dir = await createTempRepo();
   let reads = 0;
-  const handle = startMainWorkTreeWatch(dir, {
+  const handle = await startMainWorkTreeWatch(dir, {
     drainDeadlineMs: 60_000,
     beforeIgnoreInputEnds: async () => {
       reads++;
@@ -173,7 +301,7 @@ test("repeated events for one path queue one read", async () => {
 test("a writer that rewrites ignored files cannot extend the turn", async () => {
   dir = await createTempRepo();
   await writeFile(join(dir, ".git", "info", "exclude"), "ignored-*\n");
-  const handle = startMainWorkTreeWatch(dir);
+  const handle = await startMainWorkTreeWatch(dir);
   await writeUntilQueued(handle, join(dir, "ignored-0.txt"));
   let running = true;
   const writeLoop = async () => {
@@ -208,7 +336,7 @@ test("a write after the turn end is not reported", async () => {
   const startedP = new Promise((resolve) => {
     started = resolve;
   });
-  const handle = startMainWorkTreeWatch(dir, {
+  const handle = await startMainWorkTreeWatch(dir, {
     drainDeadlineMs: 60_000,
     beforeIgnoreInputEnds: async () => {
       started();
@@ -238,7 +366,7 @@ test("a write after the turn end is not reported", async () => {
 test("a missed drain deadline reports no candidates and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
-  const handle = startMainWorkTreeWatch(dir, {
+  const handle = await startMainWorkTreeWatch(dir, {
     beforeIgnoreInputEnds: ({ signal }) =>
       new Promise((resolve) => {
         signal.addEventListener("abort", () => resolve(), { once: true });
@@ -265,7 +393,7 @@ test("the drain deadline covers a held file read", async () => {
   const startedP = new Promise((resolve) => {
     started = resolve;
   });
-  const handle = startMainWorkTreeWatch(dir, {
+  const handle = await startMainWorkTreeWatch(dir, {
     beforeFileKind: async ({ signal }) => {
       started();
       await new Promise((resolve) => {
@@ -299,7 +427,7 @@ test("stop ends a real Git child held in flight", async () => {
   const startedP = new Promise((resolve) => {
     started = resolve;
   });
-  const handle = startMainWorkTreeWatch(dir, {
+  const handle = await startMainWorkTreeWatch(dir, {
     beforeIgnoreInputEnds: async ({ pid: childPid }) => {
       pid = childPid;
       started();
