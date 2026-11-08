@@ -18,6 +18,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       # Trusted publishing exchanges this OIDC token for a short-lived publish
@@ -25,6 +26,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Staged publishing needs npm 11.15.0 or later. Node 24.18.0 is the first
       # 24.x release that bundles it, and a runner can cache an older 24.x, so
       # the next step checks the version. The package still supports Node 22.
