@@ -3,12 +3,10 @@
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work tree, and when an envelope carries `localFilesDiffer` or `localSourceChangedInTurn`.
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files
-of the main work tree that `--cwd` ignores (agent instructions, harness
-configuration, `.env`, and the other paths in
-[Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree))
-into `--cwd`, before the
-first child turn. A file already in `--cwd` is never replaced, and no symlink is
-followed: a symlink in the main work tree is skipped and named. The init envelope reports the paths as `localFiles: {copied, skipped}`,
+of the main work tree into `--cwd`. It copies the files that `--cwd` ignores,
+before the first child turn. The copied set, the exclusion rules, and the refusal conditions are in
+[Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree).
+The init envelope reports the paths as `localFiles: {copied, skipped}`,
 by name only, and a path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 
@@ -18,10 +16,9 @@ the copy off. It is an init field, so a later call cannot change it.
 
 When the task needs other ignored reference data of the main work tree, such as a downloaded
 specification directory, pass `--copy-local-path <relative path>` on the init call, once for each path. The
-path joins the copy and follows every rule above, and its files appear in `localFiles.copied`. The
-init refuses an absolute path, a path that leaves the main work tree or passes through a symlink or a junction,
-a path that holds a tracked file, a path that holds a file that is not ignored, and use with
-`--no-copy-local-files`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and
+path joins the copy and follows every rule in
+[Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree),
+and its files appear in `localFiles.copied`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and
 `localFilesDiffer` covers the files.
 
 The copy runs once. No dispatch replaces or refreshes a copied file; only an explicit

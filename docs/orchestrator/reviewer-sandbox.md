@@ -4,30 +4,23 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 ## The Codex reviewer sandbox mode
 
-A Codex reviewer turn runs with no sandbox by default, with
-`sandbox_mode="danger-full-access"` ([ADR 0038](https://github.com/andromarces/agent-loops/blob/main/adr/0038-run-the-codex-reviewer-with-no-sandbox-by-default.md),
-which partially supersedes [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md)), and with the app connectors off
-(`features.apps=false`, issue #496). It can run the test suite and
-`gh pr checks`. An operator can choose a sandbox at init with
-`--reviewer-sandbox read-only` or `--reviewer-sandbox workspace-write`. The
-older `--reviewer-workspace-write` stays as an alias of `--reviewer-sandbox
-workspace-write`. The flag needs `--reviewer codex`, and any other reviewer is
-refused at init.
+A Codex reviewer turn runs with no sandbox by default. An operator can choose a
+sandbox at init with `--reviewer-sandbox read-only` or `--reviewer-sandbox
+workspace-write`. The older `--reviewer-workspace-write` stays as an alias of
+`--reviewer-sandbox workspace-write`. The flag needs `--reviewer codex`, and any
+other reviewer is refused at init.
 
-The mode table is in
+The modes, their Codex settings, the app-connector setting, and the ADRs are in
 [Codex reviewer sandbox mode](../reference/reviewer-safety.md#codex-reviewer-sandbox-mode).
 
 - Only reviewer turns change. Every orchestrator turn keeps `read-only`, every
   worker turn gets no reviewer input, and the other four adapters keep their
   invocations. The runtime mutation check still wraps every reviewer turn in
   every mode.
-- In the two sandboxed modes, network access stays off for the shell commands that
-  the sandbox runs. The runtime sets it explicitly for `workspace-write`, because
-  the mode takes network from the user Codex config otherwise. A user Codex
-  execpolicy rule that allows `bash -c`, `sh -c`, or `zsh -c` is an exception, as
-  ADR 0019 states. The limit covers shell commands only. It does not block
-  model-side tools such as Codex `web_search`, or any other channel outside the
-  sandbox. With no sandbox, no such rule applies, because no sandbox exists to skip.
+- In the two sandboxed modes, shell network stays off, and a user Codex execpolicy
+  rule is an exception. The limit covers shell commands only. Choose a sandboxed
+  mode when the turn must not reach the network; the facts and the exception are
+  in [Codex read-only network limit](../reference/reviewer-safety.md#codex-read-only-network-limit).
 - The reviewer prompt gains one note that states the actual mode. The reviewer
   still must not change a tracked file or an untracked file that Git does not
   ignore, including a cache file, must not change Git state, and must not write to
@@ -82,11 +75,9 @@ The mode table is in
   is the only read that enforces.
 - The mutation check is detection only. With no sandbox, or in `workspace-write`,
   a reviewer edit succeeds, the run halts with a `MutationError`, exit 1, and the
-  runtime does not revert it. The snapshot does not see a write to an ignored
-  file, a write outside the repository, or a remote write. The rule against
-  remote writes (issue #422) is advisory. An operator who needs containment
-  chooses a sandboxed mode, or runs the reviewer in an external sandbox with no
-  credential for the remote. Read the accepted gaps in
+  runtime does not revert it. An operator who needs containment chooses a
+  sandboxed mode, or runs the reviewer in an external sandbox with no credential
+  for the remote. Read the accepted gaps in
   [Codex reviewer sandbox mode](../reference/reviewer-safety.md#codex-reviewer-sandbox-mode)
   and
   [Safety trade-off of the no-sandbox mode](../reference/reviewer-safety.md#safety-trade-off-of-the-no-sandbox-mode)
