@@ -60,8 +60,8 @@ Moved from `docs/reference/session-resume.md` on 2026-11-08.
 - OpenCode v0.0.0-dev-20788 on macOS.
 - The probe ran through `agent-loop role dispatch --role worker` with `--worker-model opencode-go/no-such-model-xyz`.
 - The repository was a scratch Git repository outside this repository.
-- `opencode run --standalone --format json` exited 1 with empty stderr.
-- Stdout held one `error` event with the shape `{"type":"error","timestamp":<ms>,"sessionID":"<id>","error":{"type":"provider.no-route","message":"Model unavailable: opencode-go/no-such-model-xyz"}}`.
+- `opencode run --standalone --format json` exited 1 with empty stderr and one stdout line.
+- The one stdout line was an `error` event with the shape `{"type":"error","timestamp":<ms>,"sessionID":"<id>","error":{"type":"provider.no-route","message":"Model unavailable: opencode-go/no-such-model-xyz"}}`.
 - The error object has no `status`.
 - The envelope was `{"role":"worker","status":"error","error":"opencode exited with code 1: provider.no-route: Model unavailable: opencode-go/no-such-model-xyz"}`.
 - The live event matches the fixtures in `tests/agents/opencode.errors.test.mjs`.

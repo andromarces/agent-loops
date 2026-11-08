@@ -135,12 +135,12 @@ Moved from `docs/reference/reviewer-safety.md` on 2026-11-08. The sections `Code
     - `sandbox_mode="read-only"` already denies it.
     - The Codex orchestrator and a reviewer in the `read-only` or `workspace-write` mode run under that mode.
     - The fetch failed with `Could not resolve host`.
-    - A user execpolicy rule is an exception. See "Codex read-only network limit".
+    - A user execpolicy rule is an exception. See [Codex read-only network limit](../docs/reference/reviewer-safety.md#codex-read-only-network-limit).
     - A Codex reviewer with no sandbox, the default since ADR 0038, keeps shell network.
     - This probe did not cover that mode.
   - **Connector or MCP write tools.**
     - The connector is denied in `read-only` and `workspace-write`, not in `danger-full-access`.
-    - The `danger-full-access` result came from codex-cli 0.165.0-alpha.1 on 2026-10-25 on Windows. See the connector item above.
+    - The `danger-full-access` result came from codex-cli 0.165.0-alpha.1 on 2026-10-25 on Windows. The [Remote writes](../docs/reference/reviewer-safety.md#remote-writes) section records that connector write probe.
     - `--disable apps` (`features.apps=false`) removed every connector tool, read and write.
     - With it, a `read-only` turn and a `danger-full-access` turn each found no GitHub tool.
     - No comment was posted.

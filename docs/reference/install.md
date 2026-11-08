@@ -97,7 +97,7 @@ without these characters, then run `install` again. A backslash in a POSIX
 directory name is preserved: a run of two or more backslashes is doubled in the
 shell commands, and the plugin string escapes each backslash.
 
-The `bunx` layout is observed on macOS with bun 1.2.20 and on Windows 11 with bun 1.3.8. The `yarn dlx` layout is observed on macOS with yarn 4.9.2. The Windows `yarn dlx` suffix, the `dlx` command of yarn 1.22.22, and Linux are not verified. The probe logs are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#package-root-layout-probes).
+The `bunx` layout is observed on macOS with bun 1.2.20 and on Windows 11 with bun 1.3.8. The `yarn dlx` layout is observed on macOS with yarn 4.9.2. Yarn 1.22.22 on macOS has no `dlx` command. The Windows `yarn dlx` suffix and Linux are not verified. The probe logs are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#package-root-layout-probes).
 
 Linux (#707) and a `%TEMP%` that is an 8.3 short path or a junction (#709) are
 not verified. Inside an adapter turn, `install` also checks the temporary

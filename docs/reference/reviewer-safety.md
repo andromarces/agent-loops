@@ -119,7 +119,7 @@ macOS result (2026-11-02, macOS 27.2, zsh 5.9, codex-cli 0.166.0): each result r
 
 This limit applies to a Codex reviewer in the `read-only` mode, and to Codex orchestrator turns. A reviewer with no sandbox is not limited this way.
 
-Direct probes on Windows 11 and macOS found the same limit. A Codex reviewer in the `read-only` mode cannot spawn a child process or run the test suite (issues #342 and #421). A reviewer with no sandbox is not limited this way. Linux and the elevated Windows sandbox are not verified. The probe logs are in [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md#read-only-child-spawn-and-denial-probes).
+On Windows 11 a child `node` spawn returned an error, and `pnpm test --version` failed with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` (issue #342). On macOS `pnpm test` exited 1 before any test started, when `vp` failed to create `node_modules/.vite-temp` with `EPERM`. A reviewer with no sandbox is not limited this way. Linux and the elevated Windows sandbox are not verified. The probe logs are in [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md#read-only-child-spawn-and-denial-probes).
 
 #### Read-only subagent fan-out
 
@@ -172,7 +172,7 @@ The runtime enables no denial. Each candidate fails one of these tests:
 Selective MCP write denial, decided per adapter:
 
 - `claude`: not enabled. The deny rule works and keeps the read tools, but it matches tool names, so it covers only the names it lists. GitHub, Google Drive, Slack, and Pipedrive connectors each name their write tools differently, and a server of the user can name them in any way. The shell path stays open on `claude` and carries the same writes through `gh` and `git`, so the rule would narrow one path and leave the other.
-- `opencode`: not enabled. The deny rule works and keeps the read tools (see the table), but it matches tool names, as the `claude` rule does. The runtime configures no MCP server, and the shell path stays open.
+- `opencode`: not enabled. The deny rule works and keeps the read tools. [ADR 0019](https://github.com/andromarces/agent-loops/blob/main/adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md#denial-probe-issue-432) records that result. The rule matches tool names, as the `claude` rule does. The runtime configures no MCP server, and the shell path stays open.
 - `codex`: enabled for a reviewer with no sandbox. The runtime passes `-c features.apps=false`, the setting behind `--disable apps`, which removed every connector tool in a live turn (issue #496). The connector read tools go too, and the reviewer does not need them, because it reads checks through the shell. The sandboxed modes refuse the connector write already, so they get no setting.
 - `copilot`: not needed. The default toolset of the built-in GitHub server has read tools only, and the shell write commands probed were refused by default.
 

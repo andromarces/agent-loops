@@ -160,7 +160,7 @@ A non-zero OpenCode exit reports the exit code and the provider detail, and no s
 
 #### OpenCode error evidence
 
-The error envelope is verified on macOS and Windows (issues #339, #605, #638, #676, #699, and #677). Linux, a `Retry-After` above 30, and a 429 body that is not JSON are not verified. The npm package `opencode-ai` was not run. The probe logs are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#opencode-provider-error-probes).
+The error envelope is verified on macOS and Windows (issues #339, #605, #638, #676, #699, and #677). Linux, a `Retry-After` above 30, and a 429 body that is not JSON are not verified. A rate-limited turn that ends before the dispatch timeout is not verified. The #638 retry past 110 seconds stays unresolved. The npm package `opencode-ai` was not run. The probe logs are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#opencode-provider-error-probes).
 
 ## Reviewer replacement and the task-only turn
 
