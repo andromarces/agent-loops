@@ -546,7 +546,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
   - The user, a git pull, or another process can cause the fast-forward, and the report does not prove who moved the head.
   - A dirty or untracked change with a fast-forward keeps the full mainWorkTreeChanged report. A detached head, a branch switch, a reset to an older commit, and a non-fast-forward move keep the field.
   - An edit that the turn restores before it ends appears as mainWorkTreeChangedInTurn, by path only, at most 20 paths, and never content. A failed or canceled worker turn carries the field too. Report it under open in the finish summary. The user or another process can cause the change too. A path that still differs at the end appears in mainWorkTreeChanged only. A read-only access of a file moves only the access time, so it appears in neither field.
-  - An absent path does not prove that no in-window edit happened. ADR 0086 states both limits.
+  - An absent path does not prove that no in-window edit happened.
   - A file created and removed before an in-window read sees it stays unseen. A watch, read, or bound failure reports no field, so the absent field then proves nothing.
   - At the turn end the watch closes first, then drains the remaining queue, file classification, and settlement under a 1000 ms deadline. A missed deadline reports no field and logs a warning.
 - When a worker report says its edit landed in another checkout, stop the run, and leave that checkout to the user. Report the paths under \`open\` in the finish summary. \`mainWorkTreeChangedInTurn\` stays report-only: the runtime cannot attribute the edit to one run.

@@ -28,6 +28,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  * @property {object | null} mainBefore
  * @property {object | null} mainWatch
  * @property {number | null} mainWatchDeadlineMs
+ * @property {number | null} mainWatchMarginMs
  * @property {number | null} mainReadDeadlineMs
  * @property {object | null} localSourcesBefore
  * @property {string[] | null} localSourcePaths
@@ -71,6 +72,9 @@ async function readBeforeTurn(state) {
           ...(state.mainWatchDeadlineMs === null
             ? {}
             : { drainDeadlineMs: state.mainWatchDeadlineMs }),
+          ...(state.mainWatchMarginMs === null
+            ? {}
+            : { timestampMarginMs: state.mainWatchMarginMs }),
           signal: state.signal,
         })
       : null;
@@ -318,6 +322,7 @@ async function readFailedTurnEvidence(state) {
  * main work tree watch, which `mainWatch` exposes and `stop` closes; call `stop` on every outcome.
  * @param {{ cwd: string, signal?: AbortSignal, isWorker: boolean, localFilesCopied: string[],
  *   sharedGitReadBoundMs: number, mainWatchDeadlineMs?: number | null,
+ *   mainWatchMarginMs?: number | null,
  *   mainReadDeadlineMs?: number | null }} options
  */
 export function createTurnEvidence({
@@ -327,6 +332,7 @@ export function createTurnEvidence({
   localFilesCopied,
   sharedGitReadBoundMs,
   mainWatchDeadlineMs = null,
+  mainWatchMarginMs = null,
   mainReadDeadlineMs = null,
 }) {
   const state = {
@@ -342,6 +348,7 @@ export function createTurnEvidence({
     // The turn-window watch of the main work tree, stopped on every outcome.
     mainWatch: null,
     mainWatchDeadlineMs,
+    mainWatchMarginMs,
     mainReadDeadlineMs,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,

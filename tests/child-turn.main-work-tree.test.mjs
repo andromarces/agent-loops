@@ -63,7 +63,13 @@ afterEach(async () => {
   tree = undefined;
 });
 
-const turn = (act, cwd = tree.linked, onMainWatch = null, mainWatchDeadlineMs = 60_000) =>
+const turn = (
+  act,
+  cwd = tree.linked,
+  onMainWatch = null,
+  mainWatchDeadlineMs = 60_000,
+  mainWatchMarginMs = null,
+) =>
   runChild({
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
@@ -72,6 +78,7 @@ const turn = (act, cwd = tree.linked, onMainWatch = null, mainWatchDeadlineMs = 
     cwd,
     ...(onMainWatch ? { onMainWatch } : {}),
     mainWatchDeadlineMs,
+    ...(mainWatchMarginMs === null ? {} : { mainWatchMarginMs }),
   });
 
 /** Adds the branch `other` at the template commit and a second commit on the checked-out branch. */
@@ -584,18 +591,24 @@ test("a worker turn that writes nothing carries no in-turn field", async () => {
 
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
 // window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read changes no state,
-// size, or modification time, so the envelope must carry no in-turn field.
+// size, modification time, or change time, so the envelope must carry no in-turn field. Each file
+// gets an old access time before the turn, so a read inside the turn moves only that time.
 test("a worker turn that only reads a main work tree file carries no in-turn field", async () => {
-  const file = join(tree.main, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
-  await utimes(file, old, old);
+  const files = [];
+  for (let index = 0; index < 5; index++) {
+    const file = join(tree.main, `read-${index}.txt`);
+    await writeFile(file, "read\n");
+    await utimes(file, old, old);
+    files.push(file);
+  }
   let watchHandle;
+  let next = 0;
   const result = await turn(
     async () => {
       await vi.waitFor(
         async () => {
-          await utimes(file, old, old);
-          await readFile(file);
+          await readFile(files[Math.min(next++, files.length - 1)]);
           expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
         },
         { timeout: 5_000 },
@@ -605,6 +618,8 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
     (handle) => {
       watchHandle = handle;
     },
+    60_000,
+    0,
   );
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
