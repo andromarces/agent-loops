@@ -275,6 +275,30 @@ test("a direct stop before take reports a failure and warns", async () => {
   );
 });
 
+// Usefulness: verifies that a timestamp-preserving change made just before the watch arms is not
+// reported by a later read-only access (issue #1712 review). A "recent" change time must not pass
+// the window test; only a change time at or after the window start marks an in-window write.
+test("a timestamp-preserving change before the window with a read-only access reports no candidate", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  // A copy that preserves times just before the watch arms leaves a recent change time.
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  await utimes(file, old, old);
+  // A short wait keeps the change time before the window start.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const fake = createArmingWatch();
+  const handle = await startMainWorkTreeWatch(dir, {
+    drainDeadlineMs: 60_000,
+    watchFactory: fake.factory,
+  });
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: [], failed: false });
+});
+
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
 // window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read moves only the access
 // time, so the state, size, modification time, and change time stay equal and the watch must report
@@ -285,12 +309,11 @@ test("a read-only access of a watched file reports no candidate", async () => {
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
-  // A lowered margin keeps the change time that the setup wrote before the window.
+  // A short wait keeps the change time that the setup wrote before the window start.
   await new Promise((resolve) => setTimeout(resolve, 10));
   const fake = createArmingWatch();
   const handle = await startMainWorkTreeWatch(dir, {
     drainDeadlineMs: 60_000,
-    timestampMarginMs: 0,
     watchFactory: fake.factory,
   });
   fake.deliver("change", "init.txt");

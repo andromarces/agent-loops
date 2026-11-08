@@ -6,7 +6,7 @@ partially-superseded
 
 Partially supersedes [ADR 0080: Report a main work tree change that a turn restores inside its window](0080-report-a-main-work-tree-change-inside-a-turn-window.md). It replaces decision 3's confirmation filter, which reports a candidate only by its equal pre-turn and post-turn state, and the consequence that a write and a restore before the event is delivered can be missed.
 
-Partially superseded by [ADR 0107: Report a restored main work tree edit that preserves the modification time](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). It replaces decision 2's modification-time test with a modification-or-change-time test, and decision 5's limit. Decision 1, decision 3's margin, and decision 4 stay in force.
+Partially superseded by [ADR 0107: Report a restored main work tree edit that preserves the modification time](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). It adds a change-time signal to decision 2's modification-time test, and replaces decision 5's limit. Decision 1, decision 3's margin for the modification time, and decision 4 stay in force.
 
 Decisions 1, 2, and 4 to 8, decision 3's rule that a path which still differs stays in `mainWorkTreeChanged` only, and every other consequence of ADR 0080 remain in force.
 

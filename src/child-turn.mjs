@@ -168,11 +168,10 @@ export async function runChild(options) {
     onSessionAssigned,
     onTurnTmpdir,
     onTurnChild,
-    // A test uses onMainWatch, mainWatchDeadlineMs, mainWatchMarginMs, and mainReadDeadlineMs to
-    // bound the watch and the main work tree read.
+    // A test uses onMainWatch, mainWatchDeadlineMs, and mainReadDeadlineMs to bound the watch and
+    // the main work tree read.
     onMainWatch,
     mainWatchDeadlineMs = null,
-    mainWatchMarginMs = null,
     mainReadDeadlineMs = null,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
@@ -442,7 +441,6 @@ export async function runChild(options) {
     localFilesCopied,
     sharedGitReadBoundMs,
     mainWatchDeadlineMs,
-    mainWatchMarginMs,
     mainReadDeadlineMs,
   });
 

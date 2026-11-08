@@ -63,13 +63,7 @@ afterEach(async () => {
   tree = undefined;
 });
 
-const turn = (
-  act,
-  cwd = tree.linked,
-  onMainWatch = null,
-  mainWatchDeadlineMs = 60_000,
-  mainWatchMarginMs = null,
-) =>
+const turn = (act, cwd = tree.linked, onMainWatch = null, mainWatchDeadlineMs = 60_000) =>
   runChild({
     agents: { fake: scripted([act]) },
     role: { kind: "fake", sessionId: null },
@@ -78,7 +72,6 @@ const turn = (
     cwd,
     ...(onMainWatch ? { onMainWatch } : {}),
     mainWatchDeadlineMs,
-    ...(mainWatchMarginMs === null ? {} : { mainWatchMarginMs }),
   });
 
 /** Adds the branch `other` at the template commit and a second commit on the checked-out branch. */
@@ -618,8 +611,6 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
     (handle) => {
       watchHandle = handle;
     },
-    60_000,
-    0,
   );
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
