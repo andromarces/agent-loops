@@ -1,21 +1,30 @@
 # Runtime advisory fields of a reviewer envelope
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a reviewer envelope carries `inheritedTmpdirEntries` or `packageStoreEntries`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a reviewer or worker envelope carries `inheritedTmpdirEntries`, or a reviewer envelope carries `packageStoreEntries`.
 
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory during the turn, such as a probe directory that the reviewer
-  created there. The field names the entries, redacted like the test command output,
-  and never their content, at most 20. It is a diagnostic: the directory is shared with other
-  processes, the runtime cannot attribute an entry to the turn, and it does not delete one.
+  inherited temporary directory or in a literal system temporary directory during the turn, such as
+  a probe directory that a turn created there. A worker envelope carries it only for a literal
+  system temporary directory, because a worker may legitimately write in the inherited one. The
+  field names the entries, redacted like the test command output, and never their content, at most 20. It is a diagnostic: the directories are shared with other processes, the runtime cannot
+  attribute an entry to the turn, and it does not delete one.
   Only the turn directories that this process created, matched by exact name, are left out, and
   only until the removal ends: a directory that the removal refused or failed on, such as a
   replacement of the turn directory, is listed. Every other entry of the one post-turn read is
-  listed, an `al-` name too. The runtime reads the directory once after the last child call of the
+  listed, an `al-` name too. The runtime reads the directories once after the last child call of the
   dispatch, with no re-read and no wait. The field creates no `open` item by itself, and it never
   refuses a finish.
-  - On macOS the usual inherited directory is under `/var/folders` when `TMPDIR` is set.
-    The report follows `os.tmpdir()`, the inherited directory, whatever path it names. It
-    covers `/tmp` when `TMPDIR`, `TEMP`, and `TMP` are unset.
+  - On macOS the usual inherited directory is under `/var/folders` when `TMPDIR` is set. The
+    report follows `os.tmpdir()`, the inherited directory, whatever path it names, and it also
+    reads the literal system temporary directories that differ from it. The literal roots are
+    `/tmp` and `/private/tmp` on POSIX, and there are none on Windows, where a Git Bash `/tmp`
+    resolves to the inherited directory. A literal root that resolves to or holds the inherited directory is
+    left out of the extra read, so one write gives one name.
+  - An entry of a literal system temporary directory carries the prefix `literal-tmp/`, for example
+    `literal-tmp/x` for a write to `/tmp/x` on macOS (issue #1713). The prompt forbids that write,
+    and the field names it after the turn. The entry is unattributed like every other entry: the
+    parent names it to the user and deletes nothing, because another process can hold the same name.
+    A turn that reports its own leftover makes it actionable.
   - An entry that a turn explicitly reports as its own leftover stays actionable: report it under
     `open` and name the turn report. A runtime cleanup failure stays actionable: `removeTurnTmpdir`
     warns with the directory that it did not remove and says to delete it by hand. The runtime adds
@@ -31,7 +40,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     `Notes` line from a reviewer never makes an entry safe to delete.
   - Every reviewer turn that read the directory before it started carries the field. The turns
     are an ok turn, a handled error, a turn that a mutation or a snapshot error halted, and a
-    canceled turn.
+    canceled turn. A worker turn carries the field when a literal system temporary directory entry
+    appeared, because it reads only those roots before the turn.
   - The `role dispatch` envelope and the state file `lastResult` carry it for a halted or
     interrupted dispatch.
   - A turn that cannot carry it is one whose process ended

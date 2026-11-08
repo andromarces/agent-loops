@@ -239,6 +239,10 @@ const SHARED_PARENT_RULES = [
   (text) =>
     expectRule(text, /inheritedTmpdirEntries/, /reviewer/i, /inherited temporary directory/i),
   (text) => expectRule(text, /cannot attribute/i, /not delete/i),
+  // Issue #1713: a literal system temporary directory that differs from the inherited one is
+  // reported, and a worker turn reports only that read.
+  (text) => expectRule(text, /literal-tmp\//i, /literal system temporary directory/i),
+  (text) => expectRule(text, /worker envelope/i, /literal system temporary directory/i),
   // Issue #1616: the field is a diagnostic, so an unattributed difference creates no open item.
   (text) => expectRule(text, /creates no/i, /item by itself/i),
   // Issue #1616: a runtime cleanup warning reaches the operator, not the parent.
@@ -311,25 +315,25 @@ test("the docs state the inherited temporary directory field as a diagnostic wit
   expect(fields).toMatch(/creates no `open` item/i);
   expect(fields).toMatch(/no re-read and no wait/i);
   expect(fields).toContain("registered/");
+  expect(fields).toContain("literal-tmp/");
   expect(fields).toMatch(/removeTurnTmpdir[^.]*delete it by hand/i);
   expect(role).toContain("inheritedTmpdirEntries");
   expect(role).toMatch(/diagnostic/i);
   expect(role).toMatch(/no `open` item/i);
 });
 
-// Usefulness: verifies acceptance #1596 — the docs name the usual macOS path and state that the report follows os.tmpdir(), including /tmp when the variables are unset.
-test("the runtime advisory docs name the macOS path that the report follows", async () => {
+// Usefulness: verifies acceptance #1713 — the docs state that the post-turn read covers the literal
+// system temporary directories too, so a write to `/tmp` on macOS is named, and that a literal root
+// which resolves to the inherited directory is left out.
+test("the runtime advisory docs name the literal roots of the report", async () => {
   const text = (
     await readFile(join(referenceSectionsDir, "runtime-advisory-fields.md"), "utf8")
   ).replace(/\s+/g, " ");
   expectRule(text, /macOS/i, /usual/i, /\/var\/folders/i, /`TMPDIR` is set/i);
-  expectRule(
-    text,
-    /report follows `os\.tmpdir\(\)`/i,
-    /inherited directory/i,
-    /whatever path it names/i,
-  );
-  expectRule(text, /covers `\/tmp`/i, /`TMPDIR`, `TEMP`, and `TMP` are unset/i);
+  expectRule(text, /report follows `os\.tmpdir\(\)`/i, /inherited directory/i);
+  expectRule(text, /`\/tmp` and `\/private\/tmp`/i, /POSIX/i, /Windows/i);
+  expectRule(text, /literal-tmp\//i, /`\/tmp\/x`/i, /macOS/i);
+  expectRule(text, /resolves to or holds the inherited directory/i, /left out/i);
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same
