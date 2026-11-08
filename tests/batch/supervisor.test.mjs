@@ -727,9 +727,19 @@ test("a live recorded process with no start stamp is not restarted", async () =>
     });
     await new Promise((resolve) => setTimeout(resolve, 600));
     resumeController.abort();
-    const result = await resumed;
+    const first = await resumed;
     expect(resumeChild.calls).toHaveLength(0);
-    expect(result.summary.loops[0].status).toBe("needs-owner");
+    expect(first.summary.loops[0].status).toBe("needs-owner");
+    expect((await readLoop(runsRoot, prepared.id, 1)).pid).toBe(live.pid);
+    const secondChild = childDouble();
+    const second = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: secondChild.spawn, installSignal: false },
+    });
+    expect(secondChild.calls).toHaveLength(0);
+    expect(second.summary.loops[0].status).toBe("needs-owner");
   } finally {
     live.kill("SIGKILL");
     await cleanupRepo(repo);
@@ -1001,12 +1011,6 @@ test("a loop owned by another resume is not reported complete", async () => {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     controller.abort();
     await run;
-    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
-      ...loop,
-      status: "running",
-      pid: null,
-      startTime: null,
-    }));
     const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-1.resume.lock");
     release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
     expect(release).not.toBe(null);

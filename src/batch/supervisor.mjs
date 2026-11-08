@@ -287,6 +287,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   let hard = false;
   const active = new Map();
   const children = new Map();
+  const lockSkipped = new Set();
   let pausedReason = null;
 
   const forward = (signal) => {
@@ -666,6 +667,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
     const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
     if (release === null) {
+      lockSkipped.add(issue);
       progress(`issue ${issue}: another resume owns the loop`);
       return;
     }
@@ -683,11 +685,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       // owner instead of waiting forever (ADR 0106 decision 10).
       const current = await processStartTime(loop.pid);
       if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
+        // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
         await changeLoop(issue, {
           status: "needs-owner",
           reason: "unverified-process-identity",
-          pid: null,
-          startTime: null,
         });
         return;
       }
@@ -861,9 +862,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   else if (pausedReason !== null) status = "paused";
   else if ([...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))) {
     status = "failed";
-  } else if ([...loops.values()].some((loop) => loop.status === "running")) {
+  } else if (
+    lockSkipped.size > 0 ||
+    [...loops.values()].some((loop) => loop.status === "running")
+  ) {
     status = "paused";
-    pausedReason ??= "a loop is running under another resume";
+    pausedReason ??= "a loop is owned by another resume";
   } else status = "completed";
   manifest = await updateManifestReturning(runsRoot, id, (value) => ({
     ...value,

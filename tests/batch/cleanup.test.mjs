@@ -2,7 +2,7 @@ import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 import { cleanupLoop } from "../../src/batch/cleanup.mjs";
 import { createLoopWorkTree, git } from "../../src/batch/git.mjs";
 import { acquireClaim, releaseClaim } from "../../src/batch/store.mjs";
@@ -11,8 +11,11 @@ import { removePath } from "../fs-helpers.mjs";
 
 const REPO_KEY = "abcabcabcabc";
 
-let sharedFixture;
-let branchCounter = 0;
+const roots = [];
+const repositories = [];
+let shared;
+const trees = {};
+let merged;
 
 async function createRepo() {
   const main = await createTempRepo();
@@ -25,114 +28,126 @@ async function createRepo() {
   await execa("git", ["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${base}`], {
     cwd: main,
   });
-  return { main, remote, base };
+  await execa("git", ["config", "user.name", "Tester"], { cwd: main });
+  await execa("git", ["config", "user.email", "test@example.com"], { cwd: main });
+  const repo = { main, remote, base };
+  repositories.push(repo);
+  return repo;
 }
 
-// One repository and bare remote for the file, reset per case by removing that case's work tree,
-// branch, remote branch, runs root, and root directory. A case that changes the main branch gets
-// its own repository (`isolated`: a process-level state change that cannot be reset cheaply).
-async function setup({
-  status = "succeeded",
-  push = true,
-  dirty = false,
-  lock = false,
-  isolated = false,
-} = {}) {
-  const repo = isolated ? await createRepo() : (sharedFixture ??= await createRepo());
-  const { main, remote, base } = repo;
-  const root = await mkdtemp(join(tmpdir(), "batch-root-"));
+async function makeTree(repo, { name, push = true, dirty = false, lock = false } = {}) {
+  const root = await mkdtemp(join(tmpdir(), `batch-root-${name}-`));
+  roots.push(root);
   const workTree = join(root, "issue-7");
-  const branch = `batch/b1/7-${branchCounter++}`;
-  const recorded = await createLoopWorkTree({ repo: main, base, workTree, branch });
-  await execa("git", ["config", "user.name", "Tester"], { cwd: workTree });
-  await execa("git", ["config", "user.email", "test@example.com"], { cwd: workTree });
+  const branch = `batch/b1/${name}`;
+  const recorded = await createLoopWorkTree({
+    repo: repo.main,
+    base: repo.base,
+    workTree,
+    branch,
+  });
   await execa("git", ["commit", "--allow-empty", "-m", "work on the issue"], { cwd: workTree });
   if (push) await execa("git", ["push", "-u", "origin", branch], { cwd: workTree });
   if (dirty) await writeFile(join(workTree, "dirty.txt"), "uncommitted" + String.fromCharCode(10));
-  if (lock) await execa("git", ["worktree", "lock", workTree], { cwd: main });
+  if (lock) await execa("git", ["worktree", "lock", workTree], { cwd: repo.main });
+  return { repo, root, workTree, branch, recorded };
+}
+
+// Every work tree of the file is built once here; each case gets its own tree and runs root, so
+// the cases stay independent without a Git setup or teardown process per case.
+beforeAll(async () => {
+  shared = await createRepo();
+  trees.pushed = await makeTree(shared, { name: "pushed" });
+  trees.unpushed = await makeTree(shared, { name: "unpushed", push: false });
+  trees.dirty = await makeTree(shared, { name: "dirty", dirty: true });
+  trees.replaced = await makeTree(shared, { name: "replaced" });
+  trees.locked = await makeTree(shared, { name: "locked", lock: true });
+
+  // Process-level exception: this case merges into the base branch and deletes a remote branch,
+  // a state change that cannot be reset for another case. It uses its own repository.
+  const repo = await createRepo();
+  const tree = await makeTree(repo, { name: "merged" });
+  const head = (await git(["rev-parse", "HEAD"], tree.workTree)).stdout;
+  await execa("git", ["merge", "--no-ff", "-m", "merge", tree.branch], { cwd: repo.main });
+  const mergeCommit = (await git(["rev-parse", "HEAD"], repo.main)).stdout;
+  await execa("git", ["push", "origin", repo.base], { cwd: repo.main });
+  await execa("git", ["push", "origin", "--delete", tree.branch], { cwd: tree.workTree });
+  merged = { ...tree, head, mergeCommit };
+}, 60_000);
+
+afterAll(async () => {
+  for (const root of roots.splice(0)) await removePath(root);
+  for (const repo of repositories.splice(0)) {
+    await removePath(repo.remote);
+    await removePath(repo.main);
+  }
+});
+
+async function fixtureFor(tree, { status = "succeeded", pr = null } = {}) {
   const runsRoot = await mkdtemp(join(tmpdir(), "batch-runs-"));
+  roots.push(runsRoot);
   await acquireClaim(runsRoot, REPO_KEY, 7, {
     batchId: "b1",
-    repo: main,
-    workTree,
+    repo: tree.repo.main,
+    workTree: tree.workTree,
     pid: process.pid,
     startTime: null,
   });
   const manifest = {
     id: "b1",
-    repo: main,
+    repo: tree.repo.main,
     repoKey: REPO_KEY,
-    base,
-    workTreeRoot: root,
+    base: tree.repo.base,
+    workTreeRoot: tree.root,
     issues: [7],
     settings: { loops: 1, maxSteps: 10 },
   };
   const loop = {
     issue: 7,
     status,
-    pr: null,
-    workTree: recorded,
-    branch,
+    pr,
+    workTree: tree.recorded,
+    branch: tree.branch,
   };
-  const cleanup = async (overrides = {}) =>
-    cleanupLoop({
-      manifest: { ...manifest, ...overrides.manifest },
-      loop: { ...loop, ...overrides.loop },
-      runsRoot,
-      gh: overrides.gh,
-      deps: overrides.deps,
-    });
-  const clean = async () => {
-    await execa("git", ["worktree", "unlock", workTree], { cwd: main }).catch(() => {});
-    await execa("git", ["worktree", "remove", "--force", workTree], { cwd: main }).catch(() => {});
-    await execa("git", ["branch", "-D", branch], { cwd: main }).catch(() => {});
-    await execa("git", ["push", "origin", "--delete", branch], { cwd: main }).catch(() => {});
-    await removePath(root);
-    await removePath(runsRoot);
-    if (isolated) {
-      await removePath(remote);
-      await removePath(main);
-    }
+  return {
+    ...tree,
+    runsRoot,
+    manifest,
+    loop,
+    cleanup: async (overrides = {}) =>
+      cleanupLoop({
+        manifest: { ...manifest, ...overrides.manifest },
+        loop: { ...loop, ...overrides.loop },
+        runsRoot,
+        gh: overrides.gh,
+      }),
   };
-  return { main, remote, root, workTree, branch, runsRoot, manifest, loop, cleanup, clean };
 }
 
 // Usefulness: a pushed successful work tree is removed after every identity and reachability check.
 test("a pushed successful work tree is removed", async () => {
-  const fixture = await setup();
-  try {
-    const result = await fixture.cleanup();
-    expect(result).toEqual({ removed: true, reason: null });
-    await expect(stat(fixture.workTree)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await releaseClaim(fixture.runsRoot, REPO_KEY, 7, { batchId: "b1" })).toBe(false);
-  } finally {
-    await fixture.clean();
-  }
+  const fixture = await fixtureFor(trees.pushed);
+  const result = await fixture.cleanup();
+  expect(result).toEqual({ removed: true, reason: null });
+  await expect(stat(fixture.workTree)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await releaseClaim(fixture.runsRoot, REPO_KEY, 7, { batchId: "b1" })).toBe(false);
 });
 
 // Usefulness: an unpushed commit keeps the work tree for the owner.
 test("an unpushed work tree is kept", async () => {
-  const fixture = await setup({ push: false });
-  try {
-    const result = await fixture.cleanup();
-    expect(result.removed).toBe(false);
-    expect(result.reason).toContain("unpushed");
-    expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
-  } finally {
-    await fixture.clean();
-  }
+  const fixture = await fixtureFor(trees.unpushed);
+  const result = await fixture.cleanup();
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("unpushed");
+  expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
 });
 
 // Usefulness: a dirty work tree is never removed.
 test("a dirty work tree is kept", async () => {
-  const fixture = await setup({ dirty: true });
-  try {
-    const result = await fixture.cleanup();
-    expect(result.removed).toBe(false);
-    expect(result.reason).toContain("not clean");
-  } finally {
-    await fixture.clean();
-  }
+  const fixture = await fixtureFor(trees.dirty);
+  const result = await fixture.cleanup();
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("not clean");
 });
 
 // Usefulness: a failed, interrupted, or needs-owner loop keeps its work tree. These cases return
@@ -153,79 +168,56 @@ for (const status of ["failed", "interrupted", "needs-owner"]) {
 // identity is changed instead of relying on the file system to allocate a different inode, which
 // an ext4 reuse can defeat.
 test("a replaced directory is kept", async () => {
-  const fixture = await setup();
-  try {
-    const result = await fixture.cleanup({
-      loop: { workTree: { ...fixture.loop.workTree, dev: "0", ino: "0" } },
-    });
-    expect(result.removed).toBe(false);
-    expect(result.reason).toContain("identity");
-    expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
-  } finally {
-    await fixture.clean();
-  }
+  const fixture = await fixtureFor(trees.replaced);
+  const result = await fixture.cleanup({
+    loop: { workTree: { ...fixture.loop.workTree, dev: "0", ino: "0" } },
+  });
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("identity");
+  expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
 });
 
 // Usefulness: a live work tree lock keeps the tree.
 test("a locked work tree is kept", async () => {
-  const fixture = await setup({ lock: true });
-  try {
-    const result = await fixture.cleanup();
-    expect(result.removed).toBe(false);
-    expect(result.reason).toContain("lock");
-  } finally {
-    await fixture.clean();
-  }
+  const fixture = await fixtureFor(trees.locked);
+  const result = await fixture.cleanup();
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("lock");
 });
 
 // Usefulness: the main work tree and an outside path are never touched.
 test("the main work tree is never removed", async () => {
-  const fixture = await setup();
-  try {
-    const result = await fixture.cleanup({
-      loop: {
-        workTree: {
-          ...fixture.loop.workTree,
-          path: fixture.main,
-          canonicalPath: fixture.main,
-        },
+  const fixture = await fixtureFor(trees.pushed);
+  const result = await fixture.cleanup({
+    loop: {
+      workTree: {
+        ...fixture.loop.workTree,
+        path: fixture.repo.main,
+        canonicalPath: fixture.repo.main,
       },
-    });
-    expect(result.removed).toBe(false);
-    expect((await stat(fixture.main)).isDirectory()).toBe(true);
-  } finally {
-    await fixture.clean();
-  }
+    },
+  });
+  expect(result.removed).toBe(false);
+  expect((await stat(fixture.repo.main)).isDirectory()).toBe(true);
 });
 
 // Usefulness: a merged pull request proves the push when the remote branch was deleted.
 test("a merged pull request proves a deleted remote branch", async () => {
-  const fixture = await setup({ isolated: true });
-  try {
-    const head = (await git(["rev-parse", "HEAD"], fixture.workTree)).stdout;
-    await execa("git", ["merge", "--no-ff", "-m", "merge", fixture.branch], { cwd: fixture.main });
-    const merge = (await git(["rev-parse", "HEAD"], fixture.main)).stdout;
-    await execa("git", ["push", "origin", fixture.branch === "" ? "HEAD" : fixture.manifest.base], {
-      cwd: fixture.main,
-    });
-    await execa("git", ["push", "origin", "--delete", fixture.branch], { cwd: fixture.workTree });
-    const gh = async (args) => {
-      if (args[0] === "pr" && args[1] === "view") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            state: "MERGED",
-            headRefOid: head,
-            mergeCommit: { oid: merge },
-          }),
-          stderr: "",
-        };
-      }
-      return { status: 1, stdout: "", stderr: "unexpected" };
-    };
-    const result = await fixture.cleanup({ loop: { pr: 5 }, gh });
-    expect(result.removed).toBe(true);
-  } finally {
-    await fixture.clean();
-  }
+  const fixture = await fixtureFor(merged, { pr: 5 });
+  const gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "view") {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          state: "MERGED",
+          headRefOid: merged.head,
+          mergeCommit: { oid: merged.mergeCommit },
+        }),
+        stderr: "",
+      };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+  const result = await fixture.cleanup({ gh });
+  expect(result.removed).toBe(true);
 });
