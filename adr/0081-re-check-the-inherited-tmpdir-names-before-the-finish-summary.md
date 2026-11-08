@@ -6,7 +6,7 @@ superseded
 
 Partially supersedes [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md). It replaced decision 1's rule that the settle re-read is the last filter. It also replaced the consequence that a longer-lived file still needs an `open` item.
 
-[ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md) replaced decision 2's single read. It also replaced decision 8's single re-read after a reviewer turn and the consequence that the re-check makes no claim about a later state.
+Partially superseded by [ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md). It replaced decision 2's single read. It also replaced decision 8's single re-read after a reviewer turn and the consequence that the re-check makes no claim about a later state.
 
 Partially superseded by [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md). It replaced decision 3's requirement that the run is non-terminal.
 
