@@ -74,11 +74,7 @@ the checks showed. A finish that also sets `unresolvedCompare` is refused. Dispa
 command and the `headCompare` record are in
 [Finish with --compare-head](finish-compare-head.md).
 
-A finish that records the compare under
-notDone and open and omits the field is a verified finish to every machine
-consumer. `--require-ci` closes that gap in
-both paths: `agent-loop role finish
---require-ci <pr>`. A run with no usable gate keeps the marker as its only trace.
+A run that can use the gate finishes with `agent-loop role finish --require-ci <pr>`.
 
 The conditions that the `--require-accept` and `--require-ci` gates check at
 `finish` are in [Finish gates](finish-gates.md).

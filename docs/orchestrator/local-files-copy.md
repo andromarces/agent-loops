@@ -10,9 +10,8 @@ The init envelope reports the paths as `localFiles: {copied, skipped}`,
 by name only. A path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 
-The copy duplicates secrets such as `.env` into the run work tree. Remove that
-work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn
-the copy off. It is an init field, so a later call cannot change it.
+Remove the run work tree when the run ends. Pass `--no-copy-local-files` on the init
+call to turn the copy off. It is an init field, so a later call cannot change it.
 
 The task can need other ignored reference data of the main work tree. Pass
 `--copy-local-path <relative path>` on the init call, once for each path. A downloaded

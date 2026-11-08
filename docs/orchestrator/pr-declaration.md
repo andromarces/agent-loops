@@ -42,9 +42,6 @@ through the gate: `agent-loop role finish --require-ci <pr>`, with the same PR n
   - Use the `"unresolvedCompare": true` marker only
     when the PR head itself cannot be read.
 
-A run that declares no PR keeps the accepted gap. The declaration closes the
-gap for a run that states its PR.
-
 The conditions that the `--require-accept` and `--require-ci` gates check at `finish` are in
 [Finish gates](finish-gates.md).
 

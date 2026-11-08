@@ -185,7 +185,7 @@ out of scope).
 
 A task is PR work when its change is delivered on a pull request. For PR work,
 name the PR branch in the worker prompt: the worker commits its change on that
-branch and pushes it. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
+branch and pushes it, and the reviewed head is the PR head. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
 
 After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
@@ -360,8 +360,6 @@ Tell the worker to push only with a named refspec. Use `git push -u origin <bran
 run a plain `git push`. Before the first dispatch, read
 `git -C "<work tree>" config push.default`. If it prints `matching`, state the
 named push in the task text.
-
-The named push is not a guarantee: a worker that runs a plain `git push` can push the default branch under `matching`.
 
 A run on an existing pull request, such as a review or a correction of PR #N, must
 run on the PR head branch. A repository with no remote has no `origin/<default>`.
