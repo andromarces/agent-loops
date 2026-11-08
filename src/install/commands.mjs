@@ -188,9 +188,9 @@ function commandStreams(io = {}) {
 }
 
 /**
- * Runs `agent-loop install`. Without `--harness` and `--yes`, it prompts on a TTY stdin; with
- * `--yes` or a non-TTY stdin it refuses. It sets `process.exitCode` to 1 for a refusal or a failed
- * install.
+ * Runs `agent-loop install`. Without `--harness` and `--yes`, it prompts on a TTY stdin. It refuses
+ * when `--yes` is set or stdin is not a TTY. It sets `process.exitCode` to 1 for a refusal or a
+ * failed install.
  */
 export async function runInstallCommand(argv, io = {}) {
   const options = parseCommand(argv, [
