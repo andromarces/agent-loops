@@ -4,7 +4,7 @@
 
 accepted
 
-Partially supersedes [ADR 0080: Report a main work tree change that a turn restores inside its window](0080-report-a-main-work-tree-change-inside-a-turn-window.md), decision 1. It replaces the start rule that opens the recursive watch before the child call with a start rule that also waits for the stream to arm. ADR 0080 decisions 2 to 8, its caps, its close-then-drain order, and its 1000 ms drain deadline stay in force. [ADR 0086](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md) and its modification-time rule stay in force.
+Partially supersedes [ADR 0080: Report a main work tree change that a turn restores inside its window](0080-report-a-main-work-tree-change-inside-a-turn-window.md), decision 1. It replaces decision 1's start rule. The start now waits for the stream to arm before it returns the handle. ADR 0080 decisions 2 to 8, its caps, its close-then-drain order, and its 1000 ms drain deadline stay in force. [ADR 0086](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md) and its modification-time rule stay in force.
 
 ## Date
 
