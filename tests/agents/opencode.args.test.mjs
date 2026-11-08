@@ -41,6 +41,7 @@ test("opencode sends an explicit model#effort", async () => {
       timeout: undefined,
       signal: undefined,
       role: undefined,
+      env: { PWD: "/dir" },
     },
   );
   expect(state.model).toBe("claude-3-5");
@@ -109,6 +110,18 @@ test("opencode denies the edit action on a read-only turn", async () => {
   });
 });
 
+// Usefulness: verifies the child environment names the turn directory as PWD, so OpenCode opens its
+// session in the run work tree even when the operator shell's inherited PWD names the main checkout
+// (issue #1678).
+test("opencode pins PWD to the turn working directory", async () => {
+  vi.mocked(exec).mockResolvedValueOnce({ stdout: textEvent("opencode reply"), stderr: "" });
+
+  const state = { kind: "opencode", sessionId: null, model: null, effort: null };
+  await runOpenCode(state, "oc prompt", { cwd: "/worktree", env: { PWD: "/main" } });
+
+  expect(vi.mocked(exec).mock.calls[0][2].env?.PWD).toBe("/worktree");
+});
+
 // Usefulness: verifies a turn with neither model nor effort passes no --model, so OpenCode
 // selects its own default, and the log says so without naming a model.
 test("opencode with no model or effort passes no --model and logs the CLI default", async () => {
@@ -127,6 +140,7 @@ test("opencode with no model or effort passes no --model and logs the CLI defaul
       timeout: undefined,
       signal: undefined,
       role: undefined,
+      env: { PWD: "/dir" },
     },
   );
   expect(state.model).toBeNull();
@@ -154,9 +168,9 @@ test("opencode with a model and no effort passes the model unchanged", async () 
       timeout: undefined,
       signal: undefined,
       role: undefined,
+      env: { PWD: "/dir" },
     },
   );
-  expect(exec.mock.calls[0][2].env).toBeUndefined();
   expect(logInfo).toHaveBeenCalledWith(expect.stringContaining("claude-3-5"));
 });
 

@@ -377,6 +377,12 @@ another checkout, report the paths in the closing block and stop. Never restore
 or discard a file there, because a restore can discard an uncommitted change of
 the user.
 
+When a worker report says its edit landed in another checkout, stop the run,
+report the paths under `open` in the finish summary, and leave that checkout to
+the user: `mainWorkTreeChangedInTurn` stays report-only, because a concurrent run
+can report the same path, so the runtime cannot attribute the edit to one run
+(ADR 0080).
+
 Create the work tree with no upstream, so a plain `git push` of a worker cannot
 reach the default branch:
 
