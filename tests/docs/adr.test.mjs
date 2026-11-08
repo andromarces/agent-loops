@@ -343,7 +343,8 @@ test("ADR 0095 supersedes the temporary directory reporting rules and keeps the 
     expect(text).toContain("[ADR 0095:");
     expect(adr95).toContain(`[ADR ${number}:`);
   }
-  expect(adr95).toMatch(/## Status\s+accepted/);
+  expect(adr95).toMatch(/## Status\s+partially-superseded/);
+  expect(adr95).toContain("[ADR 0108:");
   expect(adr95).toMatch(/no automatic `open` item/i);
   expect(adr95).toMatch(/ADR 0047|ADR 0068/);
   expect(adr95).toMatch(/detection limits/i);

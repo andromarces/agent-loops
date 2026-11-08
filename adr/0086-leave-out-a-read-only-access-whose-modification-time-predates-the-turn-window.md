@@ -2,9 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0080: Report a main work tree change that a turn restores inside its window](0080-report-a-main-work-tree-change-inside-a-turn-window.md). It replaces decision 3's confirmation filter, which reports a candidate only by its equal pre-turn and post-turn state, and the consequence that a write and a restore before the event is delivered can be missed.
+
+Partially superseded by [ADR 0107: Report a restored main work tree edit that preserves the modification time](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). It adds a change-time signal to decision 2's modification-time test, and replaces decision 5's limit. Decision 1, decision 3's margin for the modification time, and decision 4 stay in force.
 
 Decisions 1, 2, and 4 to 8, decision 3's rule that a path which still differs stays in `mainWorkTreeChanged` only, and every other consequence of ADR 0080 remain in force.
 
@@ -45,6 +47,7 @@ Andro Marces
 - [Issue #1583](https://github.com/andromarces/agent-loops/issues/1583)
 - [Pull request #1586](https://github.com/andromarces/agent-loops/pull/1586)
 - [ADR 0080](0080-report-a-main-work-tree-change-inside-a-turn-window.md)
+- [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md) (decisions 2 and 5)
 - Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`
 - Documented in the [orchestrator instructions](../docs/orchestrator-instructions.md) and the headless prompt in `src/prompts/orchestrator.mjs`
 - [ADR Index](README.md)

@@ -87,8 +87,9 @@ async function arm(ready, { armDeadlineMs, signal, armWait, fail }) {
 /**
  * Watches the main work tree of a linked run for the turn window, with one `Map` of pending paths
  * and merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
- * records a file, and the `.git` directory stays out. A recorded file whose end modification time
- * is older than the window start is a read-only access, and stays out. `take()` returns the
+ * records a file, and the `.git` directory stays out. A recorded file is a read-only access, and
+ * stays out, when its end modification time predates the window start minus the margin and its end
+ * change time is not later than the window start plus a one-millisecond guard. `take()` returns the
  * candidates and then stops the watch on every outcome. A failed watch, read, or bound returns
  * `failed: true` and logs a warning, so the caller reports no path. The options lower the bounds
  * and hold the ignore input, for a test.
@@ -112,8 +113,15 @@ export async function startMainWorkTreeWatch(
   } = {},
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
-  // past this instant. A read leaves it before.
-  const windowStart = Date.now();
+  // past this instant. A read leaves it before. The file system stamps a change time from the
+  // system clock at sub-millisecond precision, and Date.now() steps in whole milliseconds that can
+  // lag that clock. The start therefore comes from the performance clock's wall time, which matches
+  // the file system stamp.
+  const windowStart = performance.timeOrigin + performance.now();
+  // A change time is a write only when it is strictly later than the start plus this one-millisecond
+  // guard. A timestamp-preserving change made before the start stays out, and an in-window restore
+  // inside the guard is not reported.
+  const changeTimeAfterStart = windowStart + 1;
   let failed = false;
   let watcherClosed = false;
   let stopped = false;
@@ -352,8 +360,10 @@ export async function startMainWorkTreeWatch(
     if (flushing !== null) await flushing.catch(() => {});
   };
 
-  /** The candidates that the turn may have written: an end file with a window-time mtime, or one
-   * that an in-window read saw before the turn removed it. */
+  /** The candidates that the turn may have written: an end file with a window-time modification or
+   * change time, or one that an in-window read saw before the turn removed it. A read moves only
+   * the access time, so both times stay before the window; a write that restores the modification
+   * time still moves the change time past the window start. */
   const fileCandidates = () =>
     mapInBatches([...candidates], FILE_BATCH_SIZE, async (path) => {
       if (stopped) return null;
@@ -373,9 +383,17 @@ export async function startMainWorkTreeWatch(
         }
         if (!entry.isFile() && !entry.isSymbolicLink()) return null;
         // A write moves the modification time to the write time, so a path that ends before the
-        // window start was only read, which moves no modification time on NTFS. The margin keeps a
-        // write that a coarse timestamp or a small skew places before the start reported.
-        if (entry.mtimeMs < windowStart - MTIME_MARGIN_MS) return null;
+        // window start was only read, which moves no modification or change time. The margin keeps
+        // a write that a coarse timestamp or a small skew places before the start reported. A copy
+        // that preserves the modification time still moves the change time past the guard, and
+        // stays reported. A change time inside the guard after the start could belong to a
+        // timestamp-preserving change made before the turn, so it never reports the path alone.
+        if (
+          entry.mtimeMs < windowStart - MTIME_MARGIN_MS &&
+          entry.ctimeMs <= changeTimeAfterStart
+        ) {
+          return null;
+        }
         return path;
       } catch (err) {
         if (err?.code === "ENOENT") return seenFiles.has(path) ? path : null;

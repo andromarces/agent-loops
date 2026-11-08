@@ -85,7 +85,7 @@ afterEach(async () => {
 // Usefulness: verifies that at most a batch of registry checks is in flight (issue #1470). The
 // 20-name report keeps its order and registered/ prefix for the same input.
 test("bounds the registry checks in flight and keeps the report", async () => {
-  const before = await snapshotInheritedTmpdir();
+  const before = await snapshotInheritedTmpdir({ literalRoots: [] });
   for (const name of NAMES) await mkdir(join(root, name));
 
   const pending = appearedInInheritedTmpdir(before);

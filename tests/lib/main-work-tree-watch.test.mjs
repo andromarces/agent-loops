@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -237,6 +237,29 @@ test("a file created and removed inside the window is reported", async () => {
   expect(result).toEqual({ candidates: ["scratch.txt"], failed: false });
 });
 
+// Usefulness: verifies requirement "a restored edit that preserves the modification time is
+// reported" (issue #1712). A copy that preserves times leaves the modification time before the
+// window, so a rule that reads the modification time alone drops the path. The change time still
+// records the in-window write.
+test("a restored edit that preserves the modification time is reported", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await utimes(file, old, old);
+  const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
+  await vi.waitFor(
+    async () => {
+      await writeFile(file, "changed\n");
+      await writeFile(file, "hello\n");
+      await utimes(file, old, old);
+      expect(handle.seenFileCount()).toBeGreaterThan(0);
+    },
+    { timeout: 5_000 },
+  );
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: ["init.txt"], failed: false });
+});
+
 // Usefulness: verifies requirement "a direct stop before take reports a failure and warns" (issue
 // #1556). A stop that no read failure explains must still log the watch warning.
 test("a direct stop before take reports a failure and warns", async () => {
@@ -252,24 +275,58 @@ test("a direct stop before take reports a failure and warns", async () => {
   );
 });
 
+// Usefulness: verifies that a timestamp-preserving change made just before the watch starts is not
+// reported by a later read-only access (issue #1712 review). The file system change time has
+// sub-millisecond precision and can lead the whole-millisecond Date.now(), so a change completed
+// before the start can carry a change time after it. The loop repeats the start, because a single
+// start can land after the change by more than the guard.
+test("a timestamp-preserving change in the start millisecond reports no candidate", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  let reported = false;
+  let failed = false;
+  for (let attempt = 0; attempt < 20 && !reported && !failed; attempt++) {
+    // A copy that preserves times completes immediately before the watch starts.
+    await writeFile(file, "copied\n");
+    await writeFile(file, "hello\n");
+    await utimes(file, old, old);
+    const fake = createArmingWatch();
+    const handle = await startMainWorkTreeWatch(dir, {
+      drainDeadlineMs: 60_000,
+      watchFactory: fake.factory,
+    });
+    // A read-only access moves only the access time.
+    fake.deliver("change", "init.txt");
+    await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), {
+      timeout: 5_000,
+      interval: 1,
+    });
+    const result = await handle.take();
+    reported = result.candidates.includes("init.txt");
+    failed = result.failed;
+  }
+  expect(failed).toBe(false);
+  expect(reported).toBe(false);
+});
+
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
 // window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read moves only the access
-// time, so the state, size, and modification time stay equal and the watch must report no path.
+// time, so the state, size, modification time, and change time stay equal and the watch must report
+// no path. The delivered event models the Windows access-time event, because a test that resets the
+// access time inside the window would itself move the change time.
 test("a read-only access of a watched file reports no candidate", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
-  const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
-  await vi.waitFor(
-    async () => {
-      // Windows updates an access time older than one hour, and changes it on a read.
-      await utimes(file, old, old);
-      await readFile(file);
-      expect(handle.seenFileCount()).toBeGreaterThan(0);
-    },
-    { timeout: 5_000 },
-  );
+  const fake = createArmingWatch();
+  const handle = await startMainWorkTreeWatch(dir, {
+    drainDeadlineMs: 60_000,
+    watchFactory: fake.factory,
+  });
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
   const result = await handle.take();
   expect(result).toEqual({ candidates: [], failed: false });
 });

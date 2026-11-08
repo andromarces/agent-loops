@@ -19,6 +19,13 @@ import {
 import { removePath } from "./fs-helpers.mjs";
 import { SUMMARY } from "./run-fixtures.mjs";
 
+// A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
+// #1713).
+vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, literalTmpdirRoots: () => [] };
+});
+
 // Answers `git` from memory for the cases that open their repo with `newCleanRunRepo`: they assert
 // the init task delivery, never a Git result. Every other case, and every other command, reaches the
 // real `execa`.
