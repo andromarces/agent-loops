@@ -185,8 +185,10 @@ function cliPath() {
 
 /** One line of the failure text, without the child argument list, for a loop reason. */
 function spawnFailureText(error) {
-  const text = String(error?.originalMessage ?? error?.message ?? "the child did not start");
-  return text.split("\n")[0];
+  const cause = error?.cause?.message ?? error?.originalMessage ?? error?.message;
+  const text = String(cause ?? "the child did not start").split("\n")[0];
+  const code = typeof error?.code === "string" ? error.code : null;
+  return code === null || text.includes(code) ? text : `${code}: ${text}`;
 }
 
 /** Returns a child that has a process id, and reports one that never started as an error. */
@@ -213,9 +215,14 @@ export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
     }),
   );
   const pid = subprocess.pid ?? null;
-  const done = subprocess
-    .then((result) => ({ exitCode: result.exitCode ?? null }))
-    .catch((error) => ({ exitCode: null, error }));
+  // With reject false, execa resolves a spawn failure as a failed result, not a rejection.
+  const done = subprocess.then(
+    (result) => ({
+      exitCode: result.exitCode ?? null,
+      error: result.failed ? result : null,
+    }),
+    (error) => ({ exitCode: null, error }),
+  );
   return startedChild({
     pid,
     startTime: pid === null ? null : await processStartTime(pid),

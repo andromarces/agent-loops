@@ -258,35 +258,40 @@ test("the real headless child writes its output to the log file", async () => {
   }
 });
 
-// Usefulness: a child with no process id fails the loop with its error and no started line.
-test("a child with no process id fails the loop with its error", async () => {
+// Usefulness: a real spawn failure fails the loop with its code and no started line.
+test("a real spawn failure fails the loop with its code and no started line", async () => {
   const repo = await batchRepo();
   const prepared = await preparedFor(repo, [1]);
+  const missing = join(prepared.workTreeRoot, "missing-cwd");
   const lines = [];
   const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
     lines.push(String(chunk));
     return true;
-  });
-  const spawn = async () => ({
-    pid: null,
-    startTime: null,
-    done: Promise.resolve({ exitCode: null, error: new Error("spawn ENOENT") }),
-    kill: () => {},
-    hardKill: () => {},
-    close: () => {},
   });
   try {
     const { exitCode, summary } = await runBatch({
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn, installSignal: false },
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        createWorkTree: async ({ branch }) => ({
+          path: missing,
+          canonicalPath: missing,
+          dev: "1",
+          ino: "1",
+          branch,
+        }),
+      },
     });
     expect(exitCode).toBe(1);
-    expect(summary.loops[0]).toMatchObject({
-      status: "failed",
-      reason: "child-error: spawn ENOENT",
-    });
+    const reason = summary.loops[0].reason;
+    expect(summary.loops[0].status).toBe("failed");
+    expect(reason).toMatch(/^child-error: .*ENOENT/);
+    expect(reason).toContain("spawn");
+    expect(reason).not.toContain("\n");
+    expect(reason).not.toContain("--orchestrator");
     expect(lines.some((line) => line.includes("started (pid"))).toBe(false);
     const claim = batchPaths(join(prepared.workTreeRoot, "runs")).claim(prepared.repoKey, 1);
     await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
