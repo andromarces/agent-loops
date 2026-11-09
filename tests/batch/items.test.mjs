@@ -819,3 +819,38 @@ test("batch status lists a preflight-skipped pull request item", async () => {
     await removePath(runsRoot);
   }
 });
+
+// Usefulness: a PR item has no checkpoint until its launch-time head check passes.
+test("a queued pull request item has no checkpoint before its launch", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+  const items = [
+    { kind: "issue", number: 1, key: 1, mode: "work-first", task: null },
+    { kind: "pr", number: 7, key: "pr-7", mode: "review-only", task: null },
+  ];
+  const prepared = { ...preparedWith(items), loops: 1 };
+  const first = childDouble({ hold: true });
+  const second = childDouble();
+  const spawn = async (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const run = runBatch({
+    prepared,
+    runsRoot,
+    gh: mixedGh(),
+    deps: { ...workTreeDeps, notifier: noNotify, spawn, installSignal: false },
+  });
+  try {
+    for (let attempt = 0; attempt < 100 && first.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(first.calls).toHaveLength(1);
+    await expect(
+      stat(join(runsRoot, "batches", prepared.id, "loops", "pr-7.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await first.calls[0].release();
+    const { summary } = await run;
+    expect(second.calls).toHaveLength(1);
+    expect(summary.loops.find((loop) => loop.issue === "pr-7").status).toBe("succeeded");
+  } finally {
+    await removePath(runsRoot);
+  }
+});

@@ -3,6 +3,7 @@
 // stops the loop as needs-owner.
 import { isJsonObject } from "../lib/json.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
+import { readFile } from "node:fs/promises";
 import { git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
 
 const asGit = (deps) => deps.git ?? gitRead;
@@ -36,11 +37,30 @@ async function ghJson(gh, args, cwd, label) {
 
 const owner = (reason) => ({ status: "needs-owner", reason, pr: null, requireCi: null });
 
+/** The work-tree heads that this loop's own transcript recorded for a worker or reviewer turn. */
+async function readRecordedHeads(loop) {
+  if (typeof loop.transcript !== "string") return [];
+  let data;
+  try {
+    data = JSON.parse(await readFile(loop.transcript, "utf8"));
+  } catch {
+    return [];
+  }
+  if (!isJsonObject(data) || !Array.isArray(data.events)) return [];
+  const heads = [];
+  for (const event of data.events) {
+    if (event?.type !== "result") continue;
+    const head = event.result?.reviewed?.head;
+    if (typeof head === "string") heads.push(head);
+  }
+  return heads;
+}
+
 /**
  * Reconciles one pull request item against its frozen head. A review-only loop reads no push
  * state; a work loop continues while its local branch matches, or is ahead of, the frozen head.
  */
-async function reconcilePullRequest({ loop, repo, gh, git, state }) {
+async function reconcilePullRequest({ loop, repo, gh, git, state, headsOf }) {
   let view;
   try {
     view = await ghJson(
@@ -66,10 +86,12 @@ async function reconcilePullRequest({ loop, repo, gh, git, state }) {
   }
   const moved = typeof loop.head === "string" && view.headRefOid !== loop.head;
   if (moved) {
+    const recorded = loop.mode === "review-only" ? [] : await headsOf(loop);
     const ownPush =
       loop.mode !== "review-only" &&
       state.head === view.headRefOid &&
       typeof loop.head === "string" &&
+      recorded.includes(view.headRefOid) &&
       (await git(["merge-base", "--is-ancestor", loop.head, state.head], repo)).exitCode === 0;
     if (!ownPush) {
       return owner(
@@ -108,6 +130,7 @@ async function reconcilePullRequest({ loop, repo, gh, git, state }) {
 export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   const git = asGit(deps);
   const canonical = deps.canonicalPath ?? canonicalPath;
+  const headsOf = deps.recordedHeads ?? readRecordedHeads;
   const identityOf = deps.pathIdentity ?? pathIdentity;
   const workTree = loop.workTree;
   if (!workTree?.path || typeof workTree.path !== "string") {
@@ -138,7 +161,7 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
     return owner("another branch is checked out in the work tree");
   }
   if (loop.kind === "pr") {
-    return reconcilePullRequest({ loop, repo, gh, git, state });
+    return reconcilePullRequest({ loop, repo, gh, git, state, headsOf });
   }
 
   const fetched = await git(["fetch", "origin", workTree.branch], repo);

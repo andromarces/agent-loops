@@ -1,7 +1,7 @@
 import { cp, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 import { execa } from "execa";
 import {
   createPrWorkTree,
@@ -51,81 +51,79 @@ test("device and inode compare without losing precision", () => {
   ).toBe(false);
 });
 
-let sharedPrPromise;
-const sharedPrDirs = [];
-
-// One shared seed repository and bare remote for the file. Each case copies the seed, so its local
-// branches are mutable per test while every commit and every refs/pull/<n>/head stays shared.
-async function sharedPr() {
-  sharedPrPromise ??= (async () => {
-    const seed = await createTempRepo();
-    const remote = await mkdtemp(join(tmpdir(), "batch-pr-remote-"));
-    sharedPrDirs.push(seed, remote);
-    await execa("git", ["init", "--bare"], { cwd: remote });
-    await execa("git", ["remote", "add", "origin", remote], { cwd: seed });
-    const mainHead = (await execa("git", ["rev-parse", "HEAD"], { cwd: seed })).stdout.trim();
-    await execa("git", ["push", "-u", "origin", "HEAD:refs/heads/main"], { cwd: seed });
-    await execa("git", ["symbolic-ref", "HEAD", "refs/heads/main"], { cwd: remote });
-    await execa("git", ["checkout", "-b", "feature-a"], { cwd: seed });
-    await writeFile(join(seed, "feature.txt"), "one\n");
-    await execa("git", ["add", "feature.txt"], { cwd: seed });
-    await execa("git", ["commit", "-m", "feature one"], { cwd: seed });
-    const headA = (await execa("git", ["rev-parse", "HEAD"], { cwd: seed })).stdout.trim();
-    await execa("git", ["push", "-u", "origin", "feature-a"], { cwd: seed });
-    await execa("git", ["branch", "feature-ff", mainHead], { cwd: seed });
-    const other = await mkdtemp(join(tmpdir(), "batch-pr-other-"));
-    try {
-      await execa("git", ["clone", remote, other]);
-      await execa("git", ["config", "user.name", "Tester"], { cwd: other });
-      await execa("git", ["config", "user.email", "test@example.com"], { cwd: other });
-      await execa("git", ["checkout", "-b", "feature-b"], { cwd: other });
-      await writeFile(join(other, "remote-only.txt"), "remote\n");
-      await execa("git", ["add", "remote-only.txt"], { cwd: other });
-      await execa("git", ["commit", "-m", "remote only"], { cwd: other });
-      const headB = (await execa("git", ["rev-parse", "HEAD"], { cwd: other })).stdout.trim();
-      await execa("git", ["push", "origin", "feature-b"], { cwd: other });
-      for (const [number, sha] of [
-        [1, headA],
-        [2, headB],
-        [3, headA],
-        [4, headA],
-        [5, headA],
-      ]) {
-        await execa("git", ["update-ref", `refs/pull/${number}/head`, sha], { cwd: remote });
-      }
-      return { seed, remote, headA, headB, mainHead };
-    } finally {
-      await removePath(other);
-    }
-  })();
-  return sharedPrPromise;
-}
-
-afterAll(async () => {
-  sharedPrPromise = undefined;
-  for (const dir of sharedPrDirs.splice(0)) await removePath(dir);
-});
+const scenarioDirs = [];
+const scenarios = {};
 
 async function copySeed(seed) {
   const repo = await mkdtemp(join(tmpdir(), "batch-pr-repo-"));
+  scenarioDirs.push(repo);
   await cp(seed, repo, { recursive: true });
   return repo;
 }
 
-// Usefulness: a local branch with commits the frozen head lacks is skipped, never reset.
-test("a PR work tree refuses a local branch with unpushed commits", async () => {
-  const { seed, headA, mainHead } = await sharedPr();
+async function scenarioRepo(seed, run) {
   const repo = await copySeed(seed);
   const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
+  scenarioDirs.push(root);
+  return run(repo, root);
+}
+
+async function codeOf(fn) {
   try {
+    await fn();
+    return null;
+  } catch (err) {
+    return err?.code ?? err?.message ?? String(err);
+  }
+}
+
+// One shared setup builds the seed repository and runs every Git scenario once. Each scenario has
+// its own copy and branch, and the tests below only assert on the recorded result.
+beforeAll(async () => {
+  const seed = await createTempRepo();
+  const remote = await mkdtemp(join(tmpdir(), "batch-pr-remote-"));
+  scenarioDirs.push(seed, remote);
+  await execa("git", ["init", "--bare"], { cwd: remote });
+  await execa("git", ["remote", "add", "origin", remote], { cwd: seed });
+  const mainHead = (await execa("git", ["rev-parse", "HEAD"], { cwd: seed })).stdout.trim();
+  await execa("git", ["push", "-u", "origin", "HEAD:refs/heads/main"], { cwd: seed });
+  await execa("git", ["symbolic-ref", "HEAD", "refs/heads/main"], { cwd: remote });
+  await execa("git", ["checkout", "-b", "feature-a"], { cwd: seed });
+  await writeFile(join(seed, "feature.txt"), "one\n");
+  await execa("git", ["add", "feature.txt"], { cwd: seed });
+  await execa("git", ["commit", "-m", "feature one"], { cwd: seed });
+  const headA = (await execa("git", ["rev-parse", "HEAD"], { cwd: seed })).stdout.trim();
+  await execa("git", ["push", "-u", "origin", "feature-a"], { cwd: seed });
+  await execa("git", ["branch", "feature-ff", mainHead], { cwd: seed });
+  const other = await mkdtemp(join(tmpdir(), "batch-pr-other-"));
+  scenarioDirs.push(other);
+  await execa("git", ["clone", remote, other]);
+  await execa("git", ["config", "user.name", "Tester"], { cwd: other });
+  await execa("git", ["config", "user.email", "test@example.com"], { cwd: other });
+  await execa("git", ["checkout", "-b", "feature-b"], { cwd: other });
+  await writeFile(join(other, "remote-only.txt"), "remote\n");
+  await execa("git", ["add", "remote-only.txt"], { cwd: other });
+  await execa("git", ["commit", "-m", "remote only"], { cwd: other });
+  const headB = (await execa("git", ["rev-parse", "HEAD"], { cwd: other })).stdout.trim();
+  await execa("git", ["push", "origin", "feature-b"], { cwd: other });
+  for (const [number, sha] of [
+    [1, headA],
+    [2, headB],
+    [3, headA],
+    [4, headA],
+    [5, headA],
+  ]) {
+    await execa("git", ["update-ref", `refs/pull/${number}/head`, sha], { cwd: remote });
+  }
+
+  scenarios.diverged = await scenarioRepo(seed, async (repo, root) => {
     await execa("git", ["checkout", "-b", "feature-div", mainHead], { cwd: repo });
     await writeFile(join(repo, "local.txt"), "unpushed\n");
     await execa("git", ["add", "local.txt"], { cwd: repo });
     await execa("git", ["commit", "-m", "local only"], { cwd: repo });
     const local = (await execa("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
     await execa("git", ["checkout", "feature-a"], { cwd: repo });
-    expect(local).not.toBe(headA);
-    await expect(
+    const code = await codeOf(() =>
       createPrWorkTree({
         repo,
         workTree: join(root, "pr-1"),
@@ -133,22 +131,16 @@ test("a PR work tree refuses a local branch with unpushed commits", async () => 
         head: headA,
         number: 1,
       }),
-    ).rejects.toMatchObject({ code: "pr-branch-diverged" });
+    );
     const after = (await execa("git", ["rev-parse", "feature-div"], { cwd: repo })).stdout.trim();
-    expect(after).toBe(local);
-  } finally {
-    await removePath(root);
-    await removePath(repo);
-  }
-});
+    return { code, local, after };
+  });
 
-// Usefulness: a same-repository PR head absent locally is fetched and gets its named branch.
-test("a PR work tree fetches the head commit", async () => {
-  const { seed, headA, headB } = await sharedPr();
-  const repo = await copySeed(seed);
-  const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
-  try {
-    await expect(execa("git", ["cat-file", "-e", headB], { cwd: repo })).rejects.toThrow();
+  scenarios.fetched = await scenarioRepo(seed, async (repo, root) => {
+    const present = await execa("git", ["cat-file", "-e", headB], { cwd: repo }).then(
+      () => true,
+      () => false,
+    );
     const tree = await createPrWorkTree({
       repo,
       workTree: join(root, "pr-2"),
@@ -159,25 +151,14 @@ test("a PR work tree fetches the head commit", async () => {
     const checkedOut = (
       await execa("git", ["rev-parse", "HEAD"], { cwd: tree.path })
     ).stdout.trim();
-    expect(checkedOut).toBe(headB);
-    const branchname = (
+    const branch = (
       await execa("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: tree.path })
     ).stdout.trim();
-    expect(branchname).toBe("feature-b");
-    expect(headA).not.toBe(headB);
-  } finally {
-    await removePath(root);
-    await removePath(repo);
-  }
-});
+    return { present, checkedOut, branch, head: headB };
+  });
 
-// Usefulness: a head that changed between the freeze and the fetch never reaches a review.
-test("a PR work tree refuses a head that moved since the freeze", async () => {
-  const { seed, mainHead } = await sharedPr();
-  const repo = await copySeed(seed);
-  const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
-  try {
-    await expect(
+  scenarios.moved = await scenarioRepo(seed, async (repo, root) => ({
+    code: await codeOf(() =>
       createPrWorkTree({
         repo,
         workTree: join(root, "pr-3"),
@@ -185,19 +166,10 @@ test("a PR work tree refuses a head that moved since the freeze", async () => {
         head: mainHead,
         number: 3,
       }),
-    ).rejects.toMatchObject({ code: "pr-head-moved" });
-  } finally {
-    await removePath(root);
-    await removePath(repo);
-  }
-});
+    ),
+  }));
 
-// Usefulness: the named PR branch fast-forwards to the frozen head without a reset.
-test("a PR work tree fast-forwards a branch behind the frozen head", async () => {
-  const { seed, headA } = await sharedPr();
-  const repo = await copySeed(seed);
-  const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
-  try {
+  scenarios.fastForward = await scenarioRepo(seed, async (repo, root) => {
     const tree = await createPrWorkTree({
       repo,
       workTree: join(root, "pr-5"),
@@ -205,23 +177,14 @@ test("a PR work tree fast-forwards a branch behind the frozen head", async () =>
       head: headA,
       number: 5,
     });
-    const checkedOut = (
-      await execa("git", ["rev-parse", "HEAD"], { cwd: tree.path })
-    ).stdout.trim();
-    expect(checkedOut).toBe(headA);
-  } finally {
-    await removePath(root);
-    await removePath(repo);
-  }
-});
+    return {
+      head: (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.path })).stdout.trim(),
+      expected: headA,
+    };
+  });
 
-// Usefulness: a branch checked out in another work tree is skipped, not stolen.
-test("a PR work tree refuses a branch checked out elsewhere", async () => {
-  const { seed, headA } = await sharedPr();
-  const repo = await copySeed(seed);
-  const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
-  try {
-    await expect(
+  scenarios.checkedOut = await scenarioRepo(seed, async (repo, root) => ({
+    code: await codeOf(() =>
       createPrWorkTree({
         repo,
         workTree: join(root, "pr-1"),
@@ -229,19 +192,10 @@ test("a PR work tree refuses a branch checked out elsewhere", async () => {
         head: headA,
         number: 1,
       }),
-    ).rejects.toMatchObject({ code: "pr-branch-checked-out" });
-  } finally {
-    await removePath(root);
-    await removePath(repo);
-  }
-});
+    ),
+  }));
 
-// Usefulness: the worker's documented named push reaches the PR head branch.
-test("a PR work tree pushes a correction with the named push", async () => {
-  const { seed, remote, headA } = await sharedPr();
-  const repo = await copySeed(seed);
-  const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
-  try {
+  scenarios.pushed = await scenarioRepo(seed, async (repo, root) => {
     const tree = await createPrWorkTree({
       repo,
       workTree: join(root, "pr-4"),
@@ -257,10 +211,43 @@ test("a PR work tree pushes a correction with the named push", async () => {
     const remoteHead = (
       await execa("git", ["rev-parse", "refs/heads/feature-push"], { cwd: remote })
     ).stdout.trim();
-    expect(remoteHead).toBe(corrected);
-    expect(corrected).not.toBe(headA);
-  } finally {
-    await removePath(root);
-    await removePath(repo);
-  }
+    return { corrected, remoteHead };
+  });
+});
+
+afterAll(async () => {
+  for (const dir of scenarioDirs.splice(0)) await removePath(dir);
+});
+
+// Usefulness: a local branch with commits the frozen head lacks is skipped, never reset.
+test("a PR work tree refuses a local branch with unpushed commits", () => {
+  expect(scenarios.diverged.code).toBe("pr-branch-diverged");
+  expect(scenarios.diverged.after).toBe(scenarios.diverged.local);
+});
+
+// Usefulness: a same-repository PR head absent locally is fetched and gets its named branch.
+test("a PR work tree fetches the head commit", () => {
+  expect(scenarios.fetched.present).toBe(false);
+  expect(scenarios.fetched.branch).toBe("feature-b");
+  expect(scenarios.fetched.checkedOut).toBe(scenarios.fetched.head);
+});
+
+// Usefulness: a head that changed between the freeze and the fetch never reaches a review.
+test("a PR work tree refuses a head that moved since the freeze", () => {
+  expect(scenarios.moved.code).toBe("pr-head-moved");
+});
+
+// Usefulness: the named PR branch fast-forwards to the frozen head without a reset.
+test("a PR work tree fast-forwards a branch behind the frozen head", () => {
+  expect(scenarios.fastForward.head).toBe(scenarios.fastForward.expected);
+});
+
+// Usefulness: a branch checked out in another work tree is skipped, not stolen.
+test("a PR work tree refuses a branch checked out elsewhere", () => {
+  expect(scenarios.checkedOut.code).toBe("pr-branch-checked-out");
+});
+
+// Usefulness: the worker's documented named push reaches the PR head branch.
+test("a PR work tree pushes a correction with the named push", () => {
+  expect(scenarios.pushed.remoteHead).toBe(scenarios.pushed.corrected);
 });

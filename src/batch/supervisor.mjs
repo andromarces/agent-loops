@@ -488,7 +488,14 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     manifest = await readManifest(runsRoot, id);
     if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
     start = false;
-    for (const issue of manifest.issues) loops.set(issue, await readLoop(runsRoot, id, issue));
+    const itemsByKey = new Map((manifest.items ?? []).map((item) => [item.key, item]));
+    for (const issue of manifest.issues) {
+      let loop = await readLoop(runsRoot, id, issue);
+      if (loop === null && itemsByKey.has(issue)) {
+        loop = queuedLoop(paths, id, itemsByKey.get(issue), prepared.maxSteps);
+      }
+      loops.set(issue, loop);
+    }
     const pending = manifest.issues.some((issue) => {
       const loop = loops.get(issue);
       return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
@@ -630,7 +637,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       },
     };
     for (const item of items) loops.set(item.key, queuedLoop(paths, id, item, prepared.maxSteps));
-    await createBatchStore(runsRoot, manifest, [...loops.values()]);
+    const storedLoops = [...loops.values()].filter((loop) => loop.kind !== "pr");
+    await createBatchStore(runsRoot, manifest, storedLoops);
     progress(`batch ${id} started (${items.length} item(s), ${prepared.loops} loop(s))`);
   }
 
@@ -701,10 +709,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         }),
       };
     }
-    const changed = await updateLoop(runsRoot, id, issue, (current) => ({
-      ...current,
-      ...nextPatch,
-    }));
+    const changed = await updateLoop(
+      runsRoot,
+      id,
+      issue,
+      (current) => ({
+        ...current,
+        ...nextPatch,
+      }),
+      { initial: loops.get(issue) ?? null },
+    );
     loops.set(issue, await readLoop(runsRoot, id, issue));
     return changed;
   };
@@ -1692,7 +1706,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       const issue = nextIssue();
       remaining.delete(issue);
       const runOne = async () => {
-        const current = await readLoop(runsRoot, id, issue);
+        let current = await readLoop(runsRoot, id, issue);
+        if (current === null) {
+          const item = (manifest.items ?? []).find((entry) => entry.key === issue);
+          if (item === undefined) return;
+          current = queuedLoop(paths, id, item, prepared.maxSteps);
+        }
         loops.set(issue, current);
         if (!start && current.status === "succeeded" && current.cleanup === null) {
           const cleanup = await cleanupWorkTree({ manifest, loop: current, runsRoot, gh }).catch(
@@ -1875,7 +1894,18 @@ export async function readBatchStatus({ runsRoot, id }) {
       continue;
     }
     const loop = await readLoop(runsRoot, id, issue);
-    if (loop === null) continue;
+    if (loop === null) {
+      const item = (manifest.items ?? []).find((entry) => entry.key === issue);
+      if (item === undefined) continue;
+      loops.push({
+        ...loopEntry(queuedLoop(batchPaths(runsRoot), id, item, manifest.settings?.maxSteps ?? 0)),
+        decision: null,
+        blockingIssues: [],
+        requiredMerges: [],
+        nextAction: "batch resume",
+      });
+      continue;
+    }
     const waitDetails = {
       decision: await decisionView(runsRoot, id, loop),
       blockingIssues: Array.isArray(loop.blockingIssues) ? loop.blockingIssues : [],

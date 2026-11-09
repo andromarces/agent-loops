@@ -148,15 +148,18 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
  * Returns true when a write happened. The read-modify-write runs under the one batch lock, so two
  * batch commands cannot interleave a checkpoint change.
  */
-export async function updateLoop(runsRoot, id, issue, updater) {
+export async function updateLoop(runsRoot, id, issue, updater, { initial = null } = {}) {
   const paths = batchPaths(runsRoot);
   return serialized(paths.lock(id), () =>
     withStateLock(
       paths.lock(id),
       async () => {
         const file = paths.loop(id, issue);
-        const current = parseObject(await readStoreText(file), file);
-        if (current === null) throw new Error(`No loop checkpoint for issue ${issue}.`);
+        const stored = parseObject(await readStoreText(file), file);
+        if (stored === null && initial === null) {
+          throw new Error(`No loop checkpoint for issue ${issue}.`);
+        }
+        const current = stored ?? initial;
         const next = await updater(current);
         if (next === undefined || next === null || same(next, current)) return false;
         await writeFileAtomic(file, `${JSON.stringify(next, null, 2)}\n`);

@@ -373,14 +373,17 @@ test("a pull request head moved by the loop's own push resumes", async () => {
     gh: ghReplies({
       details: { 5: { state: "OPEN", headRefOid: NEW, mergeCommit: null } },
     }),
-    deps: deps({
-      '["rev-parse","--abbrev-ref","HEAD"]': [0, "feature"],
-      '["rev-parse","HEAD"]': [0, NEW],
-      '["status","--porcelain"]': [0, ""],
-      '["fetch","origin","feature"]': [0, ""],
-      '["rev-parse","--verify","--quiet","refs/remotes/origin/feature"]': [0, NEW],
-      [`["merge-base","--is-ancestor","${HEAD}","${NEW}"]`]: [0, ""],
-    }),
+    deps: {
+      ...deps({
+        '["rev-parse","--abbrev-ref","HEAD"]': [0, "feature"],
+        '["rev-parse","HEAD"]': [0, NEW],
+        '["status","--porcelain"]': [0, ""],
+        '["fetch","origin","feature"]': [0, ""],
+        '["rev-parse","--verify","--quiet","refs/remotes/origin/feature"]': [0, NEW],
+        [`["merge-base","--is-ancestor","${HEAD}","${NEW}"]`]: [0, ""],
+      }),
+      recordedHeads: async () => [NEW],
+    },
   });
   expect(result).toMatchObject({ status: "resume", pr: 5, requireCi: 5 });
 });
@@ -394,11 +397,17 @@ test("a pull request head moved outside the loop is refused", async () => {
     gh: ghReplies({
       details: { 5: { state: "OPEN", headRefOid: NEW, mergeCommit: null } },
     }),
-    deps: deps({
-      '["rev-parse","--abbrev-ref","HEAD"]': [0, "feature"],
-      '["rev-parse","HEAD"]': [0, HEAD],
-      '["status","--porcelain"]': [0, ""],
-    }),
+    deps: {
+      ...deps({
+        '["rev-parse","--abbrev-ref","HEAD"]': [0, "feature"],
+        '["rev-parse","HEAD"]': [0, NEW],
+        '["status","--porcelain"]': [0, ""],
+        '["fetch","origin","feature"]': [0, ""],
+        '["rev-parse","--verify","--quiet","refs/remotes/origin/feature"]': [0, NEW],
+        [`["merge-base","--is-ancestor","${HEAD}","${NEW}"]`]: [0, ""],
+      }),
+      recordedHeads: async () => [],
+    },
   });
   expect(result.status).toBe("needs-owner");
   expect(result.reason).toContain("head moved");

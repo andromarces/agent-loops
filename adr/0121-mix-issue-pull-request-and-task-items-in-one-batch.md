@@ -110,8 +110,11 @@ commit that differs skips the item as `pr-head-moved`. A missing local branch is
 head. An existing branch at the head, or behind it, is used, with a fast-forward in the second
 case. A branch with commits the frozen head lacks skips the item as `pr-branch-diverged`, and one
 checked out in another work tree skips it as `pr-branch-checked-out`. No branch is forced or
-reset. In `work-first` and `review-first`, the child gets `--pr <n>` and `--require-ci <n>`, and a
-worker correction is pushed with `git push -u origin <branch>`. In `review-only`, the
+reset. On resume, a moved head is accepted only when the loop's own transcript records that head
+from a worker or reviewer turn and the frozen head is an ancestor of it; any other move stops the
+item as `needs-owner` with a reason that names both heads. In `work-first` and `review-first`, the
+child gets `--pr <n>` and `--require-ci <n>`, and a worker correction is pushed with
+`git push -u origin <branch>`. In `review-only`, the
 child gets none of `--pr`, `--require-ci`, and `--require-accept`, and the loop finishes after its
 reviewer turn. The existing single-task guards that refuse `--pr`, `--require-ci`, and
 `--require-accept` with `review-only` stay unchanged.
