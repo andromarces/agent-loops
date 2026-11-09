@@ -176,6 +176,7 @@ Andro Marces
 ## Links
 
 - [Issue #1734: Start a batch from the frozen issue set of a finished audit](https://github.com/andromarces/agent-loops/issues/1734)
+- [PR #1746: Start a batch from the frozen issue set of a finished audit](https://github.com/andromarces/agent-loops/pull/1746)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md) (decisions 2 and 3 superseded)
 - [ADR 0109: Coordinate reviewer audits and consolidated issue creation](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) (decision 13's first deferred entry superseded)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
