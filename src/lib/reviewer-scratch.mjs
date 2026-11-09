@@ -3,6 +3,7 @@ import { lstat, mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { errorLine } from "./error-message.mjs";
 import { logDebug, logWarn } from "./log.mjs";
+import { recordRunWarning } from "./run-warnings.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
 
 // Short on purpose: a deep path fails some test runtimes on Windows (issue #903).
@@ -74,7 +75,9 @@ export async function removeReviewerScratch(dir) {
     await rm(dir, { recursive: true, force: true });
     logDebug(`reviewer scratch folder removed: ${dir}`);
   } catch (err) {
-    logWarn(`reviewer scratch folder not removed, delete it by hand: ${dir}: ${errorLine(err)}`);
+    const message = `reviewer scratch folder not removed, delete it by hand: ${dir}: ${errorLine(err)}`;
+    logWarn(message);
+    recordRunWarning(message);
     return;
   }
   // `rmdir` fails on a folder that still holds an entry, so another turn's folder stays.

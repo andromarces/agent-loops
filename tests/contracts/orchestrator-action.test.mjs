@@ -53,6 +53,41 @@ test("validateAction accepts valid finish with summary", () => {
   });
 });
 
+// Usefulness: verifies the optional notes key reaches the validated summary unchanged.
+test("validateAction accepts a finish summary with notes", () => {
+  const input = {
+    action: "finish",
+    summary: {
+      changed: "all",
+      verified: "tests pass",
+      deferred: "none",
+      notDone: "none",
+      open: "none",
+      notes: "a later check",
+    },
+  };
+  const result = validateAction(input);
+  expect(result.ok).toBe(true);
+  expect(result.value.summary.notes).toBe("a later check");
+});
+
+// Usefulness: verifies a null notes value reads as omitted and keeps a five-key summary valid.
+test("validateAction treats a null notes value as omitted", () => {
+  const result = validateAction({
+    action: "finish",
+    summary: {
+      changed: "all",
+      verified: "tests pass",
+      deferred: "none",
+      notDone: "none",
+      open: "none",
+      notes: null,
+    },
+  });
+  expect(result.ok).toBe(true);
+  expect(result.value.summary).not.toHaveProperty("notes");
+});
+
 // Usefulness: verifies a finish that marks an unresolved PR-head compare keeps
 // the machine-readable marker, so the runtime can emit a distinct event (#266).
 test("validateAction keeps finish unresolvedCompare", () => {

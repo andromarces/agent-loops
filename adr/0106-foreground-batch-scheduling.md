@@ -18,6 +18,8 @@ partially-superseded
 - The consequence and the milestone 1 standalone sentence that a `needs-owner` loop holds one
   slot.
 
+[adr/0115-batch-loop-final-report.md](0115-batch-loop-final-report.md) partially supersedes this ADR. The replaced part is decision 1's summary field list. The other sentences of decision 1 stay in force.
+
 Every other decision, consequence, and acceptance check stays in force. The batch still never
 merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 
