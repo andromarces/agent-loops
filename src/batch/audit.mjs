@@ -1367,7 +1367,10 @@ async function sameRecordedWorkTree(entryPath, candidates) {
 
 // The ADR 0106 decision 13 identity, registration, revision, and cleanliness checks, applied to
 // the detached audit work tree. A null return means remove.
-async function auditWorkTreeBlocker(state) {
+async function auditWorkTreeBlocker(
+  state,
+  { readRegistrations = readRegisteredWorkTrees, runGit = git } = {},
+) {
   const workTree = state.workTree;
   if (workTree === null || typeof workTree !== "object" || typeof workTree.path !== "string") {
     return "the recorded work tree is missing";
@@ -1381,7 +1384,7 @@ async function auditWorkTreeBlocker(state) {
     // both artifacts even when the folder is gone.
     let entries;
     try {
-      entries = await readRegisteredWorkTrees(state.repo);
+      entries = await readRegistrations(state.repo);
     } catch (err) {
       return `the work tree list read failed: ${err.message}`;
     }
@@ -1404,7 +1407,7 @@ async function auditWorkTreeBlocker(state) {
 
   let entries;
   try {
-    entries = await readRegisteredWorkTrees(state.repo);
+    entries = await readRegistrations(state.repo);
   } catch (err) {
     return `the work tree list read failed: ${err.message}`;
   }
@@ -1415,11 +1418,11 @@ async function auditWorkTreeBlocker(state) {
   if (own.length !== 1) return "the path is not the registered audit work tree";
   if (own[0].locked) return "the work tree is locked by a live run";
 
-  const head = await git(["rev-parse", "HEAD"], workTree.path);
+  const head = await runGit(["rev-parse", "HEAD"], workTree.path);
   if (head.exitCode !== 0 || head.stdout !== state.revision) {
     return "the recorded revision is not checked out";
   }
-  const status = await git(["status", "--porcelain"], workTree.path);
+  const status = await runGit(["status", "--porcelain"], workTree.path);
   if (status.exitCode !== 0 || status.stdout !== "") return "the work tree is not clean";
   return null;
 }
@@ -1442,9 +1445,13 @@ async function removeEmptyAuditRoot(workTree, workTreeRoot) {
  * Removes one finished audit's work tree and store. Only a `created` audit with a frozen issue set
  * and no unreconciled write is removable; every other state keeps both. The store goes last, so a
  * failed work-tree removal leaves the record that a retry needs.
+ * `deps` injects the registration read, Git run, and work-tree removal for an in-process test.
  * @returns {Promise<{ exitCode: number, summary: object }>}
  */
-export async function removeAudit({ runsRoot, id }) {
+export async function removeAudit({ runsRoot, id, deps = {} }) {
+  const readRegistrations = deps.readRegisteredWorkTrees ?? readRegisteredWorkTrees;
+  const runGit = deps.gitRun ?? git;
+  const removeTree = deps.removeWorkTree ?? removeWorkTree;
   const paths = auditPaths(runsRoot);
   const release = await tryStateLock(paths.lock(id), { label: "Audit", noun: "audit" });
   if (release === null) {
@@ -1481,10 +1488,11 @@ export async function removeAudit({ runsRoot, id }) {
       };
     };
 
-    const blocker = removalBlocker(state) ?? (await auditWorkTreeBlocker(state));
+    const blocker =
+      removalBlocker(state) ?? (await auditWorkTreeBlocker(state, { readRegistrations, runGit }));
     if (blocker !== null) return keep(blocker);
 
-    const removal = await removeWorkTree(state.repo, state.workTree.path, {
+    const removal = await removeTree(state.repo, state.workTree.path, {
       dev: state.workTree.dev,
       ino: state.workTree.ino,
     });

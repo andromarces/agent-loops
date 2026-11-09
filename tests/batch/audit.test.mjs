@@ -15,7 +15,7 @@ import {
   writeAudit,
 } from "../../src/batch/audit.mjs";
 import { canonicalPath } from "../../src/lib/canonical-path.mjs";
-import { git, pathIdentity } from "../../src/batch/git.mjs";
+import { git, pathIdentity, removeDirectoryWithoutLinks } from "../../src/batch/git.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
@@ -1057,8 +1057,8 @@ async function registeredAudit() {
 
 // Usefulness: a finished audit's work tree folder and store are the two artifacts that cost disk
 // after the frozen issue set exists, and both are gone after remove (ADR 0118).
-// Behavior exception: needs a real Git registration, so it creates its own work tree in the
-// shared repository, and it asserts the stderr progress at the removal boundary.
+// Behavior exception: this is the one real end-to-end removal run, with a real Git work tree
+// removed, and it asserts the stderr progress at the removal boundary.
 test("remove deletes the work tree and store of a finished audit", async () => {
   const { runsRoot, state } = await registeredAudit();
   const written = [];
@@ -1118,21 +1118,35 @@ test("remove keeps an audit with an unreconciled issue write", async () => {
 
 // Usefulness: a link inside the work tree that names a directory outside it must survive, so the
 // removal never follows a link or junction (ADR 0106 decision 13, ADR 0118).
-// Behavior exception: needs a real Git registration, so it creates its own work tree in the
-// shared repository.
+// In-process: the registration read, Git run, and work-tree removal are injected, so this case
+// starts no Git process.
 test("remove does not follow a link outside the work tree", async () => {
-  const { base, runsRoot, state } = await registeredAudit();
+  const { base, runsRoot, state } = await filesystemAudit();
   const outside = join(base, "outside");
   await mkdir(outside, { recursive: true });
   await writeFile(join(outside, "keep.txt"), "kept\n");
-  await writeFile(join(state.repo, ".git", "info", "exclude"), "linked\n", { flag: "a" });
   await symlink(
     outside,
     join(state.workTree.path, "linked"),
     process.platform === "win32" ? "junction" : "dir",
   );
 
-  const result = await removeAudit({ runsRoot, id: state.id });
+  const result = await removeAudit({
+    runsRoot,
+    id: state.id,
+    deps: {
+      readRegisteredWorkTrees: async () => [
+        { path: state.workTree.path, bare: false, locked: false, reason: null },
+      ],
+      gitRun: async (args) => ({
+        exitCode: 0,
+        stdout: args[0] === "rev-parse" ? state.revision : "",
+        stderr: "",
+        timedOut: false,
+      }),
+      removeWorkTree: async (_repo, path, identity) => removeDirectoryWithoutLinks(path, identity),
+    },
+  });
 
   expect(result.exitCode).toBe(0);
   expect(await readFile(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
@@ -1141,22 +1155,27 @@ test("remove does not follow a link outside the work tree", async () => {
 
 // Usefulness: a moved folder must not hide the locked Git registration, or remove would delete the
 // store while Git still holds a locked work tree (ADR 0118 decision 3).
-// Behavior exception: needs a real locked registration, so it creates its own work tree in the
-// shared repository.
+// In-process: a recorded registration reply and an alternate path form stand in for Git, so this
+// case starts no Git process.
 test("remove keeps a locked work tree whose folder moved away", async () => {
-  const { base, runsRoot, state } = await registeredAudit();
-  const realPath = state.workTree.path;
+  const { base, runsRoot, state } = await filesystemAudit();
   // A temp directory can reach the same folder through another form, such as a macOS /var link or
-  // a Windows short name. The recorded path uses that form while Git registers the real one.
+  // a Windows short name.
   const aliasBase = join(base, "alias");
   await symlink(base, aliasBase, process.platform === "win32" ? "junction" : "dir");
-  state.workTree = { ...state.workTree, path: join(aliasBase, relative(base, realPath)) };
-  await writeAudit(runsRoot, state);
-  await git(["worktree", "lock", realPath], removeRepo);
+  const registeredPath = join(aliasBase, relative(base, state.workTree.path));
   const moved = join(base, "moved-revision");
-  await rename(realPath, moved);
+  await rename(state.workTree.path, moved);
 
-  const result = await removeAudit({ runsRoot, id: state.id });
+  const result = await removeAudit({
+    runsRoot,
+    id: state.id,
+    deps: {
+      readRegisteredWorkTrees: async () => [
+        { path: registeredPath, bare: false, locked: true, reason: null },
+      ],
+    },
+  });
 
   expect(result.exitCode).toBe(1);
   expect(result.summary.removed).toBe(false);
