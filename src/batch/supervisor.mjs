@@ -297,8 +297,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
-  // Every path that ends the batch uses this finalization, so a resume after an answer
-  // reports the same status, summary, exit code, and one completion notification.
+  // Every path that ends the batch uses this finalization.
+  // A resume after an answer reports the same status, summary, exit code, and one completion
+  // notification.
   const finalizeBatch = async () => {
     let status;
     if (interrupted) status = "interrupted";

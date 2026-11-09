@@ -13,7 +13,8 @@ These parts of `adr/0106-foreground-batch-scheduling.md` are replaced:
 - Decision 1's return rule. The foreground command also returns with status `waiting` when a
   pending decision needs the owner.
 - Decision 5's sentence that a `needs-owner` loop keeps its slot. A loop that becomes a pending
-  decision releases its slot, and the next eligible issue takes it.
+  decision releases its slot once no recorded child process is live, and the next eligible issue
+  takes it.
 - Decision 6's `blocked` skip. A blocked issue waits and is polled, and it launches after its
   blockers close. It is not a final skip.
 - Decision 16's deferred in-batch decision request, slot release, owner-merge continuation, and
@@ -38,7 +39,8 @@ a final skip, so the owner starts a new batch after the blocker closes. The owne
 event without reading `batch status`.
 
 Milestone 3 needs four capabilities. A loop releases its slot while it waits for an owner
-decision. The owner answers one decision by its id and one option. A blocked issue resumes in
+decision, once no recorded child process is live. The owner answers one decision by its id and
+one option. A blocked issue resumes in
 the running batch after its blockers close. A desktop notification announces a new decision, a
 required merge, and batch completion on macOS and Windows.
 
@@ -118,8 +120,9 @@ unanswered decision writes neither the manifest nor the checkpoint.
 ### 4. A resume answer returns the loop to the queue with the remaining budget
 
 `batch resume` reads the pending decision first. A pending decision with no answer keeps its
-`needs-owner` status, stays pending, holds no slot, and is reported again. A malformed decision
-or answer keeps the loop `needs-owner` and logs a warning. The resume never guesses an answer.
+`needs-owner` status and stays pending. It holds no slot once no recorded child process is live,
+and it is reported again. A malformed decision or answer keeps the loop `needs-owner` and logs a
+warning. The resume never guesses an answer.
 
 Recovery checks process ownership first. A live or unreadable identity keeps the loop pending,
 and the answer applies only after the process is proven dead.
@@ -180,8 +183,8 @@ non-ASCII text through the argument vector that the notifier builds.
 ### 7. A pending decision or merge wait survives an interrupted session
 
 A pending decision and a `waiting` issue are checkpoint states. `batch resume` reads both. It
-keeps a pending decision pending and keeps its slot free. It re-checks a waiting issue on the
-same poll interval and launches it after its blockers close.
+keeps a pending decision pending and keeps its slot free once no recorded child process is live.
+It re-checks a waiting issue on the same poll interval and launches it after its blockers close.
 
 The batch status `waiting` covers both cases. The command exits 1, and no completion notification
 is sent while either state remains. The owner answers a decision or merges a blocker, and runs
@@ -219,7 +222,8 @@ continuation. README and onboarding expansion stay out of scope.
 
 The implementation passes these checks:
 
-1. A pending decision frees its slot, and the next eligible issue launches in it.
+1. A pending decision frees its slot once no recorded child process is live, and the next
+   eligible issue launches in it.
 2. Each decision lists at least two option keys and one recommendation, and `batch status` shows
    them.
 3. An answer to one decision never resolves another pending decision.

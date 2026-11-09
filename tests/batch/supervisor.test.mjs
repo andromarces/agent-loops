@@ -91,8 +91,8 @@ function valueAfter(args, flag) {
 // A test never shows a desktop notification. A case that reads notifications passes its own.
 const noNotify = async () => ({ spawned: false, ok: true });
 
-// The new wait and decision cases model the work tree and the gates in process, so no case
-// starts a Git process after the one shared preparation.
+// The new wait and decision cases model the work tree and the gates in process.
+// No case starts a Git process after the one shared preparation.
 const fakeGitDeps = {
   createWorkTree: async ({ workTree, branch }) => ({
     path: workTree,
