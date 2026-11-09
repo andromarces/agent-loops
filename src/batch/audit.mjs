@@ -1345,6 +1345,26 @@ function removalBlocker(state) {
   return null;
 }
 
+function samePath(left, right) {
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+// Git can report a registered path in another form than the recorded one, such as a resolved
+// /private/var path on macOS or a long temp path on Windows. The direct forms are compared, then
+// the canonical parent plus the folder name, because the leaf itself is missing.
+async function sameRecordedWorkTree(entryPath, candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    if (samePath(resolve(entryPath), resolve(candidate))) return true;
+    const entryParent = await canonicalPath(dirname(entryPath));
+    const candidateParent = await canonicalPath(dirname(candidate));
+    const entryReal = join(entryParent, basename(entryPath));
+    const candidateReal = join(candidateParent, basename(candidate));
+    if (samePath(entryReal, candidateReal)) return true;
+  }
+  return false;
+}
+
 // The ADR 0106 decision 13 identity, registration, revision, and cleanliness checks, applied to
 // the detached audit work tree. A null return means remove.
 async function auditWorkTreeBlocker(state) {
@@ -1365,8 +1385,11 @@ async function auditWorkTreeBlocker(state) {
     } catch (err) {
       return `the work tree list read failed: ${err.message}`;
     }
-    const target = resolve(workTree.path);
-    const own = entries.filter((entry) => resolve(entry.path) === target);
+    const recorded = [workTree.path, workTree.canonicalPath];
+    const own = [];
+    for (const entry of entries) {
+      if (await sameRecordedWorkTree(entry.path, recorded)) own.push(entry);
+    }
     if (own.some((entry) => entry.locked)) return "the work tree is locked by a live run";
     if (own.length > 0) return "Git still registers the work tree";
     return null;

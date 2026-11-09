@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { execa } from "execa";
 import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
 import {
@@ -1145,9 +1145,16 @@ test("remove does not follow a link outside the work tree", async () => {
 // shared repository.
 test("remove keeps a locked work tree whose folder moved away", async () => {
   const { base, runsRoot, state } = await registeredAudit();
-  await git(["worktree", "lock", state.workTree.path], removeRepo);
+  const realPath = state.workTree.path;
+  // A temp directory can reach the same folder through another form, such as a macOS /var link or
+  // a Windows short name. The recorded path uses that form while Git registers the real one.
+  const aliasBase = join(base, "alias");
+  await symlink(base, aliasBase, process.platform === "win32" ? "junction" : "dir");
+  state.workTree = { ...state.workTree, path: join(aliasBase, relative(base, realPath)) };
+  await writeAudit(runsRoot, state);
+  await git(["worktree", "lock", realPath], removeRepo);
   const moved = join(base, "moved-revision");
-  await rename(state.workTree.path, moved);
+  await rename(realPath, moved);
 
   const result = await removeAudit({ runsRoot, id: state.id });
 
