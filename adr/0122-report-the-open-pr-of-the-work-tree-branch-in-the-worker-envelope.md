@@ -47,6 +47,7 @@ Andro Marces
 ## Links
 
 - [Issue #1755](https://github.com/andromarces/agent-loops/issues/1755)
+- [PR #1756](https://github.com/andromarces/agent-loops/pull/1756)
 - [ADR 0043: Let the headless runtime declare the PR that a worker opens](0043-let-the-headless-runtime-declare-the-pr-that-a-worker-opens.md)
 - [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md)
 - Implementation:
