@@ -117,7 +117,7 @@ const fakeGitDeps = {
 
 /**
  * A child double that records its arguments and writes a transcript. `hold` keeps each run live
- * until the test releases it.
+ * until the test releases it. `call.written` settles when the first transcript write finishes.
  */
 function childDouble({
   exitCode = 0,
@@ -129,12 +129,14 @@ function childDouble({
   error = null,
   warnings = [],
   failedTurnTest = null,
+  beforeWrite = null,
 } = {}) {
   const calls = [];
   const pending = [];
   const spawn = async ({ args, cwd, logPath }) => {
     const transcript = valueAfter(args, "--transcript");
     const gate = hold ? deferred() : null;
+    const written = deferred();
     const call = {
       args,
       cwd,
@@ -142,8 +144,11 @@ function childDouble({
       transcript,
       maxSteps: valueAfter(args, "--max-steps"),
       gate,
+      written: written.promise,
     };
     calls.push(call);
+    // The gate is reachable in the same step as its call, before any awaited transcript write.
+    if (gate) pending.push(gate);
     let earlier = { events: [] };
     if (args.includes("--continue-from")) {
       earlier = JSON.parse(await readFile(transcript, "utf8"));
@@ -155,6 +160,7 @@ function childDouble({
             { type: "result", role: "worker", stepsUsed: steps },
           ]
         : [];
+    if (beforeWrite) await beforeWrite();
     await writeFile(
       transcript,
       JSON.stringify({
@@ -175,7 +181,7 @@ function childDouble({
         warnings,
       }),
     );
-    if (gate) pending.push(gate);
+    written.resolve();
     const done = gate ? gate.promise : Promise.resolve({ exitCode });
     const stop = async () => {
       if (gate) {
@@ -2390,6 +2396,36 @@ describe("batch decisions and waits", () => {
     }
   });
 
+  // Usefulness: a held child's gate is resolvable from `pending` as soon as its call is visible,
+  // so a case that waits for the call cannot hang on a gate that a delayed transcript write hides.
+  test("a held child's gate is reachable before its transcript write", async () => {
+    const prepared = prep([220]);
+    const runsRoot = runsFor(prepared);
+    const write = deferred();
+    const child = childDouble({ hold: true, beforeWrite: () => write.promise });
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    try {
+      for (let attempt = 0; attempt < 50 && child.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(child.calls).toHaveLength(1);
+      expect(child.pending).toHaveLength(1);
+      child.pending[0].resolve({ exitCode: 0 });
+      write.resolve();
+      const { exitCode } = await run;
+      expect(exitCode).toBe(0);
+    } finally {
+      write.resolve();
+      for (const call of child.calls) call.gate?.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
   // Usefulness: a new owner stop after an applied answer creates a new decision id.
   test("a new stop after an applied answer creates a new decision", async () => {
     const prepared = prep([205]);
@@ -3041,6 +3077,7 @@ describe("batch decisions and waits", () => {
       expect(continueIndex).toBeGreaterThan(-1);
       expect(args[continueIndex + 1]).toBe(stopped.calls[0].transcript);
       expect(args[args.indexOf("--pr") + 1]).toBe("42");
+      await continued.calls[0].written;
       const data = JSON.parse(await readFile(stopped.calls[0].transcript, "utf8"));
       expect(data.events.some((event) => event.type === "continued")).toBe(true);
       expect(data.events.some((event) => event.type === "pr-declared")).toBe(true);
