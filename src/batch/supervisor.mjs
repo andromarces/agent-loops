@@ -513,7 +513,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   }
 
   // A loop end reads its transcript once and stores the report in the same checkpoint write as the
-  // status change, so the report adds no store write.
+  // status change. The report adds no store write.
   const changeLoop = async (issue, patch) => {
     let nextPatch = patch;
     if (patch?.status !== undefined && loopEnded(patch.status) && patch.report === undefined) {

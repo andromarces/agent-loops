@@ -80,7 +80,7 @@ condition did not refuse, and a finish the marker, the `review-only` condition, 
 `--require-accept` already refused still runs the gate.
 
 The headless action object allows only `action`, `summary`, and an optional boolean
-`unresolvedCompare`, and its nested `summary` object allows only the six summary keys, and `notes` is optional.
+`unresolvedCompare`. Its nested `summary` object allows only the six summary keys, and `notes` is optional.
 
 - A run declared with `--pr` ends through `agent-loop --require-ci <pr>`, with the same PR number.
 - The headless path takes both flags on one command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the run starts.

@@ -423,7 +423,7 @@ function modeBlock(mode) {
     "review-first": "the reviewer goes first, then the worker if the findings call for it.",
     // The same mapping the interactive path states, and the summary rule below.
     "review-only":
-      "do not dispatch the worker at all. The runtime refuses a run_worker action and ends the run, the same guard the interactive path applies to --role worker. The runtime also refuses a finish until a reviewer turn has run, because this run owns its own action order. That gate requires that a reviewer turn was dispatched, and that turn can end in an error. The runtime does not compare the summary with the reviewer result; record the reviewer status and verdict in verified, including an error or a missing report. Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred.",
+      "do not dispatch the worker at all. The runtime refuses a run_worker action and ends the run, the same guard the interactive path applies to --role worker. The runtime also refuses a finish until a reviewer turn has run, because this run owns its own action order. The runtime does not compare the summary with the reviewer result, even when that turn ends in an error. Record the reviewer status and verdict in verified, including an error or a missing report. Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred.",
   };
   return `\n- This run is ${mode}: ${rules[mode]}`;
 }
@@ -509,7 +509,9 @@ ${INITIAL_FORMATS.abort}
 
 The finish summary requires non-empty strings for these keys: ${REQUIRED_SUMMARY_KEYS.join(", ")}.
 The optional notes key carries reviewer Notes that no later turn addressed.
-The finish action object allows only action, summary, and an optional boolean unresolvedCompare. The nested summary object allows only the six summary keys. A finish that holds any other key in either object is refused. The refusal names each unknown key. Resend the finish with only the allowed keys.
+The finish action object allows only action, summary, and an optional boolean unresolvedCompare. The nested summary object allows only the six summary keys.
+
+A finish that holds any other key in either object is refused. The refusal names each unknown key. Resend the finish with only the allowed keys.
 
 The run_worker and run_reviewer actions allow only action and prompt. The abort action allows only action and reason. An action that holds any other key is refused, and the refusal names each unknown key. A refused action dispatches no child and charges no step. Resend it with only the allowed keys.
 

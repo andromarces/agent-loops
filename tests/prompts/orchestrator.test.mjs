@@ -60,10 +60,11 @@ test("initialPrompt lists every required summary key and names notes as optional
   expectRule(prompt, /optional notes key/i, /reviewer Notes/i);
 });
 
-// Usefulness: verifies requirement "the headless prompt states the unknown-key refusal and its
-// repair" (issue #1021) with the right split: the action object allows action, summary, and a boolean
-// unresolvedCompare, the nested summary object allows only the six summary keys. A clause that
-// swaps or merges the two allowlists fails, which a bare keyword match would not catch.
+// Usefulness: verifies the headless prompt states the unknown-key refusal and its repair (issue
+// #1021). The action object allows action, summary, and a boolean unresolvedCompare.
+// The nested summary object allows only the six summary keys.
+// A clause that swaps or merges the two allowlists fails.
+// A bare keyword match does not catch that swap.
 test("initialPrompt states the unknown-key finish refusal and its repair", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   const clauseWith = (term) => clauses(prompt).find((clause) => term.test(clause));
@@ -105,12 +106,11 @@ test("initialPrompt states the allowed keys of the dispatch and abort actions", 
   expectRule(prompt, /\brefused\b/i, /\bany other key\b/i, /\bnames each unknown key\b/i);
 });
 
-// Usefulness: verifies the headless prompt states the notes and deferred finish
-// mapping that the interactive instructions also carry: which labels the closing
-// block requires, that deferred items persist, that a resolved item lands in
-// changed, that unaddressed notes land in notes, that a change made for a note
-// needs a further reviewer accept, and that review-only findings split between
-// open and deferred (issue #214, issue #328).
+// Usefulness: verifies the headless prompt states the notes and deferred finish mapping (issue
+// #214, issue #328). The mapping names the labels that the closing block requires.
+// It keeps deferred items and records a resolved item in changed.
+// It sends unaddressed notes to notes and needs a reviewer accept for a note change.
+// It splits review-only findings between open and deferred.
 test("initialPrompt states the notes and deferred finish mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   // Every child turn closes with a report block, and the block requires
@@ -142,9 +142,10 @@ test("initialPrompt states the notes and deferred finish mapping", () => {
     /new state/i,
     /finish/i,
   );
-  // In review-only mode, Blockers go into open, Notes go into notes, and reviewer
-  // Deferred items go into deferred, which holds out-of-scope items in every mode
-  // while open holds unresolved in-scope findings.
+  // In review-only mode, Blockers go into open and Notes go into notes.
+  // Reviewer Deferred items go into deferred.
+  // Deferred holds out-of-scope items in every mode.
+  // Open holds unresolved in-scope findings.
   expectRule(prompt, /review-only[^.!?]{0,80}\bblockers/i, /go into open/i);
   expectRule(prompt, /review-only[^.!?]{0,80}\bnotes/i, /go into notes/i);
   expectRule(prompt, /reviewer[^.!?]{0,40}\bdeferred[^.!?]{0,40}\bgo into deferred/i);
@@ -378,8 +379,9 @@ test("a review-only run states the review-only mapping", () => {
   expectRule(reviewOnly, /runtime/i, /refuses[^.!?]{0,40}finish/i, /reviewer turn/i);
   // The gate is on the dispatched turn, and the summary is not compared with the
   // reviewer result, so the prompt tells the orchestrator to record the status.
-  expectRule(reviewOnly, /gate requires that a reviewer turn was dispatched/i);
+  expectRule(reviewOnly, /runtime also refuses a finish until a reviewer turn has run/i);
   expectRule(reviewOnly, /does not compare the summary with the reviewer result/i);
+  expectRule(reviewOnly, /even when that turn ends in an error/i);
   expectRule(
     reviewOnly,
     /record the reviewer status and verdict in verified/i,

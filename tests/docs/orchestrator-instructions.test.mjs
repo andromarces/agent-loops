@@ -1718,9 +1718,6 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["reviewer-evidence.md", "The --require-ci finish gate re-reads GitHub"],
   ["runtime-advisory-fields.md", "It is advisory: the store is shared"],
   ["reviewer-sandbox.md", "A refused cleanup of a tool cache in its default location"],
-  // Split parts of the reviewer-sandbox tool-cache rule, which was reference-only on origin/main.
-  ["reviewer-sandbox.md", "A cache entry that existed before the turn"],
-  ["reviewer-sandbox.md", "Do not carry either into open."],
   ["waiting-for-checks.md", "The --all wait holds a pass while"],
   ["waiting-for-checks.md", "The hold skips a workflow only when"],
   ["waiting-for-checks.md", "A PR head or base branch that moves during the reads"],

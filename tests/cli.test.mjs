@@ -173,10 +173,11 @@ test("a Git work tree whose path contains spaces is not refused", async () => {
 });
 
 // Usefulness: verifies a run with no --mode writes the pre-flag transcript shape plus the run
-// warning fields. The comparison is the recorded file: the same top-level keys with `warnings` and
-// `warningsOverflow`, the same option keys, and the same event list a run without the flag wrote
-// before it (issue #337). A transcript inside the work tree also holds `runNonce`, and nothing else
-// is added (ADR 0027), so the test runs once for each location.
+// warning fields. The comparison is the recorded file. The file holds the same top-level keys, with
+// `warnings` and `warningsOverflow`. It also holds the same option keys and the same event list. The
+// run without the flag wrote that shape before it (issue #337). A transcript inside the work tree
+// also holds `runNonce`, and nothing else is added (ADR 0027), so the test runs once for each
+// location.
 test.each([
   { where: "outside the work tree", inTree: false, added: [] },
   { where: "inside the work tree", inTree: true, added: ["runNonce"] },

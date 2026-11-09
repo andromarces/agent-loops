@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { redactAndClean } from "./redact.mjs";
 
-// The warning list of the run that the current async work belongs to, so the headless run records
-// its own warnings and the interactive `role` path records none.
+// The warning list belongs to the run of the current async work. The headless run records its own
+// warnings, and the interactive `role` path records none.
 const storage = new AsyncLocalStorage();
 
 export const MAX_RUN_WARNINGS = 20;

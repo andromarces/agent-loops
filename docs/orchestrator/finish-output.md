@@ -4,10 +4,10 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 ## Completion in `review-only`
 
-The gate is on the turn, not on a report: a turn that ended in an error satisfies
-it, so the finish can carry no report. The runtime checks that all five
-required summary keys are non-empty strings. An optional `notes` key is also
-accepted. It refuses a finish that holds any other
+The gate is on the turn, not on a report. A turn that ended in an error satisfies
+it, so the finish can carry no report. The runtime checks that all five required
+summary keys are non-empty strings, and an optional `notes` key is accepted.
+It refuses a finish that holds any other
 key and names each unknown key. The `role finish`
 stdin object allows the six summary keys and an optional boolean
 `unresolvedCompare`. It never compares the summary content with what the
@@ -50,7 +50,7 @@ The value must be a boolean, and the key is not one of the six summary keys:
 `summary` keeps only those keys. A refused finish keeps the lifecycle,
 `active` or `interrupted`. The stdin object allows only the six
 summary keys and `unresolvedCompare`. A finish with any other key is refused and the
-refusal names each unknown key; resend the finish with only the allowed keys.
+refusal names each unknown key. Resend the finish with only the allowed keys.
 
 The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside
