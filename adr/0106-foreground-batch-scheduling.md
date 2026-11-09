@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0109: Coordinate reviewer audits and consolidated issue creation](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md). The replaced parts are decision 16's entry that reviewer audit coordination and consolidated issue creation are deferred to milestone 2, and the Context sentence that lists reviewer audit coordination as out of scope. Decisions 1 to 15 stay in force, and milestone 1 stays standalone.
 
 ## Supersedes
 
