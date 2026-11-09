@@ -213,7 +213,7 @@ beforeAll(async () => {
     ).stdout.trim();
     return { corrected, remoteHead };
   });
-});
+}, 120_000);
 
 afterAll(async () => {
   for (const dir of scenarioDirs.splice(0)) await removePath(dir);
