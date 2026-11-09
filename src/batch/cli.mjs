@@ -28,6 +28,9 @@ Usage:
   agent-loop batch start --repo <dir> --issue <n> [--issue <n> ...] \\
     --orchestrator <cli> --worker <cli> --reviewer <cli> \\
     --loops <n> --max-steps <n> [settings]
+  agent-loop batch start --repo <dir> --items-file <path> \\
+    --orchestrator <cli> --worker <cli> --reviewer <cli> \\
+    --loops <n> --max-steps <n> [settings]
   agent-loop batch start --repo <dir> --from-audit <audit id> \\
     --orchestrator <cli> --worker <cli> --reviewer <cli> \\
     --loops <n> --max-steps <n> [settings]
@@ -43,11 +46,19 @@ Usage:
   agent-loop batch audit approve --audit <id>
   agent-loop batch audit remove --audit <id>
 
-The batch runs one headless loop per issue in its own work tree, at most --loops at once.
-The issue list is explicit --issue entries, or the frozen issue set of a created audit with
---from-audit; the two are mutually exclusive.
-Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
---test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
+The batch runs one headless loop per item in its own work tree, at most --loops at once.
+The item list is explicit --issue entries, a JSON --items-file list, or the frozen issue
+set of a created audit with --from-audit; exactly one source is required.
+An items-file entry is { kind, number | text, mode, task, id }: kind is issue, pr, or
+task; mode is work-first, review-first, or review-only; task replaces the template for
+that item; id is required for a task item only. The default mode is work-first for an
+issue and a task, and review-first for a pull request.
+An issue keeps its own branch and eligibility. A pull request runs on its head branch in
+every mode and is skipped before launch when that head moved or it is closed. A task runs
+on branch batch/<batch id>/task-<id> in work tree task-<id>, and in work-first or
+review-first it delivers through a pull request with no closing keyword.
+Settings: --base, --work-tree-root, --task-template, --require-specification, --setup-cmd,
+--setup-timeout, --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
 --<role>-model and --<role>-effort flags.
 
 A needs-owner loop becomes a pending decision and releases its slot. \`batch status\` shows
@@ -59,7 +70,8 @@ The audit runs two or more read-only reviewers on one revision, then one consoli
 worker. It then creates one issue per finding that no open or closed issue covers.
 Audit settings: --base, --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
 --reviewer-sandbox, --reviewer-model and --reviewer-effort after each --reviewer,
-and --worker-model and --worker-effort.
+--worker-model and --worker-effort, and --focus <text> or --focus-file <path>. The two
+focus flags are mutually exclusive, and an empty focus is refused.
 
 Exit codes: 0 every issue succeeded or was skipped, or the audit created its issue set. 1 a
 loop failed, the batch waits on an owner decision or merge, the queue paused, or an audit
@@ -72,6 +84,7 @@ Usage:
   agent-loop batch audit start --repo <dir> --reviewer <cli> --reviewer <cli> \\
     --worker <cli> [--reviewer-model <model>] [--reviewer-effort <effort>] \\
     [--worker-model <model>] [--worker-effort <effort>] \\
+    [--focus <text> | --focus-file <path>] \\
     [--base <branch>] [--work-tree-root <dir>] [--setup-cmd <command>] \\
     [--setup-timeout <seconds>] [--timeout <seconds>] [--reviewer-sandbox <mode>]
 
@@ -85,6 +98,10 @@ requested audit succeeds, or after the owner approves the partial results with a
 one worker consolidates the findings against the open and closed issues and the runtime
 creates one issue per finding that no issue covers. A failed audit creates no issue until
 a retry succeeds or the owner approves the partial results. The created issue set is frozen.
+--focus <text> or --focus-file <path> sets the only goal of each reviewer; the two are
+mutually exclusive, and an empty focus is refused. Without a focus, reviewers report any
+item someone can act on, defects included. A resume or approve reuses the stored focus,
+and status shows it.
 
 remove deletes the work tree and store of a finished audit with a frozen issue set. A
 paused, needs-owner, or interrupted audit, and one whose issue write is unreconciled,
@@ -147,6 +164,7 @@ async function preparedForResume(manifest) {
     loops: settings.loops,
     maxSteps: settings.maxSteps,
     taskTemplate: settings.taskTemplate,
+    requireSpecification: settings.requireSpecification === true,
     setupCmd: settings.setupCmd ?? null,
     setupTimeout: settings.setupTimeout,
     testCmd: settings.testCmd ?? null,
@@ -173,6 +191,7 @@ function preparedFromAudit(state, mode) {
     base: state.base,
     revision: state.revision,
     workTreeRoot: state.workTreeRoot,
+    focus: state.focus ?? null,
     reviewers: state.settings?.reviewers ?? [],
     worker: state.settings?.worker ?? { kind: null, model: null, effort: null },
     timeout: state.settings?.timeout ?? null,

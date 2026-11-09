@@ -103,6 +103,19 @@ test("audit resume without --audit exits 2", async () => {
   expect(code).toBe(2);
 });
 
+// Usefulness: the focus belongs to start only, so a resume or approve that carries it is a usage
+// refusal before any store read or write (issue #1750).
+test("audit resume and approve take no focus flag", async () => {
+  for (const command of ["resume", "approve"]) {
+    const focus = await runQuiet(["audit", command, "--audit", "known", "--focus", "cleanup"]);
+    expect(focus.code).toBe(2);
+    expect(focus.out).toBe("");
+    const file = await runQuiet(["audit", command, "--audit", "known", "--focus-file", "f.txt"]);
+    expect(file.code).toBe(2);
+    expect(file.out).toBe("");
+  }
+});
+
 // Usefulness: an unknown audit command is refused.
 test("an unknown audit command exits 2", async () => {
   const { code } = await runQuiet(["audit", "wat"]);
@@ -118,12 +131,14 @@ test("audit remove requires a known audit id", async () => {
   expect(unknown.err.flat().join("\n")).toContain("No audit no-such-audit");
 });
 
-// Usefulness: audit help prints the command surface and the exit codes.
+// Usefulness: audit help prints the command surface, the focus flags, and the exit codes.
 test("audit help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["audit", "--help"]);
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch audit start");
   expect(out).toContain("agent-loop batch audit remove");
+  expect(out).toContain("--focus");
+  expect(out).toContain("--focus-file");
   expect(out).toContain("130");
 });
 // Usefulness: decision 8 keeps checkpoints outside any repository, so a runs root inside the

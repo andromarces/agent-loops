@@ -1,5 +1,9 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { reconcileLoop } from "../../src/batch/reconcile.mjs";
+import { removePath } from "../fs-helpers.mjs";
 
 const HEAD = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -297,7 +301,7 @@ test("a dirty work tree with an open pull request stops the loop", async () => {
 test("a failed fetch stops the loop as needs-owner", async () => {
   const result = await reconcileLoop({
     loop: loop(),
-    repo: "C:\repo",
+    repo: "C:\\repo",
     base: "main",
     gh: ghReplies(),
     deps: deps(baseGit(HEAD, { '["fetch","origin","batch/1/7"]': [1, "", "network down"] })),
@@ -310,7 +314,7 @@ test("a failed fetch stops the loop as needs-owner", async () => {
 test("a pull request from another branch that closes the issue stops the loop", async () => {
   const result = await reconcileLoop({
     loop: loop(),
-    repo: "C:\repo",
+    repo: "C:\\repo",
     base: "main",
     gh: ghReplies({
       issue: "CLOSED",
@@ -328,7 +332,7 @@ test("a pull request from another branch that closes the issue stops the loop", 
 test("a failed remote-ref read stops the loop", async () => {
   const result = await reconcileLoop({
     loop: loop(),
-    repo: "C:\repo",
+    repo: "C:\\repo",
     base: "main",
     gh: ghReplies(),
     deps: deps(
@@ -343,4 +347,89 @@ test("a failed remote-ref read stops the loop", async () => {
   });
   expect(result).toMatchObject({ status: "needs-owner" });
   expect(result.reason).toContain("remote branch");
+});
+
+const NEW = "c".repeat(40);
+const prLoop = (overrides = {}) => ({
+  issue: "pr-5",
+  kind: "pr",
+  mode: "review-first",
+  pr: 5,
+  branch: "feature",
+  head: HEAD,
+  workTree: {
+    path: "C:\\wt",
+    canonicalPath: "C:\\wt",
+    dev: "1",
+    ino: "2",
+    branch: "feature",
+    ...overrides.workTree,
+  },
+  ...overrides,
+});
+
+// Usefulness: a worker result's workTree head proves the loop's own push on resume.
+test("a pull request head moved by the loop's own push resumes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "batch-pr-transcript-"));
+  const transcript = join(dir, "transcript.json");
+  await writeFile(
+    transcript,
+    JSON.stringify({
+      events: [
+        {
+          type: "result",
+          role: "worker",
+          result: {
+            status: "ok",
+            response: "Conclusion: done.",
+            workTree: { clean: true, exact: true, head: NEW, digest: "d".repeat(64) },
+          },
+        },
+      ],
+      exitCode: 130,
+    }),
+  );
+  try {
+    const result = await reconcileLoop({
+      loop: { ...prLoop(), transcript },
+      repo: "C:\\repo",
+      base: "main",
+      gh: ghReplies({
+        details: { 5: { state: "OPEN", headRefOid: NEW, mergeCommit: null } },
+      }),
+      deps: deps({
+        '["rev-parse","--abbrev-ref","HEAD"]': [0, "feature"],
+        '["rev-parse","HEAD"]': [0, NEW],
+        '["status","--porcelain"]': [0, ""],
+        '["fetch","origin","feature"]': [0, ""],
+        '["rev-parse","--verify","--quiet","refs/remotes/origin/feature"]': [0, NEW],
+        [`["merge-base","--is-ancestor","${HEAD}","${NEW}"]`]: [0, ""],
+      }),
+    });
+    expect(result).toMatchObject({ status: "resume", pr: 5, requireCi: 5 });
+  } finally {
+    await removePath(dir);
+  }
+});
+
+// Usefulness: a PR head moved outside the loop still stops as needs-owner.
+test("a pull request head moved outside the loop is refused", async () => {
+  const result = await reconcileLoop({
+    loop: prLoop(),
+    repo: "C:\\repo",
+    base: "main",
+    gh: ghReplies({
+      details: { 5: { state: "OPEN", headRefOid: NEW, mergeCommit: null } },
+    }),
+    deps: deps({
+      '["rev-parse","--abbrev-ref","HEAD"]': [0, "feature"],
+      '["rev-parse","HEAD"]': [0, NEW],
+      '["status","--porcelain"]': [0, ""],
+      '["fetch","origin","feature"]': [0, ""],
+      '["rev-parse","--verify","--quiet","refs/remotes/origin/feature"]': [0, NEW],
+      [`["merge-base","--is-ancestor","${HEAD}","${NEW}"]`]: [0, ""],
+    }),
+  });
+  expect(result.status).toBe("needs-owner");
+  expect(result.reason).toContain("head moved");
 });

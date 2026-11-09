@@ -26,6 +26,31 @@ function blockedNumbers(value) {
 
 const isOpen = (state) => String(state).toUpperCase() === "OPEN";
 
+// The text of a `gh pr view` reply that proves the number is not a pull request. Any other failed
+// reply is a failed lookup and never falls through to the issue read.
+const PR_NOT_FOUND = /could not resolve to a pull ?request/i;
+
+async function probePullRequest(gh, number, repo) {
+  let reply;
+  try {
+    reply = await gh(["pr", "view", String(number), "--json", "number"], repo);
+  } catch (err) {
+    return { kind: "failed", detail: err?.message ?? String(err) };
+  }
+  if (reply?.status === 0) {
+    try {
+      const value = JSON.parse(reply.stdout);
+      if (isJsonObject(value) && Number.isInteger(value.number)) return { kind: "pr" };
+    } catch {
+      // A successful reply that is not a number is a failed lookup.
+    }
+    return { kind: "failed", detail: "the reply named no pull request number" };
+  }
+  const text = `${reply?.stderr ?? ""} ${reply?.stdout ?? ""}`.trim();
+  if (PR_NOT_FOUND.test(text)) return { kind: "none" };
+  return { kind: "failed", detail: text || `exit ${reply?.status ?? "unknown"}` };
+}
+
 /** One `## Acceptance` heading with at least one list item, and a `## Problem` or `## Scope`. */
 export function hasStructuralMinimum(body) {
   if (typeof body !== "string") return false;
@@ -150,12 +175,28 @@ export async function checkEligibility({
   openPrClosures,
   ownPr = null,
   ownBranch = null,
+  requireSpecification = false,
 }) {
   const unverified = (detail) => ({
     ok: false,
     reason: "eligibility-unverified",
     evidence: `the read failed: ${detail}`,
   });
+  const probe = await probePullRequest(gh, issue, repo);
+  if (probe.kind === "pr") {
+    return {
+      ok: false,
+      reason: "is-pull-request",
+      evidence: `number ${issue} is a pull request`,
+    };
+  }
+  if (probe.kind === "failed") {
+    return {
+      ok: false,
+      reason: "eligibility-unverified",
+      evidence: `the pull request lookup failed: ${probe.detail}`,
+    };
+  }
   let state;
   try {
     state = await readJson(gh, ["issue", "view", String(issue), "--json", "state"], repo);
@@ -226,6 +267,8 @@ export async function checkEligibility({
     }
   }
 
+  if (!requireSpecification) return { ok: true };
+
   let body;
   try {
     body = await readJson(gh, ["issue", "view", String(issue), "--json", "body"], repo);
@@ -240,6 +283,120 @@ export async function checkEligibility({
       ok: false,
       reason: "not-specified",
       evidence: "no acceptance list, or no problem and no scope heading",
+    };
+  }
+  return { ok: true };
+}
+
+function claimSkip(claim, batchId) {
+  if (claim?.exists && claim.held && claim.record?.batchId !== batchId) {
+    return {
+      ok: false,
+      reason: "claimed",
+      evidence: `claimed by batch ${claim.record?.batchId ?? "unknown"}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The start-time refusal of one item, before any batch store exists. A pull request gets its full
+ * eligibility check; an issue gets only the pull request-number probe, so its normal launch-time
+ * eligibility and waiting behavior stay unchanged. A task has no start-time refusal.
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
+ */
+export async function preflightItemEligibility({ item, gh, repo, batchId = null }) {
+  if (item.kind === "pr") {
+    return checkItemEligibility({ item, gh, repo, batchId, claim: { exists: false } });
+  }
+  if (item.kind !== "issue") return { ok: true };
+  const probe = await probePullRequest(gh, item.number, repo);
+  if (probe.kind === "pr") {
+    return {
+      ok: false,
+      reason: "is-pull-request",
+      evidence: `number ${item.number} is a pull request`,
+    };
+  }
+  if (probe.kind === "failed") {
+    return {
+      ok: false,
+      reason: "eligibility-unverified",
+      evidence: `the pull request lookup failed: ${probe.detail}`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Applies the eligibility checks of one item kind. An issue keeps its checks, a pull request
+ * checks its state and frozen head, and a free-text task checks only its claim.
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
+ */
+export async function checkItemEligibility(options) {
+  const { item, gh, repo, batchId = null, claim } = options;
+  if (item.kind === "issue") {
+    return checkEligibility({
+      ...options,
+      issue: item.number,
+      requireSpecification: options.requireSpecification === true,
+    });
+  }
+  if (item.kind === "task") {
+    return claimSkip(claim, batchId) ?? { ok: true };
+  }
+  if (typeof item.head !== "string" || item.head.trim() === "") {
+    return {
+      ok: false,
+      reason: "pr-head-unfrozen",
+      evidence: "the pull request head was not frozen at start",
+    };
+  }
+  const unverified = (detail) => ({
+    ok: false,
+    reason: "eligibility-unverified",
+    evidence: `the read failed: ${detail}`,
+  });
+  let view;
+  try {
+    view = await readJson(
+      gh,
+      [
+        "pr",
+        "view",
+        String(item.number),
+        "--json",
+        "state,headRefOid,headRefName,isCrossRepository",
+      ],
+      repo,
+    );
+  } catch (err) {
+    return unverified(err.message);
+  }
+  if (!isJsonObject(view) || typeof view.state !== "string") {
+    return unverified("the pull request reply named no state");
+  }
+  if (!isOpen(view.state)) {
+    return {
+      ok: false,
+      reason: "pr-closed",
+      evidence: `the pull request state is ${view.state}`,
+    };
+  }
+  if (view.isCrossRepository === true && item.mode !== "review-only") {
+    return {
+      ok: false,
+      reason: "pr-head-foreign",
+      evidence: `the head of pull request ${item.number} is in another repository`,
+    };
+  }
+  const claimed = claimSkip(claim, batchId);
+  if (claimed !== null) return claimed;
+  if (typeof item.head === "string" && view.headRefOid !== item.head) {
+    return {
+      ok: false,
+      reason: "pr-head-moved",
+      evidence: `the frozen head is ${item.head}, the current head is ${view.headRefOid}`,
     };
   }
   return { ok: true };

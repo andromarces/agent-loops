@@ -390,6 +390,8 @@ agent-loop test-slot --if-held -- "pnpm exec vp test run tests/foo.test.mjs"
 ```bash
 agent-loop batch start --repo <main work tree> --issue 1709 --issue 1710 \
   --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
+agent-loop batch start --repo <main work tree> --items-file items.json \
+  --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
 agent-loop batch start --repo <main work tree> --from-audit <audit id> \
   --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
 agent-loop batch status --batch <id>
@@ -397,9 +399,11 @@ agent-loop batch resume --batch <id>
 agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 ```
 
-`start` requires `--repo` (the main work tree, never a linked one), one issue source, `--orchestrator`, `--worker`, `--reviewer`, `--loops` (1 to 64), and `--max-steps`. The issue source is explicit `--issue <n>` entries (launch order, duplicates refused), or `--from-audit <audit id>` for the frozen set of a finished audit. The two together, and a command with neither, are refused. It accepts `--base`, `--work-tree-root`, `--task-template`, `--setup-cmd`, `--setup-timeout`, `--test-cmd`, `--test-cmd-timeout`, `--timeout`, `--reviewer-sandbox`, and the `--<role>-model` and `--<role>-effort` flags. The remaining values keep their headless defaults, and every supplied value goes through the headless parser.
+`start` requires `--repo` (the main work tree, never a linked one), one item source, `--orchestrator`, `--worker`, `--reviewer`, `--loops` (1 to 64), and `--max-steps`. The item source is explicit `--issue <n>` entries (launch order, duplicates refused), a `--items-file <path>` JSON list, or `--from-audit <audit id>` for the frozen set of a finished audit. Two sources together, and a command with none, are refused. It accepts `--base`, `--work-tree-root`, `--task-template`, `--require-specification`, `--setup-cmd`, `--setup-timeout`, `--test-cmd`, `--test-cmd-timeout`, `--timeout`, `--reviewer-sandbox`, and the `--<role>-model` and `--<role>-effort` flags. The remaining values keep their headless defaults, and every supplied value goes through the headless parser.
 
-`--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused. The task template accepts `{issue}`, `{title}`, `{branch}`, and `{repo}`; an unknown placeholder or a template without `{issue}` is a usage error. The default template names the issue, the branch push, and the closing pull request.
+`--items-file` holds a JSON list of items `{ kind, number | text, mode, task, id }`. `kind` is `issue`, `pr`, or `task`. `mode` is `work-first`, `review-first`, or `review-only`, the same values as the single-task `--mode`; the default is `work-first` for an issue and for a task, and `review-first` for a pull request. `task` replaces the task template for that item only. A `task` item needs a short unique slug `id`, and its task text in `text`. A missing, malformed, or duplicate identity, an unknown kind or mode, and a malformed item each exit 2 before any state write. A `task` item runs on branch `batch/<batch id>/task-<id>` in the work tree `task-<id>`. In `work-first` and `review-first`, its worker pushes that branch and opens one pull request whose body states the task and holds no closing keyword, and the loop then ends through `--require-ci` for that pull request.
+
+`--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused. The task template accepts `{issue}`, `{title}`, `{branch}`, and `{repo}`; an unknown placeholder or a template without `{issue}` when an issue item uses it is a usage error. The default issue template names the issue, the branch push, and the closing pull request. A pull request item uses a review-oriented default template, and a task item delivers its own text plus the push and pull-request instructions.
 
 `--max-steps` is required. A model outside the supported set for its agent, an effort outside that agent's set, a duplicate or conflicting sandbox flag, and a runs root inside any Git work tree are also refused. `--timeout 0` passes no timeout to each headless child.
 
@@ -407,18 +411,18 @@ Every refusal happens before a claim, work tree, checkpoint, or child exists, an
 
 ### Selection and eligibility
 
-The runtime selects no issue. The skill resolves the request into explicit issue numbers, or names a finished audit with `--from-audit <audit id>`, and that set is frozen at `start`. A later resume reads the same set; an issue opened after `start` is never added, and an issue removed from the set is not replaced.
+The runtime selects no item. The skill resolves the request into explicit `--issue` numbers, an explicit `--items-file` list, or the frozen set of a finished audit with `--from-audit <audit id>`, and that set is frozen at `start`. A later resume reads the same set; an issue or pull request opened after `start` is never added, and an item removed from the set is not replaced. A mixed request such as "work on every item of my local list, and review every open pull request" is resolved by the skill into one `--items-file` list: each local item becomes a `task` item with its own slug, and each pull request becomes a `pr` item. The runtime adds no query selector such as "all open pull requests".
 
 `--from-audit` reads the frozen set of an audit in the `created` state, in the stored order, without sorting or dedupe. It refuses with exit 2 before any state write when the audit is unknown, unreadable, running, paused, `needs-owner`, interrupted, has a `pendingCreate` write that was not reconciled, holds a `created` entry outside its frozen set, belongs to another repository, or has an empty, malformed, or duplicate set. The audit command never starts a batch, and the batch command never starts an audit. [ADR 0119](https://github.com/andromarces/agent-loops/blob/main/adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) is the design.
 
-Before each launch the batch refreshes one issue and skips it with one named reason:
+Before each launch the batch refreshes one item and skips it with one named reason:
 
-- `closed`: the issue is not `OPEN`.
-- `blocked`: an open issue blocks it. The issue waits and is polled, not skipped.
-- `claimed`: a live local claim of another batch holds it; the skip names that batch.
-- `closed-by-open-pr`: an open pull request closes it, through `closingIssuesReferences` or a closing keyword in a commit message. A pull request commit read that reaches the 250-commit page stops the queue for the owner's decision.
-- `not-specified`: the body has no `## Acceptance` heading with a list item, or has neither `## Problem` nor `## Scope`.
+- an issue keeps the reasons `closed`, `blocked`, `claimed`, and `closed-by-open-pr`. An issue that is actually a pull request number is skipped as `is-pull-request` and never launched as new work. `not-specified` applies only with `--require-specification`; without it an issue with no `## Acceptance` heading launches.
+- a pull request item reads its state, fork flag, and head. A closed or merged pull request is skipped as `pr-closed`. A head in another repository is skipped as `pr-head-foreign` in `work-first` and `review-first`, and runs in `review-only`. A head that differs from the head frozen at start is skipped as `pr-head-moved`, and the reason names both heads. A live claim of another batch skips it as `claimed`.
+- a task item checks only its claim.
 - `eligibility-unverified`: the read failed, or returned an unreadable value.
+
+A pull request item runs in a work tree on its head branch in every mode. The head is fetched through `refs/pull/<n>/head`, and a fetched commit that differs from the head frozen at start skips the item as `pr-head-moved`. A missing local branch is created at that head; a branch at the head or behind it is used, with a fast-forward in the second case; a branch with commits the frozen head lacks is skipped as `pr-branch-diverged`, and one checked out in another work tree as `pr-branch-checked-out`. No branch is forced or reset. On resume, a moved head is accepted only when the loop's own transcript records that head from a worker or reviewer turn and the frozen head is an ancestor of it; any other move stops as `needs-owner` with a reason that names both heads. `work-first` and `review-first` pass `--pr` and `--require-ci` for that pull request, and a worker correction is pushed with `git push -u origin <branch>`. `review-only` passes none of `--pr`, `--require-ci`, and `--require-accept`, and the loop finishes after its reviewer turn. A `review-only` item ends `succeeded` after that turn and its report records the reviewer verdict and findings; a `reject` is information, not a failure. A pull request item whose head is in another repository runs on a local branch at the pull request head in `review-only`.
 
 A failed batch-wide read pauses the queue, leaves the unread issues `queued`, and resumes them on the next `batch resume`. The skip report is part of the summary and the checkpoint.
 
@@ -454,9 +458,9 @@ The notifier passes the text as an argument on macOS and as environment values o
 
 ### Claims and checkpoints
 
-The local claim of one repository and issue is `<runs root>/batches/claims/<repo key>/<issue>.json`, where the repo key is the first 12 hex characters of the SHA-256 of the canonical main work tree path with the Windows drive letter lowercased. It is created atomically with no overwrite, and a partial or unparseable claim counts as held. A claim exists from launch until the loop is terminal. A `failed` loop releases it; an `interrupted` or `needs-owner` loop keeps it.
+The local claim of one repository and item is `<runs root>/batches/claims/<repo key>/<identity>.json`, where the repo key is the first 12 hex characters of the SHA-256 of the canonical main work tree path with the Windows drive letter lowercased. An issue identity is its number, a pull request identity is `pr-<n>`, and a task identity is `task-<id>`. It is created atomically with no overwrite, and a partial or unparseable claim counts as held. A claim exists from launch until the loop is terminal. A `failed` loop releases it; an `interrupted` or `needs-owner` loop keeps it.
 
-The batch store is `<runs root>/batches/<batch id>/`: `batch.json` holds the frozen set, settings, and batch status; `loops/issue-<n>.json` holds one checkpoint; `transcripts/issue-<n>.json` holds the headless transcript; `logs/issue-<n>.<attempt>.log` holds the child output. The runs root is `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. Set it to a stable path when a checkpoint must survive a reboot.
+The batch store is `<runs root>/batches/<batch id>/`: `batch.json` holds the frozen item list, settings, and batch status; `loops/<segment>.json` holds one checkpoint; `transcripts/<segment>.json` holds the headless transcript; `logs/<segment>.<attempt>.log` holds the child output. The segment is `issue-<n>` for an issue, `pr-<n>` for a pull request, and `task-<id>` for a task. The runs root is `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. Set it to a stable path when a checkpoint must survive a reboot.
 
 The store also holds `decisions/<decision id>.json` and `answers/<decision id>.json`. Each file is created with no overwrite, and a partial or unreadable file fails closed.
 
@@ -466,7 +470,7 @@ Checkpoints are written on an event only. The events are `start`, a launch, a sk
 
 A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state. A `needs-owner` loop with reason `pr-head-unresolved` names its pull request and the next action.
 
-`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue. Each entry holds loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, cleanup result, and report.
+`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per item. Each entry holds its identity in `issue` (an issue number, `pr-<n>`, or `task-<id>`), its `kind` and `mode` for a non-issue item, loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, cleanup result, and report. A `review-only` report also holds the reviewer `verdict` (`accept`, `reject`, or `unknown`) and `findings`. A batch that names only `--issue` keeps the previous entry shape.
 
 The report holds the last attempt's finish summary, error, failed-turn test result, and delete-by-hand warnings. It also holds a `state`: `read`, `no-attempt`, `unread`, or `missing`. The transcript warning list and the report keep 20 warnings, and `warningsOverflow` names the rest. A `transcriptRead` value with `ok: false` means the transcript was unread. Every summary, error, test, and warning field is then null.
 
@@ -520,7 +524,7 @@ The batch never removes the main work tree or any path outside its own root. Gen
 
 ### Reviewer audits
 
-`agent-loop batch audit start` coordinates two or more read-only reviewers on one project revision and turns their findings into issues without duplicates. It runs in the foreground and returns one JSON summary. [ADR 0109](https://github.com/andromarces/agent-loops/blob/main/adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) is the design.
+`agent-loop batch audit start` coordinates two or more read-only reviewers on one project revision and turns their findings into issues without duplicates. It runs in the foreground and returns one JSON summary. [ADR 0109](https://github.com/andromarces/agent-loops/blob/main/adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) is the design, and [ADR 0120](https://github.com/andromarces/agent-loops/blob/main/adr/0120-take-an-operator-focus-and-keep-every-actionable-finding.md) defines the operator focus and the keep-every-actionable-finding rule.
 
 ```bash
 agent-loop batch audit start --repo <main work tree> \
@@ -531,7 +535,9 @@ agent-loop batch audit approve --audit <id>
 agent-loop batch audit remove --audit <id>
 ```
 
-`start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, and `--reviewer-sandbox`. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
+`start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, `--reviewer-sandbox`, and `--focus <text>` or `--focus-file <path>`. The two focus flags are mutually exclusive, and an empty or blank focus is refused. A supplied focus is the only goal of each reviewer turn. Without a focus, each reviewer reports any item someone can act on, defects included. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
+
+The focus is stored in the audit record. `batch audit resume` and `batch audit approve` reuse the stored focus and accept no focus flag; either flag is a refused setting that exits 2 and writes nothing. `batch audit status` shows the stored focus.
 
 The command resolves `origin/<base>` once to a commit SHA and creates one detached work tree at that SHA. Every reviewer reads the same work tree and revision, in its own session and in the requested order. A reviewer never sees another reviewer's findings. The reviewer turn uses the existing reviewer prompt, including its test-slot, secret-file, process, and sandbox rules. A Codex reviewer runs with no sandbox unless `--reviewer-sandbox` names one. A `--setup-cmd` runs once in the work tree before the first reviewer and must leave the checkout clean; a tracked or unignored change stops the run as `needs-owner` and starts no reviewer.
 
@@ -539,7 +545,7 @@ After each reviewer turn the runtime reads the work tree HEAD and `git status --
 
 Each reviewer returns a fenced JSON document with a `findings` array of `title`, `body`, and `evidence` entries. A turn that fails, returns no string, or returns no valid document is a failed audit. No consolidation and no issue starts until every requested audit succeeds.
 
-After every audit succeeds, one consolidation worker merges the findings and compares them with the open and closed issues read once with `gh issue list --state all --limit 1000`. It returns one consolidated `findings` array whose entries hold `title`, `body`, `evidence`, and `existingIssue`. The runtime validates the document: every title and body is non-empty, no two titles are equal, and every named issue is in the stored list.
+After every audit succeeds, one consolidation worker merges the findings and compares them with the open and closed issues read once with `gh issue list --state all --limit 1000`. It merges duplicates and keeps every item someone can act on that any reviewer reported, even an item outside the focus. It never drops a finding because it is not a defect. It returns one consolidated `findings` array whose entries hold `title`, `body`, `evidence`, and `existingIssue`. The runtime validates the document: every title and body is non-empty, no two titles are equal, and every named issue is in the stored list.
 
 The runtime then creates one issue per finding that no issue covers. A finding with a named existing issue links that issue. A finding whose title exactly equals an open or closed issue also links that issue, even when the worker named none. Otherwise the runtime creates the issue with `gh issue create`; the body carries the audit id, a stable finding identity, and the revision. Before the write the runtime records that identity, and on a retry it reads the issue bodies and adopts the issue whose body carries it. The identity does not depend on the current title, so a reworded re-audit links the same issue instead of creating a duplicate. The worker never writes to GitHub.
 

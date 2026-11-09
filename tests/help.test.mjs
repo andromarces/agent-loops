@@ -114,3 +114,11 @@ test("both role summaries name every dispatched operation", async () => {
     expect(roleSummary).toContain(operation);
   }
 });
+
+// Usefulness: the batch help states the three item kinds and how a mixed request becomes items.
+test("the batch help names item kinds and the mixed-request path", () => {
+  const help = render(printHelp);
+  expect(help).toContain("--items-file <path>");
+  expect(help).toContain("issue, pr, or task");
+  expect(help).toContain("mixed request");
+});

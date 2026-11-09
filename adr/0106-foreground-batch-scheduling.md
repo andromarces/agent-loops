@@ -24,6 +24,8 @@ partially-superseded
 
 [adr/0117-state-the-held-lock-paused-rule-and-its-precedence.md](0117-state-the-held-lock-paused-rule-and-its-precedence.md) partially supersedes this ADR. The replaced part is the status rule of decision 1, which lists the exit codes only. A loop skipped for a held resume lock reports `paused` with reason `a loop is owned by another resume`, and a loop this resume examined keeps its `failed` or `needs-owner` precedence.
 
+[adr/0121-mix-issue-pull-request-and-task-items-in-one-batch.md](0121-mix-issue-pull-request-and-task-items-in-one-batch.md) partially supersedes this ADR. The replaced parts are decision 2's issue-only input, decision 3's issue-only selection sentence, decision 4's new branch for every loop, decision 6's fixed issue eligibility and its default `not-specified` check, and decision 7's issue-keyed state. Every other decision stays in force.
+
 [adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) partially supersedes this ADR. The replaced parts are decision 2's rule that `--issue` is the only issue source and decision 3's rule that the runtime selects no issue and receives its numbers only from the skill. An explicit `--from-audit <id>` reads the frozen set of a finished audit; the runtime still reads no label, milestone, project, or request. Every other sentence of decisions 2 and 3 stays in force.
 
 Every other decision, consequence, and acceptance check stays in force. The batch still never

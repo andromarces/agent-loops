@@ -45,20 +45,23 @@ export function recommendedOf(options) {
 }
 
 const nonEmpty = (value) => typeof value === "string" && value.trim() !== "";
+const ITEM_KEY = /^(?:pr|task)-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const isItemKey = (value) => (Number.isInteger(value) && value >= 1) || ITEM_KEY.test(value);
 
 /**
  * The id of one decision state. The batch, issue, attempt, and a short reason hash keep it unique
  * across batches and stable across a resume of the same state.
  */
 export function newDecisionId(batchId, issue, attempt, reason) {
-  return `${batchId}-issue-${issue}-${attempt}-${sha256(String(reason)).slice(0, 8)}`;
+  const prefix = typeof issue === "number" ? "issue" : "item";
+  return `${batchId}-${prefix}-${issue}-${attempt}-${sha256(String(reason)).slice(0, 8)}`;
 }
 
 function decisionProblem(value, id, batchId) {
   if (!isJsonObject(value)) return "the decision is not a JSON object";
   if (value.id !== id) return "the decision id does not match its file";
   if (value.batchId !== batchId) return "the decision names another batch";
-  if (!Number.isInteger(value.issue) || value.issue < 1) return "the decision has no issue";
+  if (!isItemKey(value.issue)) return "the decision has no issue";
   if (!Number.isInteger(value.attempt) || value.attempt < 0) {
     return "the decision has no attempt";
   }
@@ -85,7 +88,7 @@ function answerProblem(value, decisionId, batchId, options = null, issue = null)
   if (!isJsonObject(value)) return "the answer is not a JSON object";
   if (value.decisionId !== decisionId) return "the answer names another decision";
   if (value.batchId !== batchId) return "the answer names another batch";
-  if (!Number.isInteger(value.issue) || value.issue < 1) return "the answer has no issue";
+  if (!isItemKey(value.issue)) return "the answer has no issue";
   if (issue !== null && value.issue !== issue) return "the answer names another issue";
   if (!nonEmpty(value.option)) return "the answer names no option";
   if (options !== null && !options.includes(value.option)) {

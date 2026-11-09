@@ -41,6 +41,13 @@ function valueAfter(args, flag) {
 
 function fakeGh() {
   return async (args) => {
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     if (args[0] === "issue" && args[1] === "view") {
       if (args.some((arg) => arg.includes("blockedBy"))) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: [] } }), stderr: "" };

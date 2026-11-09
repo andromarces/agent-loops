@@ -45,6 +45,13 @@ const SUMMARY = {
 
 function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
   return async (args) => {
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     if (args[0] === "issue" && args[1] === "view") {
       if (args.some((arg) => arg.includes("blockedBy"))) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: blocked } }), stderr: "" };
@@ -79,6 +86,13 @@ function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
     }
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
     }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
@@ -1275,6 +1289,13 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
       baseRefName: prepared.base,
     };
     const gh = (args) => {
+      if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
+      }
       if (args[0] === "pr" && args[1] === "list" && args.includes("--head")) {
         return { status: 0, stdout: JSON.stringify([pull]), stderr: "" };
       }
@@ -1290,6 +1311,13 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
           status: 0,
           stdout: JSON.stringify({ state: "OPEN", closedByPullRequestsReferences: [] }),
           stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
         };
       }
       return { status: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
@@ -1651,6 +1679,13 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
     }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
   let now = 0;
@@ -1716,6 +1751,13 @@ test("a failed poll read retries on the next poll", async () => {
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
     }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
   let now = 0;
@@ -1777,6 +1819,13 @@ test("a closed issue while waiting is skipped and not launched", async () => {
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
     }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
   let now = 0;
@@ -1835,6 +1884,13 @@ test("an abort during a poll wait exits 130", async () => {
     }
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
     }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
@@ -2013,6 +2069,13 @@ test("a waiting issue sends a merge-required notification", async () => {
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
     }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
   const child = childDouble();
@@ -2125,6 +2188,13 @@ test("a pending decision and a merge wait survive a resume", async () => {
     }
     if (args[0] === "repo" && args[1] === "view") {
       return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
     }
     return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
   };
@@ -2374,6 +2444,13 @@ describe("batch decisions and waits", () => {
       }
       if (args[0] === "repo" && args[1] === "view") {
         return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
       }
       return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
     };
@@ -2682,6 +2759,13 @@ describe("batch decisions and waits", () => {
       if (args[0] === "repo" && args[1] === "view") {
         return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
       }
+      if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
+      }
       return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
     };
     const child = childDouble();
@@ -2742,6 +2826,13 @@ describe("batch decisions and waits", () => {
       }
       if (args[0] === "repo" && args[1] === "view") {
         return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
       }
       return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
     };
