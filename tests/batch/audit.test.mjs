@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterAll, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
 import {
   auditPaths,
   parseAuditArgs,
@@ -21,6 +21,12 @@ import { removePath } from "../fs-helpers.mjs";
 
 const roots = [];
 const repos = [];
+let removeRepo;
+
+beforeAll(async () => {
+  removeRepo = await createTempRepo();
+  repos.push(removeRepo);
+}, 60_000);
 
 afterAll(async () => {
   for (const root of roots.splice(0)) await removePath(root);
@@ -923,18 +929,8 @@ test("findings parse only from a valid fenced document", () => {
   expect(parseFindings(fenced({ findings: [{ title: "", body: "B" }] }))).toBeNull();
 });
 
-async function finishedAudit(overrides = {}) {
-  const base = await mkdtemp(join(tmpdir(), "audit-remove-"));
-  roots.push(base);
-  const repo = await createTempRepo();
-  repos.push(repo);
-  const revision = (await git(["rev-parse", "HEAD"], repo)).stdout;
-  const workTreeRoot = join(base, "root");
-  const workTreePath = join(workTreeRoot, "revision");
-  await mkdir(workTreeRoot, { recursive: true });
-  await git(["worktree", "add", "--detach", workTreePath, revision], repo);
-  const identity = await pathIdentity(workTreePath);
-  const state = {
+function removeAuditState({ repo, revision, workTreeRoot, workTree, ...overrides }) {
+  return {
     id: "20260101-000000-remove",
     repo,
     repoKey: "abc123abc123",
@@ -942,13 +938,7 @@ async function finishedAudit(overrides = {}) {
     base: "main",
     revision,
     workTreeRoot,
-    workTree: {
-      path: workTreePath,
-      canonicalPath: await canonicalPath(workTreePath),
-      dev: String(identity.dev),
-      ino: String(identity.ino),
-      revision,
-    },
+    workTree,
     settings: {
       reviewers: [
         { kind: "claude", model: null, effort: null },
@@ -1006,21 +996,89 @@ async function finishedAudit(overrides = {}) {
     ],
     ...overrides,
   };
+}
+
+async function writeRemoveAudit(base, state) {
   const runsRoot = join(base, "runs");
   await mkdir(auditPaths(runsRoot).root, { recursive: true });
   await writeAudit(runsRoot, state);
-  return { base, runsRoot, state };
+  return runsRoot;
+}
+
+// The retained states refuse before any Git call, so a directory and a store are enough.
+async function filesystemAudit(overrides = {}) {
+  const base = await mkdtemp(join(tmpdir(), "audit-remove-"));
+  roots.push(base);
+  const workTreeRoot = join(base, "root");
+  const workTreePath = join(workTreeRoot, "revision");
+  await mkdir(workTreePath, { recursive: true });
+  const identity = await pathIdentity(workTreePath);
+  const revision = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+  const state = removeAuditState({
+    repo: join(base, "repo"),
+    revision,
+    workTreeRoot,
+    workTree: {
+      path: workTreePath,
+      canonicalPath: workTreePath,
+      dev: String(identity.dev),
+      ino: String(identity.ino),
+      revision,
+    },
+    ...overrides,
+  });
+  return { base, runsRoot: await writeRemoveAudit(base, state), state };
+}
+
+// One shared repository gives each real-registration case its own work tree.
+async function registeredAudit() {
+  const base = await mkdtemp(join(tmpdir(), "audit-remove-"));
+  roots.push(base);
+  const revision = (await git(["rev-parse", "HEAD"], removeRepo)).stdout;
+  const workTreeRoot = join(base, "root");
+  const workTreePath = join(workTreeRoot, "revision");
+  await mkdir(workTreeRoot, { recursive: true });
+  await git(["worktree", "add", "--detach", workTreePath, revision], removeRepo);
+  const identity = await pathIdentity(workTreePath);
+  const state = removeAuditState({
+    repo: removeRepo,
+    revision,
+    workTreeRoot,
+    workTree: {
+      path: workTreePath,
+      canonicalPath: await canonicalPath(workTreePath),
+      dev: String(identity.dev),
+      ino: String(identity.ino),
+      revision,
+    },
+  });
+  return { base, runsRoot: await writeRemoveAudit(base, state), state };
 }
 
 // Usefulness: a finished audit's work tree folder and store are the two artifacts that cost disk
 // after the frozen issue set exists, and both are gone after remove (ADR 0118).
+// Behavior exception: needs a real Git registration, so it creates its own work tree in the
+// shared repository, and it asserts the stderr progress at the removal boundary.
 test("remove deletes the work tree and store of a finished audit", async () => {
-  const { runsRoot, state } = await finishedAudit();
-  const result = await removeAudit({ runsRoot, id: state.id });
+  const { runsRoot, state } = await registeredAudit();
+  const written = [];
+  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    written.push(String(chunk));
+    return true;
+  });
+  let result;
+  try {
+    result = await removeAudit({ runsRoot, id: state.id });
+  } finally {
+    spy.mockRestore();
+  }
+  const stderr = written.join("");
 
   expect(result.exitCode).toBe(0);
   expect(result.summary.status).toBe("removed");
   expect(result.summary.removed).toBe(true);
+  expect(stderr).toContain("removing the work tree and store");
+  expect(stderr).toContain("removed the work tree and store");
   expect(await pathIdentity(state.workTree.path)).toBe(null);
   expect(await readAudit(runsRoot, state.id)).toBe(null);
   expect(await pathIdentity(state.workTreeRoot)).toBe(null);
@@ -1028,9 +1086,10 @@ test("remove deletes the work tree and store of a finished audit", async () => {
 
 // Usefulness: a paused or needs-owner audit can still be resumed or inspected, so remove keeps
 // both the work tree and the store (ADR 0118).
+// Filesystem-only: the status refusal happens before any Git read, so no registration is needed.
 test("remove keeps a paused or needs-owner audit", async () => {
   for (const status of ["paused", "needs-owner"]) {
-    const { runsRoot, state } = await finishedAudit({ status });
+    const { runsRoot, state } = await filesystemAudit({ status });
     const result = await removeAudit({ runsRoot, id: state.id });
 
     expect(result.exitCode).toBe(1);
@@ -1043,8 +1102,9 @@ test("remove keeps a paused or needs-owner audit", async () => {
 
 // Usefulness: the store holds the stable identity that reconciles an uncertain issue write, so
 // remove keeps both artifacts while the write is unreconciled (ADR 0118).
+// Filesystem-only: the unreconciled-write refusal happens before any Git read.
 test("remove keeps an audit with an unreconciled issue write", async () => {
-  const { runsRoot, state } = await finishedAudit({
+  const { runsRoot, state } = await filesystemAudit({
     pendingCreate: { identity: "id-9", title: "Unreconciled" },
   });
   const result = await removeAudit({ runsRoot, id: state.id });
@@ -1058,8 +1118,10 @@ test("remove keeps an audit with an unreconciled issue write", async () => {
 
 // Usefulness: a link inside the work tree that names a directory outside it must survive, so the
 // removal never follows a link or junction (ADR 0106 decision 13, ADR 0118).
+// Behavior exception: needs a real Git registration, so it creates its own work tree in the
+// shared repository.
 test("remove does not follow a link outside the work tree", async () => {
-  const { base, runsRoot, state } = await finishedAudit();
+  const { base, runsRoot, state } = await registeredAudit();
   const outside = join(base, "outside");
   await mkdir(outside, { recursive: true });
   await writeFile(join(outside, "keep.txt"), "kept\n");
@@ -1075,6 +1137,26 @@ test("remove does not follow a link outside the work tree", async () => {
   expect(result.exitCode).toBe(0);
   expect(await readFile(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
   expect(await pathIdentity(state.workTree.path)).toBe(null);
+});
+
+// Usefulness: a moved folder must not hide the locked Git registration, or remove would delete the
+// store while Git still holds a locked work tree (ADR 0118 decision 3).
+// Behavior exception: needs a real locked registration, so it creates its own work tree in the
+// shared repository.
+test("remove keeps a locked work tree whose folder moved away", async () => {
+  const { base, runsRoot, state } = await registeredAudit();
+  await git(["worktree", "lock", state.workTree.path], removeRepo);
+  const moved = join(base, "moved-revision");
+  await rename(state.workTree.path, moved);
+
+  const result = await removeAudit({ runsRoot, id: state.id });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.summary.removed).toBe(false);
+  expect(result.summary.reason).toContain("locked");
+  expect(await pathIdentity(state.workTree.path)).toBe(null);
+  expect(await readAudit(runsRoot, state.id)).not.toBe(null);
+  expect(await pathIdentity(moved)).not.toBe(null);
 });
 
 // Usefulness: a refusal before the store exists is a usage error, not a partial audit.

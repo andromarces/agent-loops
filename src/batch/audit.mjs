@@ -22,6 +22,7 @@ import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { writeFileAtomic } from "../lib/atomic-write.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
+import { logError, logWarn } from "../lib/log.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { isFatalTurnError, withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
@@ -1353,8 +1354,23 @@ async function auditWorkTreeBlocker(state) {
   }
   if (typeof state.workTreeRoot !== "string") return "the recorded work tree root is missing";
   if (typeof state.repo !== "string") return "the recorded repository is missing";
+
   const identity = await pathIdentity(workTree.path);
-  if (identity === null) return null;
+  if (identity === null) {
+    // A moved folder must not hide the registration that Git still holds, and a live lock keeps
+    // both artifacts even when the folder is gone.
+    let entries;
+    try {
+      entries = await readRegisteredWorkTrees(state.repo);
+    } catch (err) {
+      return `the work tree list read failed: ${err.message}`;
+    }
+    const target = resolve(workTree.path);
+    const own = entries.filter((entry) => resolve(entry.path) === target);
+    if (own.some((entry) => entry.locked)) return "the work tree is locked by a live run";
+    if (own.length > 0) return "Git still registers the work tree";
+    return null;
+  }
   if (!identityEqual(identity, workTree)) return "the work tree identity changed";
 
   const canonical = await canonicalPath(workTree.path);
@@ -1409,6 +1425,7 @@ export async function removeAudit({ runsRoot, id }) {
   const paths = auditPaths(runsRoot);
   const release = await tryStateLock(paths.lock(id), { label: "Audit", noun: "audit" });
   if (release === null) {
+    logWarn(`audit ${id}: kept: another command owns the audit`);
     return {
       exitCode: 1,
       summary: {
@@ -1423,17 +1440,23 @@ export async function removeAudit({ runsRoot, id }) {
   try {
     const state = await readAudit(runsRoot, id);
     if (state === null) throw usage(`No audit ${id}.`);
-    const keep = (reason) => ({
-      exitCode: 1,
-      summary: {
-        auditId: state.id,
-        status: state.status ?? null,
-        removed: false,
-        reason,
-        workTree: state.workTree?.path ?? null,
-        store: paths.file(state.id),
-      },
-    });
+    progress(`audit ${state.id}: removing the work tree and store`);
+    const keep = (reason, level = "warn") => {
+      const line = `audit ${state.id}: kept: ${reason}`;
+      if (level === "error") logError(line);
+      else logWarn(line);
+      return {
+        exitCode: 1,
+        summary: {
+          auditId: state.id,
+          status: state.status ?? null,
+          removed: false,
+          reason,
+          workTree: state.workTree?.path ?? null,
+          store: paths.file(state.id),
+        },
+      };
+    };
 
     const blocker = removalBlocker(state) ?? (await auditWorkTreeBlocker(state));
     if (blocker !== null) return keep(blocker);
@@ -1442,12 +1465,15 @@ export async function removeAudit({ runsRoot, id }) {
       dev: state.workTree.dev,
       ino: state.workTree.ino,
     });
-    if (!removal.removed) return keep(removal.reason ?? "the work tree removal failed");
+    if (!removal.removed) {
+      return keep(removal.reason ?? "the work tree removal failed", "error");
+    }
 
     await removeEmptyAuditRoot(state.workTree, state.workTreeRoot);
     await unlink(paths.file(state.id)).catch((err) => {
       if (err?.code !== "ENOENT") throw err;
     });
+    progress(`audit ${state.id}: removed the work tree and store`);
     return {
       exitCode: 0,
       summary: {

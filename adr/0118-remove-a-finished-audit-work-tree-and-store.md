@@ -13,9 +13,7 @@ These parts are replaced:
 - Owner decision 2, "Keep the audit work tree. No cleanup rule is added in milestone 2."
 - The decision 3 sentence "The work tree is kept for inspection; this milestone adds no removal
   rule."
-- The decision 10 sentence "The runtime never retries a failed reviewer or a failed
-  consolidation, never resumes an issue creation whose read is uncertain, and never deletes an
-  audit or its work tree."
+- The decision 10 deletion clause "never deletes an audit or its work tree."
 - The decision 13 entry "Removal of the audit work tree or its store."
 - The consequence sentence "The audit work tree stays on disk for inspection, so each run costs
   one checkout until the owner removes it."
@@ -82,7 +80,9 @@ Before any delete the command applies the checks of ADR 0106 decision 13 to the 
 - Its HEAD is the frozen revision and `git status --porcelain` is empty.
 
 A failed check keeps both artifacts and reports the reason. A work tree that is already missing
-passes these checks, and the command removes the store alone.
+still passes the registration and lock checks: a remaining registration, and above all a locked
+one, keeps both artifacts and reports it; when Git no longer registers the path, the command
+removes the store alone.
 
 ### 4. The delete follows no link or junction
 
@@ -124,7 +124,8 @@ The implementation adds:
 3. A `created` audit with a non-null `pendingCreate` keeps both.
 4. A link or junction inside the work tree that names a path outside it leaves the target intact.
 5. A recorded path whose identity, registration, revision, or cleanliness does not match keeps
-   both artifacts and reports the reason.
+   both artifacts and reports the reason, including a missing folder that Git still registers or
+   locks.
 6. `remove` without `--audit` or with an unknown id exits 2 and removes nothing. A malformed
    store exits 1 and removes nothing.
 

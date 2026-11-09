@@ -4,8 +4,6 @@
 
 partially-superseded
 
-## Superseded by
-
 [adr/0118-remove-a-finished-audit-work-tree-and-store.md](0118-remove-a-finished-audit-work-tree-and-store.md)
 partially supersedes this ADR. These parts are replaced:
 
