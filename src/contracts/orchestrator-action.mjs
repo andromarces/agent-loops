@@ -1,6 +1,7 @@
 import { isJsonObject } from "../lib/json.mjs";
 
-export const SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
+export const REQUIRED_SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
+export const SUMMARY_KEYS = [...REQUIRED_SUMMARY_KEYS, "notes"];
 const FINISH_KEYS = ["action", "summary", "unresolvedCompare"];
 const DISPATCH_KEYS = ["action", "prompt"];
 const ABORT_KEYS = ["action", "reason"];
@@ -84,7 +85,7 @@ export function validateAction(value) {
       }
 
       const summary = {};
-      for (const key of SUMMARY_KEYS) {
+      for (const key of REQUIRED_SUMMARY_KEYS) {
         const fieldVal = value.summary[key];
         if (typeof fieldVal !== "string" || fieldVal.trim() === "") {
           return {
@@ -93,6 +94,16 @@ export function validateAction(value) {
           };
         }
         summary[key] = fieldVal.trim();
+      }
+      const notes = value.summary.notes;
+      if (notes !== undefined && notes !== null) {
+        if (typeof notes !== "string" || notes.trim() === "") {
+          return {
+            ok: false,
+            error: "finish summary requires a non-empty string for notes.",
+          };
+        }
+        summary.notes = notes.trim();
       }
 
       const finish = {

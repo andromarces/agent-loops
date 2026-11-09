@@ -29,6 +29,7 @@ import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
 import { createLoopWorkTree, git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
+import { emptyLoopReport, readLoopReport } from "./report.mjs";
 import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
 import {
   acquireClaim,
@@ -122,6 +123,7 @@ function queuedLoop(paths, id, issue, maxSteps) {
     decision: null,
     decisionAnswer: null,
     blockingIssues: [],
+    report: null,
   };
 }
 
@@ -245,6 +247,7 @@ export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
 }
 
 const terminal = (status) => TERMINAL.has(status);
+const loopEnded = (status) => terminal(status) || status === "interrupted";
 
 function loopEntry(loop) {
   return {
@@ -263,6 +266,7 @@ function loopEntry(loop) {
     cleanup: loop.cleanup,
     decision: loop.decision ?? null,
     blockingIssues: loop.blockingIssues ?? [],
+    report: loop.report ?? emptyLoopReport(),
   };
 }
 
@@ -508,10 +512,23 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     });
   }
 
+  // A loop end reads its transcript once and stores the report in the same checkpoint write as the
+  // status change, so the report adds no store write.
   const changeLoop = async (issue, patch) => {
-    const next = await updateLoop(runsRoot, id, issue, (current) => ({ ...current, ...patch }));
+    let nextPatch = patch;
+    if (patch?.status !== undefined && loopEnded(patch.status) && patch.report === undefined) {
+      const current = loops.get(issue) ?? (await readLoop(runsRoot, id, issue));
+      nextPatch = {
+        ...patch,
+        report: await readLoopReport(current.transcript, { attempts: current.attempts }),
+      };
+    }
+    const changed = await updateLoop(runsRoot, id, issue, (current) => ({
+      ...current,
+      ...nextPatch,
+    }));
     loops.set(issue, await readLoop(runsRoot, id, issue));
-    return next;
+    return changed;
   };
 
   const refreshOpenPr = async () => {

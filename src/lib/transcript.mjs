@@ -45,6 +45,7 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
     events,
     exitCode: 1,
     error: null,
+    warnings: [],
   };
 
   // The pre-assigned session id of the turn that is running, with the mark that no CLI output

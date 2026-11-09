@@ -111,7 +111,16 @@ const fakeGitDeps = {
  * A child double that records its arguments and writes a transcript. `hold` keeps each run live
  * until the test releases it.
  */
-function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false } = {}) {
+function childDouble({
+  exitCode = 0,
+  steps = 0,
+  roles = {},
+  hold = false,
+  summary = null,
+  error = null,
+  warnings = [],
+  failedTurnTest = null,
+} = {}) {
   const calls = [];
   const pending = [];
   const spawn = async ({ args, cwd, logPath }) => {
@@ -145,10 +154,15 @@ function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false } = {})
           ...earlier.events,
           ...(args.includes("--continue-from") ? [{ type: "continued", exitCode: 130 }] : []),
           ...nextEvents,
+          ...(summary === null ? [] : [{ type: "action", action: { action: "finish", summary } }]),
+          ...(failedTurnTest === null
+            ? []
+            : [{ type: "test-run", fatal: true, testRun: failedTurnTest }]),
           { type: "gate" },
         ],
         exitCode,
-        error: null,
+        error,
+        warnings,
       }),
     );
     if (gate) pending.push(gate);
@@ -2651,4 +2665,126 @@ describe("batch decisions and waits", () => {
       await release?.();
     }
   });
+});
+
+// Usefulness: start, status, and an idle resume show the same stored loop report without a transcript read.
+test("start, status, and resume show the same stored loop report", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const summary = {
+    changed: "the change",
+    verified: "the checks",
+    deferred: "nothing",
+    notDone: "nothing",
+    open: "none",
+    notes: "a later check",
+  };
+  const child = childDouble({ summary });
+  try {
+    const started = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(started.summary.loops[0].report.summary).toEqual(summary);
+    await removePath(child.calls[0].transcript);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0].report).toEqual(started.summary.loops[0].report);
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    expect(resumed.summary.loops[0].report).toEqual(started.summary.loops[0].report);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a failed loop report names the error, the fatal turn test, and the run warnings.
+test("a failed loop report carries the error, failed turn test, and warnings", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const failedTurnTest = { command: "pnpm test", status: "fail", exitCode: 1 };
+  const warning = "turn temporary directory not removed, delete it by hand: /tmp/al-x";
+  const child = childDouble({
+    exitCode: 1,
+    error: "the child failed",
+    failedTurnTest,
+    warnings: [warning],
+  });
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(1);
+    const report = summary.loops[0].report;
+    expect(report.summary).toBeNull();
+    expect(report.error).toBe("the child failed");
+    expect(report.failedTurnTest).toEqual(failedTurnTest);
+    expect(report.warnings).toContain(warning);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: recovery writes the report in the status checkpoint from the transcript it reads.
+test("a recovered transcript reports its finish summary", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  const summary = {
+    changed: "recovered",
+    verified: "the checks",
+    deferred: "nothing",
+    notDone: "nothing",
+    open: "none",
+    notes: null,
+  };
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(
+      transcript,
+      JSON.stringify({
+        ...data,
+        events: [{ type: "action", action: { action: "finish", summary } }, { type: "gate" }],
+        exitCode: 0,
+        error: null,
+      }),
+    );
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+    expect(resumed.summary.loops[0].report.summary).toEqual(summary);
+  } finally {
+    await cleanupRepo(repo);
+  }
 });

@@ -24,7 +24,7 @@ import {
   resultPrompt,
 } from "../../src/prompts/orchestrator.mjs";
 import { runLoop } from "../../src/runtime.mjs";
-import { SUMMARY_KEYS } from "../../src/contracts/orchestrator-action.mjs";
+import { REQUIRED_SUMMARY_KEYS } from "../../src/contracts/orchestrator-action.mjs";
 import { scripted } from "../agent-doubles.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { cleanRepoGit, createCleanRepoDir } from "../git-helpers.mjs";
@@ -50,18 +50,19 @@ test("initialPrompt produces expected orchestrator prompt", () => {
   expect(prompt).toContain('{"action": "run_worker", "prompt": "<instructions for worker>"}');
 });
 
-// Usefulness: verifies requirement "the finish prompt lists every summary key as required" (issue
-// #1273), so a key added to SUMMARY_KEYS reaches the prompt with no count to update beside it.
-test("initialPrompt lists every summary key as a required non-empty string", () => {
+// Usefulness: verifies requirement "the finish prompt lists every required summary key and names notes as optional" (issue #1273).
+test("initialPrompt lists every required summary key and names notes as optional", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   const required = prompt.split("\n").find((line) => /requires non-empty strings/i.test(line));
   expect(required, "no line states the required summary keys").toBeDefined();
-  for (const key of SUMMARY_KEYS) expect(required).toContain(key);
+  for (const key of REQUIRED_SUMMARY_KEYS) expect(required).toContain(key);
+  expect(required).not.toContain("notes");
+  expectRule(prompt, /optional notes key/i, /reviewer Notes/i);
 });
 
 // Usefulness: verifies requirement "the headless prompt states the unknown-key refusal and its
 // repair" (issue #1021) with the right split: the action object allows action, summary, and a boolean
-// unresolvedCompare, the nested summary object allows only the five summary keys. A clause that
+// unresolvedCompare, the nested summary object allows only the six summary keys. A clause that
 // swaps or merges the two allowlists fails, which a bare keyword match would not catch.
 test("initialPrompt states the unknown-key finish refusal and its repair", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
@@ -76,7 +77,7 @@ test("initialPrompt states the unknown-key finish refusal and its repair", () =>
 
   const summary = clauseWith(/\bsummary object\b/i);
   expect(summary, "no clause names the summary object allowlist").toBeDefined();
-  expect(summary).toMatch(/\bonly the five summary keys\b/i);
+  expect(summary).toMatch(/\bonly the six summary keys\b/i);
   expect(summary).not.toMatch(/\bunresolvedCompare\b/);
 
   expectRule(prompt, /\brefused\b/i, /\bany other key\b/i, /\beither object\b/i);
@@ -107,7 +108,7 @@ test("initialPrompt states the allowed keys of the dispatch and abort actions", 
 // Usefulness: verifies the headless prompt states the notes and deferred finish
 // mapping that the interactive instructions also carry: which labels the closing
 // block requires, that deferred items persist, that a resolved item lands in
-// changed, that unaddressed notes land in open, that a change made for a note
+// changed, that unaddressed notes land in notes, that a change made for a note
 // needs a further reviewer accept, and that review-only findings split between
 // open and deferred (issue #214, issue #328).
 test("initialPrompt states the notes and deferred finish mapping", () => {
@@ -126,8 +127,8 @@ test("initialPrompt states the notes and deferred finish mapping", () => {
   expectRule(prompt, /\brecord[^.!?]{0,20}\bin changed\b/i);
   // The items still listed at finish go into deferred.
   expectRule(prompt, /\bitem[^.!?]{0,40}\bgo into deferred/i);
-  // A reviewer note no later turn addressed goes into open.
-  expectRule(prompt, /note[^.!?]{0,40}\bgo into open/i);
+  // A reviewer note no later turn addressed goes into notes.
+  expectRule(prompt, /note[^.!?]{0,40}\bgo into notes/i);
   // The note is not handed to the worker on its own. The negation stays with the
   // action, so "send" cannot stand in for "do not send".
   expectRule(prompt, /do not send[^.!?]{0,40}\bnote/i, /worker/i);
@@ -141,10 +142,11 @@ test("initialPrompt states the notes and deferred finish mapping", () => {
     /new state/i,
     /finish/i,
   );
-  // In review-only mode, Blockers and Notes go into open, and reviewer Deferred
-  // items go into deferred, which holds out-of-scope items in every mode while
-  // open holds unresolved in-scope findings.
-  expectRule(prompt, /review-only[^.!?]{0,80}\bblockers/i, /note/i, /go into open/i);
+  // In review-only mode, Blockers go into open, Notes go into notes, and reviewer
+  // Deferred items go into deferred, which holds out-of-scope items in every mode
+  // while open holds unresolved in-scope findings.
+  expectRule(prompt, /review-only[^.!?]{0,80}\bblockers/i, /go into open/i);
+  expectRule(prompt, /review-only[^.!?]{0,80}\bnotes/i, /go into notes/i);
   expectRule(prompt, /reviewer[^.!?]{0,40}\bdeferred[^.!?]{0,40}\bgo into deferred/i);
   expectRule(prompt, /\bdeferred\b/i, /out-of-scope/i, /every mode/i);
   expectRule(prompt, /\bopen\b/i, /unresolved/i, /in-scope/i);
@@ -233,7 +235,7 @@ test("initialPrompt names the unresolvedCompare marker", () => {
   expectRule(prompt, /add[^.!?]{0,40}unresolvedCompare[^.!?]{0,20}\btrue\b/i, /finish/i);
   expectRule(prompt, /marker/i, /action object/i, /unresolved/i);
   expect(prompt).toContain(
-    '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>"}, "unresolvedCompare": true}',
+    '{"action": "finish", "summary": {"changed": "<summary>", "verified": "<summary>", "deferred": "<summary>", "notDone": "<summary>", "open": "<summary>", "notes": "<summary>"}, "unresolvedCompare": true}',
   );
   expect(prompt).toContain("unresolved-compare event");
   expect(prompt).toContain("exits 4 instead of 0");
@@ -789,10 +791,10 @@ test("repairPrompt produces expected repair prompt", () => {
 test("repairPrompt shows both finish forms with unresolvedCompare inside the object", () => {
   const prompt = repairPrompt("finish unresolvedCompare must be a boolean.");
   expect(prompt).toContain(
-    '3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}}\nFor an unresolved PR-head compare, add the marker inside the same object:',
+    '3. {"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>", "notes": "<string>"}}\nFor an unresolved PR-head compare, add the marker inside the same object:',
   );
   expect(prompt).toContain(
-    '{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>"}, "unresolvedCompare": true}',
+    '{"action": "finish", "summary": {"changed": "<string>", "verified": "<string>", "deferred": "<string>", "notDone": "<string>", "open": "<string>", "notes": "<string>"}, "unresolvedCompare": true}',
   );
 });
 

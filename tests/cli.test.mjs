@@ -166,12 +166,11 @@ test("a Git work tree whose path contains spaces is not refused", async () => {
   }
 });
 
-// Usefulness: verifies a run with no --mode writes the transcript it wrote before the flag existed,
-// so a consumer of that file sees no field this flag introduced. The comparison
-// is the recorded file: the same top-level keys, the same option keys, and the
-// same event list a run without the flag wrote before it (issue #337). A
-// transcript inside the work tree also holds `runNonce`, and nothing else is added
-// (ADR 0027), so the test runs once for each location.
+// Usefulness: verifies a run with no --mode writes the pre-flag transcript shape plus the run
+// warning list. The comparison is the recorded file: the same top-level keys with `warnings`, the
+// same option keys, and the same event list a run without the flag wrote before it (issue #337). A
+// transcript inside the work tree also holds `runNonce`, and nothing else is added (ADR 0027), so
+// the test runs once for each location.
 test.each([
   { where: "outside the work tree", inTree: false, added: [] },
   { where: "inside the work tree", inTree: true, added: ["runNonce"] },
@@ -213,7 +212,7 @@ test.each([
   const modeFree = await runOnce([]);
   // A mode-free run wrote these keys, and no more, before the flag existed, for a run that names no mode.
   expect(Object.keys(modeFree).sort()).toEqual(
-    ["cwd", "error", "events", "exitCode", "options", "roles", "task", ...added].sort(),
+    ["cwd", "error", "events", "exitCode", "options", "roles", "task", "warnings", ...added].sort(),
   );
   if (inTree) expect(modeFree.runNonce).toMatch(/^[0-9a-f-]{36}$/);
   expect(Object.keys(modeFree.options).sort()).toEqual(
@@ -578,6 +577,66 @@ test("review-only finish without unresolvedCompare keeps exit 0", async () => {
     const printed = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(printed).toContain("===== SUMMARY =====");
     expect(printed).toContain("Verified: b");
+  } finally {
+    process.exitCode = origExitCode;
+    logSpy.mockRestore();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the headless SUMMARY block prints the optional notes line.
+test("a headless finish prints Notes in its SUMMARY block", async () => {
+  const repo = await createTempRepo();
+  const origExitCode = process.exitCode;
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  const fakeAgents = {
+    codex: {
+      async run() {
+        return JSON.stringify({
+          action: "finish",
+          summary: {
+            changed: "a",
+            verified: "b",
+            deferred: "c",
+            notDone: "d",
+            open: "e",
+            notes: "a later check",
+          },
+        });
+      },
+    },
+    claude: {
+      async run() {
+        return "worker ok";
+      },
+    },
+    agy: {
+      async run() {
+        return "reviewer ok";
+      },
+    },
+  };
+
+  try {
+    await main(
+      [
+        "--orchestrator",
+        "codex",
+        "--worker",
+        "claude",
+        "--reviewer",
+        "agy",
+        "--task",
+        "task",
+        "--cwd",
+        repo,
+      ],
+      fakeAgents,
+    );
+
+    expect(process.exitCode).toBe(0);
+    const printed = logSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(printed).toContain("Notes: a later check");
   } finally {
     process.exitCode = origExitCode;
     logSpy.mockRestore();
