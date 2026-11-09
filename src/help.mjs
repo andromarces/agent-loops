@@ -121,7 +121,7 @@ Subcommands:
 Role operations:
 
   dispatch (default)            Run one --role turn for the run state at --cwd.
-  finish                        End the run; the summary arrives as JSON on stdin, with
+  finish                        End the run. The summary arrives as JSON on stdin, with
                                 five required keys and an optional notes key, plus an
                                 optional unresolvedCompare boolean beside the keys. Exits 0
                                 for that marker, where the headless loop exits 4.

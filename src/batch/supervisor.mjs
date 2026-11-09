@@ -29,7 +29,7 @@ import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
 import { createLoopWorkTree, git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
-import { emptyLoopReport, readLoopReport } from "./report.mjs";
+import { missingLoopReport, readLoopReport } from "./report.mjs";
 import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
 import {
   acquireClaim,
@@ -266,7 +266,7 @@ function loopEntry(loop) {
     cleanup: loop.cleanup,
     decision: loop.decision ?? null,
     blockingIssues: loop.blockingIssues ?? [],
-    report: loop.report ?? emptyLoopReport(),
+    report: loop.report ?? missingLoopReport(),
   };
 }
 

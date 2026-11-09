@@ -462,9 +462,9 @@ Checkpoints are written on an event only. The events are `start`, a launch, a sk
 
 A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state.
 
-`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue: loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, cleanup result, and report.
+`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue. Each entry holds loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, cleanup result, and report.
 
-The report holds the last attempt's finish summary, error, failed-turn test result, and delete-by-hand warnings. A `transcriptRead` value with `ok: false` means the transcript was unread, and every other report field is then null.
+The report holds the last attempt's finish summary, error, failed-turn test result, and delete-by-hand warnings. It also holds a `state`: `read`, `no-attempt`, `unread`, or `missing`. The transcript warning list and the report keep 20 warnings, and `warningsOverflow` names the rest. A `transcriptRead` value with `ok: false` means the transcript was unread. Every summary, error, test, and warning field is then null.
 
 Exit codes:
 

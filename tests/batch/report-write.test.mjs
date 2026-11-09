@@ -1,7 +1,6 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 
 const writes = vi.hoisted(() => []);
@@ -23,11 +22,8 @@ vi.mock("../../src/lib/atomic-write.mjs", async (importActual) => {
   };
 });
 
-const { prepareBatch } = await import("../../src/batch/args.mjs");
-const { git } = await import("../../src/batch/git.mjs");
 const { batchPaths } = await import("../../src/batch/store.mjs");
 const { newBatchId, runBatch } = await import("../../src/batch/supervisor.mjs");
-const { createTempRepo } = await import("../git-helpers.mjs");
 const { removePath } = await import("../fs-helpers.mjs");
 
 const summary = {
@@ -73,40 +69,53 @@ function fakeGh() {
   };
 }
 
-// Usefulness: report building adds no loop checkpoint write beyond the status write.
-test("a loop end writes the report in the same checkpoint write as the status", async () => {
-  const main = await createTempRepo();
-  const remote = await mkdtemp(join(tmpdir(), "batch-report-write-remote-"));
+// A prepared batch for the write case: no Git process starts.
+async function preparedLoop() {
   const workTreeRoot = await mkdtemp(join(tmpdir(), "batch-report-write-root-"));
-  const base = (await git(["rev-parse", "--abbrev-ref", "HEAD"], main)).stdout;
-  await execa("git", ["init", "--bare"], { cwd: remote });
-  await execa("git", ["remote", "add", "origin", remote], { cwd: main });
-  await execa("git", ["push", "-u", "origin", base], { cwd: main });
-  await execa("git", ["update-ref", `refs/remotes/origin/${base}`, "HEAD"], { cwd: main });
-  try {
-    const prepared = await prepareBatch({
+  return {
+    prepared: {
       id: newBatchId(),
-      repo: main,
-      issues: [1],
-      base,
+      repo: "/repo",
+      repoKey: "report-write-key",
+      base: "main",
       workTreeRoot,
+      issues: [1],
       loops: 1,
       maxSteps: 10,
       setupCmd: null,
       setupTimeout: 600,
       taskTemplate: "Work {issue}",
+      testCmd: null,
+      testCmdTimeout: null,
       timeout: 3600,
       reviewerSandbox: null,
-      orchestrator: "codex",
-      worker: "claude",
-      reviewer: "agy",
-      orchestratorModel: null,
-      workerModel: null,
-      reviewerModel: null,
-      orchestratorEffort: null,
-      workerEffort: null,
-      reviewerEffort: null,
-    });
+      roles: {
+        orchestrator: { kind: "codex", model: null, effort: null },
+        worker: { kind: "claude", model: null, effort: null },
+        reviewer: { kind: "agy", model: null, effort: null },
+      },
+    },
+    workTreeRoot,
+  };
+}
+
+const gitDeps = {
+  createWorkTree: async ({ workTree, branch }) => ({
+    path: workTree,
+    canonicalPath: workTree,
+    dev: "1",
+    ino: "1",
+    branch,
+  }),
+  verifyWorkTree: async () => null,
+  reconcileLoop: async () => ({ status: "resume", reason: null, pr: null, requireCi: null }),
+  cleanupLoop: async () => ({ removed: false, reason: "test" }),
+};
+
+// Usefulness: report building adds no loop checkpoint write beyond the status write.
+test("a loop end writes the report in the same checkpoint write as the status", async () => {
+  const { prepared, workTreeRoot } = await preparedLoop();
+  try {
     const spawn = async ({ args }) => {
       const transcript = valueAfter(args, "--transcript");
       await writeFile(
@@ -131,7 +140,12 @@ test("a loop end writes the report in the same checkpoint write as the status", 
       prepared,
       runsRoot: join(workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { notifier: async () => ({ spawned: false }), spawn, installSignal: false },
+      deps: {
+        ...gitDeps,
+        notifier: async () => ({ spawned: false }),
+        spawn,
+        installSignal: false,
+      },
     });
     const loopFile = batchPaths(join(workTreeRoot, "runs")).loop(prepared.id, 1);
     const transitions = writes
@@ -156,7 +170,5 @@ test("a loop end writes the report in the same checkpoint write as the status", 
     ).toBe(false);
   } finally {
     await removePath(workTreeRoot);
-    await removePath(remote);
-    await removePath(main);
   }
 });

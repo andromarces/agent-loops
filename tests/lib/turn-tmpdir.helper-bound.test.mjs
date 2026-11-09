@@ -8,14 +8,16 @@ import { processExists } from "../process-helpers.mjs";
 
 // `helperArgs` replaces the arguments of the removal helper, so the test runs a helper that hangs
 // or dies instead of the real one.
-const hook = vi.hoisted(() => ({ helperArgs: null }));
+const hook = vi.hoisted(() => ({ helperArgs: null, reject: false }));
 
 vi.mock("../../src/lib/exec.mjs", async (importActual) => {
   const actual = await importActual();
   return {
     ...actual,
     execBounded: (command, args, options) =>
-      actual.execBounded(command, hook.helperArgs ?? args, options),
+      hook.reject
+        ? Promise.reject(new Error("the removal failed"))
+        : actual.execBounded(command, hook.helperArgs ?? args, options),
   };
 });
 
@@ -36,6 +38,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   hook.helperArgs = null;
+  hook.reject = false;
   warnings.mockRestore();
   await removePath(dir);
 });
@@ -71,7 +74,7 @@ test("a hanging removal helper ends at the bound and never fails the turn", asyn
 
 // Usefulness: verifies a delete-by-hand warning of the turn directory reaches the run warning list.
 test("a delete-by-hand turn directory warning reaches the run warning list", async () => {
-  hangingHelper();
+  hook.reject = true;
   const collected = [];
   await withRunWarnings(collected, () =>
     withTurnTmpdir(async () => "turn result", { removalBoundMs: BOUND_MS }),

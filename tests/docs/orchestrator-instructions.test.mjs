@@ -920,9 +920,9 @@ const REFUSED_CWD_BLOCKS = {
       "Map the report fields into the finish summary:",
       "- Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.",
       "- A reviewer accept can leave a criterion unverified, because the reviewer turn cannot run its check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.",
-      "- Reviewer Notes that no later turn addressed go into notes. A refused cleanup of a tool cache in its default location, or of a cache entry that existed before the turn, is not a finding: do not carry it into open. Output under a path that the reviewer chose, such as a temporary directory that it set or the scratch folder, stays turn output, so a refused cleanup of it still goes into open.",
+      "- Reviewer Notes that no later turn addressed go into notes. A refused cleanup of a tool cache in its default location is not a finding. A cache entry that existed before the turn is not a finding either. Do not carry either into open. Output under a path that the reviewer chose, such as its temporary directory or the scratch folder, stays turn output. A refused cleanup of that output still goes into open.",
       "- Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.",
-      "- In review-only mode, Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode; open holds unresolved in-scope findings.",
+      "- In review-only mode, Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode. open holds unresolved in-scope findings.",
       `- ${REFUSED_CWD_RULE[0]}`,
       `- ${REFUSED_CWD_RULE[1]}`,
       `- ${REFUSED_CWD_RULE[2]}`,
@@ -1522,11 +1522,17 @@ test("the instructions and the headless prompt share the tool-cache open rule", 
   for (const [name, text] of Object.entries({ instructions, prompt })) {
     const flat = text.replaceAll("`", "");
     expect(flat, name).toContain(
-      "A refused cleanup of a tool cache in its default location, or of a cache entry that existed before the turn, is not a finding: do not carry it into open.",
+      "A refused cleanup of a tool cache in its default location is not a finding.",
     );
     expect(flat, name).toContain(
-      "Output under a path that the reviewer chose, such as a temporary directory that it set or the scratch folder, stays turn output, so a refused cleanup of it still goes into open.",
+      "A cache entry that existed before the turn is not a finding either.",
     );
+    expect(flat, name).toContain("Do not carry either into open.");
+    expect(flat, name).toContain(
+      "Output under a path that the reviewer chose, such as its temporary directory or the scratch folder, stays turn output.",
+    );
+    expect(flat, name).toContain("A refused cleanup of that output");
+    expect(flat, name).toContain("still goes into open.");
   }
 });
 
@@ -1712,6 +1718,9 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["reviewer-evidence.md", "The --require-ci finish gate re-reads GitHub"],
   ["runtime-advisory-fields.md", "It is advisory: the store is shared"],
   ["reviewer-sandbox.md", "A refused cleanup of a tool cache in its default location"],
+  // Split parts of the reviewer-sandbox tool-cache rule, which was reference-only on origin/main.
+  ["reviewer-sandbox.md", "A cache entry that existed before the turn"],
+  ["reviewer-sandbox.md", "Do not carry either into open."],
   ["waiting-for-checks.md", "The --all wait holds a pass while"],
   ["waiting-for-checks.md", "The hold skips a workflow only when"],
   ["waiting-for-checks.md", "A PR head or base branch that moves during the reads"],

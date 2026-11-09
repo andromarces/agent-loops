@@ -1,8 +1,10 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
-import { buildLoopReport, readLoopReport } from "../../src/batch/report.mjs";
+import { buildLoopReport, missingLoopReport, readLoopReport } from "../../src/batch/report.mjs";
+import { createTranscriptWriter } from "../../src/lib/transcript.mjs";
+import { recordRunWarning, withRunWarnings } from "../../src/lib/run-warnings.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
 const dirs = [];
@@ -34,10 +36,12 @@ test("a finished loop report keeps the summary and reads a missing notes key as 
     { attempts: 1 },
   );
   expect(report.transcriptRead).toEqual({ ok: true });
+  expect(report.state).toBe("read");
   expect(report.summary).toEqual({ ...SUMMARY, notes: null });
   expect(report.error).toBeNull();
   expect(report.failedTurnTest).toBeNull();
   expect(report.warnings).toEqual([]);
+  expect(report.warningsOverflow).toBe(0);
 });
 
 // Usefulness: a finish summary with notes carries that text into the report unchanged.
@@ -128,10 +132,12 @@ test("a missing transcript of a loop with no attempt reads as an empty report", 
   const dir = await tempDir();
   const report = await readLoopReport(join(dir, "missing.json"), { attempts: 0 });
   expect(report).toEqual({
+    state: "no-attempt",
     summary: null,
     error: null,
     failedTurnTest: null,
     warnings: [],
+    warningsOverflow: 0,
     transcriptRead: { ok: true },
   });
 });
@@ -141,9 +147,11 @@ test("a missing transcript of an attempted loop reports the unread state", async
   const dir = await tempDir();
   const report = await readLoopReport(join(dir, "missing.json"), { attempts: 1 });
   expect(report.transcriptRead).toEqual({ ok: false, reason: "the transcript is missing" });
+  expect(report.state).toBe("unread");
   expect(report.summary).toBeNull();
   expect(report.error).toBeNull();
   expect(report.warnings).toBeNull();
+  expect(report.warningsOverflow).toBeNull();
 });
 
 // Usefulness: an empty or truncated transcript fails closed, so an unread record never looks empty.
@@ -158,6 +166,7 @@ test.each([
   const report = await readLoopReport(file, { attempts: 1 });
   expect(report.transcriptRead.ok).toBe(false);
   expect(report.warnings).toBeNull();
+  expect(report.warningsOverflow).toBeNull();
   expect(report.error).toBeNull();
 });
 
@@ -169,6 +178,7 @@ test("a malformed event in the transcript reports the unread state", () => {
   );
   expect(report.transcriptRead.ok).toBe(false);
   expect(report.warnings).toBeNull();
+  expect(report.warningsOverflow).toBeNull();
 });
 
 // Usefulness: a transcript with fewer segments than attempts cannot describe the last attempt.
@@ -195,6 +205,52 @@ test("warnings keep 20 entries and redact a secret value", () => {
       { attempts: 1 },
     );
     expect(report.warnings).toHaveLength(20);
+    expect(report.warningsOverflow).toBe(5);
+    expect(report.warnings.join("\n")).not.toContain(secret);
+  } finally {
+    if (before === undefined) delete process.env[name];
+    else process.env[name] = before;
+  }
+});
+
+// Usefulness: a stored loop without a report reads as missing, not as no error and no warnings.
+test("a missing stored report reads as missing", () => {
+  const report = missingLoopReport();
+  expect(report.state).toBe("missing");
+  expect(report.transcriptRead.ok).toBe(false);
+  expect(report.warnings).toBeNull();
+  expect(report.warningsOverflow).toBeNull();
+  expect(report.error).toBeNull();
+});
+
+// Usefulness: the transcript warning list and the report both keep 20 entries and report the overflow.
+test("a transcript warning list is redacted, capped, and reports its overflow", async () => {
+  const name = "AGENT_LOOP_REPORT_TEST_TOKEN";
+  const secret = "a-very-secret-value";
+  const before = process.env[name];
+  process.env[name] = secret;
+  try {
+    const dir = await tempDir();
+    const file = join(dir, "transcript.json");
+    const writer = createTranscriptWriter({
+      options: { transcript: file, testCmd: null, compareHead: null, mode: null },
+      roles: {},
+      events: [],
+      reviewerSandbox: null,
+    });
+    const warnings = Array.from({ length: 25 }, (_, index) => `w${index} warning`);
+    warnings[0] = `w00 warning ${secret}`;
+    await withRunWarnings(writer.data.warnings, async () => {
+      for (const warning of warnings) recordRunWarning(warning);
+    });
+    await writer.writeTranscript();
+    const data = JSON.parse(await readFile(file, "utf8"));
+    expect(data.warnings).toHaveLength(20);
+    expect(data.warningsOverflow).toBe(5);
+    expect(data.warnings.join("\n")).not.toContain(secret);
+    const report = buildLoopReport(data, { attempts: 1 });
+    expect(report.warnings).toHaveLength(20);
+    expect(report.warningsOverflow).toBe(5);
     expect(report.warnings.join("\n")).not.toContain(secret);
   } finally {
     if (before === undefined) delete process.env[name];

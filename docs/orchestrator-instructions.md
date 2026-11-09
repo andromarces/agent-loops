@@ -619,7 +619,7 @@ Map the child report fields into the finish summary:
   dispatch the worker for that change, then obtain another reviewer `accept` on
   the new state before `finish`.
 - `review-only`: `Blockers` go into `open`, `Notes` go into `notes`, and reviewer `Deferred`
-  items go into `deferred`. `deferred` holds out-of-scope items in every mode;
+  items go into `deferred`. `deferred` holds out-of-scope items in every mode.
   `open` holds unresolved in-scope findings.
 
 ## PR declaration

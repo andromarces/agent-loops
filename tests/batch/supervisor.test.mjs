@@ -2667,10 +2667,37 @@ describe("batch decisions and waits", () => {
   });
 });
 
+// A prepared batch for the report cases: no Git process starts.
+async function preparedReportLoop() {
+  const root = await mkdtemp(join(tmpdir(), "batch-report-root-"));
+  roots.push(root);
+  return {
+    id: newBatchId(),
+    repo: "/repo",
+    repoKey: "report-key",
+    base: "main",
+    workTreeRoot: root,
+    issues: [1],
+    loops: 1,
+    maxSteps: 10,
+    setupCmd: null,
+    setupTimeout: 600,
+    taskTemplate: "Work {issue}",
+    testCmd: null,
+    testCmdTimeout: null,
+    timeout: 3600,
+    reviewerSandbox: null,
+    roles: {
+      orchestrator: { kind: "codex", model: null, effort: null },
+      worker: { kind: "claude", model: null, effort: null },
+      reviewer: { kind: "agy", model: null, effort: null },
+    },
+  };
+}
+
 // Usefulness: start, status, and an idle resume show the same stored loop report without a transcript read.
 test("start, status, and resume show the same stored loop report", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await preparedReportLoop();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const summary = {
     changed: "the change",
@@ -2681,33 +2708,35 @@ test("start, status, and resume show the same stored loop report", async () => {
     notes: "a later check",
   };
   const child = childDouble({ summary });
-  try {
-    const started = await runBatch({
-      prepared,
-      runsRoot,
-      gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
-    });
-    expect(started.summary.loops[0].report.summary).toEqual(summary);
-    await removePath(child.calls[0].transcript);
-    const status = await readBatchStatus({ runsRoot, id: prepared.id });
-    expect(status.loops[0].report).toEqual(started.summary.loops[0].report);
-    const resumed = await runBatch({
-      prepared: { ...prepared, resume: true },
-      runsRoot,
-      gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
-    });
-    expect(resumed.summary.loops[0].report).toEqual(started.summary.loops[0].report);
-  } finally {
-    await cleanupRepo(repo);
-  }
+  const deps = {
+    ...fakeGitDeps,
+    notifier: noNotify,
+    spawn: child.spawn,
+    installSignal: false,
+  };
+  const started = await runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh(),
+    deps,
+  });
+  expect(started.summary.loops[0].report.state).toBe("read");
+  expect(started.summary.loops[0].report.summary).toEqual(summary);
+  await removePath(child.calls[0].transcript);
+  const status = await readBatchStatus({ runsRoot, id: prepared.id });
+  expect(status.loops[0].report).toEqual(started.summary.loops[0].report);
+  const resumed = await runBatch({
+    prepared: { ...prepared, resume: true },
+    runsRoot,
+    gh: fakeGh(),
+    deps: { ...deps, spawn: childDouble().spawn },
+  });
+  expect(resumed.summary.loops[0].report).toEqual(started.summary.loops[0].report);
 });
 
 // Usefulness: a failed loop report names the error, the fatal turn test, and the run warnings.
 test("a failed loop report carries the error, failed turn test, and warnings", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await preparedReportLoop();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const failedTurnTest = { command: "pnpm test", status: "fail", exitCode: 1 };
   const warning = "turn temporary directory not removed, delete it by hand: /tmp/al-x";
@@ -2717,28 +2746,24 @@ test("a failed loop report carries the error, failed turn test, and warnings", a
     failedTurnTest,
     warnings: [warning],
   });
-  try {
-    const { exitCode, summary } = await runBatch({
-      prepared,
-      runsRoot,
-      gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
-    });
-    expect(exitCode).toBe(1);
-    const report = summary.loops[0].report;
-    expect(report.summary).toBeNull();
-    expect(report.error).toBe("the child failed");
-    expect(report.failedTurnTest).toEqual(failedTurnTest);
-    expect(report.warnings).toContain(warning);
-  } finally {
-    await cleanupRepo(repo);
-  }
+  const { exitCode, summary } = await runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh(),
+    deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+  });
+  expect(exitCode).toBe(1);
+  const report = summary.loops[0].report;
+  expect(report.state).toBe("read");
+  expect(report.summary).toBeNull();
+  expect(report.error).toBe("the child failed");
+  expect(report.failedTurnTest).toEqual(failedTurnTest);
+  expect(report.warnings).toContain(warning);
 });
 
 // Usefulness: recovery writes the report in the status checkpoint from the transcript it reads.
 test("a recovered transcript reports its finish summary", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await preparedReportLoop();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const child = childDouble({ hold: true });
   const controller = new AbortController();
@@ -2750,41 +2775,106 @@ test("a recovered transcript reports its finish summary", async () => {
     open: "none",
     notes: null,
   };
-  try {
-    const run = runBatch({
-      prepared,
-      runsRoot,
-      gh: fakeGh(),
-      deps: {
-        notifier: noNotify,
-        spawn: child.spawn,
-        installSignal: false,
-        signal: controller.signal,
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    controller.abort();
-    await run;
-    const transcript = child.calls[0].transcript;
-    const data = JSON.parse(await readFile(transcript, "utf8"));
-    await writeFile(
-      transcript,
-      JSON.stringify({
-        ...data,
-        events: [{ type: "action", action: { action: "finish", summary } }, { type: "gate" }],
-        exitCode: 0,
-        error: null,
-      }),
-    );
-    const resumed = await runBatch({
-      prepared: { ...prepared, resume: true },
-      runsRoot,
-      gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
-    });
-    expect(resumed.summary.loops[0].status).toBe("succeeded");
-    expect(resumed.summary.loops[0].report.summary).toEqual(summary);
-  } finally {
-    await cleanupRepo(repo);
-  }
+  const run = runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh(),
+    deps: {
+      ...fakeGitDeps,
+      notifier: noNotify,
+      spawn: child.spawn,
+      installSignal: false,
+      signal: controller.signal,
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  controller.abort();
+  await run;
+  const transcript = child.calls[0].transcript;
+  const data = JSON.parse(await readFile(transcript, "utf8"));
+  await writeFile(
+    transcript,
+    JSON.stringify({
+      ...data,
+      events: [{ type: "action", action: { action: "finish", summary } }, { type: "gate" }],
+      exitCode: 0,
+      error: null,
+    }),
+  );
+  const resumed = await runBatch({
+    prepared: { ...prepared, resume: true },
+    runsRoot,
+    gh: fakeGh(),
+    deps: { ...fakeGitDeps, notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+  });
+  expect(resumed.summary.loops[0].status).toBe("succeeded");
+  expect(resumed.summary.loops[0].report.state).toBe("read");
+  expect(resumed.summary.loops[0].report.summary).toEqual(summary);
+});
+
+// Usefulness: a stored loop without a report reads as missing, not as no error and no warnings.
+test("a stored loop without a report reads as missing", async () => {
+  const prepared = await preparedReportLoop();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    exitCode: 1,
+    error: "the child failed",
+  });
+  await runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh(),
+    deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+  });
+  await updateLoop(runsRoot, prepared.id, 1, (loop) => {
+    const next = { ...loop };
+    delete next.report;
+    return next;
+  });
+  const status = await readBatchStatus({ runsRoot, id: prepared.id });
+  const report = status.loops[0].report;
+  expect(report.state).toBe("missing");
+  expect(report.transcriptRead.ok).toBe(false);
+  expect(report.error).toBeNull();
+  expect(report.warnings).toBeNull();
+  expect(report.warningsOverflow).toBeNull();
+});
+
+// Usefulness: a loop end with no transcript reports the unread state, not a clean loop.
+test("a loop end without a transcript reports the unread state", async () => {
+  const prepared = await preparedReportLoop();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const spawn = async () => {
+    throw new Error("the spawn failed");
+  };
+  const { summary } = await runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh(),
+    deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+  });
+  const report = summary.loops[0].report;
+  expect(summary.loops[0].status).toBe("failed");
+  expect(report.state).toBe("unread");
+  expect(report.transcriptRead.ok).toBe(false);
+  expect(report.error).toBeNull();
+  expect(report.warnings).toBeNull();
+  expect(report.warningsOverflow).toBeNull();
+});
+
+// Usefulness: a skipped loop with no attempt reports the explicit no-attempt state.
+test("a skipped loop with no attempt reports the no-attempt state", async () => {
+  const prepared = await preparedReportLoop();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const { summary } = await runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh({ closed: new Set([1]) }),
+    deps: { ...fakeGitDeps, notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+  });
+  const report = summary.loops[0].report;
+  expect(summary.loops[0].status).toBe("skipped");
+  expect(report.state).toBe("no-attempt");
+  expect(report.warnings).toEqual([]);
+  expect(report.warningsOverflow).toBe(0);
 });

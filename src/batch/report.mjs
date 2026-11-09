@@ -2,7 +2,7 @@
 // loop transcript once at the loop end, then stored in the loop checkpoint. `batch status` reads it
 // from the checkpoint and never reads the transcript again.
 import { readFile } from "node:fs/promises";
-import { reportedEntryNames } from "../lib/entry-report.mjs";
+import { boundedWarnings } from "../lib/run-warnings.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { redactAndClean } from "../lib/redact.mjs";
 
@@ -13,20 +13,37 @@ const FINISH_EXIT_CODES = new Set([0, 4]);
 /** The report of a loop that ran no attempt and wrote no transcript. */
 export function emptyLoopReport() {
   return {
+    state: "no-attempt",
     summary: null,
     error: null,
     failedTurnTest: null,
     warnings: [],
+    warningsOverflow: 0,
     transcriptRead: { ok: true },
+  };
+}
+
+/** The report of a stored loop whose checkpoint holds no report, such as a pre-change record. */
+export function missingLoopReport() {
+  return {
+    state: "missing",
+    summary: null,
+    error: null,
+    failedTurnTest: null,
+    warnings: null,
+    warningsOverflow: null,
+    transcriptRead: { ok: false, reason: "the checkpoint holds no report" },
   };
 }
 
 function unreadReport(reason) {
   return {
+    state: "unread",
     summary: null,
     error: null,
     failedTurnTest: null,
     warnings: null,
+    warningsOverflow: null,
     transcriptRead: { ok: false, reason },
   };
 }
@@ -88,11 +105,19 @@ function failedTurnTest(events) {
 }
 
 function warningsOf(data) {
-  if (data.warnings === undefined) return [];
+  if (data.warnings === undefined) return { warnings: [], warningsOverflow: 0 };
   if (!Array.isArray(data.warnings) || data.warnings.some((item) => typeof item !== "string")) {
     return null;
   }
-  return reportedEntryNames(data.warnings);
+  const bounded = boundedWarnings(data.warnings);
+  const stored =
+    Number.isInteger(data.warningsOverflow) && data.warningsOverflow > 0
+      ? data.warningsOverflow
+      : 0;
+  return {
+    warnings: bounded.warnings,
+    warningsOverflow: bounded.warningsOverflow + stored,
+  };
 }
 
 /**
@@ -118,8 +143,8 @@ export function buildLoopReport(data, { attempts = 0 } = {}) {
   if (data.error !== null && data.error !== undefined && typeof data.error !== "string") {
     return unreadReport("the transcript holds an unreadable error");
   }
-  const warnings = warningsOf(data);
-  if (warnings === null) return unreadReport("the transcript holds a malformed warning list");
+  const bounded = warningsOf(data);
+  if (bounded === null) return unreadReport("the transcript holds a malformed warning list");
 
   const lastEvents = lastAttemptEvents(data.events);
   let summary = null;
@@ -134,10 +159,12 @@ export function buildLoopReport(data, { attempts = 0 } = {}) {
     typeof data.error === "string" && data.error.trim() !== "" ? redactAndClean(data.error) : null;
 
   return {
+    state: "read",
     summary,
     error,
     failedTurnTest: failedTurnTest(lastEvents),
-    warnings,
+    warnings: bounded.warnings,
+    warningsOverflow: bounded.warningsOverflow,
     transcriptRead: { ok: true },
   };
 }

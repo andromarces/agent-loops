@@ -1,6 +1,9 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 
-const hook = vi.hoisted(() => ({ failRemove: false }));
+const hook = vi.hoisted(() => ({ failRemove: false, root: null }));
 
 vi.mock("node:fs/promises", async (importActual) => {
   const actual = await importActual();
@@ -13,15 +16,23 @@ vi.mock("node:fs/promises", async (importActual) => {
   };
 });
 
+vi.mock("../../src/lib/snapshot.mjs", async (importActual) => {
+  const actual = await importActual();
+  return {
+    ...actual,
+    workTreeRoot: async () => hook.root,
+  };
+});
+
 const { createReviewerScratch, removeReviewerScratch } =
   await import("../../src/lib/reviewer-scratch.mjs");
 const { withRunWarnings } = await import("../../src/lib/run-warnings.mjs");
-const { createTempRepo } = await import("../git-helpers.mjs");
 const { removePath } = await import("../fs-helpers.mjs");
 
 // Usefulness: verifies a delete-by-hand scratch warning reaches the run warning list and the log.
 test("a delete-by-hand reviewer scratch warning reaches the run warning list", async () => {
-  const repo = await createTempRepo();
+  const repo = await mkdtemp(join(tmpdir(), "reviewer-scratch-warning-"));
+  hook.root = repo;
   const warnings = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     const dir = await createReviewerScratch(repo);
@@ -34,6 +45,7 @@ test("a delete-by-hand reviewer scratch warning reaches the run warning list", a
     );
   } finally {
     hook.failRemove = false;
+    hook.root = null;
     warnings.mockRestore();
     await removePath(repo);
   }

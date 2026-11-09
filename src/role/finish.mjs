@@ -71,10 +71,10 @@ function describeJsonParseError(error) {
  * `--compare-head <pr>` makes the PR-head half of the gate and records
  * `headCompare: "verified"` in the envelope and the state file. `--require-accept` and `--require-ci` gate the finish,
  * and every applicable refusal is reported in one error. A run that declared
- * `--pr <pr>` at init must end through `--require-ci <pr>`. Without `--require-ci`
- * or `--compare-head` this subcommand never resolves the PR head, so an omitted
- * marker is an accepted gap.
+ * `--pr <pr>` at init must end through `--require-ci <pr>`.
  */
+// Without `--require-ci` or `--compare-head` this subcommand never resolves the PR head, so an
+// omitted marker is an accepted gap.
 export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (state.lifecycle !== "active") {
     throw new RoleError(`finish is accepted only from active; run is ${state.lifecycle}.`);
