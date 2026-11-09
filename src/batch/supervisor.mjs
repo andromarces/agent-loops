@@ -200,7 +200,8 @@ async function startedChild(child) {
 /** Spawns one headless run with stdout and stderr appended to `logPath`. */
 export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
   if (deps.spawn) return startedChild(await deps.spawn({ args, cwd, logPath }));
-  // Execa opens one shared append stream for both fds and closes it on a normal end or a spawn failure.
+  // Execa opens one shared append stream for both output streams. It closes the stream on a normal
+  // end or a spawn failure.
   const subprocess = killTreeOnExit(
     execa(process.execPath, [cliPath(), ...args], {
       cwd,
