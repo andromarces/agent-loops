@@ -2,14 +2,25 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterAll, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 import { prepareBatch } from "../../src/batch/args.mjs";
 import { git } from "../../src/batch/git.mjs";
 import { tryStateLock } from "../../src/lib/state-lock.mjs";
 import { endSubprocessTree } from "../../src/lib/exec-tree.mjs";
 import { pidAlive } from "../../src/lib/process-identity.mjs";
-import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/store.mjs";
-import { answerDecision, readDecision } from "../../src/batch/decisions.mjs";
+import {
+  batchPaths,
+  readLoop,
+  readManifest,
+  updateLoop,
+  updateManifest,
+} from "../../src/batch/store.mjs";
+import {
+  answerDecision,
+  createDecision,
+  newDecisionId,
+  readDecision,
+} from "../../src/batch/decisions.mjs";
 import {
   childArguments,
   newBatchId,
@@ -1163,10 +1174,27 @@ test("a queued checkpoint with a replaced work tree stops before launch", async 
   }
 });
 
+// One prepared repository serves the new wait cases. Each case gets its own work-tree root.
+let sharedWait;
+async function waitPrepared(issues, overrides = {}) {
+  if (!sharedWait) {
+    const repo = await batchRepo();
+    sharedWait = await preparedFor(repo, [1]);
+  }
+  const id = newBatchId();
+  return {
+    ...sharedWait,
+    id,
+    issues,
+    loops: overrides.loops ?? issues.length,
+    workTreeRoot: join(sharedWait.workTreeRoot, `case-${id}`),
+    ...overrides,
+  };
+}
+
 // Usefulness: a blocked issue waits on the monotonic poll and launches after its blockers close.
 test("a blocked issue waits on the poll and launches after its blockers close", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   let blockedReads = 0;
   let polls = 0;
@@ -1223,14 +1251,13 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
     expect(exitCode).toBe(0);
     expect(summary.loops[0].status).toBe("succeeded");
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: a failed poll read warns, launches nothing, and retries on the next poll.
 test("a failed poll read retries on the next poll", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   let waitReads = 0;
   let blockedReads = 0;
@@ -1238,7 +1265,7 @@ test("a failed poll read retries on the next poll", async () => {
     if (args[0] === "issue" && args[1] === "view") {
       if (args.includes("state,blockedBy")) {
         waitReads += 1;
-        if (waitReads === 1) return { status: 1, stdout: "", stderr: "the read failed" };
+        if (waitReads === 1) return { status: 1, timedOut: true, stdout: "", stderr: "" };
         return {
           status: 0,
           stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] } }),
@@ -1287,14 +1314,13 @@ test("a failed poll read retries on the next poll", async () => {
     expect(child.calls).toHaveLength(1);
     expect(summary.loops[0].status).toBe("succeeded");
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: an issue closed while it waits is reported as skipped and launches no child.
 test("a closed issue while waiting is skipped and not launched", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   let blockedReads = 0;
   const gh = (args) => {
@@ -1348,14 +1374,13 @@ test("a closed issue while waiting is skipped and not launched", async () => {
     expect(exitCode).toBe(0);
     expect(summary.loops[0]).toMatchObject({ status: "skipped", skipReason: "closed" });
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: an abort during a poll wait ends the batch as interrupted with no child.
 test("an abort during a poll wait exits 130", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const gh = (args) => {
     if (args[0] === "issue" && args[1] === "view") {
@@ -1411,16 +1436,14 @@ test("an abort during a poll wait exits 130", async () => {
     expect(summary.status).toBe("interrupted");
     expect(child.calls).toHaveLength(0);
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: the notifier receives one event for a decision, one for a merge, one for completion.
 test("the notifier receives decision, merge, and completion events", async () => {
-  const repo = await batchRepo();
-
   const decisionEvents = [];
-  const first = await preparedFor(repo, [1]);
+  const first = await waitPrepared([1]);
   const firstRoot = join(first.workTreeRoot, "runs");
   const firstChild = childDouble();
   try {
@@ -1460,7 +1483,7 @@ test("the notifier receives decision, merge, and completion events", async () =>
     expect(decisionEvents.some((event) => event.kind === "decision")).toBe(true);
 
     const completionEvents = [];
-    const second = await preparedFor(repo, [1]);
+    const second = await waitPrepared([1]);
     await runBatch({
       prepared: second,
       runsRoot: join(second.workTreeRoot, "runs"),
@@ -1476,14 +1499,13 @@ test("the notifier receives decision, merge, and completion events", async () =>
     });
     expect(completionEvents.some((event) => event.kind === "batch-completed")).toBe(true);
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: batch status carries the decision options, the recommendation, and completion.
 test("batch status shows decision details and completion", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   try {
     await runBatch({
@@ -1511,14 +1533,13 @@ test("batch status shows decision details and completion", async () => {
     expect(status.loops[0].decision.recommended).toBe("resume");
     expect(status.loops[0].decision.state).toBe("pending");
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: a waiting issue sends one merge-required notification when the blockers first appear.
 test("a waiting issue sends a merge-required notification", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const events = [];
   const gh = (args) => {
@@ -1585,14 +1606,13 @@ test("a waiting issue sends a merge-required notification", async () => {
     expect(status.loops[0].requiredMerges).toEqual([9]);
     expect(status.completion).toEqual({ status: "interrupted", complete: false });
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: a malformed decision file fails closed and never restarts the loop.
 test("a malformed decision keeps the loop needs-owner on resume", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   try {
     await runBatch({
@@ -1622,14 +1642,13 @@ test("a malformed decision keeps the loop needs-owner on resume", async () => {
     expect(resumed.summary.loops[0].status).toBe("needs-owner");
     expect(resumed.exitCode).toBe(1);
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: a pending decision and a merge wait both survive, and only the unblocked loop runs.
 test("a pending decision and a merge wait survive a resume", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1, 2], { loops: 2 });
+  const prepared = await waitPrepared([1, 2], { loops: 2 });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const ghWith = (openIssue1) => (args) => {
     if (args[0] === "issue" && args[1] === "view") {
@@ -1716,6 +1735,512 @@ test("a pending decision and a merge wait survive a resume", async () => {
     expect(resumed.summary.loops[1].decision).toBeTruthy();
     expect(resumed.summary.status).toBe("waiting");
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
+});
+
+describe("batch decisions and waits", () => {
+  let shared;
+  beforeAll(async () => {
+    const repo = await batchRepo();
+    shared = await preparedFor(repo, [1]);
+  });
+
+  const prep = (issues, overrides = {}) => ({
+    ...shared,
+    id: newBatchId(),
+    issues,
+    loops: overrides.loops ?? issues.length,
+    ...overrides,
+  });
+  const runsFor = (prepared) => join(shared.workTreeRoot, `runs-${prepared.id}`);
+
+  async function setNeedsOwner(
+    runsRoot,
+    prepared,
+    issue,
+    { reason, attempts = 1, decision, pid = null, startTime = null, decisionAnswer = null },
+  ) {
+    await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason,
+      attempts,
+      decision: decision ?? null,
+      decisionAnswer,
+      pid,
+      startTime,
+      skipReason: null,
+    }));
+  }
+
+  async function makeDecision(runsRoot, prepared, issue, { reason, attempts = 1 }) {
+    const id = newDecisionId(prepared.id, issue, attempts, reason);
+    await createDecision({
+      runsRoot,
+      batchId: prepared.id,
+      id,
+      issue,
+      attempt: attempts,
+      reason,
+      evidence: reason,
+    });
+    return id;
+  }
+
+  // Usefulness: a live answer keeps its identity and never launches or releases the claim.
+  test("a live answer on a resumed loop never launches", async () => {
+    const prepared = prep([201]);
+    const runsRoot = runsFor(prepared);
+    const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
+    live.catch(() => {});
+    try {
+      await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh({ closed: new Set([201]) }),
+        deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      });
+      const reason = "a live state";
+      const decision = await makeDecision(runsRoot, prepared, 201, { reason });
+      await setNeedsOwner(runsRoot, prepared, 201, {
+        reason,
+        decision,
+        pid: live.pid,
+      });
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: decision,
+        option: "abandon",
+      });
+      expect(answered.ok).toBe(true);
+      const child = childDouble();
+      const resumed = await runBatch({
+        prepared: { ...prepared, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      });
+      expect(child.calls).toHaveLength(0);
+      expect(resumed.summary.status).toBe("waiting");
+      const loop = await readLoop(runsRoot, prepared.id, 201);
+      expect(loop.pid).toBe(live.pid);
+      expect(loop.status).toBe("needs-owner");
+    } finally {
+      live.kill("SIGKILL");
+    }
+  });
+
+  // Usefulness: an unverified-steps decision lists no resume option that relaunches.
+  test("an unverified-steps decision lists no resume option", async () => {
+    const prepared = prep([202]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    await setNeedsOwner(runsRoot, prepared, 202, {
+      reason: "unverified-steps",
+      attempts: 1,
+    });
+    await removePath(batchPaths(runsRoot).transcript(prepared.id, 202));
+    const child = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(child.calls).toHaveLength(0);
+    const loop = await readLoop(runsRoot, prepared.id, 202);
+    const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+    expect(decision.ok).toBe(true);
+    expect(decision.decision.options.map((option) => option.key)).toEqual(["abandon", "skip"]);
+    expect(decision.decision.recommended).toBe("abandon");
+    const refused = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: loop.decision,
+      option: "resume",
+    });
+    expect(refused.ok).toBe(false);
+    expect(resumed.summary.status).toBe("waiting");
+  });
+
+  // Usefulness: a waiting issue takes a free slot while another child still runs.
+  test("a waiting issue launches while another child runs", async () => {
+    const prepared = prep([203, 204], { loops: 2 });
+    const runsRoot = runsFor(prepared);
+    let blockedReads = 0;
+    const gh = (args) => {
+      if (args[0] === "issue" && args[1] === "view") {
+        const issue = Number(args[2]);
+        if (args.includes("state,blockedBy")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] } }),
+            stderr: "",
+          };
+        }
+        if (args.some((arg) => arg.includes("blockedBy"))) {
+          blockedReads += issue === 203 ? 1 : 0;
+          const open = issue === 203 && blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
+          return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
+        }
+        if (args.includes("body"))
+          return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+        if (args.includes("title")) {
+          return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+        }
+        return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    let now = 0;
+    const child = childDouble({ hold: true });
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 1000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 50 && child.calls.length < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(child.calls).toHaveLength(2);
+      for (const pending of child.pending) pending.resolve({ exitCode: 0 });
+      await run;
+    } finally {
+      for (const pending of child.pending) pending.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
+  // Usefulness: a new owner stop after an applied answer creates a new decision id.
+  test("a new stop after an applied answer creates a new decision", async () => {
+    const prepared = prep([205]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    const reason = "the recorded work tree is missing";
+    const first = await makeDecision(runsRoot, prepared, 205, { reason });
+    await setNeedsOwner(runsRoot, prepared, 205, { reason, decision: first });
+    const answered = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: first,
+      option: "resume",
+    });
+    expect(answered.ok).toBe(true);
+    await setNeedsOwner(runsRoot, prepared, 205, {
+      reason,
+      decision: first,
+      decisionAnswer: "resume",
+    });
+    const transcript = batchPaths(runsRoot).transcript(prepared.id, 205);
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(transcript, JSON.stringify({ ...data, exitCode: 130 }));
+    await removePath(join(shared.workTreeRoot, "issue-205"));
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    const loop = await readLoop(runsRoot, prepared.id, 205);
+    expect(loop.status).toBe("needs-owner");
+    expect(loop.decision).not.toBe(first);
+    expect((await readDecision(runsRoot, prepared.id, loop.decision)).ok).toBe(true);
+    expect(resumed.summary.status).toBe("waiting");
+  });
+
+  // Usefulness: a live answer updates the status and completes the batch once.
+  test("a live abandon answer completes the batch", async () => {
+    const prepared = prep([206, 207], { loops: 2 });
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([206, 207]) }),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    const reason = "a live decision";
+    const decision = await makeDecision(runsRoot, prepared, 206, { reason });
+    await setNeedsOwner(runsRoot, prepared, 206, { reason, decision });
+    await updateLoop(runsRoot, prepared.id, 207, (loop) => ({
+      ...loop,
+      status: "queued",
+      attempts: 0,
+      workTree: null,
+      pid: null,
+      startTime: null,
+    }));
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      status: "waiting",
+      completionNotified: false,
+    }));
+    const events = [];
+    const child = childDouble({ hold: true });
+    const run = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: async (event) => {
+          events.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 50,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 100 && child.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(child.calls).toHaveLength(1);
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: decision,
+        option: "abandon",
+      });
+      expect(answered.ok).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      for (const pending of child.pending) pending.resolve({ exitCode: 0 });
+      const { exitCode, summary } = await run;
+      expect(exitCode).toBe(1);
+      expect(summary.status).toBe("failed");
+      expect(summary.loops[0].status).toBe("failed");
+      expect(summary.loops[1].status).toBe("succeeded");
+      expect(events.filter((event) => event.kind === "batch-completed")).toHaveLength(1);
+    } finally {
+      for (const pending of child.pending) pending.resolve({ exitCode: 0 });
+    }
+  });
+
+  // Usefulness: a malformed decision isolates its loop and keeps the queue running.
+  test("a malformed decision isolates its loop", async () => {
+    const prepared = prep([208, 209], { loops: 2 });
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([208, 209]) }),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    await setNeedsOwner(runsRoot, prepared, 208, {
+      reason: "unverified-steps",
+      attempts: 1,
+    });
+    await updateLoop(runsRoot, prepared.id, 209, (loop) => ({
+      ...loop,
+      status: "queued",
+      attempts: 0,
+      workTree: null,
+      pid: null,
+      startTime: null,
+    }));
+    const broken = newDecisionId(prepared.id, 208, 1, "unverified-steps");
+    await mkdir(batchPaths(runsRoot).decisions(prepared.id), { recursive: true });
+    await writeFile(batchPaths(runsRoot).decision(prepared.id, broken), "{");
+    const child = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(child.calls).toHaveLength(1);
+    expect(resumed.summary.loops[0].status).toBe("needs-owner");
+    expect(resumed.summary.loops[0].reason).toContain("unreadable");
+    expect(resumed.summary.loops[1].status).toBe("succeeded");
+  });
+
+  // Usefulness: a resume of only an unanswered decision writes nothing.
+  test("a resume of only an unanswered decision writes nothing", async () => {
+    const prepared = prep([210]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+    });
+    const reason = "a waiting state";
+    const decision = await makeDecision(runsRoot, prepared, 210, { reason });
+    await setNeedsOwner(runsRoot, prepared, 210, { reason, decision });
+    await updateManifest(runsRoot, prepared.id, (value) => ({ ...value, status: "waiting" }));
+    const manifestFile = batchPaths(runsRoot).manifest(prepared.id);
+    const loopFile = batchPaths(runsRoot).loop(prepared.id, 210);
+    const beforeManifest = await stat(manifestFile, { bigint: true });
+    const beforeLoop = await stat(loopFile, { bigint: true });
+    const child = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(child.calls).toHaveLength(0);
+    expect(resumed.summary.status).toBe("waiting");
+    expect((await stat(manifestFile, { bigint: true })).mtimeNs).toBe(beforeManifest.mtimeNs);
+    expect((await stat(loopFile, { bigint: true })).mtimeNs).toBe(beforeLoop.mtimeNs);
+  });
+
+  // Usefulness: a poll read carries a timeout and the abort signal.
+  test("a poll read carries a timeout and the abort signal", async () => {
+    const prepared = prep([211]);
+    const runsRoot = runsFor(prepared);
+    let pollOptions = null;
+    const gh = (args, cwd, options) => {
+      if (args[0] === "issue" && args[1] === "view") {
+        if (args.includes("state,blockedBy")) {
+          pollOptions = options;
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+            }),
+            stderr: "",
+          };
+        }
+        if (args.some((arg) => arg.includes("blockedBy"))) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
+            stderr: "",
+          };
+        }
+        if (args.includes("body"))
+          return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+        return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    const child = childDouble();
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 10,
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    controller.abort();
+    await run;
+    expect(pollOptions).not.toBeNull();
+    expect(typeof pollOptions.timeoutMs).toBe("number");
+    expect(pollOptions.timeoutMs).toBeGreaterThan(0);
+    expect(pollOptions.signal).toBeInstanceOf(AbortSignal);
+    expect(child.calls).toHaveLength(0);
+  });
+
+  // Usefulness: a caller cancel keeps its own reason object through the poll.
+  test("a caller cancel keeps its reason identity", async () => {
+    const prepared = prep([212]);
+    const runsRoot = runsFor(prepared);
+    const gh = (args) => {
+      if (args[0] === "issue" && args[1] === "view") {
+        if (args.includes("state,blockedBy")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+            }),
+            stderr: "",
+          };
+        }
+        if (args.some((arg) => arg.includes("blockedBy"))) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
+            stderr: "",
+          };
+        }
+        if (args.includes("body"))
+          return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+        return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    const reason = { code: "operator-cancel" };
+    let seen = null;
+    const controller = new AbortController();
+    const child = childDouble();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 60_000,
+        sleep: (ms, signal) =>
+          new Promise((resolve) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                seen = signal.reason;
+                resolve();
+              },
+              { once: true },
+            );
+          }),
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    controller.abort(reason);
+    const { exitCode } = await run;
+    expect(exitCode).toBe(130);
+    expect(seen).toBe(reason);
+  });
 });

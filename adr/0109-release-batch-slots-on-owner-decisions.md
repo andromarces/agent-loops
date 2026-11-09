@@ -8,7 +8,7 @@ accepted
 
 This ADR partially supersedes
 [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md).
-These parts of ADR 0106 are replaced:
+These parts of `adr/0106-foreground-batch-scheduling.md` are replaced:
 
 - Decision 1's return rule. The foreground command also returns with status `waiting` when a
   pending decision needs the owner.
@@ -17,11 +17,11 @@ These parts of ADR 0106 are replaced:
 - Decision 6's `blocked` skip. A blocked issue waits and is polled, and it launches after its
   blockers close. It is not a final skip.
 - Decision 16's deferred in-batch decision request, slot release, owner-merge continuation, and
-  desktop notifications. ADR 0109 provides all four.
-- The consequence that a `needs-owner` loop holds a slot until milestone 3, and the milestone 1
-  standalone sentence that a loop needing an owner decision or a merge holds one slot.
+  desktop notifications. `adr/0109-release-batch-slots-on-owner-decisions.md` provides all four.
+- The consequence that a `needs-owner` loop holds a slot until milestone 3. The milestone 1
+  standalone sentence also says that such a loop holds one slot.
 
-Every other decision, consequence, and acceptance check of ADR 0106 stays in force. The batch
+Every other decision, consequence, and acceptance check of `adr/0106-foreground-batch-scheduling.md` stays in force. The batch
 still never merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 
 ## Date
@@ -30,7 +30,7 @@ still never merges, approves, comments on, labels, force-pushes, resets, or dele
 
 ## Context
 
-ADR 0106 runs one foreground batch of headless loops. A loop that stops as `needs-owner` keeps
+`adr/0106-foreground-batch-scheduling.md` runs one foreground batch of headless loops. A loop that stops as `needs-owner` keeps
 its slot, because milestone 1 has no answer path. A selected issue that an open issue blocks is
 a final skip, so the owner starts a new batch after the blocker closes. The owner sees neither
 event without reading `batch status`.
@@ -40,29 +40,33 @@ decision. The owner answers one decision by its id and one option. A blocked iss
 the running batch after its blockers close. A desktop notification announces a new decision, a
 required merge, and batch completion on macOS and Windows.
 
-The accepted ADR 0106 already fixes claims, checkpoints, budgets, gates, and cleanup. This ADR
+The accepted `adr/0106-foreground-batch-scheduling.md` already fixes claims, checkpoints, budgets, gates, and cleanup. This ADR
 composes those rules and changes only the slot, blocking, answer, and notification behavior.
 
 ## Decision
 
 ### 1. A `needs-owner` loop becomes a pending decision and releases its slot
 
-Every transition that ADR 0106 records as `needs-owner` now creates a pending decision. The
+Every transition that `adr/0106-foreground-batch-scheduling.md` records as `needs-owner` now creates a pending decision. The
 decision holds a unique id, the issue, the reason, the evidence, two or more option keys, and one
 recommended option. The id is `<batch id>-issue-<issue>-<attempt>-<reason hash>`, so it is
-unique across batches and stable for one state.
+unique across batches. A new stop after an applied answer appends a short nonce.
 
 The loop checkpoint keeps the decision id in `decision`. A later `needs-owner` transition with
-the same reason reuses that pending decision. A changed reason creates a new decision, because the
-old evidence no longer describes the loop.
+the same reason reuses that decision while its answer is not applied. A new stop after an applied
+answer creates a new decision with a new id.
 
 A loop with a pending decision is not terminal. The batch counts it as no live slot, so the next
 eligible issue launches in the freed slot. The loop keeps its claim, work tree, transcript, and
-remaining step budget, as ADR 0106 decision 7 states for `needs-owner`.
+remaining step budget, as `adr/0106-foreground-batch-scheduling.md` decision 7 states for `needs-owner`.
 
 The two fixed options are `resume` and `abandon`. `resume` is recommended. `resume` returns the
 loop to the queue after the owner resolves the local or remote state. `abandon` ends the loop as
 `failed` with reason `owner-abandoned`, releases its claim, and keeps its work tree.
+
+A decision lists only options that recovery can carry out. A loop whose step count cannot be
+proven offers `abandon` and `skip`, and no resume option. Every other state offers `resume` and
+`abandon`.
 
 ### 2. The answer command binds one option to one decision
 
@@ -73,16 +77,19 @@ agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 ```
 
 The answer is bound to that batch id and that decision id only. The command refuses an unknown
-batch, an unknown decision, a decision of another batch, an answered decision, and an option that
-the decision does not list. A refusal exits 2 and writes nothing.
+batch, an unknown decision, and a decision of another batch. It also refuses an answered decision
+and an option that the decision does not list. A refusal exits 2 and writes nothing.
 
 A malformed decision file, a malformed answer file, and a loop checkpoint that does not name the
 decision each exit 1 and write nothing. The reader never guesses a missing option or a partial
 record.
 
 A successful answer prints one JSON object on stdout and exits 0. `resume` sets the loop
-checkpoint to `queued`. `abandon` sets it to `failed` with reason `owner-abandoned` and releases
-the claim.
+checkpoint to `queued`. `abandon` sets it to `failed` with reason `owner-abandoned`. `skip` sets
+it to `skipped` with reason `owner-skipped`. Both terminal options release the claim.
+
+An answer never clears or changes the recorded process identity. A live process keeps the loop
+pending, and recovery applies the answer after the process is proven dead.
 
 ### 3. An exclusive answer file makes two answers race safely
 
@@ -98,16 +105,25 @@ The answer file is written before the loop checkpoint changes. A crash between t
 answer recorded, and the next `batch resume` applies it. An answer write is guarded by an
 observable change, so a repeated answer never rewrites the file.
 
+A repeated decision create writes no file, not even a temporary one. A resume of only an
+unanswered decision writes neither the manifest nor the checkpoint.
+
 ### 4. A resume answer returns the loop to the queue with the remaining budget
 
 `batch resume` reads the pending decision first. A pending decision with no answer keeps its
 `needs-owner` status, stays pending, holds no slot, and is reported again. A malformed decision
 or answer keeps the loop `needs-owner` and logs a warning. The resume never guesses an answer.
 
+Recovery checks process ownership first. A live or unreadable identity keeps the loop pending,
+and the answer applies only after the process is proven dead.
+
 An answer with `abandon` ends the loop as `failed` and releases its claim. An answer with
 `resume` sets the loop `queued`, and the normal recovery path re-checks the recorded state.
 
-The resumed attempt keeps the remaining step budget rules of ADR 0106 decision 10. It continues
+An answer never invents a step budget. A loop whose steps cannot be proven offers no resume
+option, so no answer takes the fresh-launch path.
+
+The resumed attempt keeps the remaining step budget rules of `adr/0106-foreground-batch-scheduling.md` decision 10. It continues
 the same transcript, passes `--continue-from`, and passes `--max-steps <remaining>`. A zero
 remainder ends the loop as `failed` with reason `step-budget-exhausted`. A relaunch waits for a
 free loop slot, because the answer does not hold one.
@@ -125,6 +141,10 @@ monotonic clock, never `Date.now()`.
 A blocked issue whose blockers all close returns to the queue and launches in the next free slot.
 An issue that closes while it waits is `skipped` with reason `closed` and launches nothing. A
 failed read during the poll logs a warning, launches nothing, and retries on the next poll.
+
+The poll and the answer check run while children run. A free slot is filled as soon as a waiting
+issue becomes eligible. Each poll read has a stated timeout and the abort signal. A read at the
+bound counts as a failed read.
 
 The batch stays live while a waiting issue exists, so the owner needs no new start command. A
 decision-waiting loop does not keep the batch live, because only the owner can answer it.
@@ -156,6 +176,9 @@ same poll interval and launches it after its blockers close.
 The batch status `waiting` covers both cases. The command exits 1, and no completion notification
 is sent while either state remains. The owner answers a decision or merges a blocker, and runs
 `batch resume` only when the batch is not live.
+
+The running supervisor applies a live answer to its in-memory loop, queue, status, and completion
+check. It sends one completion notification when the batch completes.
 
 ### 8. `batch status` shows the decision and wait details
 
@@ -213,7 +236,7 @@ The implementation passes these checks:
 
 ## Alternatives
 
-1. **Keep the slot while a loop waits for a decision.** Rejected. It is the ADR 0106 behavior
+1. **Keep the slot while a loop waits for a decision.** Rejected. It is the `adr/0106-foreground-batch-scheduling.md` behavior
    that stalls the batch, and the issue asks for the release.
 2. **Answer through a GitHub comment or label.** Rejected. The repository forbids a new label
    without authorization, and a remote write is not atomic.

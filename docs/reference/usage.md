@@ -383,7 +383,7 @@ agent-loop test-slot --if-held -- "pnpm exec vp test run tests/foo.test.mjs"
 
 ## Batch runs
 
-`agent-loop batch start` owns one batch of independent issues for its whole life. It runs in the foreground, prints progress on stderr, and returns one JSON summary on stdout when every selected issue is terminal, when an owner decision is pending, or when the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
+`agent-loop batch start` owns one batch of independent issues for its whole life. It runs in the foreground and prints progress on stderr. It returns one JSON summary on stdout when every selected issue is terminal, when an owner decision is pending, or when the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
 
 ### Commands and settings
 
@@ -456,7 +456,7 @@ The batch store is `<runs root>/batches/<batch id>/`: `batch.json` holds the fro
 
 The store also holds `decisions/<decision id>.json` and `answers/<decision id>.json`. Each file is created with no overwrite, and a partial or unreadable file fails closed.
 
-Checkpoints are written on an event only: at `start`, at a launch, at a skip, at a child exit, at a reconciliation result that changes the loop, at a decision or waiting transition, and at the final batch status. There is no heartbeat and no periodic write. `batch status` writes nothing, and a resume with nothing to do writes nothing.
+Checkpoints are written on an event only. The events are `start`, a launch, a skip, a child exit, a reconciliation change, a decision or wait change, and the final status. There is no heartbeat and no periodic write. `batch status` writes nothing, and a resume with nothing to do writes nothing.
 
 ### Loop statuses and the summary
 

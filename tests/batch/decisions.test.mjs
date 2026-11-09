@@ -1,9 +1,12 @@
 import { mkdir, mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import {
   ABANDON_REASON,
+  SKIP_REASON,
+  UNVERIFIED_STEPS_OPTIONS,
   answerDecision,
   createDecision,
   newDecisionId,
@@ -109,11 +112,15 @@ test("a decision create with an existing id writes nothing", async () => {
     };
     await createDecision(params);
     const file = batchPaths(root).decision(BATCH, id);
+    const dir = batchPaths(root).decisions(BATCH);
     const before = await stat(file, { bigint: true });
+    const beforeDir = await stat(dir, { bigint: true });
     const again = await createDecision(params);
     const after = await stat(file, { bigint: true });
+    const afterDir = await stat(dir, { bigint: true });
     expect(again.created).toBe(false);
     expect(after.mtimeNs).toBe(before.mtimeNs);
+    expect(afterDir.mtimeNs).toBe(beforeDir.mtimeNs);
   } finally {
     await removePath(root);
   }
@@ -349,6 +356,102 @@ test("a stale loop refuses the answer", async () => {
     expect(result.ok).toBe(false);
     expect(result.usage).toBe(true);
     await expect(readdir(batchPaths(root).answers(BATCH))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    await removePath(root);
+  }
+});
+
+// Usefulness: an answer on a live loop keeps its process identity and its claim.
+test("an answer on a live loop keeps its identity and claim", async () => {
+  const { root, first } = await storeFor();
+  const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
+  live.catch(() => {});
+  try {
+    await acquireClaim(root, REPO_KEY, 1, { batchId: BATCH, pid: process.pid });
+    await updateLoop(root, BATCH, 1, (loop) => ({
+      ...loop,
+      pid: live.pid,
+      startTime: null,
+    }));
+    const result = await answerDecision({
+      runsRoot: root,
+      batchId: BATCH,
+      decisionId: first,
+      option: "abandon",
+    });
+    expect(result.ok).toBe(true);
+    const loop = await readLoop(root, BATCH, 1);
+    expect(loop.pid).toBe(live.pid);
+    expect(loop.status).toBe("needs-owner");
+    expect((await stat(batchPaths(root).claim(REPO_KEY, 1))).isFile()).toBe(true);
+  } finally {
+    live.kill("SIGKILL");
+    await removePath(root);
+  }
+});
+
+// Usefulness: an answer with an unlisted option and no issue fails closed.
+test("an answer with an unlisted option and no issue is refused", async () => {
+  const { root, first } = await storeFor();
+  try {
+    await mkdir(batchPaths(root).answers(BATCH), { recursive: true });
+    const file = batchPaths(root).answer(BATCH, first);
+    await writeFile(
+      file,
+      JSON.stringify({ decisionId: first, batchId: BATCH, issue: 1, option: "force-push" }),
+    );
+    expect((await readAnswer(root, BATCH, first, ["resume", "abandon"], 1)).ok).toBe(false);
+    await writeFile(file, JSON.stringify({ decisionId: first, batchId: BATCH, option: "resume" }));
+    expect((await readAnswer(root, BATCH, first, ["resume"], 1)).ok).toBe(false);
+  } finally {
+    await removePath(root);
+  }
+});
+
+// Usefulness: an unverified-steps decision offers no resume option that relaunches.
+test("the unverified-steps options omit resume", () => {
+  const keys = UNVERIFIED_STEPS_OPTIONS.map((option) => option.key);
+  expect(keys).toEqual(["abandon", "skip"]);
+  expect(keys).not.toContain("resume");
+  expect(UNVERIFIED_STEPS_OPTIONS.filter((option) => option.recommended)).toHaveLength(1);
+});
+
+// Usefulness: a skip answer ends the loop as skipped and releases its claim.
+test("a skip answer skips the loop and releases its claim", async () => {
+  const { root } = await storeFor();
+  try {
+    const id = newDecisionId(BATCH, 1, 1, "unverified-steps");
+    await createDecision({
+      runsRoot: root,
+      batchId: BATCH,
+      id,
+      issue: 1,
+      attempt: 1,
+      reason: "unverified-steps",
+      evidence: "the transcript is missing",
+      options: UNVERIFIED_STEPS_OPTIONS,
+      recommended: "abandon",
+    });
+    await updateLoop(root, BATCH, 1, (loop) => ({
+      ...loop,
+      reason: "unverified-steps",
+      decision: id,
+    }));
+    await acquireClaim(root, REPO_KEY, 1, { batchId: BATCH, pid: process.pid });
+    const result = await answerDecision({
+      runsRoot: root,
+      batchId: BATCH,
+      decisionId: id,
+      option: "skip",
+    });
+    expect(result.ok).toBe(true);
+    expect(await readLoop(root, BATCH, 1)).toMatchObject({
+      status: "skipped",
+      skipReason: SKIP_REASON,
+    });
+    await expect(stat(batchPaths(root).claim(REPO_KEY, 1))).rejects.toMatchObject({
       code: "ENOENT",
     });
   } finally {

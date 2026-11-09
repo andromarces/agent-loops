@@ -18,11 +18,13 @@ import { cleanupLoop } from "./cleanup.mjs";
 import {
   ABANDON_REASON,
   DECISION_OPTIONS,
-  RECOMMENDED_OPTION,
+  SKIP_REASON,
   createDecision,
   newDecisionId,
+  optionsForReason,
   readAnswer,
   readDecision,
+  recommendedOf,
 } from "./decisions.mjs";
 import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
@@ -42,12 +44,16 @@ import {
   updateManifest,
 } from "./store.mjs";
 
-// A needs-owner loop becomes a pending decision and releases its slot (ADR 0109 decision 1).
-// A waiting loop keeps its checkpoint and is re-checked on the poll (ADR 0109 decision 5).
+// A needs-owner loop becomes a pending decision and releases its slot
+// (adr/0109-release-batch-slots-on-owner-decisions.md decision 1). A waiting loop keeps its
+// checkpoint and is re-checked on the poll (adr/0109-release-batch-slots-on-owner-decisions.md
+// decision 5).
 const TERMINAL = new Set(["succeeded", "skipped", "failed"]);
 const INTERRUPT_WAIT_MS = 30_000;
-/** The wait between two re-checks of a blocked issue (ADR 0109 decision 5). */
+/** The wait between two re-checks of a blocked issue (adr/0109-release-batch-slots-on-owner-decisions.md decision 5). */
 export const POLL_INTERVAL_MS = 15_000;
+/** The bound on one poll read of the wait state. */
+export const POLL_READ_TIMEOUT_MS = 60_000;
 
 function defaultSleep(ms, signal) {
   return new Promise((resolve) => {
@@ -291,6 +297,37 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     if (!pending) {
       return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
     }
+    const actionable = [];
+    for (const issue of manifest.issues) {
+      const loop = loops.get(issue);
+      if (loop.status === "needs-owner") {
+        if (typeof loop.decision !== "string") {
+          actionable.push(issue);
+          continue;
+        }
+        const decision = await readDecision(runsRoot, id, loop.decision);
+        if (decision === null || !decision.ok) continue;
+        const options = decision.decision.options.map((option) => option.key);
+        const answer = await readAnswer(runsRoot, id, loop.decision, options, loop.issue);
+        if (answer !== null) actionable.push(issue);
+      } else if (loop.status === "waiting") {
+        actionable.push(issue);
+      } else if (!terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null)) {
+        actionable.push(issue);
+      }
+    }
+    if (actionable.length === 0) {
+      if (manifest.status !== "waiting") {
+        manifest = (
+          await updateManifestReturning(runsRoot, id, (value) => ({
+            ...value,
+            status: "waiting",
+            pauseReason: null,
+          }))
+        ).manifest;
+      }
+      return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+    }
     if (manifest.status !== "running") {
       manifest = (
         await updateManifestReturning(runsRoot, id, (value) => ({
@@ -332,8 +369,11 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   const controller = new AbortController();
   if (deps.signal) {
-    if (deps.signal.aborted) controller.abort();
-    else deps.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    if (deps.signal.aborted) controller.abort(deps.signal.reason);
+    else
+      deps.signal.addEventListener("abort", () => controller.abort(deps.signal.reason), {
+        once: true,
+      });
   }
 
   let interrupted = false;
@@ -342,6 +382,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   const children = new Map();
   const lockSkipped = new Set();
   const waiting = new Set();
+  const pendingDecisions = new Set();
   let pausedReason = null;
   const notifier = deps.notifier ?? defaultNotify;
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
@@ -385,7 +426,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     deps.signal.addEventListener("abort", () => {
       if (!interrupted) {
         interrupted = true;
-        controller.abort();
+        controller.abort(deps.signal.reason);
         forward("SIGINT");
       }
     });
@@ -426,11 +467,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   const optionKeysOf = (decision) =>
     (decision?.options ?? DECISION_OPTIONS).map((option) => option.key).join(", ");
 
+  const decisionOptions = (decision) => decision.options.map((option) => option.key);
+
   const markNeedsOwner = async (issue, reason, { evidence = null, extra = {} } = {}) => {
     const current = await readLoop(runsRoot, id, issue);
     const attempt = Number.isInteger(current?.attempts) ? current.attempts : 0;
     let decisionId = null;
     let created = false;
+    const options = optionsForReason(reason);
+    const recommended = recommendedOf(options);
+
     if (typeof current?.decision === "string") {
       const existing = await readDecision(runsRoot, id, current.decision);
       if (
@@ -439,22 +485,77 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         existing.decision.reason === reason &&
         existing.decision.attempt === attempt
       ) {
-        decisionId = current.decision;
+        const answer = await readAnswer(
+          runsRoot,
+          id,
+          current.decision,
+          decisionOptions(existing.decision),
+          issue,
+        );
+        const applied = current.decisionAnswer != null;
+        if (answer === null || !applied) decisionId = current.decision;
       }
     }
     if (decisionId === null) {
-      const idForState = newDecisionId(id, issue, attempt, reason);
-      const result = await createDecision({
-        runsRoot,
-        batchId: id,
-        id: idForState,
-        issue,
-        attempt,
-        reason,
-        evidence,
-      });
-      decisionId = result.decision.id;
-      created = result.created;
+      let idForState = newDecisionId(id, issue, attempt, reason);
+      const existingAtId = await readDecision(runsRoot, id, idForState);
+      if (existingAtId !== null && !existingAtId.ok) {
+        const refusal = `the decision file is unreadable: ${existingAtId.reason}`;
+        logWarn(`issue ${issue}: ${refusal}`);
+        await changeLoop(issue, {
+          status: "needs-owner",
+          reason: refusal,
+          skipReason: null,
+          decision: idForState,
+          ...extra,
+        });
+        pendingDecisions.add(issue);
+        return false;
+      }
+      if (existingAtId !== null && existingAtId.ok) {
+        const sameState =
+          existingAtId.decision.reason === reason && existingAtId.decision.attempt === attempt;
+        const answer = await readAnswer(
+          runsRoot,
+          id,
+          idForState,
+          decisionOptions(existingAtId.decision),
+          issue,
+        );
+        if (sameState && answer === null) {
+          decisionId = idForState;
+        } else {
+          idForState = `${idForState}-${randomUUID().slice(0, 8)}`;
+        }
+      }
+      if (decisionId === null) {
+        const result = await createDecision({
+          runsRoot,
+          batchId: id,
+          id: idForState,
+          issue,
+          attempt,
+          reason,
+          evidence,
+          options,
+          recommended,
+        });
+        if (result.decision === null) {
+          const refusal = `the decision file is unreadable: ${result.error ?? idForState}`;
+          logWarn(`issue ${issue}: ${refusal}`);
+          await changeLoop(issue, {
+            status: "needs-owner",
+            reason: refusal,
+            skipReason: null,
+            decision: idForState,
+            ...extra,
+          });
+          pendingDecisions.add(issue);
+          return false;
+        }
+        decisionId = result.decision.id;
+        created = result.created;
+      }
     }
     // A recorded live process keeps its pid and stamp, so a later resume re-checks it first.
     await changeLoop(issue, {
@@ -465,6 +566,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       ...(created ? { decisionAnswer: null } : {}),
       ...extra,
     });
+    pendingDecisions.add(issue);
     if (created) {
       logInfo(`issue ${issue}: decision ${decisionId} created (${reason})`);
       const read = await readDecision(runsRoot, id, decisionId);
@@ -472,13 +574,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await sendNotification({
         kind: "decision",
         title: "Batch decision needed",
-        text: `Batch ${id} issue ${issue} needs a decision: ${reason}. Options: ${optionKeysOf(decision)}. Recommended: ${decision?.recommended ?? RECOMMENDED_OPTION}. Answer: agent-loop batch answer --batch ${id} --decision ${decisionId} --option <key>`,
+        text: `Batch ${id} issue ${issue} needs a decision: ${reason}. Options: ${optionKeysOf(decision)}. Recommended: ${recommendedOf(decision?.options ?? options)}. Answer: agent-loop batch answer --batch ${id} --decision ${decisionId} --option <key>`,
       });
     }
     return created;
   };
 
   const applyDecisionAnswer = async (issue, current) => {
+    if (isLive(current) && (await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
+      return { kind: "pending" };
+    }
     if (typeof current.decision !== "string") {
       await markNeedsOwner(issue, current.reason ?? "needs-owner", {
         evidence: current.reason ?? null,
@@ -487,33 +592,42 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     const decision = await readDecision(runsRoot, id, current.decision);
     if (decision === null || !decision.ok) {
-      logWarn(
-        `issue ${issue}: decision ${current.decision} is unreadable; the loop stays needs-owner`,
-      );
+      logWarn(`issue ${issue}: decision ${current.decision} is unreadable. The loop stays pending`);
       return { kind: "malformed" };
     }
-    const answer = await readAnswer(runsRoot, id, current.decision);
+    const answer = await readAnswer(
+      runsRoot,
+      id,
+      current.decision,
+      decisionOptions(decision.decision),
+      current.issue,
+    );
     if (answer !== null && !answer.ok) {
-      logWarn(
-        `issue ${issue}: answer ${current.decision} is unreadable; the loop stays needs-owner`,
-      );
+      logWarn(`issue ${issue}: answer ${current.decision} is unreadable. The loop stays pending`);
       return { kind: "malformed" };
     }
     if (answer === null) return { kind: "pending" };
-    const abandon = answer.answer.option === "abandon";
-    await changeLoop(issue, {
-      status: abandon ? "failed" : "queued",
-      reason: abandon ? ABANDON_REASON : null,
-      skipReason: null,
-      decisionAnswer: answer.answer.option,
-      pid: null,
-      startTime: null,
-    });
-    if (abandon) {
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-      return { kind: "abandoned" };
+    const option = answer.answer.option;
+    if (option === "resume") {
+      await changeLoop(issue, {
+        status: "queued",
+        reason: null,
+        skipReason: null,
+        decisionAnswer: option,
+      });
+      return { kind: "resume", loop: await readLoop(runsRoot, id, issue) };
     }
-    return { kind: "resume", loop: await readLoop(runsRoot, id, issue) };
+    if (option === "abandon" || option === "skip") {
+      const patch =
+        option === "abandon"
+          ? { status: "failed", reason: ABANDON_REASON, skipReason: null }
+          : { status: "skipped", skipReason: SKIP_REASON, reason: "the owner stopped the loop" };
+      await changeLoop(issue, { ...patch, decisionAnswer: option });
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      return { kind: "terminal" };
+    }
+    logWarn(`issue ${issue}: decision ${current.decision} names an unknown option`);
+    return { kind: "malformed" };
   };
 
   const launchIssue = async (issue, { recovery = null } = {}) => {
@@ -865,14 +979,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   const recover = async (issue, initial) => {
     let loop = initial;
-    if (loop.status === "needs-owner") {
-      const applied = await applyDecisionAnswer(issue, loop);
-      if (applied.kind !== "resume") return;
-      loop = applied.loop;
-    }
     if (isLive(loop)) {
       // A recorded live PID is never restarted. Without a readable identity the loop needs its
-      // owner instead of waiting forever (ADR 0106 decision 10).
+      // owner instead of waiting forever (adr/0106-foreground-batch-scheduling.md decision 10).
       const current = await processStartTime(loop.pid);
       if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
         // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
@@ -885,6 +994,11 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         if (interrupted || hard) return;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
+    }
+    if (loop.status === "needs-owner") {
+      const applied = await applyDecisionAnswer(issue, loop);
+      if (applied.kind !== "resume") return;
+      loop = applied.loop;
     }
     const transcript = await readTranscript(loop.transcript);
     if (transcript === null && loop.attempts > 0) {
@@ -974,11 +1088,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     });
   };
 
-  // Fill the loop slots from the frozen set in order. A waiting issue is polled outside the queue.
+  // Fill the loop slots from the frozen set in order. A waiting issue and a pending decision
+  // are polled outside the queue.
   const remaining = new Set();
   for (const issue of manifest.issues) {
     const loop = loops.get(issue);
     if (loop.status === "waiting") waiting.add(issue);
+    else if (loop.status === "needs-owner") pendingDecisions.add(issue);
     else if (!terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null)) {
       remaining.add(issue);
     }
@@ -991,8 +1107,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const reply = await gh(
       ["issue", "view", String(issue), "--json", "state,blockedBy"],
       prepared.repo,
-      { signal: controller.signal },
+      { signal: controller.signal, timeoutMs: POLL_READ_TIMEOUT_MS },
     );
+    if (reply?.timedOut) throw new Error("the read reached its bound");
     if (reply?.status !== 0) {
       throw new Error((reply?.stderr ?? "").trim() || `exit ${reply?.status ?? "unknown"}`);
     }
@@ -1017,7 +1134,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       read = await readWaitState(issue);
     } catch (err) {
       if (interrupted || hard) return "wait";
-      logWarn(`issue ${issue}: the wait read failed: ${err.message}; retrying on the next poll`);
+      logWarn(`issue ${issue}: the wait read failed: ${err.message}. Retrying on the next poll`);
       return "wait";
     }
     if (String(read.state).toUpperCase() !== "OPEN") {
@@ -1054,17 +1171,55 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       pid: null,
       startTime: null,
     });
-    logInfo(`issue ${issue}: blockers closed; queued for launch`);
+    logInfo(`issue ${issue}: blockers closed. Queued for launch`);
     return "ready";
   };
+  const refreshWaiting = async () => {
+    for (const issue of waiting) {
+      const result = await recheckWaiting(issue);
+      if (result === "done") waiting.delete(issue);
+      else if (result === "ready") {
+        waiting.delete(issue);
+        remaining.add(issue);
+      }
+    }
+  };
+  const refreshPendingDecisions = async () => {
+    for (const issue of pendingDecisions) {
+      const current = await readLoop(runsRoot, id, issue);
+      if (current === null) continue;
+      loops.set(issue, current);
+      if (current.status !== "needs-owner") {
+        pendingDecisions.delete(issue);
+        if (current.status === "queued") remaining.add(issue);
+        continue;
+      }
+      const applied = await applyDecisionAnswer(issue, current);
+      if (applied.kind === "resume") {
+        pendingDecisions.delete(issue);
+        remaining.add(issue);
+      } else if (applied.kind === "terminal") {
+        pendingDecisions.delete(issue);
+      }
+    }
+  };
+  const syncFromDisk = async () => {
+    for (const issue of manifest.issues) {
+      const current = await readLoop(runsRoot, id, issue);
+      if (current !== null) loops.set(issue, current);
+    }
+  };
+  await refreshPendingDecisions();
   const canFill = () => active.size < prepared.loops;
   let pollLogged = false;
+  let nextPoll = clock.now() + pollIntervalMs;
   for (;;) {
     while (!interrupted && !hard && pausedReason === null && canFill() && remaining.size > 0) {
       const issue = nextIssue();
       remaining.delete(issue);
       const runOne = async () => {
         const current = await readLoop(runsRoot, id, issue);
+        loops.set(issue, current);
         if (!start && current.status === "succeeded" && current.cleanup === null) {
           const cleanup = await cleanupLoop({ manifest, loop: current, runsRoot, gh }).catch(
             (err) => ({ removed: false, reason: err.message }),
@@ -1074,16 +1229,20 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           return;
         }
         if (terminal(current.status)) return;
+        if (current.status === "needs-owner") {
+          pendingDecisions.add(issue);
+          return;
+        }
         if (!start) {
           // A resume reconciles one recovered loop before it launches, so it never restarts
-          // blindly. A recorded transcript is a lost record, not a fresh launch.
+          // blindly. A counted attempt or a recorded answer never takes the fresh-launch path.
           const hasTranscript =
             current.status !== "queued" ||
             (await stat(current.transcript).then(
               () => true,
               () => false,
             ));
-          if (hasTranscript) {
+          if (hasTranscript || current.attempts > 0 || current.decisionAnswer != null) {
             await recover(issue, current);
             return;
           }
@@ -1099,30 +1258,54 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await new Promise((resolve) => setImmediate(resolve));
     }
     if (hard || interrupted) break;
+    if (pausedReason !== null && active.size === 0) break;
+    const pollingNeeded = waiting.size > 0 || pendingDecisions.size > 0;
+    if (pollingNeeded && !pollLogged) {
+      pollLogged = true;
+      logInfo(`waiting poll started for issue(s) ${[...waiting, ...pendingDecisions].join(", ")}`);
+    }
     if (active.size > 0) {
-      await Promise.race(active.values());
+      const racers = [...active.values()];
+      let pollElapsed = false;
+      let pollController = null;
+      if (pollingNeeded) {
+        pollController = new AbortController();
+        const wait = Math.max(0, nextPoll - clock.now());
+        const pollSignal = AbortSignal.any([controller.signal, pollController.signal]);
+        racers.push(
+          pollWait(wait, pollSignal, clock).then(() => {
+            pollElapsed = true;
+          }),
+        );
+      }
+      await Promise.race(racers);
+      pollController?.abort();
+      if (interrupted || hard) break;
+      if (pollElapsed) {
+        nextPoll = clock.now() + pollIntervalMs;
+        await syncFromDisk();
+        await refreshWaiting();
+        await refreshPendingDecisions();
+      }
       continue;
     }
     if (pausedReason !== null) break;
-    if (waiting.size === 0) break;
-    if (!pollLogged) {
-      pollLogged = true;
-      logInfo(`waiting poll started for issue(s) ${[...waiting].join(", ")}`);
+    if (waiting.size === 0 && pendingDecisions.size === 0) break;
+    if (waiting.size > 0) {
+      const wait = Math.max(0, nextPoll - clock.now());
+      await pollWait(wait, controller.signal, clock);
+      if (interrupted || hard) break;
+      nextPoll = clock.now() + pollIntervalMs;
+      await syncFromDisk();
+      await refreshWaiting();
+      await refreshPendingDecisions();
+      continue;
     }
-    await pollWait(pollIntervalMs, controller.signal, clock);
-    if (interrupted || hard) break;
-    for (const issue of waiting) {
-      const result = await recheckWaiting(issue);
-      if (result === "done") waiting.delete(issue);
-      else if (result === "ready") {
-        waiting.delete(issue);
-        remaining.add(issue);
-      }
-    }
-    if (waiting.size === 0 && pollLogged) {
-      pollLogged = false;
-      logInfo("waiting poll stopped");
-    }
+    // Only pending decisions remain. Apply a live answer that already arrived, then stop.
+    await syncFromDisk();
+    await refreshPendingDecisions();
+    if (remaining.size > 0) continue;
+    break;
   }
   if (pollLogged) logInfo("waiting poll stopped");
   // A resume runs its recovered loops one at a time; this drains any that the pass left live.
@@ -1195,7 +1378,13 @@ async function decisionView(runsRoot, batchId, loop) {
     recommended: decision.recommended,
     answer: null,
   };
-  const answer = await readAnswer(runsRoot, batchId, loop.decision);
+  const answer = await readAnswer(
+    runsRoot,
+    batchId,
+    loop.decision,
+    decision.options.map((option) => option.key),
+    loop.issue,
+  );
   if (answer !== null && !answer.ok) {
     return { ...view, state: "malformed", error: answer.reason };
   }

@@ -1,9 +1,11 @@
-// Owner decisions of one batch (ADR 0109 decisions 1 to 4). A decision records the reason, the
-// evidence, the options, and the recommendation. An answer is an exclusive file bound to one
-// decision, so two answers cannot both win. Every malformed record fails closed.
+// Owner decisions of one batch (adr/0109-release-batch-slots-on-owner-decisions.md decisions 1
+// to 4). A decision records the reason, the evidence, the options, and the recommendation. An
+// answer is an exclusive file bound to one decision, so two answers cannot both win. Every
+// malformed record fails closed.
 import { isJsonObject } from "../lib/json.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { logInfo, logWarn } from "../lib/log.mjs";
+import { ownerAlive } from "../lib/process-identity.mjs";
 import {
   batchPaths,
   createExclusive,
@@ -14,14 +16,33 @@ import {
   updateLoop,
 } from "./store.mjs";
 
-/** The fixed options of every decision. `resume` is the recommendation. */
+/** The fixed options of a decision that recovery can resume. `resume` is the recommendation. */
 export const DECISION_OPTIONS = [
   { key: "resume", label: "Resume the loop after the owner resolves the state" },
   { key: "abandon", label: "Stop the loop as failed and keep its work tree" },
 ];
+/** The options of a loop whose step count cannot be proven, so no resume option relaunches. */
+export const UNVERIFIED_STEPS_OPTIONS = [
+  { key: "abandon", label: "Stop the loop as failed and keep its work tree", recommended: true },
+  { key: "skip", label: "Stop the loop as skipped and keep its work tree" },
+];
 export const RECOMMENDED_OPTION = "resume";
 /** The failure reason of a loop that the owner abandons. */
 export const ABANDON_REASON = "owner-abandoned";
+/** The skip reason of a loop that the owner stops as skipped. */
+export const SKIP_REASON = "owner-skipped";
+
+const OPERATION_KEYS = new Set(["resume", "abandon", "skip"]);
+
+/** The options of a decision for `reason`. An unprovable step count offers no resume option. */
+export function optionsForReason(reason) {
+  return reason === "unverified-steps" ? UNVERIFIED_STEPS_OPTIONS : DECISION_OPTIONS;
+}
+
+/** The recommended key of an option list. */
+export function recommendedOf(options) {
+  return options.find((option) => option.recommended)?.key ?? options[0]?.key ?? null;
+}
 
 const nonEmpty = (value) => typeof value === "string" && value.trim() !== "";
 
@@ -60,11 +81,16 @@ function decisionProblem(value, id, batchId) {
   return null;
 }
 
-function answerProblem(value, decisionId, batchId) {
+function answerProblem(value, decisionId, batchId, options = null, issue = null) {
   if (!isJsonObject(value)) return "the answer is not a JSON object";
   if (value.decisionId !== decisionId) return "the answer names another decision";
   if (value.batchId !== batchId) return "the answer names another batch";
+  if (!Number.isInteger(value.issue) || value.issue < 1) return "the answer has no issue";
+  if (issue !== null && value.issue !== issue) return "the answer names another issue";
   if (!nonEmpty(value.option)) return "the answer names no option";
+  if (options !== null && !options.includes(value.option)) {
+    return `the answer names an unlisted option: ${value.option}`;
+  }
   return null;
 }
 
@@ -83,8 +109,11 @@ export async function readDecision(runsRoot, batchId, decisionId) {
   return problem === null ? { ok: true, decision: value } : { ok: false, reason: problem };
 }
 
-/** Reads one answer. Returns null when it is missing and a refusal object when it is malformed. */
-export async function readAnswer(runsRoot, batchId, decisionId) {
+/**
+ * Reads one answer. Returns null when it is missing and a refusal object when it is malformed.
+ * `options` and `issue` bind the answer to the decision that lists it.
+ */
+export async function readAnswer(runsRoot, batchId, decisionId, options = null, issue = null) {
   const file = batchPaths(runsRoot).answer(batchId, decisionId);
   const text = await readStoreText(file);
   if (text === null) return null;
@@ -94,13 +123,14 @@ export async function readAnswer(runsRoot, batchId, decisionId) {
   } catch {
     return { ok: false, reason: `the answer is not valid JSON: ${file}` };
   }
-  const problem = answerProblem(value, decisionId, batchId);
+  const problem = answerProblem(value, decisionId, batchId, options, issue);
   return problem === null ? { ok: true, answer: value } : { ok: false, reason: problem };
 }
 
 /**
  * Creates one pending decision with an exclusive create and no overwrite. A repeated create of the
- * same id returns the existing record and writes nothing. Returns `{ created, decision }`.
+ * same id returns the existing record and writes nothing, not even a temporary file. Returns
+ * `{ created, decision }`, or `{ created: false, decision: null, error }` for an unreadable file.
  */
 export async function createDecision({
   runsRoot,
@@ -126,14 +156,21 @@ export async function createDecision({
   };
   const problem = decisionProblem(record, id, batchId);
   if (problem !== null) throw new Error(problem);
+  const existing = await readDecision(runsRoot, batchId, id);
+  if (existing !== null && existing.ok) return { created: false, decision: existing.decision };
+  if (existing !== null && !existing.ok) {
+    return { created: false, decision: null, error: existing.reason };
+  }
   const file = batchPaths(runsRoot).decision(batchId, id);
   const created = await createExclusive(file, `${JSON.stringify(record, null, 2)}\n`);
   if (created) return { created: true, decision: record };
-  const existing = await readDecision(runsRoot, batchId, id);
-  if (existing === null || !existing.ok) {
-    throw new Error(existing?.reason ?? `the decision record is missing: ${file}`);
-  }
-  return { created: false, decision: existing.decision };
+  const raced = await readDecision(runsRoot, batchId, id);
+  if (raced !== null && raced.ok) return { created: false, decision: raced.decision };
+  return {
+    created: false,
+    decision: null,
+    error: raced?.reason ?? `the decision record is missing: ${file}`,
+  };
 }
 
 /**
@@ -152,18 +189,18 @@ export async function answerDecision({ runsRoot, batchId, decisionId, option }) 
     return { ok: false, usage: true, reason: `No decision ${decisionId} in batch ${batchId}.` };
   }
   if (!read.ok) return { ok: false, reason: read.reason };
-  const existing = await readAnswer(runsRoot, batchId, decisionId);
-  if (existing !== null && !existing.ok) return { ok: false, reason: existing.reason };
-  if (existing !== null) {
-    return { ok: false, usage: true, reason: `Decision ${decisionId} is already answered.` };
-  }
   const keys = read.decision.options.map((entry) => entry.key);
-  if (!keys.includes(option)) {
+  if (!keys.includes(option) || !OPERATION_KEYS.has(option)) {
     return {
       ok: false,
       usage: true,
       reason: `Option ${option} is not one of: ${keys.join(", ")}.`,
     };
+  }
+  const existing = await readAnswer(runsRoot, batchId, decisionId, keys, read.decision.issue);
+  if (existing !== null && !existing.ok) return { ok: false, reason: existing.reason };
+  if (existing !== null) {
+    return { ok: false, usage: true, reason: `Decision ${decisionId} is already answered.` };
   }
   const loop = await readLoop(runsRoot, batchId, read.decision.issue);
   if (loop === null) {
@@ -188,34 +225,43 @@ export async function answerDecision({ runsRoot, batchId, decisionId, option }) 
     return { ok: false, usage: true, reason: `Decision ${decisionId} is already answered.` };
   }
 
+  const live =
+    typeof loop.pid === "number" &&
+    (await ownerAlive({ pid: loop.pid, startTime: loop.startTime }));
+  if (live) {
+    logInfo(`decision ${decisionId}: answered with ${option}, applied after the process ends`);
+    return { ok: true, answer };
+  }
+
   try {
     await updateLoop(runsRoot, batchId, read.decision.issue, (current) => {
       if (current.decision !== decisionId || current.status !== "needs-owner") return undefined;
-      return option === "abandon"
-        ? {
-            ...current,
-            status: "failed",
-            reason: ABANDON_REASON,
-            decisionAnswer: option,
-            pid: null,
-            startTime: null,
-          }
-        : {
-            ...current,
-            status: "queued",
-            reason: null,
-            skipReason: null,
-            decisionAnswer: option,
-            pid: null,
-            startTime: null,
-          };
+      if (option === "abandon") {
+        return { ...current, status: "failed", reason: ABANDON_REASON, decisionAnswer: option };
+      }
+      if (option === "skip") {
+        return {
+          ...current,
+          status: "skipped",
+          skipReason: SKIP_REASON,
+          reason: "the owner stopped the loop",
+          decisionAnswer: option,
+        };
+      }
+      return {
+        ...current,
+        status: "queued",
+        reason: null,
+        skipReason: null,
+        decisionAnswer: option,
+      };
     });
-    if (option === "abandon") {
+    if (option === "abandon" || option === "skip") {
       await releaseClaim(runsRoot, manifest.repoKey, read.decision.issue, { batchId });
     }
   } catch (err) {
     logWarn(
-      `decision ${decisionId}: the answer is recorded; the loop update follows on resume: ${err?.message ?? err}`,
+      `decision ${decisionId}: the answer is recorded. The loop update follows on resume: ${err?.message ?? err}`,
     );
   }
   logInfo(`decision ${decisionId}: answered with ${option}`);
