@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { writeFileSync } from "node:fs";
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -246,7 +246,13 @@ test("a restored edit that preserves the modification time is reported", async (
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
+  const startBefore = Date.now();
   const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
+  // Wait past the change-time guard, so the in-window restore reports through its change time.
+  await vi.waitFor(() => expect(Date.now() - startBefore).toBeGreaterThanOrEqual(4), {
+    timeout: 5_000,
+    interval: 1,
+  });
   await vi.waitFor(
     async () => {
       await writeFile(file, "changed\n");
@@ -276,22 +282,22 @@ test("a direct stop before take reports a failure and warns", async () => {
 });
 
 // Usefulness: verifies that a timestamp-preserving change made just before the watch starts is not
-// reported by a later read-only access (issue #1712 review). The file system change time has
-// sub-millisecond precision and can lead the whole-millisecond Date.now(), so a change completed
-// before the start can carry a change time after it. The loop repeats the start, because a single
-// start can land after the change by more than the guard.
-test("a timestamp-preserving change in the start millisecond reports no candidate", async () => {
+// reported by a later read-only access (issue #1712 review). The production guard drops the stamp
+// without a wait.
+test("a timestamp-preserving change just before the start reports no candidate", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   let reported = false;
   let failed = false;
+  let message = "";
   for (let attempt = 0; attempt < 20 && !reported && !failed; attempt++) {
     // A copy that preserves times completes immediately before the watch starts.
     await writeFile(file, "copied\n");
     await writeFile(file, "hello\n");
     await utimes(file, old, old);
     const fake = createArmingWatch();
+    const startBefore = Date.now();
     const handle = await startMainWorkTreeWatch(dir, {
       drainDeadlineMs: 60_000,
       watchFactory: fake.factory,
@@ -305,9 +311,48 @@ test("a timestamp-preserving change in the start millisecond reports no candidat
     const result = await handle.take();
     reported = result.candidates.includes("init.txt");
     failed = result.failed;
+    const stats = await lstat(file);
+    message = `attempt ${attempt + 1} change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
   }
-  expect(failed).toBe(false);
-  expect(reported).toBe(false);
+  expect(failed, message).toBe(false);
+  expect(reported, message).toBe(false);
+});
+
+// Usefulness: verifies that the recorded Windows clock difference reports no pre-window change
+// (issue #1740). Both process clocks are 2.2 ms behind the settled file stamp, as the saved
+// 1.542 ms difference was.
+test("a clock difference of two milliseconds reports no pre-window change", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  const realDateNow = Date.now.bind(Date);
+  const realNow = performance.now.bind(performance);
+  const realWall = performance.timeOrigin + realNow();
+  const target = 2.2;
+  const dateSkewMs = realDateNow() - settled + target;
+  const perfSkewMs = realWall - settled + target;
+  const dateSkew = vi.spyOn(Date, "now").mockImplementation(() => realDateNow() - dateSkewMs);
+  const perfSkew = vi.spyOn(performance, "now").mockImplementation(() => realNow() - perfSkewMs);
+  try {
+    const startBefore = Date.now();
+    const fake = createArmingWatch();
+    const handle = await startMainWorkTreeWatch(dir, {
+      drainDeadlineMs: 60_000,
+      watchFactory: fake.factory,
+    });
+    fake.deliver("change", "init.txt");
+    await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+    const result = await handle.take();
+    const stats = await lstat(file);
+    const message = `attempt 1 change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
+    expect(result, message).toEqual({ candidates: [], failed: false });
+  } finally {
+    dateSkew.mockRestore();
+    perfSkew.mockRestore();
+  }
 });
 
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
@@ -321,6 +366,7 @@ test("a read-only access of a watched file reports no candidate", async () => {
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
   const fake = createArmingWatch();
+  const startBefore = Date.now();
   const handle = await startMainWorkTreeWatch(dir, {
     drainDeadlineMs: 60_000,
     watchFactory: fake.factory,
@@ -328,8 +374,28 @@ test("a read-only access of a watched file reports no candidate", async () => {
   fake.deliver("change", "init.txt");
   await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
   const result = await handle.take();
-  expect(result).toEqual({ candidates: [], failed: false });
+  const stats = await lstat(file);
+  const message = `attempt 1 change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
+  expect(result, message).toEqual({ candidates: [], failed: false });
 });
+
+/**
+ * Waits until the change time of `file` is stable across five milliseconds, so a deferred `utimes`
+ * stamp has landed.
+ * @param {string} file
+ * @param {Date} old
+ * @returns {Promise<number>} the settled change time in milliseconds
+ */
+async function settleChangeTime(file, old) {
+  await utimes(file, old, old);
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const first = (await lstat(file)).ctimeMs;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = (await lstat(file)).ctimeMs;
+    if (first === second) return second;
+  }
+  throw new Error("the change time did not settle");
+}
 
 // Usefulness: verifies requirement "repeated events for one path queue one read" (issue #1556). A
 // burst for one open path must not grow the queue or repeat the real Git read.
