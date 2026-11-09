@@ -661,6 +661,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     return created;
   };
 
+  const markPrHeadUnresolved = (issue, { pr, stepsUsed, remainingSteps }) =>
+    markNeedsOwner(issue, "pr-head-unresolved", {
+      evidence: pr === null ? "the transcript records no pull request" : `pull request ${pr}`,
+      extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null },
+    });
+
   const applyDecisionAnswer = async (issue, current) => {
     if (isLive(current) && (await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
       return { kind: "pending" };
@@ -929,6 +935,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       log: logPath,
       pid: null,
       startTime: null,
+      decisionAnswer: null,
     });
     let child;
     try {
@@ -993,6 +1000,23 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       progress(
         `issue ${issue}: succeeded${cleanup.removed ? " (work tree removed)" : ` (work tree kept: ${cleanup.reason})`}`,
       );
+      return;
+    }
+    if (exitCode === 4) {
+      const transcript = await readTranscript(loop.transcript);
+      let declaredPr = loop.pr;
+      try {
+        declaredPr = declaredPrFromTranscript(transcript) ?? loop.pr;
+      } catch (err) {
+        await markNeedsOwner(
+          issue,
+          `the transcript declares an unreadable pull request: ${err.message}`,
+          { evidence: err.message, extra: common },
+        );
+        return;
+      }
+      await markPrHeadUnresolved(issue, { ...common, pr: declaredPr });
+      progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
     }
     await changeLoop(issue, {
@@ -1136,7 +1160,20 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await finishSuccess(issue, loop, { stepsUsed, remainingSteps, pr: loop.pr });
       return;
     }
-    if (recordedExit.ok && recordedExit.proven && [1, 2, 4].includes(recordedExit.exitCode)) {
+    if (
+      recordedExit.ok &&
+      recordedExit.proven &&
+      recordedExit.exitCode === 4 &&
+      loop.decisionAnswer !== "resume"
+    ) {
+      await markPrHeadUnresolved(issue, {
+        pr: loop.pr,
+        stepsUsed,
+        remainingSteps,
+      });
+      return;
+    }
+    if (recordedExit.ok && recordedExit.proven && [1, 2].includes(recordedExit.exitCode)) {
       await finishFailure(issue, loop, `exit-${recordedExit.exitCode}`, {
         stepsUsed,
         remainingSteps,
@@ -1497,6 +1534,15 @@ async function decisionView(runsRoot, batchId, loop) {
   return view;
 }
 
+/** The next action of a loop that needs its owner, or null when no named action exists. */
+function nextActionOf(loop) {
+  if (loop.status !== "needs-owner" || loop.reason !== "pr-head-unresolved") return null;
+  if (loop.pr == null) {
+    return `compare branch ${loop.branch} with the reviewed commit, then merge or resume. The pull request number is not recorded`;
+  }
+  return `compare pull request ${loop.pr} head with the reviewed commit, then merge or resume`;
+}
+
 /** Reads one batch for `batch status`; a live-owner checkpoint that is gone reads `stale`. */
 export async function readBatchStatus({ runsRoot, id }) {
   const manifest = await readManifest(runsRoot, id);
@@ -1518,7 +1564,7 @@ export async function readBatchStatus({ runsRoot, id }) {
         status: live ? "running" : "stale",
         nextAction: live ? null : "batch resume",
       });
-    } else loops.push({ ...loopEntry(loop), ...waitDetails, nextAction: null });
+    } else loops.push({ ...loopEntry(loop), ...waitDetails, nextAction: nextActionOf(loop) });
   }
   return {
     ...manifest,

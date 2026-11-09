@@ -111,7 +111,7 @@ const fakeGitDeps = {
  * A child double that records its arguments and writes a transcript. `hold` keeps each run live
  * until the test releases it.
  */
-function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false } = {}) {
+function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false, pr = null } = {}) {
   const calls = [];
   const pending = [];
   const spawn = async ({ args, cwd, logPath }) => {
@@ -145,6 +145,7 @@ function childDouble({ exitCode = 0, steps = 0, roles = {}, hold = false } = {})
           ...earlier.events,
           ...(args.includes("--continue-from") ? [{ type: "continued", exitCode: 130 }] : []),
           ...nextEvents,
+          ...(pr === null ? [] : [{ type: "pr-declared", pr }]),
           { type: "gate" },
         ],
         exitCode,
@@ -423,6 +424,7 @@ test("a failed loop does not stop or retry another loop", async () => {
     expect(exitCode).toBe(1);
     expect(summary.status).toBe("failed");
     expect(summary.loops.map((loop) => loop.status)).toEqual(["failed", "succeeded"]);
+    expect(summary.loops[0].reason).toBe("exit-2");
     expect(child.calls).toHaveLength(2);
     const loops = join(prepared.workTreeRoot, "runs", "batches", prepared.id, "loops");
     expect((await stat(loops)).isDirectory()).toBe(true);
@@ -788,6 +790,176 @@ test("a transcript that exited 2 is not retried on recovery", async () => {
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-2" });
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a normal exit 4 stops needs-owner, keeps its claim and work tree, and records the PR.
+test("a child that exits 4 stops needs-owner on the normal path", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ exitCode: 4, pr: 42 });
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(1);
+    expect(summary.loops[0]).toMatchObject({
+      status: "needs-owner",
+      reason: "pr-head-unresolved",
+      pr: 42,
+    });
+    expect((await stat(summary.loops[0].workTree)).isDirectory()).toBe(true);
+    const claim = batchPaths(runsRoot).claim(prepared.repoKey, 1);
+    expect((await stat(claim)).isFile()).toBe(true);
+    const loop = await readLoop(runsRoot, prepared.id, 1);
+    const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+    expect(decision.ok).toBe(true);
+    expect(decision.decision.options.map((option) => option.key)).toEqual(["resume", "abandon"]);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: batch status names the pull request and the next action of an exit 4 loop.
+test("batch status names the pull request and the next action", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 4, pr: 77 }).spawn,
+        installSignal: false,
+      },
+    });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({ status: "needs-owner", pr: 77 });
+    expect(status.loops[0].nextAction).toContain("pull request 77");
+    expect(status.loops[0].nextAction).toContain("merge or resume");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: status names the branch and the missing pull request number when none is recorded.
+test("batch status names the branch when no pull request is recorded", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 4 }).spawn,
+        installSignal: false,
+      },
+    });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({
+      status: "needs-owner",
+      reason: "pr-head-unresolved",
+      pr: null,
+    });
+    expect(status.loops[0].nextAction).toContain(`branch ${status.loops[0].branch}`);
+    expect(status.loops[0].nextAction).toContain("not recorded");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a child that exits 1 stays failed on the normal path.
+test("a child that exits 1 is failed on the normal path", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 1 }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1" });
+    const claim = batchPaths(runsRoot).claim(prepared.repoKey, 1);
+    await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a proven transcript exit 4 stops needs-owner on recovery and reuses its decision.
+test("a transcript that exited 4 stops needs-owner on recovery", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 3, hold: true, pr: 42 });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(transcript, JSON.stringify({ ...data, exitCode: 4 }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.summary.loops[0]).toMatchObject({
+      status: "needs-owner",
+      reason: "pr-head-unresolved",
+      pr: 42,
+    });
+    expect((await stat(resumed.summary.loops[0].workTree)).isDirectory()).toBe(true);
+    const claim = batchPaths(runsRoot).claim(prepared.repoKey, 1);
+    expect((await stat(claim)).isFile()).toBe(true);
+    const loop = await readLoop(runsRoot, prepared.id, 1);
+    const checkpoint = batchPaths(runsRoot).loop(prepared.id, 1);
+    const before = await stat(checkpoint, { bigint: true });
+    const again = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+    });
+    const after = await readLoop(runsRoot, prepared.id, 1);
+    expect(again.exitCode).toBe(1);
+    expect(after.decision).toBe(loop.decision);
+    expect((await stat(checkpoint, { bigint: true })).mtimeNs).toBe(before.mtimeNs);
   } finally {
     await cleanupRepo(repo);
   }
@@ -2650,5 +2822,50 @@ describe("batch decisions and waits", () => {
     } finally {
       await release?.();
     }
+  });
+
+  // Usefulness: a resumed exit 4 loop reconciles the pull request head and can end succeeded.
+  test("an answered resume on an exit 4 loop reconciles the pull request", async () => {
+    const prepared = prep([218]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 4, pr: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    const stopped = await readLoop(runsRoot, prepared.id, 218);
+    expect(stopped).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+    const answered = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: stopped.decision,
+      option: "resume",
+    });
+    expect(answered.ok).toBe(true);
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        reconcileLoop: async () => ({
+          status: "succeeded",
+          reason: null,
+          pr: 42,
+          requireCi: null,
+        }),
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.summary.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
   });
 });

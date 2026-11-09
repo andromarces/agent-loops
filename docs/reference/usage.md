@@ -426,7 +426,7 @@ Every `--test-cmd` run still passes through the machine-wide test slot, whose de
 
 ### Owner decisions
 
-A loop that stops as `needs-owner` records a pending decision. The decision has a unique id, the reason, the evidence, two option keys, and one recommendation. A normal state offers `resume`, which is recommended, and `abandon`. A loop whose step count cannot be proven offers `abandon`, which is recommended, and `skip`.
+A loop that stops as `needs-owner` records a pending decision. The decision has a unique id, the reason, the evidence, two option keys, and one recommendation. A normal state offers `resume`, which is recommended, and `abandon`. A loop whose step count cannot be proven offers `abandon`, which is recommended, and `skip`. A loop that exits 4 offers the normal options under reason `pr-head-unresolved`.
 
 `batch status` shows the decision state, the option keys, and the recommendation. A pending decision keeps its claim, work tree, transcript, and remaining budget. It holds no loop slot once no recorded child process is live.
 
@@ -460,7 +460,7 @@ Checkpoints are written on an event only. The events are `start`, a launch, a sk
 
 ### Loop statuses and the summary
 
-A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state.
+A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state. A `needs-owner` loop with reason `pr-head-unresolved` names its pull request and the next action.
 
 `start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue: loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, and cleanup result.
 
@@ -502,7 +502,9 @@ The batch never force-pushes, resets, merges, reopens, or deletes a branch to ma
 
 ### Failure isolation and cleanup
 
-A loop that ends on a nonzero headless exit, a failed setup (`setup-failed`), a refused finish, or a child error is `failed` with its reason. It is not retried, and its failure stops neither another loop nor the queue. It releases its claim and keeps its work tree, branch, transcript, and log.
+A loop that ends on headless exit 1 or 2, a failed setup (`setup-failed`), a refused finish, or a child error is `failed` with its reason. It is not retried, and its failure stops neither another loop nor the queue. It releases its claim and keeps its work tree, branch, transcript, and log.
+
+A loop that exits 4 is `needs-owner` with reason `pr-head-unresolved`. It keeps its claim and work tree. Its decision offers `resume` and `abandon`. `resume` reconciles the pull request, so a merged pull request ends the loop `succeeded`.
 
 Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes: the path is the recorded path under the batch root and not the main work tree, `git worktree list` names it, the recorded branch is checked out, the device and inode still match, the tree is clean, every local commit is pushed or merged, no other live process holds the claim, and no live run lock names the tree. A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed; the branch, pull request, transcript, log, and checkpoint stay.
 
