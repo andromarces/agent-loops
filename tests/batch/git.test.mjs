@@ -106,6 +106,8 @@ test("a PR work tree fetches the head commit", async () => {
   const other = await mkdtemp(join(tmpdir(), "batch-pr-other-"));
   try {
     await execa("git", ["clone", remote, other]);
+    await execa("git", ["config", "user.name", "Tester"], { cwd: other });
+    await execa("git", ["config", "user.email", "test@example.com"], { cwd: other });
     await execa("git", ["checkout", "feature"], { cwd: other });
     await writeFile(join(other, "remote-only.txt"), "remote\n");
     await execa("git", ["add", "remote-only.txt"], { cwd: other });
@@ -151,6 +153,35 @@ test("a PR work tree refuses a head that moved since the freeze", async () => {
         number: 1,
       }),
     ).rejects.toMatchObject({ code: "pr-head-moved" });
+  } finally {
+    await removePath(root);
+    await removePath(remote);
+    await removePath(main);
+  }
+});
+
+// Usefulness: worker corrections from the detached PR checkout reach the PR head branch.
+test("a detached PR work tree pushes a correction to the head branch", async () => {
+  const { main, remote, head } = await prRepo();
+  const root = await mkdtemp(join(tmpdir(), "batch-pr-work-"));
+  try {
+    const tree = await createPrWorkTree({
+      repo: main,
+      workTree: join(root, "pr-1"),
+      branch: "feature",
+      head,
+      number: 1,
+    });
+    await writeFile(join(tree.path, "correction.txt"), "corrected\n");
+    await execa("git", ["add", "correction.txt"], { cwd: tree.path });
+    await execa("git", ["commit", "-m", "correction"], { cwd: tree.path });
+    const corrected = (await execa("git", ["rev-parse", "HEAD"], { cwd: tree.path })).stdout.trim();
+    await execa("git", ["push", "origin", "HEAD:refs/heads/feature"], { cwd: tree.path });
+    const remoteHead = (
+      await execa("git", ["rev-parse", "refs/heads/feature"], { cwd: remote })
+    ).stdout.trim();
+    expect(remoteHead).toBe(corrected);
+    expect(corrected).not.toBe(head);
   } finally {
     await removePath(root);
     await removePath(remote);
