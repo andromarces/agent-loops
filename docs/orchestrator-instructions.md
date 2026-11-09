@@ -525,7 +525,9 @@ Exclude every issue that a commit message closes. The commits endpoint returns a
 
 ## Batch runs
 
-When the user asks to work several issues as one batch, the skill resolves the request into explicit flags and runs one `agent-loop batch start` command. It passes every setting as a flag: the repository, each `--issue` in launch order, the agents, models, efforts, `--max-steps`, `--loops`, the base branch, the work-tree root, the task template, the setup command, the test command, the timeout, and the reviewer sandbox. It shows the resolved settings and issue numbers before it starts. The runtime prompts for nothing and reads no request.
+When the user asks to work several issues as one batch, the skill resolves the request into explicit flags and runs one `agent-loop batch start` command. It passes every setting as a flag: the repository, each `--issue` in launch order or one `--from-audit <audit id>`, the agents, models, efforts, `--max-steps`, `--loops`, the base branch, the work-tree root, the task template, the setup command, the test command, the timeout, and the reviewer sandbox. It shows the resolved settings and issue numbers before it starts. The runtime prompts for nothing and reads no request.
+
+When the user asks to work the issues of a finished audit, read the audit with `agent-loop batch audit status --audit <id>` and pass `--from-audit <id>` instead of `--issue`. Run it only when the status is `created`; a paused or `needs-owner` audit is refused, and the audit command never starts a batch.
 
 Do not dispatch one `role` turn per issue for a batch. The batch command owns the loops, the claims, the checkpoints, and the recovery. Use [Selecting issues for a batch](#selecting-issues-for-a-batch) to choose the numbers; the runtime never selects one.
 

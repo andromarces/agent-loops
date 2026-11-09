@@ -122,12 +122,30 @@ test("an effort without a model is a usage error", () => {
 test("an empty selection is a usage error", () => {
   expect(() =>
     parseBatchArgs(BASE.filter((value, i) => value !== "--issue" && BASE[i - 1] !== "--issue")),
-  ).toThrow("Missing required --issue.");
+  ).toThrow("Missing required --issue or --from-audit.");
 });
 
 // Usefulness: a duplicate issue would launch one issue twice in one batch.
 test("a duplicate issue is a usage error", () => {
   expect(() => parseBatchArgs([...BASE, "--issue", "1"])).toThrow("Duplicate --issue: 1.");
+});
+
+// Usefulness: an audit id supplies the whole selection, so no explicit --issue is required.
+test("--from-audit replaces the required --issue list", () => {
+  const options = parseBatchArgs([
+    ...BASE.filter((value, i) => value !== "--issue" && BASE[i - 1] !== "--issue"),
+    "--from-audit",
+    "20260101-000000-abcd1234",
+  ]);
+  expect(options.fromAudit).toBe("20260101-000000-abcd1234");
+  expect(options.issues).toEqual([]);
+});
+
+// Usefulness: a frozen audit set and explicit issues in one command mix two selections.
+test("--from-audit and --issue are mutually exclusive", () => {
+  expect(() => parseBatchArgs([...BASE, "--from-audit", "20260101-000000-abcd1234"])).toThrow(
+    "--from-audit cannot be combined with --issue.",
+  );
 });
 
 // Usefulness: an unknown placeholder would render literal text into a child task.

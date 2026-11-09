@@ -13,6 +13,7 @@ import {
   prepareAudit,
   readAudit,
   readAuditStatus,
+  readFrozenIssueSet,
   runAudit,
 } from "./audit.mjs";
 import { runGh } from "../lib/gh-api.mjs";
@@ -24,6 +25,9 @@ const BATCH_USAGE = `
 Usage:
 
   agent-loop batch start --repo <dir> --issue <n> [--issue <n> ...] \\
+    --orchestrator <cli> --worker <cli> --reviewer <cli> \\
+    --loops <n> --max-steps <n> [settings]
+  agent-loop batch start --repo <dir> --from-audit <audit id> \\
     --orchestrator <cli> --worker <cli> --reviewer <cli> \\
     --loops <n> --max-steps <n> [settings]
 
@@ -38,6 +42,8 @@ Usage:
   agent-loop batch audit approve --audit <id>
 
 The batch runs one headless loop per issue in its own work tree, at most --loops at once.
+The issue list is explicit --issue entries, or the frozen issue set of a created audit with
+--from-audit; the two are mutually exclusive.
 Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
 --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
 --<role>-model and --<role>-effort flags.
@@ -252,6 +258,13 @@ export async function runBatchMain(argv) {
     }
     if (command === "start") {
       const options = parseBatchArgs(argv.slice(1));
+      if (options.fromAudit !== null) {
+        options.issues = await readFrozenIssueSet({
+          runsRoot,
+          id: options.fromAudit,
+          repo: options.repo,
+        });
+      }
       const id = newBatchId();
       const prepared = await prepareBatch({ ...options, id });
       await refuseRunsRootInGitWorkTree(runsRoot);

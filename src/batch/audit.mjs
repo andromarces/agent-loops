@@ -419,6 +419,58 @@ export async function readAuditStatus({ runsRoot, id }) {
   return auditSummary(state);
 }
 
+/**
+ * Resolves the frozen issue set of a finished audit for `batch start --from-audit`.
+ * Reads only: no store write and no child. Throws a usage error for an audit that is not
+ * `created`, an unreconciled issue write, another repository, or a malformed frozen set.
+ * @returns {Promise<number[]>} the frozen issue numbers in their stored order
+ */
+export async function readFrozenIssueSet({ runsRoot, id, repo }) {
+  let state;
+  try {
+    state = await readAudit(runsRoot, id);
+  } catch (err) {
+    throw usage(`Audit ${id} is unreadable: ${err.message}`);
+  }
+  if (state === null) throw usage(`No audit ${id}.`);
+  if (state.status !== "created") {
+    throw usage(
+      `Audit ${id} is ${state.status}, not created. A batch starts only from a created audit.`,
+    );
+  }
+  if (state.pendingCreate !== null && state.pendingCreate !== undefined) {
+    throw usage(`Audit ${id} has an unreconciled issue write.`);
+  }
+  const stateRepo = typeof state.repo === "string" ? await canonicalPath(state.repo) : null;
+  if (stateRepo !== (await canonicalPath(repo))) {
+    throw usage(`Audit ${id} belongs to ${state.repo}.`);
+  }
+  const issues = Array.isArray(state.issues) ? state.issues : [];
+  if (issues.length === 0) throw usage(`Audit ${id} created no issue.`);
+  const numbers = [];
+  for (const issue of issues) {
+    if (
+      issue === null ||
+      typeof issue !== "object" ||
+      !Number.isSafeInteger(issue.number) ||
+      issue.number < 1
+    ) {
+      throw usage(`Audit ${id} has a malformed frozen issue set.`);
+    }
+    if (numbers.includes(issue.number)) {
+      throw usage(`Audit ${id} has a duplicate issue in its frozen set.`);
+    }
+    numbers.push(issue.number);
+  }
+  const created = Array.isArray(state.created) ? state.created : [];
+  for (const entry of created) {
+    if (!Number.isSafeInteger(entry?.number) || !numbers.includes(entry.number)) {
+      throw usage(`Audit ${id} has an unreconciled issue write.`);
+    }
+  }
+  return numbers;
+}
+
 function auditSummary(state) {
   const issues = Array.isArray(state.issues) ? state.issues : [];
   return {

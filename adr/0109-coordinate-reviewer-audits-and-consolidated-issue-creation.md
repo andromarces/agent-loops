@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) partially supersedes this ADR. The replaced part is decision 13's deferred entry "Automatic selection of the issues that an audit creates for a following batch, or automatic chaining of an audit into a batch start". The explicit selection is now defined; automatic chaining of an audit into a batch start stays deferred. Every other decision stays in force.
 
 ## Supersedes
 
