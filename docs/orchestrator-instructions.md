@@ -529,7 +529,7 @@ When the user asks to work several issues as one batch, the skill resolves the r
 
 Do not dispatch one `role` turn per issue for a batch. The batch command owns the loops, the claims, the checkpoints, and the recovery. Use [Selecting issues for a batch](#selecting-issues-for-a-batch) to choose the numbers; the runtime never selects one.
 
-Read a batch with `agent-loop batch status --batch <id>` and continue an interrupted batch with `agent-loop batch resume --batch <id>`. A `needs-owner` loop is not a failure and is not retried. Resolve the named local or remote state.
+Read a batch with `agent-loop batch status --batch <id>` and continue an interrupted batch with `agent-loop batch resume --batch <id>`. A `needs-owner` loop is not a failure and is not retried. Resolve the named local or remote state. A loop that exits 4 stops with reason `pr-head-unresolved`. Compare its pull request head with the reviewed commit, then merge or resume.
 
 A pending decision releases its slot once no recorded child process is live. `agent-loop batch answer --batch <id> --decision <id> --option <key>` records one listed option. A blocked issue waits on a poll and launches after its blockers close, so no new start command is needed. For a decision, run `batch resume` again after the answer.
 

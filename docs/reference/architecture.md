@@ -62,6 +62,8 @@ See [Architecture Decision Records](https://github.com/andromarces/agent-loops/b
 
 A `needs-owner` loop becomes a pending decision and releases its slot once no recorded child process is live. A blocked issue waits on a monotonic poll and launches after its blockers close. `agent-loop batch answer` binds one option to one decision through an exclusive file. A pending decision and a merge wait survive `batch resume`. The supervisor sends bounded desktop notifications on macOS and Windows. [adr/0110-release-batch-slots-on-owner-decisions.md](https://github.com/andromarces/agent-loops/blob/main/adr/0110-release-batch-slots-on-owner-decisions.md) is the design of those parts.
 
+An exit 4 loop becomes a pending decision with reason `pr-head-unresolved`. Its status names the pull request and the next action. [adr/0114-report-an-exit-4-loop-as-needs-owner.md](https://github.com/andromarces/agent-loops/blob/main/adr/0114-report-an-exit-4-loop-as-needs-owner.md) is the design of that part.
+
 ## Supported agents
 
 The controller supports these CLI names:

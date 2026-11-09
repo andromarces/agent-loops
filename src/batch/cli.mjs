@@ -44,6 +44,8 @@ Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeou
 
 A needs-owner loop becomes a pending decision and releases its slot. \`batch status\` shows
 the options and the recommendation. \`batch answer\` binds one listed option to one decision.
+A loop whose headless run exits 4 becomes \`needs-owner\` with reason \`pr-head-unresolved\`.
+Its status names the pull request and the next action.
 
 The audit runs two or more read-only reviewers on one revision, then one consolidation
 worker. It then creates one issue per finding that no open or closed issue covers.

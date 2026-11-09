@@ -678,6 +678,14 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     return created;
   };
 
+  const markPrHeadUnresolved = async (issue, loop, { pr, stepsUsed, remainingSteps }) => {
+    const report = await readLoopReport(loop.transcript, { attempts: loop.attempts });
+    return markNeedsOwner(issue, "pr-head-unresolved", {
+      evidence: pr === null ? "the transcript records no pull request" : `pull request ${pr}`,
+      extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null, report },
+    });
+  };
+
   const applyDecisionAnswer = async (issue, current) => {
     if (isLive(current) && (await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
       return { kind: "pending" };
@@ -760,6 +768,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         batchId: id,
         claim,
         openPrClosures: closures,
+        ownPr: loop.pr,
+        ownBranch: loop.branch,
       });
       if (!eligibility.ok) {
         if (eligibility.reason === "blocked") {
@@ -862,6 +872,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         return;
       }
       loop = { ...loop, task, workTree };
+      const continuation = loop.decisionAnswer != null;
       let freshRecovery = { continueFrom: null, pr: null };
       if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
         const refused = await verifyWorkTree(loop);
@@ -869,26 +880,29 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           await markNeedsOwner(issue, refused, { evidence: refused });
           return;
         }
-        const decision = await reconcile({
-          loop,
-          repo: prepared.repo,
-          base: prepared.base,
-          gh,
-          deps,
-        });
-        if (decision.status === "succeeded") {
-          await finishSuccess(issue, loop, {
-            stepsUsed: loop.stepsUsed,
-            remainingSteps: loop.remainingSteps,
-            pr: decision.pr ?? loop.pr,
+        if (!continuation) {
+          const decision = await reconcile({
+            loop,
+            repo: prepared.repo,
+            base: prepared.base,
+            gh,
+            deps,
           });
-          return;
+          if (decision.status === "succeeded") {
+            await finishSuccess(issue, loop, {
+              stepsUsed: loop.stepsUsed,
+              remainingSteps: loop.remainingSteps,
+              pr: decision.pr ?? loop.pr,
+            });
+            return;
+          }
+          if (decision.status === "needs-owner") {
+            await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
+            return;
+          }
+          const continueFrom = loop.attempts > 0 ? loop.transcript : null;
+          freshRecovery = { continueFrom, pr: decision.pr ?? loop.pr };
         }
-        if (decision.status === "needs-owner") {
-          await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
-          return;
-        }
-        if (decision.pr !== null) freshRecovery = { continueFrom: null, pr: decision.pr };
       }
       await changeLoop(issue, {
         workTree,
@@ -897,6 +911,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         setupDone: loop.setupDone === true,
         pr: freshRecovery.pr ?? loop.pr,
       });
+      if (continuation) {
+        await continueLoop(issue, loop);
+        return;
+      }
       if (prepared.setupCmd && loop.setupDone !== true) {
         const ok = await runSetup({
           command: prepared.setupCmd,
@@ -946,6 +964,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       log: logPath,
       pid: null,
       startTime: null,
+      decisionAnswer: null,
     });
     let child;
     try {
@@ -1010,6 +1029,23 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       progress(
         `issue ${issue}: succeeded${cleanup.removed ? " (work tree removed)" : ` (work tree kept: ${cleanup.reason})`}`,
       );
+      return;
+    }
+    if (exitCode === 4) {
+      const transcript = await readTranscript(loop.transcript);
+      let declaredPr = loop.pr;
+      try {
+        declaredPr = declaredPrFromTranscript(transcript) ?? loop.pr;
+      } catch (err) {
+        await markNeedsOwner(
+          issue,
+          `the transcript declares an unreadable pull request: ${err.message}`,
+          { evidence: err.message, extra: common },
+        );
+        return;
+      }
+      await markPrHeadUnresolved(issue, loop, { ...common, pr: declaredPr });
+      progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
     }
     await changeLoop(issue, {
@@ -1096,30 +1132,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
-  const recover = async (issue, initial) => {
+  /**
+   * Continues one loop from its transcript. It reads the steps, applies the exhaustion check,
+   * reconciles GitHub, and launches with --continue-from and the recorded pull request.
+   */
+  const continueLoop = async (issue, initial) => {
     let loop = initial;
-    if (isLive(loop)) {
-      // A recorded live PID is never restarted. Without a readable identity the loop needs its
-      // owner instead of waiting forever (adr/0106-foreground-batch-scheduling.md decision 10).
-      const current = await processStartTime(loop.pid);
-      if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
-        // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
-        await markNeedsOwner(issue, "unverified-process-identity", {
-          evidence: "the process start stamp cannot be read",
-        });
-        return;
-      }
-      while (await ownerStillLive(loop)) {
-        if (interrupted || hard) return;
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-      slots.delete(issue);
-    }
-    if (loop.status === "needs-owner") {
-      const applied = await applyDecisionAnswer(issue, loop);
-      if (applied.kind !== "resume") return;
-      loop = applied.loop;
-    }
     const transcript = await readTranscript(loop.transcript);
     if (transcript === null && loop.attempts > 0) {
       await markNeedsOwner(issue, "unverified-steps", {
@@ -1153,7 +1171,20 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await finishSuccess(issue, loop, { stepsUsed, remainingSteps, pr: loop.pr });
       return;
     }
-    if (recordedExit.ok && recordedExit.proven && [1, 2, 4].includes(recordedExit.exitCode)) {
+    if (
+      recordedExit.ok &&
+      recordedExit.proven &&
+      recordedExit.exitCode === 4 &&
+      loop.decisionAnswer !== "resume"
+    ) {
+      await markPrHeadUnresolved(issue, loop, {
+        pr: loop.pr,
+        stepsUsed,
+        remainingSteps,
+      });
+      return;
+    }
+    if (recordedExit.ok && recordedExit.proven && [1, 2].includes(recordedExit.exitCode)) {
       await finishFailure(issue, loop, `exit-${recordedExit.exitCode}`, {
         stepsUsed,
         remainingSteps,
@@ -1204,8 +1235,35 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       startTime: null,
     });
     await launchIssue(issue, {
-      recovery: { continueFrom: loop.transcript, pr: decision.pr },
+      recovery: { continueFrom: loop.transcript, pr: decision.pr ?? loop.pr },
     });
+  };
+
+  const recover = async (issue, initial) => {
+    let loop = initial;
+    if (isLive(loop)) {
+      // A recorded live PID is never restarted. Without a readable identity the loop needs its
+      // owner instead of waiting forever (adr/0106-foreground-batch-scheduling.md decision 10).
+      const current = await processStartTime(loop.pid);
+      if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
+        // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
+        await markNeedsOwner(issue, "unverified-process-identity", {
+          evidence: "the process start stamp cannot be read",
+        });
+        return;
+      }
+      while (await ownerStillLive(loop)) {
+        if (interrupted || hard) return;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      slots.delete(issue);
+    }
+    if (loop.status === "needs-owner") {
+      const applied = await applyDecisionAnswer(issue, loop);
+      if (applied.kind !== "resume") return;
+      loop = applied.loop;
+    }
+    await continueLoop(issue, loop);
   };
 
   // Fill the loop slots from the frozen set in order. A waiting issue and a pending decision
@@ -1387,6 +1445,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           pendingDecisions.add(issue);
           return;
         }
+        const appliedAnswer = current.decisionAnswer != null;
         if (!start) {
           // A resume reconciles one recovered loop before it launches, so it never restarts
           // blindly. A counted attempt or a recorded answer never takes the fresh-launch path.
@@ -1396,16 +1455,23 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
               () => true,
               () => false,
             ));
-          if (hasTranscript || current.attempts > 0 || current.decisionAnswer != null) {
+          if (hasTranscript || current.attempts > 0 || appliedAnswer) {
             await recover(issue, current);
             return;
           }
         }
-        try {
-          await launchIssue(issue);
-        } catch (err) {
-          if (!err?.batchWide) throw err;
+        const launch = async () => {
+          try {
+            await launchIssue(issue);
+          } catch (err) {
+            if (!err?.batchWide) throw err;
+          }
+        };
+        if (start && appliedAnswer) {
+          await withLoopOwnership(issue, launch);
+          return;
         }
+        await launch();
       };
       if (start) await runOne();
       else await withLoopOwnership(issue, runOne);
@@ -1514,6 +1580,15 @@ async function decisionView(runsRoot, batchId, loop) {
   return view;
 }
 
+/** The next action of a loop that needs its owner, or null when no named action exists. */
+function nextActionOf(loop) {
+  if (loop.status !== "needs-owner" || loop.reason !== "pr-head-unresolved") return null;
+  if (loop.pr == null) {
+    return `compare branch ${loop.branch} with the reviewed commit, then merge or resume. The pull request number is not recorded`;
+  }
+  return `compare pull request ${loop.pr} head with the reviewed commit, then merge or resume`;
+}
+
 /** Reads one batch for `batch status`; a live-owner checkpoint that is gone reads `stale`. */
 export async function readBatchStatus({ runsRoot, id }) {
   const manifest = await readManifest(runsRoot, id);
@@ -1535,7 +1610,7 @@ export async function readBatchStatus({ runsRoot, id }) {
         status: live ? "running" : "stale",
         nextAction: live ? null : "batch resume",
       });
-    } else loops.push({ ...loopEntry(loop), ...waitDetails, nextAction: null });
+    } else loops.push({ ...loopEntry(loop), ...waitDetails, nextAction: nextActionOf(loop) });
   }
   return {
     ...manifest,
