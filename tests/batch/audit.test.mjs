@@ -1012,24 +1012,41 @@ test("prepare resolves the frozen revision and refuses a missing base", async ()
   ).rejects.toThrow(/has no refs\/remotes\/origin\/no-such-base/);
 });
 
+// Builds one audit record in a plain temporary directory, with no Git repository or process, for
+// the read-only frozen-set tests.
+async function frozenAuditStore(overrides = {}) {
+  const base = await mkdtemp(join(tmpdir(), "audit-read-"));
+  roots.push(base);
+  const repo = join(base, "repo");
+  await mkdir(repo);
+  const runsRoot = join(base, "runs");
+  const state = {
+    id: "20260101-000000-read",
+    repo,
+    status: "created",
+    pendingCreate: null,
+    created: [],
+    issues: [],
+    ...overrides,
+  };
+  await mkdir(auditPaths(runsRoot).root, { recursive: true });
+  await writeAudit(runsRoot, state);
+  return { runsRoot, repo, state };
+}
+
 // Usefulness: a created audit supplies exactly its frozen issue set in the stored order, and the
 // read writes nothing (issue #1734).
 test("a created audit supplies its frozen issue set in order", async () => {
-  const prepared = await preparedAudit();
-  const runsRoot = join(prepared.workTreeRoot, "runs");
-  await pausedAudit(prepared, {
-    status: "created",
-    pauseReason: null,
-    reason: null,
+  const { runsRoot, repo, state } = await frozenAuditStore({
     issues: [
       { identity: "id-1", title: "Second finding", number: 12, url: "u12", existing: false },
       { title: "Linked finding", number: 4, url: "u4", existing: true },
     ],
   });
-  const file = auditPaths(runsRoot).file(prepared.id);
+  const file = auditPaths(runsRoot).file(state.id);
   const before = await stat(file);
 
-  const numbers = await readFrozenIssueSet({ runsRoot, id: prepared.id, repo: prepared.repo });
+  const numbers = await readFrozenIssueSet({ runsRoot, id: state.id, repo });
 
   expect(numbers).toEqual([12, 4]);
   expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
@@ -1038,56 +1055,42 @@ test("a created audit supplies its frozen issue set in order", async () => {
 // Usefulness: a paused audit has no finished frozen set, so a batch start is refused before any
 // state write (issue #1734).
 test("a paused audit is refused", async () => {
-  const prepared = await preparedAudit();
-  const runsRoot = join(prepared.workTreeRoot, "runs");
-  await pausedAudit(prepared);
+  const { runsRoot, repo, state } = await frozenAuditStore({ status: "paused" });
 
-  await expect(
-    readFrozenIssueSet({ runsRoot, id: prepared.id, repo: prepared.repo }),
-  ).rejects.toThrow(`Audit ${prepared.id} is paused, not created.`);
+  await expect(readFrozenIssueSet({ runsRoot, id: state.id, repo })).rejects.toThrow(
+    `Audit ${state.id} is paused, not created.`,
+  );
 });
 
 // Usefulness: a needs-owner audit is not finished, so a batch start is refused (issue #1734).
 test("a needs-owner audit is refused", async () => {
-  const prepared = await preparedAudit();
-  const runsRoot = join(prepared.workTreeRoot, "runs");
-  await pausedAudit(prepared, { status: "needs-owner" });
+  const { runsRoot, repo, state } = await frozenAuditStore({ status: "needs-owner" });
 
-  await expect(
-    readFrozenIssueSet({ runsRoot, id: prepared.id, repo: prepared.repo }),
-  ).rejects.toThrow(`Audit ${prepared.id} is needs-owner, not created.`);
+  await expect(readFrozenIssueSet({ runsRoot, id: state.id, repo })).rejects.toThrow(
+    `Audit ${state.id} is needs-owner, not created.`,
+  );
 });
 
 // Usefulness: a pending issue write is not reconciled, so its issue set cannot be trusted
 // (issue #1734).
 test("an unreconciled issue write is refused", async () => {
-  const prepared = await preparedAudit();
-  const runsRoot = join(prepared.workTreeRoot, "runs");
-  await pausedAudit(prepared, {
-    status: "created",
-    pauseReason: null,
-    reason: null,
+  const { runsRoot, repo, state } = await frozenAuditStore({
     pendingCreate: { identity: "id-1", title: "Unconfirmed" },
     issues: [{ identity: "id-1", title: "Unconfirmed", number: 20, url: "u20", existing: false }],
   });
 
-  await expect(
-    readFrozenIssueSet({ runsRoot, id: prepared.id, repo: prepared.repo }),
-  ).rejects.toThrow("has an unreconciled issue write");
+  await expect(readFrozenIssueSet({ runsRoot, id: state.id, repo })).rejects.toThrow(
+    "has an unreconciled issue write",
+  );
 });
 
 // Usefulness: the frozen set of another repository would launch unrelated issues (issue #1734).
 test("an audit of another repository is refused", async () => {
-  const prepared = await preparedAudit();
-  const runsRoot = join(prepared.workTreeRoot, "runs");
-  await pausedAudit(prepared, {
-    status: "created",
-    pauseReason: null,
-    reason: null,
+  const { runsRoot, repo, state } = await frozenAuditStore({
     issues: [{ title: "Finding", number: 20, url: "u20", existing: false }],
   });
 
   await expect(
-    readFrozenIssueSet({ runsRoot, id: prepared.id, repo: `${prepared.repo}-other` }),
-  ).rejects.toThrow(`Audit ${prepared.id} belongs to ${prepared.repo}.`);
+    readFrozenIssueSet({ runsRoot, id: state.id, repo: `${repo}-other` }),
+  ).rejects.toThrow(`Audit ${state.id} belongs to ${repo}.`);
 });

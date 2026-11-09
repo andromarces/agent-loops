@@ -57,6 +57,7 @@ test("batch help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["--help"]);
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch start");
+  expect(out).toContain("--from-audit");
   expect(out).toContain("agent-loop batch answer");
   expect(out).toContain("130");
 });

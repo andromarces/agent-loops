@@ -27,6 +27,9 @@ Usage:
   agent-loop batch start --repo <dir> --issue <n> [--issue <n> ...] \\
     --orchestrator <cli> --worker <cli> --reviewer <cli> \\
     --loops <n> --max-steps <n> [settings]
+  agent-loop batch start --repo <dir> --from-audit <audit id> \\
+    --orchestrator <cli> --worker <cli> --reviewer <cli> \\
+    --loops <n> --max-steps <n> [settings]
 
   agent-loop batch status [--batch <id>]
   agent-loop batch resume --batch <id>
@@ -39,6 +42,8 @@ Usage:
   agent-loop batch audit approve --audit <id>
 
 The batch runs one headless loop per issue in its own work tree, at most --loops at once.
+The issue list is explicit --issue entries, or the frozen issue set of a created audit with
+--from-audit; the two are mutually exclusive.
 Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
 --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
 --<role>-model and --<role>-effort flags.
