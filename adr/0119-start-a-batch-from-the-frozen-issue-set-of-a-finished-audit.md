@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[adr/0121-mix-issue-pull-request-and-task-items-in-one-batch.md](0121-mix-issue-pull-request-and-task-items-in-one-batch.md) partially supersedes this ADR. The replaced part is decision 1's rule that `--from-audit` and `--issue` are the only two item sources; a third source, `--items-file`, is added. Every other decision stays in force.
 
 ## Supersedes
 

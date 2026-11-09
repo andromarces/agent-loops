@@ -28,6 +28,9 @@ Usage:
   agent-loop batch start --repo <dir> --issue <n> [--issue <n> ...] \\
     --orchestrator <cli> --worker <cli> --reviewer <cli> \\
     --loops <n> --max-steps <n> [settings]
+  agent-loop batch start --repo <dir> --items-file <path> \\
+    --orchestrator <cli> --worker <cli> --reviewer <cli> \\
+    --loops <n> --max-steps <n> [settings]
   agent-loop batch start --repo <dir> --from-audit <audit id> \\
     --orchestrator <cli> --worker <cli> --reviewer <cli> \\
     --loops <n> --max-steps <n> [settings]
@@ -43,11 +46,19 @@ Usage:
   agent-loop batch audit approve --audit <id>
   agent-loop batch audit remove --audit <id>
 
-The batch runs one headless loop per issue in its own work tree, at most --loops at once.
-The issue list is explicit --issue entries, or the frozen issue set of a created audit with
---from-audit; the two are mutually exclusive.
-Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
---test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
+The batch runs one headless loop per item in its own work tree, at most --loops at once.
+The item list is explicit --issue entries, a JSON --items-file list, or the frozen issue
+set of a created audit with --from-audit; exactly one source is required.
+An items-file entry is { kind, number | text, mode, task, id }: kind is issue, pr, or
+task; mode is work-first, review-first, or review-only; task replaces the template for
+that item; id is required for a task item only. The default mode is work-first for an
+issue and a task, and review-first for a pull request.
+An issue keeps its own branch and eligibility. A pull request runs on its head branch in
+every mode and is skipped before launch when that head moved or it is closed. A task runs
+on branch batch/<batch id>/task-<id> in work tree task-<id>, and in work-first or
+review-first it delivers through a pull request with no closing keyword.
+Settings: --base, --work-tree-root, --task-template, --require-specification, --setup-cmd,
+--setup-timeout, --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
 --<role>-model and --<role>-effort flags.
 
 A needs-owner loop becomes a pending decision and releases its slot. \`batch status\` shows
@@ -153,6 +164,7 @@ async function preparedForResume(manifest) {
     loops: settings.loops,
     maxSteps: settings.maxSteps,
     taskTemplate: settings.taskTemplate,
+    requireSpecification: settings.requireSpecification === true,
     setupCmd: settings.setupCmd ?? null,
     setupTimeout: settings.setupTimeout,
     testCmd: settings.testCmd ?? null,

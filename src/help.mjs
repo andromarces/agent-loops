@@ -65,15 +65,26 @@ Subcommands:
                                 64 on a usage error, 130 or 143 on SIGINT or SIGTERM.
                                 See agent-loop test-slot --help.
   agent-loop batch start        Run one foreground batch: one headless loop per selected
-                                issue, each in its own work tree, at most --loops at once.
-                                Requires --repo <main work tree>, --issue <n> (repeatable) or
-                                --from-audit <audit id> for the frozen set of a created audit,
-                                --orchestrator, --worker, --reviewer, --loops <1-64>, and
-                                --max-steps. Accepts --base, --work-tree-root,
-                                --task-template, --setup-cmd, --setup-timeout, --test-cmd,
+                                item, each in its own work tree, at most --loops at once.
+                                Requires --repo <main work tree> and exactly one selection:
+                                --issue <n> (repeatable), --from-audit <audit id> for the
+                                frozen set of a created audit, or --items-file <path> for a
+                                JSON list of {kind, number|text, mode, task, id}. A kind is
+                                issue, pr, or task. The default mode is work-first for an
+                                issue or task and review-first for a pull request. A task
+                                item needs a short unique id; its branch is
+                                batch/<batch id>/task-<id> and its work tree is task-<id>.
+                                Turn a mixed request into one --items-file list: a local
+                                item becomes a task with a unique id, a pull request
+                                becomes a pr item, and an issue becomes an issue item.
+                                Also requires --orchestrator, --worker, --reviewer,
+                                --loops <1-64>, and --max-steps. Accepts --base,
+                                --work-tree-root, --task-template, --require-specification,
+                                --setup-cmd, --setup-timeout, --test-cmd,
                                 --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
-                                --<role>-model and --<role>-effort flags. A linked --repo, both
-                                selection flags, a duplicate issue, a paused or needs-owner
+                                --<role>-model and --<role>-effort flags. A linked --repo, two
+                                selection flags, a duplicate item, an unknown kind or mode, a
+                                task item without a unique id, a paused or needs-owner
                                 audit, an unreconciled audit write, an unknown task placeholder,
                                 or a work-tree root inside a Git work tree is refused with
                                 exit 2 before any claim, work tree, checkpoint, or child exists.

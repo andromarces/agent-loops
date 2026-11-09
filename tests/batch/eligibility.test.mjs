@@ -9,6 +9,13 @@ const BODY_OK = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check
 
 function issueReply(state, { body = BODY_OK, blocked = [] } = {}) {
   return (args) => {
+    if (args[0] === "pr" && args[1] === "view") {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
     if (args[0] === "issue" && args[1] === "view") {
       if (args.includes("blockedBy")) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: blocked } }), stderr: "" };
