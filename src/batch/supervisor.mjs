@@ -1,6 +1,5 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per issue, prints progress on stderr, and returns one summary for stdout.
-import { createWriteStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -184,28 +183,49 @@ function cliPath() {
   return fileURLToPath(new URL("../cli.mjs", import.meta.url));
 }
 
+/** One line of the failure text, without the child argument list, for a loop reason. */
+function spawnFailureText(error) {
+  const cause = error?.cause?.message ?? error?.originalMessage ?? error?.message;
+  const text = String(cause ?? "the child did not start").split("\n")[0];
+  const code = typeof error?.code === "string" ? error.code : null;
+  return code === null || text.includes(code) ? text : `${code}: ${text}`;
+}
+
+/** Returns a child that has a process id, and reports one that never started as an error. */
+async function startedChild(child) {
+  if (child.pid != null) return child;
+  const { error } = await child.done;
+  child.close?.();
+  throw error ?? new Error("the child did not start");
+}
+
 /** Spawns one headless run with stdout and stderr appended to `logPath`. */
 export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
-  if (deps.spawn) return deps.spawn({ args, cwd, logPath });
-  const stream = createWriteStream(logPath, { flags: "a" });
+  if (deps.spawn) return startedChild(await deps.spawn({ args, cwd, logPath }));
+  // Execa opens one shared append stream for both output streams. It closes the stream on a normal
+  // end or a spawn failure.
   const subprocess = killTreeOnExit(
     execa(process.execPath, [cliPath(), ...args], {
       cwd,
       reject: false,
       stdin: "ignore",
-      stdout: stream,
-      stderr: stream,
+      stdout: { file: logPath, append: true },
+      stderr: { file: logPath, append: true },
       killDescendants: true,
     }),
   );
-  const pid = subprocess.pid;
-  const startTime = await processStartTime(pid);
-  const done = subprocess
-    .then((result) => ({ exitCode: result.exitCode ?? null }))
-    .catch(() => ({ exitCode: null }));
-  return {
+  const pid = subprocess.pid ?? null;
+  // With reject false, execa resolves a spawn failure as a failed result, not a rejection.
+  const done = subprocess.then(
+    (result) => ({
+      exitCode: result.exitCode ?? null,
+      error: result.failed ? result : null,
+    }),
+    (error) => ({ exitCode: null, error }),
+  );
+  return startedChild({
     pid,
-    startTime,
+    startTime: pid === null ? null : await processStartTime(pid),
     done,
     kill: (signal = "SIGINT") => {
       try {
@@ -221,8 +241,7 @@ export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
         // A run that already ended needs no signal.
       }
     },
-    close: () => stream.end(),
-  };
+  });
 }
 
 const terminal = (status) => TERMINAL.has(status);
@@ -920,12 +939,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         deps,
       });
     } catch (err) {
+      const text = spawnFailureText(err);
       await changeLoop(issue, {
         status: "failed",
-        reason: `child-error: ${err.message}`,
+        reason: `child-error: ${text}`,
       });
       await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-      logError(`issue ${issue}: failed (child-error: ${err.message})`);
+      logError(`issue ${issue}: failed (child-error: ${text})`);
       return;
     }
     children.set(issue, child);
