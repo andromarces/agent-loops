@@ -1,10 +1,25 @@
 import { afterEach, expect, vi } from "vite-plus/test";
+
+// Answers `git` from memory, so each case starts no `git` process. See `cleanRepoGit`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) => {
+      const answer =
+        gitDouble.answer && command === "git" ? gitDouble.answer(command, args, options) : null;
+      return answer ?? real.execa(command, args, options);
+    },
+  };
+});
+
 import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
-  newRunRepo,
+  newCleanRunRepo,
   readRepoState,
   recordingAdapter,
   stdinPrompt,
@@ -17,7 +32,10 @@ const HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
 
-afterEach(cleanup);
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 /** A `gh` double that answers only the PR list read of the worker envelope. */
 function prListGh({ entries = [], status = 0, stdout } = {}) {
@@ -42,7 +60,7 @@ const agents = () => ({ fake1: recordingAdapter([]), fake2: recordingAdapter([])
 // Usefulness: verifies a worker turn that opens a PR carries its number and head in the envelope
 // and the state. The parent then reads no free text for the PR source.
 test("a worker turn carries the open PR of its branch", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const gh = prListGh({
     entries: [{ number: 1755, headRefOid: HEAD, isCrossRepository: false }],
   });
@@ -67,7 +85,7 @@ test("a worker turn carries the open PR of its branch", async () => {
 
 // Usefulness: verifies a worker turn with no open PR carries no field and stays ok.
 test("a worker turn with no open PR carries no field and stays ok", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
 
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     agents: agents(),
@@ -82,7 +100,7 @@ test("a worker turn with no open PR carries no field and stays ok", async () => 
 
 // Usefulness: verifies a failed PR read carries no field, logs one warning, and keeps the turn ok.
 test("a failed PR read carries no field and keeps the turn ok", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -103,7 +121,7 @@ test("a failed PR read carries no field and keeps the turn ok", async () => {
 
 // Usefulness: verifies a reviewer turn reads no PR, so the field belongs to the worker only.
 test("a reviewer turn reads no PR", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     agents: agents(),
     stdin: stdinPrompt,
