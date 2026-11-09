@@ -34,6 +34,8 @@ Both the normal end path and the recovery path call one shared step for exit 4. 
 
 The loop keeps its claim and its work tree. The exit 4 path runs no cleanup and no `releaseClaim`.
 
+The exit 4 stop also stores the final report of the finished attempt, as `adr/0115-batch-loop-final-report.md` requires.
+
 ### 2. The step records the declared pull request
 
 The recovery path reads the pull request with `declaredPrFromTranscript`. The normal end path reads the same function from the transcript. The step records the number on the loop.

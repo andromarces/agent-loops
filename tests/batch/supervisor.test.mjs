@@ -34,6 +34,14 @@ import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
 const BODY = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", ""].join("\n");
+const SUMMARY = {
+  changed: "a",
+  verified: "b",
+  deferred: "c",
+  notDone: "d",
+  open: "e",
+  notes: "a note",
+};
 
 function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
   return async (args) => {
@@ -845,6 +853,39 @@ test("a child that exits 4 stops needs-owner on the normal path", async () => {
   }
 });
 
+// Usefulness: an exit 4 loop keeps its finish summary and warnings on the normal path.
+test("an exit 4 loop keeps its report on the normal path", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    exitCode: 4,
+    pr: 42,
+    summary: SUMMARY,
+    warnings: ["delete by hand: old branch"],
+  });
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0].report).toMatchObject({
+      state: "read",
+      summary: SUMMARY,
+      warnings: ["delete by hand: old branch"],
+      transcriptRead: { ok: true },
+    });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: batch status names the pull request and the next action of an exit 4 loop.
 test("batch status names the pull request and the next action", async () => {
   const prepared = await waitPrepared([1]);
@@ -989,6 +1030,61 @@ test("a transcript that exited 4 stops needs-owner on recovery", async () => {
     expect(again.exitCode).toBe(1);
     expect(after.decision).toBe(loop.decision);
     expect((await stat(checkpoint, { bigint: true })).mtimeNs).toBe(before.mtimeNs);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: an exit 4 loop keeps its finish summary and warnings on recovery.
+test("an exit 4 loop keeps its report on recovery", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    steps: 3,
+    hold: true,
+    pr: 42,
+    summary: SUMMARY,
+    warnings: ["delete by hand: old branch"],
+  });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(transcript, JSON.stringify({ ...data, exitCode: 4 }));
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: resumeChild.spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0].report).toMatchObject({
+      state: "read",
+      summary: SUMMARY,
+      warnings: ["delete by hand: old branch"],
+      transcriptRead: { ok: true },
+    });
   } finally {
     await cleanupRepo();
   }

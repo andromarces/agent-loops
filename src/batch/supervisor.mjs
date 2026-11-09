@@ -678,11 +678,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     return created;
   };
 
-  const markPrHeadUnresolved = (issue, { pr, stepsUsed, remainingSteps }) =>
-    markNeedsOwner(issue, "pr-head-unresolved", {
+  const markPrHeadUnresolved = async (issue, loop, { pr, stepsUsed, remainingSteps }) => {
+    const report = await readLoopReport(loop.transcript, { attempts: loop.attempts });
+    return markNeedsOwner(issue, "pr-head-unresolved", {
       evidence: pr === null ? "the transcript records no pull request" : `pull request ${pr}`,
-      extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null },
+      extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null, report },
     });
+  };
 
   const applyDecisionAnswer = async (issue, current) => {
     if (isLive(current) && (await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
@@ -1042,7 +1044,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         );
         return;
       }
-      await markPrHeadUnresolved(issue, { ...common, pr: declaredPr });
+      await markPrHeadUnresolved(issue, loop, { ...common, pr: declaredPr });
       progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
     }
@@ -1175,7 +1177,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       recordedExit.exitCode === 4 &&
       loop.decisionAnswer !== "resume"
     ) {
-      await markPrHeadUnresolved(issue, {
+      await markPrHeadUnresolved(issue, loop, {
         pr: loop.pr,
         stepsUsed,
         remainingSteps,
