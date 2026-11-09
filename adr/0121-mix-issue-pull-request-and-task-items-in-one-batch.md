@@ -244,6 +244,7 @@ Andro Marces
 ## Links
 
 - [Issue #1751: Let batch start run a mix of issue, pull request, and free-text items, each with its own loop mode](https://github.com/andromarces/agent-loops/issues/1751)
+- [PR #1753: Run issue, pull request, and task items in one batch](https://github.com/andromarces/agent-loops/pull/1753)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
 - [ADR 0114: Report an exit 4 batch loop as needs-owner](0114-report-an-exit-4-loop-as-needs-owner.md)
