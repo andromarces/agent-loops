@@ -383,7 +383,7 @@ agent-loop test-slot --if-held -- "pnpm exec vp test run tests/foo.test.mjs"
 
 ## Batch runs
 
-`agent-loop batch start` owns one batch of independent issues for its whole life. It runs in the foreground, prints progress on stderr, and returns one JSON summary on stdout when every selected issue is terminal or the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
+`agent-loop batch start` owns one batch of independent issues for its whole life. It runs in the foreground and prints progress on stderr. It returns one JSON summary on stdout when every selected issue is terminal, when an owner decision is pending, or when the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
 
 ### Commands and settings
 
@@ -392,6 +392,7 @@ agent-loop batch start --repo <main work tree> --issue 1709 --issue 1710 \
   --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
 agent-loop batch status --batch <id>
 agent-loop batch resume --batch <id>
+agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 ```
 
 `start` requires `--repo` (the main work tree, never a linked one), at least one `--issue` (launch order, duplicates refused), `--orchestrator`, `--worker`, `--reviewer`, `--loops` (1 to 64), and `--max-steps`. It accepts `--base`, `--work-tree-root`, `--task-template`, `--setup-cmd`, `--setup-timeout`, `--test-cmd`, `--test-cmd-timeout`, `--timeout`, `--reviewer-sandbox`, and the `--<role>-model` and `--<role>-effort` flags. The remaining values keep their headless defaults, and every supplied value goes through the headless parser.
@@ -409,7 +410,7 @@ The runtime selects no issue. The skill resolves the request into explicit issue
 Before each launch the batch refreshes one issue and skips it with one named reason:
 
 - `closed`: the issue is not `OPEN`.
-- `blocked`: an open issue blocks it; the skip names the blocking numbers.
+- `blocked`: an open issue blocks it. The issue waits and is polled, not skipped.
 - `claimed`: a live local claim of another batch holds it; the skip names that batch.
 - `closed-by-open-pr`: an open pull request closes it, through `closingIssuesReferences` or a closing keyword in a commit message. A pull request commit read that reaches the 250-commit page stops the queue for the owner's decision.
 - `not-specified`: the body has no `## Acceptance` heading with a list item, or has neither `## Problem` nor `## Scope`.
@@ -419,9 +420,33 @@ A failed batch-wide read pauses the queue, leaves the unread issues `queued`, an
 
 ### Loop slots and test slots
 
-`--loops` bounds live headless runs of one batch. It is not machine-wide. A free slot is filled from the frozen set in order. A run holds its slot until it is terminal or the batch stops. A `needs-owner` loop keeps its slot in milestone 1.
+`--loops` bounds live headless runs of one batch. It is not machine-wide. A free slot is filled from the frozen set in order. A run holds its slot until it is terminal or the batch stops. A `needs-owner` loop becomes a pending decision and releases its slot once no recorded child process is live. A `waiting` loop holds no slot.
 
 Every `--test-cmd` run still passes through the machine-wide test slot, whose default count is 1. Two loops can therefore run together while their full suites serialize.
+
+### Owner decisions
+
+A loop that stops as `needs-owner` records a pending decision. The decision has a unique id, the reason, the evidence, two option keys, and one recommendation. A normal state offers `resume`, which is recommended, and `abandon`. A loop whose step count cannot be proven offers `abandon`, which is recommended, and `skip`.
+
+`batch status` shows the decision state, the option keys, and the recommendation. A pending decision keeps its claim, work tree, transcript, and remaining budget. It holds no loop slot once no recorded child process is live.
+
+`agent-loop batch answer` binds one listed option to one decision. The answer file is created with no overwrite, so two answers to one decision have exactly one winner. An unknown batch, an unknown decision, another batch's decision, an answered decision, and an unlisted option exit 2 and write nothing.
+
+An answer of `resume` puts the loop back in the queue, and `batch resume` continues it with the remaining budget. An answer of `abandon` ends the loop as `failed` with reason `owner-abandoned` and releases its claim. An answer of `skip` ends it as `skipped` with reason `owner-skipped` and releases its claim. A malformed decision or answer fails closed and is reported.
+
+### Waiting for a blocker merge
+
+An issue with an open blocking issue becomes `waiting` instead of a final skip. The checkpoint records `skipReason: "blocked"` and `blockingIssues`, and the issue holds no claim, work tree, or slot.
+
+The batch re-checks a waiting issue every 15 seconds on a monotonic clock. A closed issue is reported as `skipped` with reason `closed` and launches nothing. A failed poll read logs a warning and retries on the next poll. When every blocker closes, the issue returns to the queue and launches in the next free slot, with no new start command.
+
+A waiting issue keeps the foreground command live until its blockers close or the command is interrupted. A pending decision does not keep it live, because only the owner can answer it.
+
+### Notifications
+
+On macOS and Windows the batch sends a desktop notification for a new pending decision, a required owner merge, and batch completion. Linux and other platforms spawn nothing.
+
+The notifier passes the text as an argument on macOS and as environment values on Windows. The text never enters a script. The notifier bounds the text, the process time, and its own child. A failure logs a warning and never fails the batch.
 
 ### Claims and checkpoints
 
@@ -429,18 +454,20 @@ The local claim of one repository and issue is `<runs root>/batches/claims/<repo
 
 The batch store is `<runs root>/batches/<batch id>/`: `batch.json` holds the frozen set, settings, and batch status; `loops/issue-<n>.json` holds one checkpoint; `transcripts/issue-<n>.json` holds the headless transcript; `logs/issue-<n>.<attempt>.log` holds the child output. The runs root is `AGENT_LOOP_RUNS_ROOT`, else `<os tmpdir>/agent-loops/runs`. Set it to a stable path when a checkpoint must survive a reboot.
 
-Checkpoints are written on an event only: at `start`, at a launch, at a skip, at a child exit, at a reconciliation result that changes the loop, and at the final batch status. There is no heartbeat and no periodic write. `batch status` writes nothing, and a resume with nothing to do writes nothing.
+The store also holds `decisions/<decision id>.json` and `answers/<decision id>.json`. Each file is created with no overwrite, and a partial or unreadable file fails closed.
+
+Checkpoints are written on an event only. The events are `start`, a launch, a skip, a child exit, a reconciliation change, a decision or wait change, and the final status. There is no heartbeat and no periodic write. `batch status` writes nothing, and a resume with nothing to do writes nothing.
 
 ### Loop statuses and the summary
 
-A loop is `queued`, `running`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action.
+A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state.
 
 `start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue: loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, and cleanup result.
 
 Exit codes:
 
 - `0`: every selected issue ended `succeeded` or `skipped`.
-- `1`: a loop ended `failed` or `needs-owner`, or the queue paused.
+- `1`: a loop ended `failed` or `needs-owner`, the batch waits on a decision or merge, or the queue paused.
 - `2`: a refused setting, or a refusal before any state write.
 - `130`: SIGINT ended the batch.
 
@@ -455,6 +482,10 @@ The first SIGINT stops new launches, forwards SIGINT to each live child, and wai
 3. `remaining = --max-steps at start - steps used`. Zero marks the loop `failed` with reason `step-budget-exhausted`; a positive remainder becomes the next attempt's `--max-steps`.
 4. GitHub is reconciled before any repeat (below).
 5. The attempt continues the same transcript with `--continue-from <transcript> --transcript <same path> --max-steps <remaining>`. A matching open pull request is supplied as both `--pr <n>` and `--require-ci <n>`.
+
+A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`.
+
+A `waiting` issue is re-checked on the same 15-second poll, and it launches after its blockers close. Both states survive an interrupted session, so `batch resume` keeps them.
 
 ### GitHub reconciliation
 

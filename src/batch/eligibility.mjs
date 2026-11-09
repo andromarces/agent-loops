@@ -169,6 +169,7 @@ export async function checkEligibility({ issue, gh, repo, batchId = null, claim,
       ok: false,
       reason: "blocked",
       evidence: `open blocking issues: ${open.join(", ")}`,
+      blocking: open,
     };
   }
 

@@ -529,7 +529,9 @@ When the user asks to work several issues as one batch, the skill resolves the r
 
 Do not dispatch one `role` turn per issue for a batch. The batch command owns the loops, the claims, the checkpoints, and the recovery. Use [Selecting issues for a batch](#selecting-issues-for-a-batch) to choose the numbers; the runtime never selects one.
 
-Read a batch with `agent-loop batch status --batch <id>` and continue an interrupted batch with `agent-loop batch resume --batch <id>`. A `needs-owner` loop is not a failure and is not retried; resolve the named local or remote state, then run `batch resume` again. A target that needs a decision in the batch, a slot release, or a merge continuation belongs to a later milestone and is not available here.
+Read a batch with `agent-loop batch status --batch <id>` and continue an interrupted batch with `agent-loop batch resume --batch <id>`. A `needs-owner` loop is not a failure and is not retried. Resolve the named local or remote state.
+
+A pending decision releases its slot once no recorded child process is live. `agent-loop batch answer --batch <id> --decision <id> --option <key>` records one listed option. A blocked issue waits on a poll and launches after its blockers close, so no new start command is needed. For a decision, run `batch resume` again after the answer.
 
 When the user asks for an audit of a project revision that produces issues, run one `agent-loop batch audit start` command. Pass the repository, one `--reviewer` per requested reviewer with its `--reviewer-model` or `--reviewer-effort`, the consolidation `--worker`, the base branch, the work-tree root, the setup command, the timeout, and the reviewer sandbox. Show the resolved settings before it starts. Do not choose a revision or select issues. Read an audit with `agent-loop batch audit status --audit <id>`. Retry a failed audit with `batch audit resume`, and run `batch audit approve` only on the user's explicit instruction. An audit that stops as `needs-owner` is not retried; resolve the named work tree state, then run `batch audit resume`.
 
