@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[adr/0117-state-the-held-lock-paused-rule-and-its-precedence.md](0117-state-the-held-lock-paused-rule-and-its-precedence.md) partially supersedes this ADR. The replaced part is the held-lock sentence of decision 9, which states the `paused` report but states no precedence. The rest of decision 9 and every other decision, consequence, and acceptance check stays in force.
 
 ## Supersedes
 
@@ -287,7 +291,11 @@ Andro Marces
 
 - [Issue #1711: Release loop slots on owner decisions, resume after owner merges, and notify](https://github.com/andromarces/agent-loops/issues/1711)
 - [PR #1732: Release batch loop slots on owner decisions, resume after merges, and notify](https://github.com/andromarces/agent-loops/pull/1732)
+- [Issue #1728: Report paused when another resume holds the lock of a needs-owner batch loop](https://github.com/andromarces/agent-loops/issues/1728)
+- [PR #1730: Report paused when a held lock skips a needs-owner loop](https://github.com/andromarces/agent-loops/pull/1730)
+- [Issue #1735: State the held-lock paused rule of batch resume in the ADR and link PR #1730](https://github.com/andromarces/agent-loops/issues/1735)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
+- [ADR 0117: State the held-lock paused rule and its precedence in batch resume](0117-state-the-held-lock-paused-rule-and-its-precedence.md)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)
