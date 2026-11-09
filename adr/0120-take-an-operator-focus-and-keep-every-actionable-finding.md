@@ -76,6 +76,7 @@ Andro Marces
 ## Links
 
 - [Issue #1750: Let batch audit start take an operator focus and keep every actionable finding](https://github.com/andromarces/agent-loops/issues/1750)
+- [PR #1752: Let batch audit start take an operator focus and keep every actionable finding](https://github.com/andromarces/agent-loops/pull/1752)
 - [ADR 0109: Coordinate reviewer audits and consolidated issue creation](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md)
 - [Implementation: audit supervisor](../src/batch/audit.mjs)
 - [Implementation: batch command](../src/batch/cli.mjs)
