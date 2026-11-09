@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import { prepareBatch } from "../../src/batch/args.mjs";
 import { git } from "../../src/batch/git.mjs";
 import { tryStateLock } from "../../src/lib/state-lock.mjs";
@@ -28,6 +28,7 @@ import {
   readBatchStatus,
   runBatch,
   runSetup,
+  spawnHeadless,
 } from "../../src/batch/supervisor.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
@@ -239,6 +240,61 @@ async function pushLoop(prepared, issue = 1) {
 // The shared repository and remote are removed once for the file. Each case removes only the
 // work-tree root it created, at `afterAll`, so no case depends on another case's teardown.
 async function cleanupRepo() {}
+
+// Usefulness: the real headless child writes its output to the log file (the one end-to-end run of this entry point).
+test("the real headless child writes its output to the log file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "batch-spawn-"));
+  const logPath = join(root, "child.log");
+  try {
+    await writeFile(logPath, "batch-spawn-earlier\n");
+    const child = await spawnHeadless({ args: ["--help"], cwd: root, logPath });
+    const { exitCode } = await child.done;
+    expect(exitCode).toBe(0);
+    const log = await readFile(logPath, "utf8");
+    expect(log).toContain("batch-spawn-earlier\n");
+    expect(log).toContain("Usage:");
+  } finally {
+    await removePath(root);
+  }
+});
+
+// Usefulness: a child with no process id fails the loop with its error and no started line.
+test("a child with no process id fails the loop with its error", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const lines = [];
+  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  const spawn = async () => ({
+    pid: null,
+    startTime: null,
+    done: Promise.resolve({ exitCode: null, error: new Error("spawn ENOENT") }),
+    kill: () => {},
+    hardKill: () => {},
+    close: () => {},
+  });
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: join(prepared.workTreeRoot, "runs"),
+      gh: fakeGh(),
+      deps: { notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(1);
+    expect(summary.loops[0]).toMatchObject({
+      status: "failed",
+      reason: "child-error: spawn ENOENT",
+    });
+    expect(lines.some((line) => line.includes("started (pid"))).toBe(false);
+    const claim = batchPaths(join(prepared.workTreeRoot, "runs")).claim(prepared.repoKey, 1);
+    await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    spy.mockRestore();
+    await cleanupRepo(repo);
+  }
+});
 
 // Usefulness: three issues get three work trees, three branches, and one child each.
 test("three selected issues create three work trees and one child each", async () => {
