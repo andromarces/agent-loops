@@ -13,6 +13,7 @@ import {
   prepareAudit,
   readAudit,
   readAuditStatus,
+  readFrozenIssueSet,
   runAudit,
 } from "./audit.mjs";
 import { runGh } from "../lib/gh-api.mjs";
@@ -252,6 +253,13 @@ export async function runBatchMain(argv) {
     }
     if (command === "start") {
       const options = parseBatchArgs(argv.slice(1));
+      if (options.fromAudit !== null) {
+        options.issues = await readFrozenIssueSet({
+          runsRoot,
+          id: options.fromAudit,
+          repo: options.repo,
+        });
+      }
       const id = newBatchId();
       const prepared = await prepareBatch({ ...options, id });
       await refuseRunsRootInGitWorkTree(runsRoot);

@@ -1,7 +1,10 @@
+import { mkdtemp, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { runBatchMain } from "../../src/batch/cli.mjs";
+import { writeAudit } from "../../src/batch/audit.mjs";
 import { setLogsToStderr } from "../../src/lib/log.mjs";
 import { git } from "../../src/batch/git.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
@@ -158,5 +161,40 @@ test("a runs root inside the repository is refused before any write", async () =
     else process.env.AGENT_LOOP_RUNS_ROOT = previous;
     await removePath(remote);
     await removePath(main);
+  }
+});
+
+// Usefulness: a batch started from a paused audit is refused before any batch state write
+// (issue #1734).
+test("--from-audit of a paused audit exits 2 and writes no batch", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-from-audit-"));
+  const previous = process.env.AGENT_LOOP_RUNS_ROOT;
+  const id = "20260101-000000-abcd1234";
+  try {
+    process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+    await writeAudit(runsRoot, { id, repo: runsRoot, status: "paused" });
+    const { code } = await runQuiet([
+      "start",
+      "--repo",
+      runsRoot,
+      "--from-audit",
+      id,
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--loops",
+      "1",
+      "--max-steps",
+      "2",
+    ]);
+    expect(code).toBe(2);
+    expect(await readdir(join(runsRoot, "batches"))).toEqual(["audits"]);
+  } finally {
+    if (previous === undefined) delete process.env.AGENT_LOOP_RUNS_ROOT;
+    else process.env.AGENT_LOOP_RUNS_ROOT = previous;
+    await removePath(runsRoot);
   }
 });
