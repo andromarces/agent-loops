@@ -34,25 +34,28 @@ asks for the rule and the precedence in an accepted ADR.
    pending decision, claim, work tree, transcript, and remaining step budget.
 2. **An examined loop keeps `failed` or `needs-owner` precedence.** A loop whose resume
    lock this resume takes is examined, so the held-lock pause does not apply to it, and it
-   keeps its own `failed` or `needs-owner` status. A loop that ends `failed` makes the batch
-   `failed` with exit 1. A loop that stays or becomes `needs-owner` keeps its pending
-   decision and the batch reports `waiting` with exit 1, as
-   [adr/0110-release-batch-slots-on-owner-decisions.md](0110-release-batch-slots-on-owner-decisions.md)
-   states, unless decision 3 reports `paused` for another loop.
+   keeps its own `failed` or `needs-owner` status. The batch status then follows this order:
+   a `waiting` or `needs-owner` loop makes the batch `waiting` with exit 1 before a `failed`
+   loop makes it `failed` with exit 1. One `failed` loop beside one unanswered
+   `needs-owner` loop therefore leaves the batch `waiting`, and a `failed` loop alone leaves
+   it `failed`.
 3. **A held-lock skip pauses the batch.** At least one held-lock skip reports the batch
-   `paused` with reason `a loop is owned by another resume`, whatever the other loop
-   statuses. The summary still reports the status of every loop this resume examined. A
-   batch-wide read failure and an interruption keep their existing status precedence.
+   `paused` with reason `a loop is owned by another resume`, before the `waiting` and
+   `failed` checks and whatever the other loop statuses. The summary still reports the
+   status of every loop this resume examined. A batch-wide read failure and an interruption
+   keep their existing status precedence.
 4. **The skip writes no loop record.** The held-lock skip writes no loop checkpoint and
-   launches no child. It writes only the final batch status and its reason. `batch status`
-   still reads the checkpoint that the other resume owns.
+   launches no child. A resume that starts from `waiting` can write the batch manifest
+   status `running` before the final `paused`, so the final status is not the only batch
+   write. `batch status` still reads the checkpoint that the other resume owns.
 
 ## Consequences
 
 - A resume that finds every loop lock held reports `paused`, not `failed`, `waiting`, or
   `completed`.
 - A resume that examined failing or owner-bound work reports that loop status in the
-  summary, and it decides the batch unless another loop's held lock reports `paused`.
+  summary. The batch is `waiting` when any examined loop is `waiting` or `needs-owner`, and
+  `failed` when the only examined trouble is a `failed` loop.
 - An examined `needs-owner` loop remains a pending decision and, without another held lock,
   the batch exits with status `waiting`.
 - The held loop keeps its checkpoint and decision, so a later resume can apply it.
