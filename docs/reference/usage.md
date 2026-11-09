@@ -390,12 +390,14 @@ agent-loop test-slot --if-held -- "pnpm exec vp test run tests/foo.test.mjs"
 ```bash
 agent-loop batch start --repo <main work tree> --issue 1709 --issue 1710 \
   --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
+agent-loop batch start --repo <main work tree> --from-audit <audit id> \
+  --orchestrator codex --worker claude --reviewer agy --loops 2 --max-steps 20
 agent-loop batch status --batch <id>
 agent-loop batch resume --batch <id>
 agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 ```
 
-`start` requires `--repo` (the main work tree, never a linked one), at least one `--issue` (launch order, duplicates refused), `--orchestrator`, `--worker`, `--reviewer`, `--loops` (1 to 64), and `--max-steps`. It accepts `--base`, `--work-tree-root`, `--task-template`, `--setup-cmd`, `--setup-timeout`, `--test-cmd`, `--test-cmd-timeout`, `--timeout`, `--reviewer-sandbox`, and the `--<role>-model` and `--<role>-effort` flags. The remaining values keep their headless defaults, and every supplied value goes through the headless parser.
+`start` requires `--repo` (the main work tree, never a linked one), one issue source, `--orchestrator`, `--worker`, `--reviewer`, `--loops` (1 to 64), and `--max-steps`. The issue source is explicit `--issue <n>` entries (launch order, duplicates refused), or `--from-audit <audit id>` for the frozen set of a finished audit. The two together, and a command with neither, are refused. It accepts `--base`, `--work-tree-root`, `--task-template`, `--setup-cmd`, `--setup-timeout`, `--test-cmd`, `--test-cmd-timeout`, `--timeout`, `--reviewer-sandbox`, and the `--<role>-model` and `--<role>-effort` flags. The remaining values keep their headless defaults, and every supplied value goes through the headless parser.
 
 `--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused. The task template accepts `{issue}`, `{title}`, `{branch}`, and `{repo}`; an unknown placeholder or a template without `{issue}` is a usage error. The default template names the issue, the branch push, and the closing pull request.
 
@@ -405,7 +407,9 @@ Every refusal happens before a claim, work tree, checkpoint, or child exists, an
 
 ### Selection and eligibility
 
-The runtime selects no issue. The skill resolves the request into explicit issue numbers, and that set is frozen at `start`. A later resume reads the same set; an issue opened after `start` is never added, and an issue removed from the set is not replaced.
+The runtime selects no issue. The skill resolves the request into explicit issue numbers, or names a finished audit with `--from-audit <audit id>`, and that set is frozen at `start`. A later resume reads the same set; an issue opened after `start` is never added, and an issue removed from the set is not replaced.
+
+`--from-audit` reads the frozen set of an audit in the `created` state, in the stored order, without sorting or dedupe. It refuses with exit 2 before any state write when the audit is unknown, unreadable, running, paused, `needs-owner`, interrupted, has a `pendingCreate` write that was not reconciled, holds a `created` entry outside its frozen set, belongs to another repository, or has an empty, malformed, or duplicate set. The audit command never starts a batch, and the batch command never starts an audit. [ADR 0119](https://github.com/andromarces/agent-loops/blob/main/adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) is the design.
 
 Before each launch the batch refreshes one issue and skips it with one named reason:
 
@@ -524,6 +528,7 @@ agent-loop batch audit start --repo <main work tree> \
 agent-loop batch audit status --audit <id>
 agent-loop batch audit resume --audit <id>
 agent-loop batch audit approve --audit <id>
+agent-loop batch audit remove --audit <id>
 ```
 
 `start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, and `--reviewer-sandbox`. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
@@ -544,9 +549,9 @@ The audit store is `<runs root>/batches/audits/<audit id>.json`. It holds the re
 
 Exit codes:
 
-- `0`: the audit created its issue set.
-- `1`: the audit paused at a failed audit, a failed consolidation, a failed read, or a failed creation, or stopped as `needs-owner` at a changed checkout.
+- `0`: the audit created its issue set, or `remove` deleted a finished audit.
+- `1`: the audit paused at a failed audit, a failed consolidation, a failed read, or a failed creation, stopped as `needs-owner` at a changed checkout, or `remove` kept the audit.
 - `2`: a refused setting, or a refusal before any state write.
 - `130`: SIGINT ended the audit.
 
-The audit keeps its work tree for inspection. It removes no work tree, creates no label, comments on no issue, and edits no issue. Removal stays with the owner.
+The audit keeps its work tree and store for inspection until the owner removes them. `agent-loop batch audit remove --audit <id>` removes both only for a finished audit: status `created`, a frozen issue set, and no unreconciled issue write. It removes the work tree first, then the store, and the audit root only when it is empty. A `paused`, `needs-owner`, `interrupted`, or running audit, and an audit whose issue write is unreconciled, keeps both and the summary names the reason. The removal checks the recorded path, root, identity, registration, frozen revision, cleanliness, and work-tree lock, and it follows no link or junction. The audit creates no label, comments on no issue, and edits no issue.

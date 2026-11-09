@@ -2,7 +2,22 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+[adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) partially supersedes this ADR. The replaced part is decision 13's deferred entry "Automatic selection of the issues that an audit creates for a following batch, or automatic chaining of an audit into a batch start". The explicit selection is now defined; automatic chaining of an audit into a batch start stays deferred.
+
+[adr/0118-remove-a-finished-audit-work-tree-and-store.md](0118-remove-a-finished-audit-work-tree-and-store.md)
+partially supersedes this ADR. These parts are replaced:
+
+- Owner decision 2, "Keep the audit work tree. No cleanup rule is added in milestone 2."
+- The decision 3 sentence "The work tree is kept for inspection; this milestone adds no removal
+  rule."
+- The decision 10 deletion clause "never deletes an audit or its work tree."
+- The decision 13 entry "Removal of the audit work tree or its store."
+- The consequence sentence "The audit work tree stays on disk for inspection, so each run costs
+  one checkout until the owner removes it."
+
+Every other decision, consequence, and acceptance check stays in force.
 
 ## Supersedes
 

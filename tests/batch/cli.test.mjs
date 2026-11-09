@@ -1,7 +1,10 @@
+import { mkdtemp, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { runBatchMain } from "../../src/batch/cli.mjs";
+import { writeAudit } from "../../src/batch/audit.mjs";
 import { setLogsToStderr } from "../../src/lib/log.mjs";
 import { git } from "../../src/batch/git.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
@@ -54,6 +57,7 @@ test("batch help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["--help"]);
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch start");
+  expect(out).toContain("--from-audit");
   expect(out).toContain("agent-loop batch answer");
   expect(out).toContain("130");
 });
@@ -105,11 +109,21 @@ test("an unknown audit command exits 2", async () => {
   expect(code).toBe(2);
 });
 
+// Usefulness: remove needs one known audit id, so a missing or foreign id is a usage refusal
+// rather than a removal of something else (ADR 0118).
+test("audit remove requires a known audit id", async () => {
+  expect((await runQuiet(["audit", "remove"])).code).toBe(2);
+  const unknown = await runQuiet(["audit", "remove", "--audit", "no-such-audit"]);
+  expect(unknown.code).toBe(2);
+  expect(unknown.err.flat().join("\n")).toContain("No audit no-such-audit");
+});
+
 // Usefulness: audit help prints the command surface and the exit codes.
 test("audit help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["audit", "--help"]);
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch audit start");
+  expect(out).toContain("agent-loop batch audit remove");
   expect(out).toContain("130");
 });
 // Usefulness: decision 8 keeps checkpoints outside any repository, so a runs root inside the
@@ -158,5 +172,40 @@ test("a runs root inside the repository is refused before any write", async () =
     else process.env.AGENT_LOOP_RUNS_ROOT = previous;
     await removePath(remote);
     await removePath(main);
+  }
+});
+
+// Usefulness: a batch started from a paused audit is refused before any batch state write
+// (issue #1734).
+test("--from-audit of a paused audit exits 2 and writes no batch", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-from-audit-"));
+  const previous = process.env.AGENT_LOOP_RUNS_ROOT;
+  const id = "20260101-000000-abcd1234";
+  try {
+    process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
+    await writeAudit(runsRoot, { id, repo: runsRoot, status: "paused" });
+    const { code } = await runQuiet([
+      "start",
+      "--repo",
+      runsRoot,
+      "--from-audit",
+      id,
+      "--orchestrator",
+      "codex",
+      "--worker",
+      "claude",
+      "--reviewer",
+      "agy",
+      "--loops",
+      "1",
+      "--max-steps",
+      "2",
+    ]);
+    expect(code).toBe(2);
+    expect(await readdir(join(runsRoot, "batches"))).toEqual(["audits"]);
+  } finally {
+    if (previous === undefined) delete process.env.AGENT_LOOP_RUNS_ROOT;
+    else process.env.AGENT_LOOP_RUNS_ROOT = previous;
+    await removePath(runsRoot);
   }
 });

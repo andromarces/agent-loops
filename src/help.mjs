@@ -66,15 +66,17 @@ Subcommands:
                                 See agent-loop test-slot --help.
   agent-loop batch start        Run one foreground batch: one headless loop per selected
                                 issue, each in its own work tree, at most --loops at once.
-                                Requires --repo <main work tree>, --issue <n> (repeatable),
+                                Requires --repo <main work tree>, --issue <n> (repeatable) or
+                                --from-audit <audit id> for the frozen set of a created audit,
                                 --orchestrator, --worker, --reviewer, --loops <1-64>, and
                                 --max-steps. Accepts --base, --work-tree-root,
                                 --task-template, --setup-cmd, --setup-timeout, --test-cmd,
                                 --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
-                                --<role>-model and --<role>-effort flags. A linked --repo, a
-                                duplicate issue, an unknown task placeholder, or a
-                                work-tree root inside a Git work tree is refused with exit 2
-                                before any claim, work tree, checkpoint, or child exists.
+                                --<role>-model and --<role>-effort flags. A linked --repo, both
+                                selection flags, a duplicate issue, a paused or needs-owner
+                                audit, an unreconciled audit write, an unknown task placeholder,
+                                or a work-tree root inside a Git work tree is refused with
+                                exit 2 before any claim, work tree, checkpoint, or child exists.
   agent-loop batch status       Read a batch and write nothing. --batch <id> names one
                                 batch; with no id it lists the local batches, newest first.
                                 A loop entry names a pending decision, its options, its
@@ -112,6 +114,10 @@ Subcommands:
                                 consolidate and create from the audits that succeeded.
                                 Requires --audit <id>. It never approves a failed
                                 consolidation.
+  agent-loop batch audit remove Remove the work tree and store of a finished audit. Requires
+                                --audit <id>. A paused, needs-owner, or interrupted audit,
+                                and one whose issue write is unreconciled, keeps both and
+                                exits 1. The delete follows no link or junction.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no

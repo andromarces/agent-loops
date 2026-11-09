@@ -79,6 +79,7 @@ export function parseBatchArgs(argv) {
   const options = {
     repo: null,
     issues: [],
+    fromAudit: null,
     base: null,
     workTreeRoot: null,
     taskTemplate: DEFAULT_TASK_TEMPLATE,
@@ -128,6 +129,9 @@ export function parseBatchArgs(argv) {
         options.issues.push(number);
         break;
       }
+      case "--from-audit":
+        options.fromAudit = read(flag);
+        break;
       case "--loops":
         options.loops = loopCount(read(flag));
         break;
@@ -183,7 +187,12 @@ export function parseBatchArgs(argv) {
   }
 
   if (options.repo === null) throw usage("Missing required --repo.");
-  if (options.issues.length === 0) throw usage("Missing required --issue.");
+  if (options.fromAudit !== null && options.issues.length > 0) {
+    throw usage("--from-audit cannot be combined with --issue.");
+  }
+  if (options.fromAudit === null && options.issues.length === 0) {
+    throw usage("Missing required --issue or --from-audit.");
+  }
   if (options.loops === null) throw usage("Missing required --loops.");
   if (options.maxSteps === null) throw usage("Missing required --max-steps.");
   for (const role of ROLE_KINDS) {
