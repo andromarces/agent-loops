@@ -47,7 +47,9 @@ The loop entry carries a `nextAction` for reason `pr-head-unresolved`. It names 
 
 The decision offers the normal `resume` and `abandon` options. `abandon` ends the loop as failed and releases its claim. `resume` returns the loop to the queue.
 
-On resume, an applied `resume` answer skips the exit 4 stop and runs the existing reconciliation. A live answer refreshes eligibility, takes the loop lock, and launches with the same transcript and recorded pull request. A batch resume answer uses the recovery path. A merged pull request that holds every local commit ends the loop `succeeded`. An unresolved or ambiguous head stops the loop `needs-owner` again, with the reconciliation reason. A resume with no remaining step budget fails with `step-budget-exhausted` before reconciliation.
+On resume, an applied `resume` answer skips the exit 4 stop and runs one shared continuation step. The step reads the steps, applies the `step-budget-exhausted` check, reconciles GitHub, and launches with `--continue-from` and the recorded pull request. A live answer refreshes eligibility and takes the loop lock before that step. The eligibility check ignores the loop's own open pull request that closes its issue. Another branch's pull request still skips the loop.
+
+A merged pull request that holds every local commit ends the loop `succeeded`. An unresolved or ambiguous head stops the loop `needs-owner` again, with the reconciliation reason. A resume with no remaining step budget fails with `step-budget-exhausted` before reconciliation.
 
 A new attempt clears the applied answer, so a later exit 4 is a new stop with its own decision. A repeated recovery of the same unanswered state reuses its decision and writes no checkpoint.
 

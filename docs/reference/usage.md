@@ -485,6 +485,8 @@ The first SIGINT stops new launches, forwards SIGINT to each live child, and wai
 
 A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`. A live answer refreshes eligibility, takes the loop lock, and continues the same transcript.
 
+The eligibility check ignores the loop's own open pull request that closes its issue. Another branch's pull request still skips the loop. A live answer and a `batch resume` answer share one continuation step. The step applies the `step-budget-exhausted` check before it reconciles and launches.
+
 A `waiting` issue is re-checked on the same 15-second poll, and it launches after its blockers close. Both states survive an interrupted session, so `batch resume` keeps them.
 
 ### GitHub reconciliation

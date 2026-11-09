@@ -64,7 +64,7 @@ export async function readOpenPrClosures({ gh, repo }) {
       "--state",
       "open",
       "--json",
-      "number,closingIssuesReferences",
+      "number,closingIssuesReferences,headRefName",
       "--limit",
       "1000",
     ],
@@ -73,6 +73,13 @@ export async function readOpenPrClosures({ gh, repo }) {
   if (!Array.isArray(list)) throw new Error("gh pr list returned no list");
   const closed = new Set();
   const sources = new Map();
+  const addSource = (issueNumber, entry) => {
+    const listForIssue = sources.get(issueNumber) ?? [];
+    if (!listForIssue.some((source) => source.number === entry.number)) {
+      listForIssue.push({ number: entry.number, headRefName: entry.headRefName ?? null });
+      sources.set(issueNumber, listForIssue);
+    }
+  };
   for (const entry of list) {
     if (!isJsonObject(entry) || !Number.isInteger(entry.number)) {
       throw new Error("gh pr list returned a malformed entry");
@@ -84,11 +91,11 @@ export async function readOpenPrClosures({ gh, repo }) {
     for (const reference of references ?? []) {
       if (Number.isInteger(reference?.number)) {
         closed.add(reference.number);
-        if (!sources.has(reference.number)) sources.set(reference.number, entry.number);
+        addSource(reference.number, entry);
       }
     }
   }
-  if (list.length === 0) return { closed, pr: null, incompletePr: null };
+  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources };
 
   const repository = await readJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
   if (!isJsonObject(repository) || typeof repository.nameWithOwner !== "string") {
@@ -113,7 +120,7 @@ export async function readOpenPrClosures({ gh, repo }) {
         for (const match of message.matchAll(CLOSING_KEYWORD)) {
           const number = Number(match[1]);
           closed.add(number);
-          if (!sources.has(number)) sources.set(number, entry.number);
+          addSource(number, entry);
         }
       }
       if (commits.length < 100) break;
@@ -124,7 +131,8 @@ export async function readOpenPrClosures({ gh, repo }) {
     }
   }
   const first = [...closed].sort((a, b) => a - b)[0];
-  return { closed, pr: first === undefined ? null : sources.get(first), incompletePr };
+  const firstSource = first === undefined ? null : (sources.get(first)?.[0]?.number ?? null);
+  return { closed, pr: firstSource, incompletePr, sources };
 }
 
 /**
@@ -133,7 +141,16 @@ export async function readOpenPrClosures({ gh, repo }) {
  * not needed.
  * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
  */
-export async function checkEligibility({ issue, gh, repo, batchId = null, claim, openPrClosures }) {
+export async function checkEligibility({
+  issue,
+  gh,
+  repo,
+  batchId = null,
+  claim,
+  openPrClosures,
+  ownPr = null,
+  ownBranch = null,
+}) {
   const unverified = (detail) => ({
     ok: false,
     reason: "eligibility-unverified",
@@ -192,11 +209,21 @@ export async function checkEligibility({ issue, gh, repo, batchId = null, claim,
     };
   }
   if (openPrClosures.closed.has(issue)) {
-    return {
-      ok: false,
-      reason: "closed-by-open-pr",
-      evidence: `pull request ${openPrClosures.pr ?? "unknown"} closes it`,
-    };
+    const sources = openPrClosures.sources?.get(issue) ?? [];
+    const own =
+      sources.length > 0 &&
+      sources.every(
+        (source) =>
+          (ownPr !== null && source.number === ownPr) ||
+          (ownBranch !== null && source.headRefName === ownBranch),
+      );
+    if (!own) {
+      return {
+        ok: false,
+        reason: "closed-by-open-pr",
+        evidence: `pull request ${openPrClosures.pr ?? "unknown"} closes it`,
+      };
+    }
   }
 
   let body;

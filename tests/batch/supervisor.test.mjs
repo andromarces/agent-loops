@@ -3070,6 +3070,227 @@ describe("batch decisions and waits", () => {
     }
   });
 
+  // Usefulness: a live resume answer ignores its own open pull request closure and continues.
+  test("a live resume answer ignores its own open pull request closure", async () => {
+    const prepared = prep([226, 227], { loops: 1 });
+    const runsRoot = runsFor(prepared);
+    const stopped = childDouble({ exitCode: 4, pr: 42 });
+    const holding = childDouble({ hold: true });
+    const continued = childDouble();
+    const children = [stopped, holding, continued];
+    let spawnIndex = 0;
+    const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
+    let closing = false;
+    const ownBranch = `batch/${prepared.id}/226`;
+    const baseGh = fakeGh();
+    const gh = (args) => {
+      if (
+        closing &&
+        args[0] === "pr" &&
+        args[1] === "list" &&
+        args.includes("--state") &&
+        !args.includes("--head")
+      ) {
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            { number: 42, headRefName: ownBranch, closingIssuesReferences: [{ number: 226 }] },
+          ]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "api") return { status: 0, stdout: "[]", stderr: "" };
+      return baseGh(args);
+    };
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const loop = await readLoop(runsRoot, prepared.id, 226);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      closing = true;
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (let attempt = 0; attempt < 100 && continued.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(continued.calls).toHaveLength(1);
+      const args = continued.calls[0].args;
+      const continueIndex = args.indexOf("--continue-from");
+      expect(continueIndex).toBeGreaterThan(-1);
+      expect(args[continueIndex + 1]).toBe(stopped.calls[0].transcript);
+      expect(args[args.indexOf("--pr") + 1]).toBe("42");
+      expect((await readLoop(runsRoot, prepared.id, 226)).status).toBe("succeeded");
+      await run;
+    } finally {
+      controller.abort();
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
+  // Usefulness: a live resume answer does not launch a loop that used every step.
+  test("a live resume answer does not launch an exhausted loop", async () => {
+    const prepared = prep([228, 229], { loops: 1 });
+    const runsRoot = runsFor(prepared);
+    const stopped = childDouble({ exitCode: 4, steps: 10, pr: 42 });
+    const holding = childDouble({ hold: true });
+    const continued = childDouble({ hold: true });
+    const children = [stopped, holding, continued];
+    let spawnIndex = 0;
+    const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const loop = await readLoop(runsRoot, prepared.id, 228);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const current = await readLoop(runsRoot, prepared.id, 228);
+        if (continued.calls.length > 0 || current.status === "failed") break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(continued.calls).toHaveLength(0);
+      expect(await readLoop(runsRoot, prepared.id, 228)).toMatchObject({
+        status: "failed",
+        reason: "step-budget-exhausted",
+      });
+      const claim = batchPaths(runsRoot).claim(prepared.repoKey, 228);
+      await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
+      await run;
+    } finally {
+      controller.abort();
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (const pending of continued.pending) pending.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
+  // Usefulness: an open pull request of another branch still skips the loop.
+  test("an open pull request of another branch still skips the loop", async () => {
+    const prepared = prep([230, 231], { loops: 1 });
+    const runsRoot = runsFor(prepared);
+    const stopped = childDouble({ exitCode: 4, pr: 42 });
+    const holding = childDouble({ hold: true });
+    const continued = childDouble({ hold: true });
+    const children = [stopped, holding, continued];
+    let spawnIndex = 0;
+    const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
+    let closing = false;
+    const baseGh = fakeGh();
+    const gh = (args) => {
+      if (
+        closing &&
+        args[0] === "pr" &&
+        args[1] === "list" &&
+        args.includes("--state") &&
+        !args.includes("--head")
+      ) {
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              number: 99,
+              headRefName: "another-branch",
+              closingIssuesReferences: [{ number: 230 }],
+            },
+          ]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "api") return { status: 0, stdout: "[]", stderr: "" };
+      return baseGh(args);
+    };
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const loop = await readLoop(runsRoot, prepared.id, 230);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      closing = true;
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (let attempt = 0; attempt < 100 && continued.calls.length < 1; attempt += 1) {
+        const current = await readLoop(runsRoot, prepared.id, 230);
+        if (current.status === "skipped") break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(continued.calls).toHaveLength(0);
+      expect(await readLoop(runsRoot, prepared.id, 230)).toMatchObject({
+        status: "skipped",
+        skipReason: "closed-by-open-pr",
+      });
+      await run;
+    } finally {
+      controller.abort();
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (const pending of continued.pending) pending.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
   // Usefulness: a batch resume answer continues the same transcript and recorded pull request.
   test("a batch resume answer continues the same transcript and pull request", async () => {
     const prepared = prep([221]);
