@@ -50,8 +50,9 @@ async function readRecordedHeads(loop) {
   const heads = [];
   for (const event of data.events) {
     if (event?.type !== "result") continue;
-    const head = event.result?.reviewed?.head;
-    if (typeof head === "string") heads.push(head);
+    for (const head of [event.result?.workTree?.head, event.result?.reviewed?.head]) {
+      if (typeof head === "string") heads.push(head);
+    }
   }
   return heads;
 }
