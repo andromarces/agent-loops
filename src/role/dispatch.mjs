@@ -353,6 +353,20 @@ async function dispatchLocked(
       gh,
       onEvent,
     });
+    // A worker envelope carries the open PR of the run branch beside the work tree state. Only a
+    // caller that injects `gh` reads it, and a failed read or no match adds no field. A cancel
+    // reaches the catch below, which records the interrupted lifecycle and exit 130.
+    if (
+      roleName === "worker" &&
+      result.status === "ok" &&
+      result.workTree &&
+      typeof gh === "function"
+    ) {
+      const pr = await readWorkTreePr({ cwd: args.cwd, gh, signal });
+      if (pr) {
+        result = { ...result, workTree: { ...result.workTree, pr } };
+      }
+    }
   } catch (err) {
     const canceled = Boolean(readProp(err, "isCanceled"));
     const refusedModel = readProp(err, "refusedModel");
@@ -383,20 +397,6 @@ async function dispatchLocked(
         sparseCheckout,
       ),
     };
-  }
-
-  // A worker envelope carries the open PR of the run branch beside the work tree state. Only a
-  // caller that injects `gh` reads it, and a cancel, a failed read, or no match adds no field.
-  if (
-    roleName === "worker" &&
-    result.status === "ok" &&
-    result.workTree &&
-    typeof gh === "function"
-  ) {
-    const pr = await readWorkTreePr({ cwd: args.cwd, gh, signal });
-    if (pr) {
-      result = { ...result, workTree: { ...result.workTree, pr } };
-    }
   }
 
   if (firstRoleTurn && result.status === "error" && typeof result.refusedModel === "string") {
