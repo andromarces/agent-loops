@@ -860,7 +860,11 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   let status;
   if (interrupted) status = "interrupted";
   else if (pausedReason !== null) status = "paused";
-  else if ([...loops.values()].some((loop) => ["failed", "needs-owner"].includes(loop.status))) {
+  else if (
+    [...loops.values()].some(
+      (loop) => ["failed", "needs-owner"].includes(loop.status) && !lockSkipped.has(loop.issue),
+    )
+  ) {
     status = "failed";
   } else if (
     lockSkipped.size > 0 ||
