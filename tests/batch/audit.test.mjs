@@ -1020,7 +1020,7 @@ async function filesystemAudit(overrides = {}) {
     workTreeRoot,
     workTree: {
       path: workTreePath,
-      canonicalPath: workTreePath,
+      canonicalPath: await canonicalPath(workTreePath),
       dev: String(identity.dev),
       ino: String(identity.ino),
       revision,
