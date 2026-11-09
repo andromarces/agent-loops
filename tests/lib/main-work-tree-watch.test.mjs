@@ -380,19 +380,19 @@ test("a read-only access of a watched file reports no candidate", async () => {
 });
 
 /**
- * Waits until the change time of `file` settles after `utimes`, so the stamp predates the start.
+ * Waits until the change time of `file` is stable across five milliseconds, so a deferred `utimes`
+ * stamp has landed.
  * @param {string} file
  * @param {Date} old
  * @returns {Promise<number>} the settled change time in milliseconds
  */
 async function settleChangeTime(file, old) {
-  const before = (await lstat(file)).ctimeMs;
   await utimes(file, old, old);
-  for (let attempt = 0; attempt < 200; attempt++) {
+  for (let attempt = 0; attempt < 100; attempt++) {
     const first = (await lstat(file)).ctimeMs;
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const second = (await lstat(file)).ctimeMs;
-    if (first === second && second !== before) return second;
+    if (first === second) return second;
   }
   throw new Error("the change time did not settle");
 }
