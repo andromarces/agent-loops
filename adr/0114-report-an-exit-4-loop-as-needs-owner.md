@@ -47,7 +47,7 @@ The loop entry carries a `nextAction` for reason `pr-head-unresolved`. It names 
 
 The decision offers the normal `resume` and `abandon` options. `abandon` ends the loop as failed and releases its claim. `resume` returns the loop to the queue.
 
-On resume, an applied `resume` answer skips the exit 4 stop and runs the existing reconciliation. A merged pull request that holds every local commit ends the loop `succeeded`. An unresolved or ambiguous head stops the loop `needs-owner` again, with the reconciliation reason.
+On resume, an applied `resume` answer skips the exit 4 stop and runs the existing reconciliation. A live answer runs the same recovery, so both continue the same transcript with the recorded pull request. A merged pull request that holds every local commit ends the loop `succeeded`. An unresolved or ambiguous head stops the loop `needs-owner` again, with the reconciliation reason. A resume with no remaining step budget fails with `step-budget-exhausted` before reconciliation.
 
 A new attempt clears the applied answer, so a later exit 4 is a new stop with its own decision. A repeated recovery of the same unanswered state reuses its decision and writes no checkpoint.
 
@@ -74,7 +74,11 @@ The implementation updates `docs/reference/usage.md`, `docs/reference/architectu
 
 ## Links
 
-- Issue #1739
-- [PR #1741](https://github.com/andromarces/agent-loops/pull/1741)
-- `adr/0106-foreground-batch-scheduling.md`
-- `adr/0110-release-batch-slots-on-owner-decisions.md`
+- [Issue #1739: Report a batch loop that exits 4 as needs-owner, not failed](https://github.com/andromarces/agent-loops/issues/1739)
+- [PR #1741: Report an exit 4 loop as needs-owner](https://github.com/andromarces/agent-loops/pull/1741)
+- [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
+- [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
+- [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: batch decisions](../src/batch/decisions.mjs)
+- [Implementation: batch help](../src/batch/cli.mjs)
+- [ADR Index](README.md)

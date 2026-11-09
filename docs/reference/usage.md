@@ -483,7 +483,7 @@ The first SIGINT stops new launches, forwards SIGINT to each live child, and wai
 4. GitHub is reconciled before any repeat (below).
 5. The attempt continues the same transcript with `--continue-from <transcript> --transcript <same path> --max-steps <remaining>`. A matching open pull request is supplied as both `--pr <n>` and `--require-ci <n>`.
 
-A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`.
+A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`. A live answer follows the same recovery and continues the same transcript.
 
 A `waiting` issue is re-checked on the same 15-second poll, and it launches after its blockers close. Both states survive an interrupted session, so `batch resume` keeps them.
 
@@ -502,9 +502,9 @@ The batch never force-pushes, resets, merges, reopens, or deletes a branch to ma
 
 ### Failure isolation and cleanup
 
-A loop that ends on headless exit 1 or 2, a failed setup (`setup-failed`), a refused finish, or a child error is `failed` with its reason. It is not retried, and its failure stops neither another loop nor the queue. It releases its claim and keeps its work tree, branch, transcript, and log.
+A loop that ends on headless exit 1 or 2 is `failed` with its reason. A failed setup (`setup-failed`), a refused finish, or a child error is also `failed`. It is not retried, and its failure stops neither another loop nor the queue. It releases its claim and keeps its work tree, branch, transcript, and log.
 
-A loop that exits 4 is `needs-owner` with reason `pr-head-unresolved`. It keeps its claim and work tree. Its decision offers `resume` and `abandon`. `resume` reconciles the pull request, so a merged pull request ends the loop `succeeded`.
+A loop that exits 4 is `needs-owner` with reason `pr-head-unresolved`. It keeps its claim and work tree. Its decision offers `resume` and `abandon`. `resume` reconciles the pull request, so a merged pull request ends the loop `succeeded`. With no remaining step budget, resume fails with `step-budget-exhausted` before reconciliation.
 
 Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes: the path is the recorded path under the batch root and not the main work tree, `git worktree list` names it, the recorded branch is checked out, the device and inode still match, the tree is clean, every local commit is pushed or merged, no other live process holds the claim, and no live run lock names the tree. A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed; the branch, pull request, transcript, log, and checkpoint stay.
 

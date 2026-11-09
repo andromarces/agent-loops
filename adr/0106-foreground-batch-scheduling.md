@@ -18,7 +18,7 @@ partially-superseded
 - The consequence and the milestone 1 standalone sentence that a `needs-owner` loop holds one
   slot.
 
-[adr/0114-report-an-exit-4-loop-as-needs-owner.md](0114-report-an-exit-4-loop-as-needs-owner.md) partially supersedes this ADR. The replaced parts are the exit 4 rule of decision 10's sentence "A loop that ended 1, 2, or 4 is `failed`" and the exit 4 part of decision 12's sentence that a loop ending on a nonzero headless exit is `failed`.
+[adr/0114-report-an-exit-4-loop-as-needs-owner.md](0114-report-an-exit-4-loop-as-needs-owner.md) partially supersedes this ADR. The replaced parts are the exit 4 rule of decision 10's sentence "A loop that ended 1, 2, or 4 is `failed`". They also include the exit 4 part of decision 12's sentence that a loop ending on a nonzero headless exit is `failed`.
 
 Every other decision, consequence, and acceptance check stays in force. The batch still never
 merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.

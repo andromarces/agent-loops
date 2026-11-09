@@ -877,7 +877,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
           return;
         }
-        if (decision.pr !== null) freshRecovery = { continueFrom: null, pr: decision.pr };
+        const continueFrom = loop.attempts > 0 ? loop.transcript : null;
+        freshRecovery = { continueFrom, pr: decision.pr ?? loop.pr };
       }
       await changeLoop(issue, {
         workTree,
@@ -1224,7 +1225,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       startTime: null,
     });
     await launchIssue(issue, {
-      recovery: { continueFrom: loop.transcript, pr: decision.pr },
+      recovery: { continueFrom: loop.transcript, pr: decision.pr ?? loop.pr },
     });
   };
 
@@ -1407,7 +1408,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           pendingDecisions.add(issue);
           return;
         }
-        if (!start) {
+        const appliedAnswer = current.decisionAnswer != null;
+        if (appliedAnswer || !start) {
           // A resume reconciles one recovered loop before it launches, so it never restarts
           // blindly. A counted attempt or a recorded answer never takes the fresh-launch path.
           const hasTranscript =
@@ -1416,7 +1418,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
               () => true,
               () => false,
             ));
-          if (hasTranscript || current.attempts > 0 || current.decisionAnswer != null) {
+          if (appliedAnswer || hasTranscript || current.attempts > 0) {
             await recover(issue, current);
             return;
           }
