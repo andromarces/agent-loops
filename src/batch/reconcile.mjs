@@ -64,10 +64,18 @@ async function reconcilePullRequest({ loop, repo, gh, git, state }) {
   if (view.state !== "OPEN") {
     return owner(`pull request ${loop.pr} is closed without a merge`);
   }
-  if (typeof loop.head === "string" && view.headRefOid !== loop.head) {
-    return owner(
-      `pull request ${loop.pr} head moved: the frozen head is ${loop.head}, the current head is ${view.headRefOid}`,
-    );
+  const moved = typeof loop.head === "string" && view.headRefOid !== loop.head;
+  if (moved) {
+    const ownPush =
+      loop.mode !== "review-only" &&
+      state.head === view.headRefOid &&
+      typeof loop.head === "string" &&
+      (await git(["merge-base", "--is-ancestor", loop.head, state.head], repo)).exitCode === 0;
+    if (!ownPush) {
+      return owner(
+        `pull request ${loop.pr} head moved: the frozen head is ${loop.head}, the current head is ${view.headRefOid}`,
+      );
+    }
   }
   if (!state.clean) return owner("the work tree is not clean");
   if (loop.mode === "review-only") {

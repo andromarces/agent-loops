@@ -15,7 +15,7 @@ This ADR partially supersedes
   item freezes its head at start. The skill still resolves the request, and the runtime still
   reads no label, milestone, project, or natural-language request.
 - Decision 4's rule that every loop gets a new branch from the base branch. A pull request item
-  runs at its head, and a task item gets `batch/<batch id>/task-<id>`.
+  runs on its head branch, and a task item gets `batch/<batch id>/task-<id>`.
 - Decision 6's fixed issue eligibility. Each kind has its own checks, and the `not-specified`
   heading check is opt-in with `--require-specification`.
 - Decision 7's issue-keyed claims, checkpoints, reconciliation, resume, owner decisions,
@@ -97,24 +97,27 @@ Each item carries `work-first`, `review-first`, or `review-only`, the values of 
 request. The batch passes `--mode` to the child when the mode is not the default work-first, and
 always for a pull request.
 
-### 4. A pull request item runs at its head
+### 4. A pull request item runs on its head branch
 
 The batch reads and freezes the pull request head at start. Before each launch it checks that
 the current head equals the frozen head, and skips the item as `pr-head-moved` before any claim or
 work tree with a reason that states both heads. A closed or merged pull request is skipped as
 `pr-closed`.
 
-The item runs in a detached work tree at the pull request head in every mode. The batch fetches
+The item runs in a work tree on the pull request head branch in every mode. The batch fetches
 `refs/pull/<n>/head` and checks that the fetched commit equals the frozen head before checkout; a
-commit that differs skips the item as `pr-head-moved`. No local branch is created, moved, or
+commit that differs skips the item as `pr-head-moved`. A missing local branch is created at that
+head. An existing branch at the head, or behind it, is used, with a fast-forward in the second
+case. A branch with commits the frozen head lacks skips the item as `pr-branch-diverged`, and one
+checked out in another work tree skips it as `pr-branch-checked-out`. No branch is forced or
 reset. In `work-first` and `review-first`, the child gets `--pr <n>` and `--require-ci <n>`, and a
-worker correction is pushed with `git push origin HEAD:refs/heads/<branch>`. In `review-only`, the
+worker correction is pushed with `git push -u origin <branch>`. In `review-only`, the
 child gets none of `--pr`, `--require-ci`, and `--require-accept`, and the loop finishes after its
 reviewer turn. The existing single-task guards that refuse `--pr`, `--require-ci`, and
 `--require-accept` with `review-only` stay unchanged.
 
-A pull request whose head is in another repository runs in `review-only`, fetched through
-`refs/pull/<n>/head` and checked out detached. In `work-first` or `review-first` it is skipped as
+A pull request whose head is in another repository runs in `review-only` on a local branch at the
+head, fetched through `refs/pull/<n>/head`. In `work-first` or `review-first` it is skipped as
 `pr-head-foreign` before any claim or work tree.
 
 ### 5. A free-text task delivers like an issue
@@ -159,7 +162,7 @@ parent turns a mixed request into items.
 
 1. A mixed batch with one issue item in `work-first` and one pull request item in `review-first`
    runs both loops. The issue loop runs on a new `batch/...` branch. The pull request loop gets
-   `--mode review-first`, `--pr <n>`, and `--require-ci <n>`, in a work tree at the head.
+   `--mode review-first`, `--pr <n>`, and `--require-ci <n>`, in a work tree on the head branch.
 2. A pull request item whose head moved after start is skipped before any claim or work tree,
    with a reason that states the frozen head and the current head.
 3. A closed or merged pull request item is skipped with a named reason.
@@ -169,7 +172,7 @@ parent turns a mixed request into items.
    transcript, and remaining step budget.
 6. A `review-only` item never dispatches a worker, and its child gets none of `--require-accept`,
    `--pr`, and `--require-ci`.
-7. A pull request item in `review-only` runs in a work tree at its head after the frozen
+7. A pull request item in `review-only` runs in a work tree on its head branch after the frozen
    head check and finishes after its reviewer turn.
 8. A single-task run that combines `review-only` with `--pr`, `--require-ci`, or
    `--require-accept` is still refused with the same message.

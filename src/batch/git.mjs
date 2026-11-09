@@ -83,27 +83,71 @@ export async function createLoopWorkTree({ repo, base, workTree, branch }) {
   };
 }
 
+function prBranchError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 /**
- * Creates the linked work tree of one pull request item at its frozen head. The pull request head
- * is fetched through `refs/pull/<n>/head` for a same-repository and a foreign head, then checked
- * out detached. No local branch is created, moved, or reset, so an unpushed local branch keeps its
- * commits. A fetched commit that differs from the frozen head is refused before checkout.
- * @returns {Promise<{ path: string, canonicalPath: string, dev: string, ino: string, branch: string, head: string, detached: boolean }>}
+ * Reads whether the frozen pull request head can run on a named local branch without a reset. The
+ * fetched `refs/pull/<n>/head` commit must equal the frozen head. A missing local branch is created
+ * later; an existing branch at the head or behind it is used, with a fast-forward in the second
+ * case. A branch with commits the frozen head lacks, or one checked out in another work tree, is
+ * refused before any claim or work-tree write.
+ * @returns {Promise<{ fetched: string, localHead: string | null, fastForward: boolean }>}
  */
-export async function createPrWorkTree({ repo, workTree, branch, head, number }) {
-  await mkdir(dirname(workTree), { recursive: true });
+export async function planPrWorkTree({ repo, branch, head, number }) {
   await gitOrThrow(["fetch", "origin", `refs/pull/${number}/head`], repo);
   const fetched = await gitOrThrow(["rev-parse", "FETCH_HEAD"], repo);
   if (typeof head !== "string" || head.trim() === "" || fetched !== head) {
-    const error = new Error(
+    const error = prBranchError(
+      "pr-head-moved",
       `pull request ${number} head moved: the frozen head is ${head ?? "unset"}, the fetched head is ${fetched}`,
     );
-    error.code = "pr-head-moved";
     error.frozen = head ?? null;
     error.current = fetched;
     throw error;
   }
-  await gitOrThrow(["worktree", "add", "--detach", workTree, fetched], repo);
+  const target = `refs/heads/${branch}`;
+  const entries = await readRegisteredWorkTrees(repo);
+  if (entries.some((entry) => entry.branch === target)) {
+    throw prBranchError(
+      "pr-branch-checked-out",
+      `branch ${branch} is checked out in another work tree`,
+    );
+  }
+  const local = await git(["rev-parse", "--verify", "--quiet", target], repo);
+  if (local.exitCode !== 0) return { fetched, localHead: null, fastForward: false };
+  if (local.stdout === fetched) return { fetched, localHead: local.stdout, fastForward: false };
+  const ancestor = await git(["merge-base", "--is-ancestor", local.stdout, fetched], repo);
+  if (ancestor.exitCode !== 0) {
+    throw prBranchError(
+      "pr-branch-diverged",
+      `branch ${branch} has commits the frozen head lacks: local ${local.stdout}, frozen ${fetched}`,
+    );
+  }
+  return { fetched, localHead: local.stdout, fastForward: true };
+}
+
+/**
+ * Creates the linked work tree of one pull request item on its named head branch at the frozen
+ * head. No branch is forced or reset: a missing branch is created at the fetched head, a branch at
+ * the head is used, and a branch behind it is fast-forwarded. A fetched commit that differs from
+ * the frozen head is refused before checkout.
+ * @returns {Promise<{ path: string, canonicalPath: string, dev: string, ino: string, branch: string, head: string }>}
+ */
+export async function createPrWorkTree({ repo, workTree, branch, head, number }) {
+  const plan = await planPrWorkTree({ repo, branch, head, number });
+  await mkdir(dirname(workTree), { recursive: true });
+  if (plan.localHead === null) {
+    await gitOrThrow(["worktree", "add", "--no-track", "-b", branch, workTree, plan.fetched], repo);
+  } else {
+    await gitOrThrow(["worktree", "add", workTree, branch], repo);
+    if (plan.fastForward) {
+      await gitOrThrow(["merge", "--ff-only", plan.fetched], workTree);
+    }
+  }
   const identity = await pathIdentity(workTree);
   if (identity === null) throw new Error("The new work tree is missing after git worktree add.");
   return {
@@ -112,8 +156,7 @@ export async function createPrWorkTree({ repo, workTree, branch, head, number })
     dev: String(identity.dev),
     ino: String(identity.ino),
     branch,
-    head: fetched,
-    detached: true,
+    head: plan.fetched,
   };
 }
 

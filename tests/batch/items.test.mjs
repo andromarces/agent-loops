@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
 import { parseBatchArgs } from "../../src/batch/args.mjs";
 import { checkItemEligibility } from "../../src/batch/eligibility.mjs";
-import { childArguments, runBatch } from "../../src/batch/supervisor.mjs";
+import { childArguments, readBatchStatus, runBatch } from "../../src/batch/supervisor.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
 const ROLE_ARGS = [
@@ -427,8 +427,8 @@ const workTreeDeps = {
     ino: "1",
     branch,
     head,
-    detached: false,
   }),
+  planPrWorkTree: async ({ head }) => ({ fetched: head, localHead: null, fastForward: false }),
   verifyWorkTree: async () => null,
   reconcileLoop: async () => ({ status: "resume", reason: null, pr: null, requireCi: null }),
   cleanupLoop: async () => ({ removed: false, reason: "test" }),
@@ -756,6 +756,65 @@ test("a pull request head that moves before the fetch is skipped", async () => {
     await expect(
       stat(join(runsRoot, "batches", "claims", prepared.repoKey, "pr-7.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await removePath(runsRoot);
+  }
+});
+
+// Usefulness: an issue item that names a pull request is refused before any batch store.
+test("a pull request number as an issue item leaves no batch store", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+  const items = [{ kind: "issue", number: 7, key: 7, mode: "work-first", task: null }];
+  const prepared = preparedWith(items);
+  const child = childDouble();
+  const gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ number: 7 }), stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: { ...workTreeDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "skipped",
+      skipReason: "is-pull-request",
+    });
+    expect(child.calls).toHaveLength(0);
+    await expect(stat(join(runsRoot, "batches", prepared.id, "batch.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  } finally {
+    await removePath(runsRoot);
+  }
+});
+
+// Usefulness: batch status lists a preflight-skipped pull request with its reason.
+test("batch status lists a preflight-skipped pull request item", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+  const items = [
+    { kind: "issue", number: 1, key: 1, mode: "work-first", task: null },
+    { kind: "pr", number: 7, key: "pr-7", mode: "work-first", task: null },
+  ];
+  const prepared = preparedWith(items);
+  const child = childDouble();
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: mixedGh({ prState: "MERGED" }),
+      deps: { ...workTreeDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops.map((loop) => loop.issue)).toEqual([1, "pr-7"]);
+    expect(status.loops.find((loop) => loop.issue === "pr-7")).toMatchObject({
+      status: "skipped",
+      skipReason: "pr-closed",
+    });
   } finally {
     await removePath(runsRoot);
   }

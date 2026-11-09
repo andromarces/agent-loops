@@ -63,6 +63,8 @@ export function parseWorkTreeList(stdout) {
     } else if (field.startsWith("locked ")) {
       current.locked = true;
       current.reason = field.slice(7);
+    } else if (field.startsWith("branch ")) {
+      current.branch = field.slice(7);
     }
   }
   return entries;

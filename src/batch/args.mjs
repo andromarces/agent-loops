@@ -43,9 +43,9 @@ export const DEFAULT_TASK_TEMPLATE = [
 ].join("\n");
 
 export const DEFAULT_PR_TASK_TEMPLATE = [
-  "Review pull request {issue} of {repo} in this work tree at the pull request head.",
-  "The work tree is detached at that head. In work-first or review-first, commit any worker",
-  "correction and push it with `git push origin HEAD:refs/heads/{branch}`.",
+  "Review pull request {issue} of {repo} in this work tree on branch {branch}.",
+  "The work tree holds the pull request head. In work-first or review-first, commit any worker",
+  "correction on the same branch and push it with `git push -u origin {branch}`.",
   "In review-only, change nothing and finish after the reviewer turn.",
 ].join("\n");
 

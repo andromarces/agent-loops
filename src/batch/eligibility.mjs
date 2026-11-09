@@ -28,8 +28,7 @@ const isOpen = (state) => String(state).toUpperCase() === "OPEN";
 
 // The text of a `gh pr view` reply that proves the number is not a pull request. Any other failed
 // reply is a failed lookup and never falls through to the issue read.
-const PR_NOT_FOUND =
-  /could not resolve to a pull ?request|pullrequest|no pull requests? found|not found|no pull request with/i;
+const PR_NOT_FOUND = /could not resolve to a pull ?request/i;
 
 async function probePullRequest(gh, number, repo) {
   let reply;
@@ -298,6 +297,35 @@ function claimSkip(claim, batchId) {
     };
   }
   return null;
+}
+
+/**
+ * The start-time refusal of one item, before any batch store exists. A pull request gets its full
+ * eligibility check; an issue gets only the pull request-number probe, so its normal launch-time
+ * eligibility and waiting behavior stay unchanged. A task has no start-time refusal.
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
+ */
+export async function preflightItemEligibility({ item, gh, repo, batchId = null }) {
+  if (item.kind === "pr") {
+    return checkItemEligibility({ item, gh, repo, batchId, claim: { exists: false } });
+  }
+  if (item.kind !== "issue") return { ok: true };
+  const probe = await probePullRequest(gh, item.number, repo);
+  if (probe.kind === "pr") {
+    return {
+      ok: false,
+      reason: "is-pull-request",
+      evidence: `number ${item.number} is a pull request`,
+    };
+  }
+  if (probe.kind === "failed") {
+    return {
+      ok: false,
+      reason: "eligibility-unverified",
+      evidence: `the pull request lookup failed: ${probe.detail}`,
+    };
+  }
+  return { ok: true };
 }
 
 /**

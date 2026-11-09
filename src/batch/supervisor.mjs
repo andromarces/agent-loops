@@ -25,7 +25,11 @@ import {
   readDecision,
   recommendedOf,
 } from "./decisions.mjs";
-import { checkItemEligibility, readOpenPrClosures } from "./eligibility.mjs";
+import {
+  checkItemEligibility,
+  preflightItemEligibility,
+  readOpenPrClosures,
+} from "./eligibility.mjs";
 import { defaultMode, loopSegment, preparedItems } from "./items.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
 import {
@@ -34,6 +38,7 @@ import {
   git as gitRead,
   identityEqual,
   pathIdentity,
+  planPrWorkTree,
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, readLoopReport } from "./report.mjs";
@@ -142,6 +147,15 @@ function queuedLoop(paths, id, item, maxSteps) {
     decisionAnswer: null,
     blockingIssues: [],
     report: null,
+  };
+}
+
+function skippedLoop(paths, id, item, maxSteps, { reason, evidence }) {
+  return {
+    ...queuedLoop(paths, id, item, maxSteps),
+    status: "skipped",
+    skipReason: reason,
+    reason: evidence,
   };
 }
 
@@ -540,29 +554,42 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     });
     const items = [];
     const skipped = [];
+    const startPlanTree = deps.planPrWorkTree ?? planPrWorkTree;
     for (const item of frozenItems) {
-      if (item.kind !== "pr") {
-        items.push(item);
-        continue;
-      }
-      const eligibility = await checkItemEligibility({
+      const eligibility = await preflightItemEligibility({
         item,
         gh,
         repo: prepared.repo,
         batchId: id,
-        claim: { exists: false },
       });
-      if (eligibility.ok) {
-        items.push(item);
+      if (!eligibility.ok) {
+        skipped.push(skippedLoop(paths, id, item, prepared.maxSteps, eligibility));
         continue;
       }
-      const skippedLoop = queuedLoop(paths, id, item, prepared.maxSteps);
-      skipped.push({
-        ...skippedLoop,
-        status: "skipped",
-        skipReason: eligibility.reason,
-        reason: eligibility.evidence,
-      });
+      if (item.kind === "pr") {
+        try {
+          await startPlanTree({
+            repo: prepared.repo,
+            branch: item.headRefName ?? `pr-${item.number}`,
+            head: item.head,
+            number: item.number,
+          });
+        } catch (err) {
+          if (
+            !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
+          ) {
+            throw err;
+          }
+          skipped.push(
+            skippedLoop(paths, id, item, prepared.maxSteps, {
+              reason: err.code,
+              evidence: err.message,
+            }),
+          );
+          continue;
+        }
+      }
+      items.push(item);
     }
     if (items.length === 0) {
       progress(`batch ${id}: every item was refused before any state write`);
@@ -695,6 +722,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   const createWorkTree = deps.createWorkTree ?? createLoopWorkTree;
   const createPullRequestWorkTree =
     deps.createPrWorkTree ?? deps.createWorkTree ?? createPrWorkTree;
+  const planTree = deps.planPrWorkTree ?? planPrWorkTree;
   const reconcile = deps.reconcileLoop ?? reconcileLoop;
   const cleanupWorkTree = deps.cleanupLoop ?? cleanupLoop;
   const verifyRecordedWorkTree = async (loop) => {
@@ -978,6 +1006,30 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         progress(`issue ${issue}: skipped (${eligibility.reason}: ${eligibility.evidence})`);
         return;
       }
+      if (item.kind === "pr") {
+        try {
+          await planTree({
+            repo: prepared.repo,
+            branch: loop.branch,
+            head: loop.head,
+            number: item.number,
+          });
+        } catch (err) {
+          if (
+            !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
+          ) {
+            throw err;
+          }
+          await changeLoop(issue, {
+            status: "skipped",
+            skipReason: err.code,
+            reason: err.message,
+            remainingSteps: loop.remainingSteps,
+          });
+          progress(`issue ${issue}: skipped (${err.code}: ${err.message})`);
+          return;
+        }
+      }
       const ownClaim = claim.exists && claim.record?.batchId === id;
       const claimResult = ownClaim
         ? { acquired: true }
@@ -1060,16 +1112,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
                 });
         }
       } catch (err) {
-        if (err?.code === "pr-head-moved") {
+        if (["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)) {
           await changeLoop(issue, {
             status: "skipped",
-            skipReason: "pr-head-moved",
+            skipReason: err.code,
             reason: err.message,
             workTree: null,
             remainingSteps: loop.remainingSteps,
           });
           await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-          progress(`issue ${issue}: skipped (pr-head-moved: ${err.message})`);
+          progress(`issue ${issue}: skipped (${err.code}: ${err.message})`);
           return;
         }
         await changeLoop(issue, {
@@ -1804,7 +1856,24 @@ export async function readBatchStatus({ runsRoot, id }) {
   const manifest = await readManifest(runsRoot, id);
   if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
   const loops = [];
-  for (const issue of manifest.issues) {
+  const skipped = new Map((manifest.skipped ?? []).map((loop) => [loop.key, loop]));
+  const keys = Array.isArray(manifest.items)
+    ? manifest.items.map((item) => item.key)
+    : manifest.issues;
+  const runnable = new Set(manifest.issues);
+  for (const issue of keys) {
+    if (!runnable.has(issue)) {
+      const skippedLoop = skipped.get(issue);
+      if (skippedLoop === undefined) continue;
+      loops.push({
+        ...loopEntry(skippedLoop),
+        decision: null,
+        blockingIssues: [],
+        requiredMerges: [],
+        nextAction: null,
+      });
+      continue;
+    }
     const loop = await readLoop(runsRoot, id, issue);
     if (loop === null) continue;
     const waitDetails = {
