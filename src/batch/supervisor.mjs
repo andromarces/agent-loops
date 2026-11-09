@@ -1409,7 +1409,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           return;
         }
         const appliedAnswer = current.decisionAnswer != null;
-        if (appliedAnswer || !start) {
+        if (!start) {
           // A resume reconciles one recovered loop before it launches, so it never restarts
           // blindly. A counted attempt or a recorded answer never takes the fresh-launch path.
           const hasTranscript =
@@ -1418,16 +1418,23 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
               () => true,
               () => false,
             ));
-          if (appliedAnswer || hasTranscript || current.attempts > 0) {
+          if (hasTranscript || current.attempts > 0 || appliedAnswer) {
             await recover(issue, current);
             return;
           }
         }
-        try {
-          await launchIssue(issue);
-        } catch (err) {
-          if (!err?.batchWide) throw err;
+        const launch = async () => {
+          try {
+            await launchIssue(issue);
+          } catch (err) {
+            if (!err?.batchWide) throw err;
+          }
+        };
+        if (start && appliedAnswer) {
+          await withLoopOwnership(issue, launch);
+          return;
         }
+        await launch();
       };
       if (start) await runOne();
       else await withLoopOwnership(issue, runOne);

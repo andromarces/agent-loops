@@ -2893,16 +2893,10 @@ describe("batch decisions and waits", () => {
     const children = [stopped, holding, continued];
     let spawnIndex = 0;
     const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
-    const baseGh = fakeGh();
-    let pullReads = 0;
-    const gh = (args) => {
-      if (args[0] === "pr" && args[1] === "list") pullReads += 1;
-      return baseGh(args);
-    };
     const run = runBatch({
       prepared,
       runsRoot,
-      gh,
+      gh: fakeGh(),
       deps: {
         ...fakeGitDeps,
         notifier: noNotify,
@@ -2939,10 +2933,139 @@ describe("batch decisions and waits", () => {
       const data = JSON.parse(await readFile(stopped.calls[0].transcript, "utf8"));
       expect(data.events.some((event) => event.type === "continued")).toBe(true);
       expect(data.events.some((event) => event.type === "pr-declared")).toBe(true);
-      expect(pullReads).toBe(2);
       await run;
     } finally {
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
+  // Usefulness: a live resume answer refreshes eligibility and does not launch past an open blocker.
+  test("a live resume answer does not launch past an open blocker", async () => {
+    const prepared = prep([222, 223], { loops: 1 });
+    const runsRoot = runsFor(prepared);
+    const stopped = childDouble({ exitCode: 4, pr: 42 });
+    const holding = childDouble({ hold: true });
+    const continued = childDouble({ hold: true });
+    const children = [stopped, holding, continued];
+    let spawnIndex = 0;
+    const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
+    let blocked = false;
+    const baseGh = fakeGh();
+    const gh = (args) => {
+      if (blocked && args[0] === "issue" && args[1] === "view" && args[2] === "222") {
+        if (args.some((arg) => typeof arg === "string" && arg.includes("blockedBy"))) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+            }),
+            stderr: "",
+          };
+        }
+      }
+      return baseGh(args);
+    };
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const loop = await readLoop(runsRoot, prepared.id, 222);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      blocked = true;
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const current = await readLoop(runsRoot, prepared.id, 222);
+        if (continued.calls.length > 0 || current.status === "waiting") break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(continued.calls).toHaveLength(0);
+      expect((await readLoop(runsRoot, prepared.id, 222)).status).toBe("waiting");
+    } finally {
+      controller.abort();
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (const pending of continued.pending) pending.resolve({ exitCode: 0 });
+      await run.catch(() => {});
+    }
+  });
+
+  // Usefulness: a held resume lock stops a live resume answer before it launches.
+  test("a held resume lock stops a live resume answer", async () => {
+    const prepared = prep([224, 225], { loops: 1 });
+    const runsRoot = runsFor(prepared);
+    const stopped = childDouble({ exitCode: 4, pr: 42 });
+    const holding = childDouble({ hold: true });
+    const continued = childDouble({ hold: true });
+    const children = [stopped, holding, continued];
+    let spawnIndex = 0;
+    const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    let release;
+    try {
+      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const loop = await readLoop(runsRoot, prepared.id, 224);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-224.resume.lock");
+      release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+      expect(release).not.toBe(null);
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      const raced = await Promise.race([
+        run.then((value) => ({ value })),
+        new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
+      ]);
+      expect(continued.calls).toHaveLength(0);
+      expect(raced).not.toBe(null);
+      expect(raced.value.summary.status).toBe("paused");
+      expect((await readLoop(runsRoot, prepared.id, 224)).status).toBe("queued");
+    } finally {
+      await release?.();
+      controller.abort();
+      for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
+      for (const pending of continued.pending) pending.resolve({ exitCode: 0 });
       await run.catch(() => {});
     }
   });

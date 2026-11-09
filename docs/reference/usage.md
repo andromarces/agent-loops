@@ -483,7 +483,7 @@ The first SIGINT stops new launches, forwards SIGINT to each live child, and wai
 4. GitHub is reconciled before any repeat (below).
 5. The attempt continues the same transcript with `--continue-from <transcript> --transcript <same path> --max-steps <remaining>`. A matching open pull request is supplied as both `--pr <n>` and `--require-ci <n>`.
 
-A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`. A live answer follows the same recovery and continues the same transcript.
+A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`. A live answer refreshes eligibility, takes the loop lock, and continues the same transcript.
 
 A `waiting` issue is re-checked on the same 15-second poll, and it launches after its blockers close. Both states survive an interrupted session, so `batch resume` keeps them.
 
