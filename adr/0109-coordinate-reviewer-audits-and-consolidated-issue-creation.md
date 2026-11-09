@@ -4,6 +4,13 @@
 
 partially-superseded
 
+[adr/0120-take-an-operator-focus-and-keep-every-actionable-finding.md](0120-take-an-operator-focus-and-keep-every-actionable-finding.md) partially supersedes this ADR. These parts are replaced:
+
+- Decision 4's reviewer goal, which asks for defects only and one finding per actionable defect.
+- Decision 6's rule that the consolidation worker "drops a finding that is not a defect against the revision".
+
+Every other decision, consequence, and acceptance check stays in force.
+
 [adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) partially supersedes this ADR. The replaced part is decision 13's deferred entry "Automatic selection of the issues that an audit creates for a following batch, or automatic chaining of an audit into a batch start". The explicit selection is now defined; automatic chaining of an audit into a batch start stays deferred.
 
 [adr/0118-remove-a-finished-audit-work-tree-and-store.md](0118-remove-a-finished-audit-work-tree-and-store.md)

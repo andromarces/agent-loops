@@ -520,7 +520,7 @@ The batch never removes the main work tree or any path outside its own root. Gen
 
 ### Reviewer audits
 
-`agent-loop batch audit start` coordinates two or more read-only reviewers on one project revision and turns their findings into issues without duplicates. It runs in the foreground and returns one JSON summary. [ADR 0109](https://github.com/andromarces/agent-loops/blob/main/adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) is the design.
+`agent-loop batch audit start` coordinates two or more read-only reviewers on one project revision and turns their findings into issues without duplicates. It runs in the foreground and returns one JSON summary. [ADR 0109](https://github.com/andromarces/agent-loops/blob/main/adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) is the design, and [ADR 0120](https://github.com/andromarces/agent-loops/blob/main/adr/0120-take-an-operator-focus-and-keep-every-actionable-finding.md) defines the operator focus and the keep-every-actionable-finding rule.
 
 ```bash
 agent-loop batch audit start --repo <main work tree> \
@@ -531,7 +531,9 @@ agent-loop batch audit approve --audit <id>
 agent-loop batch audit remove --audit <id>
 ```
 
-`start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, and `--reviewer-sandbox`. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
+`start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, `--reviewer-sandbox`, and `--focus <text>` or `--focus-file <path>`. The two focus flags are mutually exclusive, and an empty or blank focus is refused. A supplied focus is the only goal of each reviewer turn. Without a focus, each reviewer reports any item someone can act on, defects included. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
+
+The focus is stored in the audit record. `batch audit resume` and `batch audit approve` reuse the stored focus and accept no focus flag; either flag is a refused setting that exits 2 and writes nothing. `batch audit status` shows the stored focus.
 
 The command resolves `origin/<base>` once to a commit SHA and creates one detached work tree at that SHA. Every reviewer reads the same work tree and revision, in its own session and in the requested order. A reviewer never sees another reviewer's findings. The reviewer turn uses the existing reviewer prompt, including its test-slot, secret-file, process, and sandbox rules. A Codex reviewer runs with no sandbox unless `--reviewer-sandbox` names one. A `--setup-cmd` runs once in the work tree before the first reviewer and must leave the checkout clean; a tracked or unignored change stops the run as `needs-owner` and starts no reviewer.
 
@@ -539,7 +541,7 @@ After each reviewer turn the runtime reads the work tree HEAD and `git status --
 
 Each reviewer returns a fenced JSON document with a `findings` array of `title`, `body`, and `evidence` entries. A turn that fails, returns no string, or returns no valid document is a failed audit. No consolidation and no issue starts until every requested audit succeeds.
 
-After every audit succeeds, one consolidation worker merges the findings and compares them with the open and closed issues read once with `gh issue list --state all --limit 1000`. It returns one consolidated `findings` array whose entries hold `title`, `body`, `evidence`, and `existingIssue`. The runtime validates the document: every title and body is non-empty, no two titles are equal, and every named issue is in the stored list.
+After every audit succeeds, one consolidation worker merges the findings and compares them with the open and closed issues read once with `gh issue list --state all --limit 1000`. It merges duplicates and keeps every item someone can act on that any reviewer reported, even an item outside the focus. It never drops a finding because it is not a defect. It returns one consolidated `findings` array whose entries hold `title`, `body`, `evidence`, and `existingIssue`. The runtime validates the document: every title and body is non-empty, no two titles are equal, and every named issue is in the stored list.
 
 The runtime then creates one issue per finding that no issue covers. A finding with a named existing issue links that issue. A finding whose title exactly equals an open or closed issue also links that issue, even when the worker named none. Otherwise the runtime creates the issue with `gh issue create`; the body carries the audit id, a stable finding identity, and the revision. Before the write the runtime records that identity, and on a retry it reads the issue bodies and adopts the issue whose body carries it. The identity does not depend on the current title, so a reworded re-audit links the same issue instead of creating a duplicate. The worker never writes to GitHub.
 

@@ -553,6 +553,175 @@ test("two reviewers run before one consolidation and create one issue per findin
   expect(summary.issues.every((issue) => issue.existing === false)).toBe(true);
 });
 
+// Usefulness: a supplied focus is the only reviewer goal, it reaches every reviewer and the
+// consolidation, and the record keeps it for a later resume or status (issue #1750).
+test("a focused audit gives the focus to every reviewer and keeps it in the record", async () => {
+  const focus =
+    "Check refactor, cleanup, documentation, code organization, outdated direct dependencies, and test cost";
+  const prepared = await preparedAudit({ focus });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      claude: fenced({ findings: [{ title: "Unused export", body: "Body", evidence: "a.mjs:1" }] }),
+      agy: fenced({
+        findings: [{ title: "Old dependency", body: "Body", evidence: "package.json" }],
+      }),
+    },
+    consolidations: [
+      fenced({
+        findings: [
+          { title: "Unused export", body: "Body", evidence: "a.mjs:1", existingIssue: null },
+          { title: "Old dependency", body: "Body", evidence: "package.json", existingIssue: null },
+        ],
+      }),
+    ],
+  });
+
+  const { exitCode, summary } = await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(0);
+  expect(summary.focus).toBe(focus);
+  const reviewerCalls = turns.calls.filter((call) => call.roleName === "reviewer");
+  expect(reviewerCalls).toHaveLength(2);
+  for (const call of reviewerCalls) {
+    expect(call.prompt).toContain(focus);
+    expect(call.prompt).not.toContain("Report only defects");
+    expect(call.prompt).toContain("Do not change a tracked file");
+    expect(call.prompt).toContain("Do not write to GitHub or any remote");
+  }
+  const worker = turns.calls.find((call) => call.roleName === "worker");
+  expect(worker.prompt).toContain(focus);
+  expect(worker.prompt).toContain("even an item outside the focus");
+  expect(worker.prompt).not.toContain("Drop a finding that is not");
+  expect((await readAudit(runsRoot, prepared.id)).focus).toBe(focus);
+  expect((await readAuditStatus({ runsRoot, id: prepared.id })).focus).toBe(focus);
+});
+
+// Usefulness: without a focus the reviewers look for every actionable item, and a consolidation
+// keeps a non-defect item instead of dropping it (issue #1750).
+test("an unfocused audit asks for any actionable item and creates a non-defect finding", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      claude: fenced({
+        findings: [{ title: "Remove unused export", body: "Body", evidence: "a.mjs:1" }],
+      }),
+      agy: fenced({ findings: [] }),
+    },
+    consolidations: [
+      fenced({
+        findings: [
+          {
+            title: "Remove unused export",
+            body: "Body",
+            evidence: "a.mjs:1",
+            existingIssue: null,
+          },
+        ],
+      }),
+    ],
+  });
+
+  const { exitCode, summary } = await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(0);
+  expect(summary.focus).toBe(null);
+  expect(summary.created).toHaveLength(1);
+  const reviewerCalls = turns.calls.filter((call) => call.roleName === "reviewer");
+  for (const call of reviewerCalls) {
+    expect(call.prompt).toContain("Report any item someone can act on, defects included.");
+    expect(call.prompt).not.toContain("Report only defects");
+  }
+  expect(turns.calls.find((call) => call.roleName === "worker").prompt).toContain(
+    "Keep every item someone can act on",
+  );
+});
+
+// Usefulness: a resume reruns a failed reviewer with the focus stored at start, so the operator
+// does not repeat it and the retried audit keeps its goal (issue #1750).
+test("a resume reruns the failed reviewer with the stored focus", async () => {
+  const focus = "Check test cost opportunities";
+  const prepared = await preparedAudit({ focus });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const failed = fakeTurns({
+    reviewers: {
+      claude: fenced({ findings: [] }),
+      agy: new Error("reviewer unavailable"),
+    },
+  });
+  await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: failed.runTurn },
+  });
+
+  const retry = fakeTurns({
+    reviewers: { agy: fenced({ findings: [] }) },
+    consolidations: [fenced({ findings: [] })],
+  });
+  const second = await runAudit({
+    prepared: { ...prepared, mode: "resume", focus: null },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: retry.runTurn },
+  });
+
+  expect(second.exitCode).toBe(0);
+  const reviewer = retry.calls.find((call) => call.roleName === "reviewer");
+  expect(reviewer.kind).toBe("agy");
+  expect(reviewer.prompt).toContain(focus);
+});
+
+// Usefulness: approve reuses the focus stored at start for consolidation, so an approved partial
+// audit keeps the operator goal (issue #1750).
+test("approve reuses the stored focus for consolidation", async () => {
+  const focus = "Check documentation";
+  const prepared = await preparedAudit({ focus });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const failed = fakeTurns({
+    reviewers: {
+      claude: fenced({ findings: [] }),
+      agy: new Error("no model"),
+    },
+  });
+  await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: failed.runTurn },
+  });
+
+  const approved = fakeTurns({
+    consolidations: [fenced({ findings: [] })],
+  });
+  const result = await runAudit({
+    prepared: { ...prepared, mode: "approve", focus: null },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: approved.runTurn },
+  });
+
+  expect(result.exitCode).toBe(0);
+  const worker = approved.calls.find((call) => call.roleName === "worker");
+  expect(worker.prompt).toContain(focus);
+});
+
 // Usefulness: a failed audit blocks consolidation and creation until a retry succeeds, so no issue
 // is created from an incomplete audit set.
 test("a failed audit creates no issue until a resume succeeds", async () => {
@@ -1217,6 +1386,62 @@ test("audit arguments require two reviewers and one worker", () => {
       "codex",
     ]),
   ).toThrow("Duplicate reviewer settings: claude.");
+});
+
+// Usefulness: the operator focus is one text source, and a blank text cannot become a reviewer
+// goal, so the refusal happens before a store, work tree, or child exists (issue #1750).
+test("focus flags are mutually exclusive and refuse blank text", () => {
+  const base = ["--repo", ".", "--reviewer", "claude", "--reviewer", "agy", "--worker", "codex"];
+  expect(parseAuditArgs([...base, "--focus", "check cleanup"]).focus).toBe("check cleanup");
+  expect(parseAuditArgs([...base, "--focus-file", "focus.txt"]).focusFile).toBe("focus.txt");
+  expect(() => parseAuditArgs([...base, "--focus", "a", "--focus-file", "focus.txt"])).toThrow(
+    "--focus and --focus-file cannot be combined.",
+  );
+  expect(() => parseAuditArgs([...base, "--focus", "   "])).toThrow("--focus must not be empty.");
+});
+
+// Usefulness: a focus file that holds no text gives the reviewers no goal, so the start is
+// refused before any store, work tree, or child exists (issue #1750).
+test("a blank focus file is refused and a file supplies the focus text", async () => {
+  const main = await createTempRepo();
+  repos.push(main);
+  const remote = `${main}-remote`;
+  repos.push(remote);
+  const base = (await git(["rev-parse", "--abbrev-ref", "HEAD"], main)).stdout;
+  await execa("git", ["init", "--bare", remote]);
+  await execa("git", ["remote", "add", "origin", remote], { cwd: main });
+  await execa("git", ["push", "-u", "origin", base], { cwd: main });
+  await execa("git", ["update-ref", `refs/remotes/origin/${base}`, "HEAD"], { cwd: main });
+  const dir = await mkdtemp(join(tmpdir(), "audit-focus-"));
+  roots.push(dir);
+  const blank = join(dir, "blank.txt");
+  await writeFile(blank, " \n\t\n");
+  const full = join(dir, "focus.txt");
+  await writeFile(full, "Check outdated direct dependencies\n");
+  const options = {
+    id: "20260101-000000-test",
+    repo: main,
+    reviewers: [
+      { kind: "claude", model: null, effort: null },
+      { kind: "agy", model: null, effort: null },
+    ],
+    worker: "codex",
+    workerModel: null,
+    workerEffort: null,
+    base,
+    workTreeRoot: dir,
+    setupCmd: null,
+    setupTimeout: 600,
+    timeout: null,
+    reviewerSandbox: null,
+    focus: null,
+    focusFile: blank,
+  };
+
+  await expect(prepareAudit(options)).rejects.toThrow("--focus-file must not be empty.");
+
+  const prepared = await prepareAudit({ ...options, focusFile: full });
+  expect(prepared.focus).toBe("Check outdated direct dependencies");
 });
 
 // Usefulness: the audit freezes one revision and refuses a base that has no remote ref, so no
