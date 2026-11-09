@@ -75,5 +75,6 @@ The implementation updates `docs/reference/usage.md`, `docs/reference/architectu
 ## Links
 
 - Issue #1739
+- [PR #1741](https://github.com/andromarces/agent-loops/pull/1741)
 - `adr/0106-foreground-batch-scheduling.md`
 - `adr/0110-release-batch-slots-on-owner-decisions.md`
