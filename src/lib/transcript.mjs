@@ -9,6 +9,7 @@ import {
   sessionRecordPath,
   writeSessionRecord,
 } from "./session-record.mjs";
+import { boundedWarnings } from "./run-warnings.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
 import { redactAndClean } from "./redact.mjs";
 
@@ -45,6 +46,7 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
     events,
     exitCode: 1,
     error: null,
+    warnings: [],
   };
 
   // The pre-assigned session id of the turn that is running, with the mark that no CLI output
@@ -57,16 +59,22 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
 
   // A transcript write supersedes the session record of the file, so it removes the record.
   const transcriptText = () => {
+    const bounded = boundedWarnings(transcriptData.warnings);
+    const base = {
+      ...transcriptData,
+      warnings: bounded.warnings,
+      warningsOverflow: bounded.warningsOverflow,
+    };
     const { role, id } = pendingSession ?? {};
     const data = pendingSession
       ? {
-          ...transcriptData,
+          ...base,
           roles: {
             ...roles,
             [role]: { ...roles[role], sessionId: id, sessionUnconfirmed: true },
           },
         }
-      : transcriptData;
+      : base;
     return JSON.stringify(data, null, 2);
   };
   const writeTranscript = async () => {

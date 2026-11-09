@@ -44,6 +44,7 @@ import { resolveWriteTarget } from "./lib/atomic-write.mjs";
 import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runTestSlot } from "./lib/test-slot-cli.mjs";
 import { createTranscriptWriter } from "./lib/transcript.mjs";
+import { withRunWarnings } from "./lib/run-warnings.mjs";
 import { printHelp } from "./help.mjs";
 import { runProbeTurn } from "./child-turn.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
@@ -183,6 +184,7 @@ function formatSummary(summary) {
     `Deferred: ${summary.deferred}`,
     `Not done: ${summary.notDone}`,
     `Open: ${summary.open}`,
+    `Notes: ${summary.notes ?? "none"}`,
   ].join("\n");
 }
 
@@ -431,33 +433,35 @@ export async function main(
         // first turn, outside every mutation check.
         if ((await chooseSaveMode()) === "record") await writeTranscript();
       }
-      const result = await runLoop({
-        task: options.task,
-        cwd: options.cwd,
-        maxSteps: options.maxSteps,
-        timeout: options.timeout,
-        requireAccept: options.requireAccept,
-        pr: options.pr,
-        requireCi: options.requireCi,
-        compareHead: options.compareHead,
-        testCmd: options.testCmd,
-        testCmdTimeout: options.testCmdTimeout,
-        reviewerSandbox,
-        mode: options.mode,
-        continued: Boolean(options.continueFrom),
-        earlierGate,
-        earlierPr,
-        gh,
-        copyLocalFiles: options.copyLocalFiles,
-        // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
-        // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
-        // one transcript path have no write coordination (issue #564).
-        ...(options.transcript ? { onSessionAssigned } : {}),
-        signal: controller.signal,
-        roles: transcriptData.roles,
-        agents,
-        onEvent,
-      });
+      const result = await withRunWarnings(transcriptData.warnings, () =>
+        runLoop({
+          task: options.task,
+          cwd: options.cwd,
+          maxSteps: options.maxSteps,
+          timeout: options.timeout,
+          requireAccept: options.requireAccept,
+          pr: options.pr,
+          requireCi: options.requireCi,
+          compareHead: options.compareHead,
+          testCmd: options.testCmd,
+          testCmdTimeout: options.testCmdTimeout,
+          reviewerSandbox,
+          mode: options.mode,
+          continued: Boolean(options.continueFrom),
+          earlierGate,
+          earlierPr,
+          gh,
+          copyLocalFiles: options.copyLocalFiles,
+          // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
+          // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
+          // one transcript path have no write coordination (issue #564).
+          ...(options.transcript ? { onSessionAssigned } : {}),
+          signal: controller.signal,
+          roles: transcriptData.roles,
+          agents,
+          onEvent,
+        }),
+      );
       // The last event of a run that returned an exit code: its gate state, which a
       // later --continue-from checks against a replay of the events (#393). A
       // thrown error leaves none.

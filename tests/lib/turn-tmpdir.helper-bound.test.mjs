@@ -8,18 +8,21 @@ import { processExists } from "../process-helpers.mjs";
 
 // `helperArgs` replaces the arguments of the removal helper, so the test runs a helper that hangs
 // or dies instead of the real one.
-const hook = vi.hoisted(() => ({ helperArgs: null }));
+const hook = vi.hoisted(() => ({ helperArgs: null, reject: false }));
 
 vi.mock("../../src/lib/exec.mjs", async (importActual) => {
   const actual = await importActual();
   return {
     ...actual,
     execBounded: (command, args, options) =>
-      actual.execBounded(command, hook.helperArgs ?? args, options),
+      hook.reject
+        ? Promise.reject(new Error("the removal failed"))
+        : actual.execBounded(command, hook.helperArgs ?? args, options),
   };
 });
 
 const { withTurnTmpdir } = await import("../../src/lib/turn-tmpdir.mjs");
+const { withRunWarnings } = await import("../../src/lib/run-warnings.mjs");
 
 const BOUND_MS = 400;
 // The bound, the forced end after a refused SIGTERM, and slack for a loaded machine.
@@ -35,6 +38,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   hook.helperArgs = null;
+  hook.reject = false;
   warnings.mockRestore();
   await removePath(dir);
 });
@@ -66,6 +70,16 @@ test("a hanging removal helper ends at the bound and never fails the turn", asyn
   expect(Date.now() - started).toBeLessThan(MAX_WAIT_MS);
   expect(processExists(Number(readFileSync(pidFile, "utf8")))).toBe(false);
   expect(warned()).toBe(true);
+});
+
+// Usefulness: verifies a delete-by-hand warning of the turn directory reaches the run warning list.
+test("a delete-by-hand turn directory warning reaches the run warning list", async () => {
+  hook.reject = true;
+  const collected = [];
+  await withRunWarnings(collected, () =>
+    withTurnTmpdir(async () => "turn result", { removalBoundMs: BOUND_MS }),
+  );
+  expect(collected.some((line) => line.includes("delete it by hand"))).toBe(true);
 });
 
 // Usefulness: verifies a canceled or timed-out turn does not wait past the bound for the helper

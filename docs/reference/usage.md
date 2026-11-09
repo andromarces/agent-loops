@@ -80,7 +80,7 @@ condition did not refuse, and a finish the marker, the `review-only` condition, 
 `--require-accept` already refused still runs the gate.
 
 The headless action object allows only `action`, `summary`, and an optional boolean
-`unresolvedCompare`, and its nested `summary` object allows only the five summary keys.
+`unresolvedCompare`. Its nested `summary` object allows only the six summary keys, and `notes` is optional.
 
 - A run declared with `--pr` ends through `agent-loop --require-ci <pr>`, with the same PR number.
 - The headless path takes both flags on one command line, so `agent-loop --pr 42 --require-ci 7` is a usage error before the run starts.
@@ -346,7 +346,7 @@ A headless run that ends on a fatal error prints the test-command result in its 
 
 | Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Orchestrator returned `finish` with valid 5-part summary and no `unresolvedCompare` marker.                                                                                                                                                                                                                                                                                                                                                              |
+| 0    | Orchestrator returned `finish` with a valid summary and no `unresolvedCompare` marker.                                                                                                                                                                                                                                                                                                                                                                   |
 | 1    | Orchestrator returned `abort`, a `--require-accept` or `--require-ci` finish refused twice or refused with no step budget left, a `--pr` declaration with no matching gate refused the finish, a `--mode review-only` run that refused a `run_worker` action, a usage error, orchestrator CLI failure or timeout, mutation detected, or controller error. A child timeout is not fatal: the orchestrator receives it as an error result and can recover. |
 | 2    | Step limit reached (`--max-steps`) with work remaining. `--continue-from` continues that run.                                                                                                                                                                                                                                                                                                                                                            |
 | 4    | Orchestrator returned a `finish` that set `unresolvedCompare: true`. The run is a recorded finish, not a failure: the summary is printed as for exit 0 and the transcript holds no error. The code is what tells an exit-code-only consumer that the PR-head compare was never verified. A consumer that treats any nonzero code as failure must special-case 4, and so must a consumer that reads the transcript `exitCode`.                            |
@@ -462,7 +462,9 @@ Checkpoints are written on an event only. The events are `start`, a launch, a sk
 
 A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state.
 
-`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue: loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, and cleanup result.
+`start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per issue. Each entry holds loop status, reason, work tree, branch, pull request, attempts, steps used, remaining steps, log, transcript, cleanup result, and report.
+
+The report holds the last attempt's finish summary, error, failed-turn test result, and delete-by-hand warnings. It also holds a `state`: `read`, `no-attempt`, `unread`, or `missing`. The transcript warning list and the report keep 20 warnings, and `warningsOverflow` names the rest. A `transcriptRead` value with `ok: false` means the transcript was unread. Every summary, error, test, and warning field is then null.
 
 Exit codes:
 

@@ -65,16 +65,16 @@ function describeJsonParseError(error) {
 }
 
 /**
- * `finish`: accepts the five-key summary as JSON on stdin, from active only, and
- * sets the lifecycle to `finished`. A key other than the five and
- * `unresolvedCompare` is refused and named (#1021).
+ * `finish`: accepts the summary as JSON on stdin, from active only, and sets the lifecycle to
+ * `finished`. The summary holds five required keys and an optional notes key. A key other than
+ * the six and `unresolvedCompare` is refused and named (#1021).
  * `--compare-head <pr>` makes the PR-head half of the gate and records
  * `headCompare: "verified"` in the envelope and the state file. `--require-accept` and `--require-ci` gate the finish,
  * and every applicable refusal is reported in one error. A run that declared
- * `--pr <pr>` at init must end through `--require-ci <pr>`. Without `--require-ci`
- * or `--compare-head` this subcommand never resolves the PR head, so an omitted
- * marker is an accepted gap.
+ * `--pr <pr>` at init must end through `--require-ci <pr>`.
  */
+// Without `--require-ci` or `--compare-head` this subcommand never resolves the PR head, so an
+// omitted marker is an accepted gap.
 export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (state.lifecycle !== "active") {
     throw new RoleError(`finish is accepted only from active; run is ${state.lifecycle}.`);
@@ -97,7 +97,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     );
   }
   // The summary arrives unwrapped, so the marker the headless action carries
-  // beside `summary` sits beside the five keys here. It moves out of the
+  // beside `summary` sits beside the summary keys here. It moves out of the
   // summary so the validator keeps its own boolean check (#281) and refuses
   // every other unknown key (#1021).
   const action = { action: "finish", summary: value };
