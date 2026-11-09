@@ -98,8 +98,13 @@ Subcommands:
                                 least twice), and --worker. Accepts --base,
                                 --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
                                 --reviewer-sandbox, a --reviewer-model or --reviewer-effort
-                                after each --reviewer, and --worker-model or
-                                --worker-effort. A failed audit creates no issue until
+                                after each --reviewer, --worker-model or --worker-effort,
+                                and --focus <text> or --focus-file <path>. The two focus
+                                flags are mutually exclusive, and an empty focus is refused.
+                                A focus is the only reviewer goal; without one, reviewers
+                                report any item someone can act on, defects included. The
+                                focus is stored, so resume and approve reuse it and status
+                                shows it. A failed audit creates no issue until
                                 batch audit resume succeeds or batch audit approve
                                 accepts the partial results. A changed audit checkout
                                 stops the run for the owner and deletes nothing. Exits 0

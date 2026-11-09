@@ -95,6 +95,8 @@ export function parseAuditArgs(argv) {
     setupTimeout: DEFAULT_SETUP_TIMEOUT,
     timeout: DEFAULT_TIMEOUT,
     reviewerSandbox: null,
+    focus: null,
+    focusFile: null,
   };
   let current = null;
   let sandboxAlias = false;
@@ -153,6 +155,12 @@ export function parseAuditArgs(argv) {
       case "--base":
         options.base = read(flag);
         break;
+      case "--focus":
+        options.focus = setScalar("focus", flag, read(flag));
+        break;
+      case "--focus-file":
+        options.focusFile = setScalar("focus-file", flag, read(flag));
+        break;
       case "--work-tree-root":
         options.workTreeRoot = resolve(read(flag));
         break;
@@ -192,6 +200,12 @@ export function parseAuditArgs(argv) {
   }
 
   if (options.repo === null) throw usage("Missing required --repo.");
+  if (options.focus !== null && options.focusFile !== null) {
+    throw usage("--focus and --focus-file cannot be combined.");
+  }
+  if (options.focus !== null && options.focus.trim() === "") {
+    throw usage("--focus must not be empty.");
+  }
   if (options.reviewers.length < 2) throw usage("At least two --reviewer entries are required.");
   if (options.worker === null) throw usage("Missing required --worker.");
   const seen = new Set();
@@ -281,12 +295,39 @@ async function assertWritableDirectory(path) {
 }
 
 /**
- * Resolves the repository, base branch, revision, and work-tree root of an audit, refusing before
- * any state write or child process exists.
+ * Resolves the reviewer focus from `--focus` or `--focus-file`. Returns null when none is supplied.
+ * Throws a usage error for a read failure or a blank focus, before any state write.
+ * @param {{ focus?: string|null, focusFile?: string|null }} options parsed options
+ */
+async function resolveFocus(options) {
+  if ((options.focus ?? null) !== null && (options.focusFile ?? null) !== null) {
+    throw usage("--focus and --focus-file cannot be combined.");
+  }
+  const fromFile = (options.focusFile ?? null) !== null;
+  let focus = options.focus ?? null;
+  if (fromFile) {
+    try {
+      focus = await readFile(resolve(options.focusFile), "utf8");
+    } catch (err) {
+      throw usage(
+        `Cannot read --focus-file ${options.focusFile}: ${err?.code ?? err?.message ?? "unknown error"}`,
+      );
+    }
+  }
+  if (focus === null) return null;
+  const text = focus.trim();
+  if (text === "") throw usage(`${fromFile ? "--focus-file" : "--focus"} must not be empty.`);
+  return text;
+}
+
+/**
+ * Resolves the repository, base branch, revision, work-tree root, and focus of an audit, refusing
+ * before any state write or child process exists.
  * @param {object} options parsed options
  * @param {{ gitRun?: (args: string[], cwd: string) => Promise<object> }} [deps]
  */
 export async function prepareAudit(options, { gitRun = git } = {}) {
+  const focus = await resolveFocus(options);
   const repo = await canonicalPath(options.repo);
   const listed = await gitRun(["worktree", "list", "--porcelain", "-z"], repo);
   if (listed.exitCode !== 0) throw usage(`--repo is not a Git work tree: ${listed.stderr}`);
@@ -332,6 +373,7 @@ export async function prepareAudit(options, { gitRun = git } = {}) {
     revision: revision.stdout,
     workTreeRoot: rootCanonical,
     repoKey,
+    focus,
     reviewers: options.reviewers.map((reviewer) => ({
       kind: normalizeAgent(reviewer.kind) ?? reviewer.kind,
       model: reviewer.model,
@@ -497,6 +539,7 @@ function auditSummary(state) {
     status: state.status,
     revision: state.revision,
     base: state.base,
+    focus: state.focus ?? null,
     workTree: state.workTree?.path ?? null,
     pauseReason: state.pauseReason ?? null,
     reason: state.reason ?? null,
@@ -526,6 +569,7 @@ function initialState(prepared) {
     createdAt: new Date().toISOString(),
     base: prepared.base,
     revision: prepared.revision,
+    focus: prepared.focus ?? null,
     workTreeRoot: prepared.workTreeRoot,
     workTree: null,
     settings: {
@@ -724,24 +768,30 @@ export function validateConsolidation(findings, issues) {
   return out;
 }
 
-function auditPrompt({ revision, base, kind }) {
+function auditPrompt({ revision, base, kind, focus = null }) {
+  const focusText = typeof focus === "string" && focus.trim() !== "" ? focus.trim() : null;
+  const goal =
+    focusText === null
+      ? "Report any item someone can act on, defects included. Do not report praise or general observations."
+      : `The only goal of this audit is: ${focusText}`;
   return escapeLineSeparators(`You are reviewer ${kind} of one read-only project audit. Audit revision ${revision} of the base branch ${base} in this work tree.
 
-Do not change a tracked file or an untracked file that Git does not ignore, and do not change Git state. Do not write to GitHub or any remote: do not create, edit, comment on, label, or close an issue or a pull request, and do not push. Read-only queries are allowed. Report only defects that a reader can act on, not praise or general observations.
+Do not change a tracked file or an untracked file that Git does not ignore, and do not change Git state. Do not write to GitHub or any remote: do not create, edit, comment on, label, or close an issue or a pull request, and do not push. Read-only queries are allowed. ${goal}
 
 Return exactly one fenced json code block with this document:
 {"findings":[{"title":"...","body":"...","evidence":"..."}]}
 
 Rules for the document:
-- One finding per actionable defect. Do not repeat a finding under two titles.
+- One finding per item. Do not repeat a finding under two titles.
 - The title is a concise issue title of at most 256 characters.
-- The body states the problem, where it occurs, and the failure scenario.
+- The body states the item, where it occurs, and why someone can act on it.
 - The evidence names the files, symbols, inputs, or commands that support the finding.
-- If the revision has no actionable defect, return an empty findings array.
+- If the revision has no item to report, return an empty findings array.
 - Put the document before any other closing text, and include no other fenced json block.`);
 }
 
-function consolidationPrompt({ auditId, revision, findings, issues }) {
+function consolidationPrompt({ auditId, revision, findings, issues, focus = null }) {
+  const focusText = typeof focus === "string" && focus.trim() !== "" ? focus.trim() : null;
   const supplied = findings.map(({ reviewer, finding }) => ({
     reviewer,
     title: finding.title,
@@ -751,6 +801,8 @@ function consolidationPrompt({ auditId, revision, findings, issues }) {
   const issueList = issues.map(({ number, title, state }) => ({ number, title, state }));
   return escapeLineSeparators(`You are the consolidation worker of audit run ${auditId} on revision ${revision}. Merge the reviewer findings into one issue set.
 
+The operator focus was: ${focusText === null ? "none supplied" : focusText}
+
 Reviewer findings, supplied by the runtime as JSON:
 ${JSON.stringify(supplied, null, 2)}
 
@@ -758,11 +810,11 @@ Open and closed issues of the repository, supplied by the runtime as JSON:
 ${JSON.stringify(issueList, null, 2)}
 
 Rules:
-- Merge findings that describe the same defect. One defect becomes one finding.
-- Drop a finding that is not an actionable defect against this revision.
+- Merge findings that describe the same item. One item becomes one finding.
+- Keep every item someone can act on that any reviewer reported, even an item outside the focus. Do not drop a finding because it is not a defect.
 - Compare every finding with every supplied issue, open or closed. When an issue already covers it, set existingIssue to that number. Otherwise set existingIssue to null.
 - Never create, edit, comment on, label, or close an issue yourself. The runtime makes every remote write.
-- Keep an issue title at most 256 characters, and state a concrete problem, its location, and its failure scenario in the body.
+- Keep an issue title at most 256 characters, and state the item, its location, and why someone can act on it in the body.
 
 Return exactly one fenced json code block with this document:
 {"findings":[{"title":"...","body":"...","evidence":"...","existingIssue":12}]}
@@ -1089,6 +1141,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
               revision: state.revision,
               base: state.base,
               kind: reviewer.kind,
+              focus: state.focus ?? null,
             }),
             sandboxMode,
           }),
@@ -1210,6 +1263,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
               reviewer.findings.map((finding) => ({ reviewer: reviewer.kind, finding })),
             ),
             issues: state.existingIssues,
+            focus: state.focus ?? null,
           }),
           cwd: state.workTree.path,
           timeout: state.settings.timeout,

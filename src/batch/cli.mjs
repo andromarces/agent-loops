@@ -59,7 +59,8 @@ The audit runs two or more read-only reviewers on one revision, then one consoli
 worker. It then creates one issue per finding that no open or closed issue covers.
 Audit settings: --base, --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
 --reviewer-sandbox, --reviewer-model and --reviewer-effort after each --reviewer,
-and --worker-model and --worker-effort.
+--worker-model and --worker-effort, and --focus <text> or --focus-file <path>. The two
+focus flags are mutually exclusive, and an empty focus is refused.
 
 Exit codes: 0 every issue succeeded or was skipped, or the audit created its issue set. 1 a
 loop failed, the batch waits on an owner decision or merge, the queue paused, or an audit
@@ -72,6 +73,7 @@ Usage:
   agent-loop batch audit start --repo <dir> --reviewer <cli> --reviewer <cli> \\
     --worker <cli> [--reviewer-model <model>] [--reviewer-effort <effort>] \\
     [--worker-model <model>] [--worker-effort <effort>] \\
+    [--focus <text> | --focus-file <path>] \\
     [--base <branch>] [--work-tree-root <dir>] [--setup-cmd <command>] \\
     [--setup-timeout <seconds>] [--timeout <seconds>] [--reviewer-sandbox <mode>]
 
@@ -85,6 +87,10 @@ requested audit succeeds, or after the owner approves the partial results with a
 one worker consolidates the findings against the open and closed issues and the runtime
 creates one issue per finding that no issue covers. A failed audit creates no issue until
 a retry succeeds or the owner approves the partial results. The created issue set is frozen.
+--focus <text> or --focus-file <path> sets the only goal of each reviewer; the two are
+mutually exclusive, and an empty focus is refused. Without a focus, reviewers report any
+item someone can act on, defects included. A resume or approve reuses the stored focus,
+and status shows it.
 
 remove deletes the work tree and store of a finished audit with a frozen issue set. A
 paused, needs-owner, or interrupted audit, and one whose issue write is unreconciled,
@@ -173,6 +179,7 @@ function preparedFromAudit(state, mode) {
     base: state.base,
     revision: state.revision,
     workTreeRoot: state.workTreeRoot,
+    focus: state.focus ?? null,
     reviewers: state.settings?.reviewers ?? [],
     worker: state.settings?.worker ?? { kind: null, model: null, effort: null },
     timeout: state.settings?.timeout ?? null,
