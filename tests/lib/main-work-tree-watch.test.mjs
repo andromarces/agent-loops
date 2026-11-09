@@ -246,7 +246,13 @@ test("a restored edit that preserves the modification time is reported", async (
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
+  const startBefore = Date.now();
   const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
+  // Wait past the change-time guard, so the in-window restore reports through its change time.
+  await vi.waitFor(() => expect(Date.now() - startBefore).toBeGreaterThanOrEqual(4), {
+    timeout: 5_000,
+    interval: 1,
+  });
   await vi.waitFor(
     async () => {
       await writeFile(file, "changed\n");
@@ -276,27 +282,24 @@ test("a direct stop before take reports a failure and warns", async () => {
 });
 
 // Usefulness: verifies that a timestamp-preserving change made just before the watch starts is not
-// reported by a later read-only access (issue #1712 review). Windows applies the change time after
-// the `utimes` call, so the setup waits for that stamp before the start.
+// reported by a later read-only access (issue #1712 review). The production guard drops the stamp
+// without a wait.
 test("a timestamp-preserving change just before the start reports no candidate", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   let reported = false;
   let failed = false;
-  let windowStart = 0;
   let message = "";
   for (let attempt = 0; attempt < 20 && !reported && !failed; attempt++) {
     // A copy that preserves times completes immediately before the watch starts.
     await writeFile(file, "copied\n");
     await writeFile(file, "hello\n");
     await utimes(file, old, old);
-    await settleChangeTimeStamp();
     const fake = createArmingWatch();
-    const startBefore = performance.timeOrigin + performance.now();
+    const startBefore = Date.now();
     const handle = await startMainWorkTreeWatch(dir, {
       drainDeadlineMs: 60_000,
-      wallClock: () => (windowStart = Date.now()),
       watchFactory: fake.factory,
     });
     // A read-only access moves only the access time.
@@ -309,43 +312,46 @@ test("a timestamp-preserving change just before the start reports no candidate",
     reported = result.candidates.includes("init.txt");
     failed = result.failed;
     const stats = await lstat(file);
-    const start = windowStart || startBefore;
-    message = `attempt ${attempt + 1} change-time delta ${(stats.ctimeMs - start).toFixed(3)} ms`;
+    message = `attempt ${attempt + 1} change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
   }
   expect(failed, message).toBe(false);
   expect(reported, message).toBe(false);
 });
 
-// Usefulness: verifies that a window start behind the change-time clock reports no candidate (issue
-// #1740). A start from the whole-millisecond system clock keeps a pre-window stamp out.
-test("a performance clock behind the change-time clock reports no candidate", async () => {
+// Usefulness: verifies that the recorded Windows clock difference reports no pre-window change
+// (issue #1740). Both process clocks are 2.2 ms behind the settled file stamp, as the saved
+// 1.542 ms difference was.
+test("a clock difference of two milliseconds reports no pre-window change", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await writeFile(file, "copied\n");
   await writeFile(file, "hello\n");
-  await utimes(file, old, old);
-  await settleChangeTimeStamp();
+  const settled = await settleChangeTime(file, old);
+  const realDateNow = Date.now.bind(Date);
   const realNow = performance.now.bind(performance);
-  const skew = vi.spyOn(performance, "now").mockImplementation(() => realNow() - 50);
+  const realWall = performance.timeOrigin + realNow();
+  const target = 2.2;
+  const dateSkewMs = realDateNow() - settled + target;
+  const perfSkewMs = realWall - settled + target;
+  const dateSkew = vi.spyOn(Date, "now").mockImplementation(() => realDateNow() - dateSkewMs);
+  const perfSkew = vi.spyOn(performance, "now").mockImplementation(() => realNow() - perfSkewMs);
   try {
-    let windowStart = 0;
+    const startBefore = Date.now();
     const fake = createArmingWatch();
-    const startBefore = performance.timeOrigin + performance.now();
     const handle = await startMainWorkTreeWatch(dir, {
       drainDeadlineMs: 60_000,
-      wallClock: () => (windowStart = Date.now()),
       watchFactory: fake.factory,
     });
     fake.deliver("change", "init.txt");
     await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
     const result = await handle.take();
     const stats = await lstat(file);
-    const start = windowStart || startBefore;
-    const message = `attempt 1 change-time delta ${(stats.ctimeMs - start).toFixed(3)} ms`;
+    const message = `attempt 1 change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
     expect(result, message).toEqual({ candidates: [], failed: false });
   } finally {
-    skew.mockRestore();
+    dateSkew.mockRestore();
+    perfSkew.mockRestore();
   }
 });
 
@@ -359,28 +365,36 @@ test("a read-only access of a watched file reports no candidate", async () => {
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await utimes(file, old, old);
-  await settleChangeTimeStamp();
-  let windowStart = 0;
   const fake = createArmingWatch();
-  const startBefore = performance.timeOrigin + performance.now();
+  const startBefore = Date.now();
   const handle = await startMainWorkTreeWatch(dir, {
     drainDeadlineMs: 60_000,
-    wallClock: () => (windowStart = Date.now()),
     watchFactory: fake.factory,
   });
   fake.deliver("change", "init.txt");
   await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
   const result = await handle.take();
   const stats = await lstat(file);
-  const start = windowStart || startBefore;
-  const message = `attempt 1 change-time delta ${(stats.ctimeMs - start).toFixed(3)} ms`;
+  const message = `attempt 1 change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
   expect(result, message).toEqual({ candidates: [], failed: false });
 });
 
-// Waits 20 ms so a pre-window change-time stamp has landed before the watch starts.
-// The saved Windows probe saw change-time stamps up to 2.1 ms after the `utimes` call.
-async function settleChangeTimeStamp() {
-  await new Promise((resolve) => setTimeout(resolve, 20));
+/**
+ * Waits until the change time of `file` settles after `utimes`, so the stamp predates the start.
+ * @param {string} file
+ * @param {Date} old
+ * @returns {Promise<number>} the settled change time in milliseconds
+ */
+async function settleChangeTime(file, old) {
+  const before = (await lstat(file)).ctimeMs;
+  await utimes(file, old, old);
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const first = (await lstat(file)).ctimeMs;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const second = (await lstat(file)).ctimeMs;
+    if (first === second && second !== before) return second;
+  }
+  throw new Error("the change time did not settle");
 }
 
 // Usefulness: verifies requirement "repeated events for one path queue one read" (issue #1556). A
