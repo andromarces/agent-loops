@@ -3133,6 +3133,9 @@ describe("batch decisions and waits", () => {
     let spawnIndex = 0;
     const spawn = (options) => children[Math.min(spawnIndex++, children.length - 1)].spawn(options);
     const controller = new AbortController();
+    const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-224.resume.lock");
+    const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+    expect(release).not.toBe(null);
     const run = runBatch({
       prepared,
       runsRoot,
@@ -3146,16 +3149,12 @@ describe("batch decisions and waits", () => {
         pollIntervalMs: 20,
       },
     });
-    let release;
     try {
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       const loop = await readLoop(runsRoot, prepared.id, 224);
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-224.resume.lock");
-      release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
-      expect(release).not.toBe(null);
       const answered = await answerDecision({
         runsRoot,
         batchId: prepared.id,
@@ -3251,8 +3250,8 @@ describe("batch decisions and waits", () => {
       expect(continueIndex).toBeGreaterThan(-1);
       expect(args[continueIndex + 1]).toBe(stopped.calls[0].transcript);
       expect(args[args.indexOf("--pr") + 1]).toBe("42");
-      expect((await readLoop(runsRoot, prepared.id, 226)).status).toBe("succeeded");
       await run;
+      expect((await readLoop(runsRoot, prepared.id, 226)).status).toBe("succeeded");
     } finally {
       controller.abort();
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
@@ -3304,13 +3303,13 @@ describe("batch decisions and waits", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
       expect(continued.calls).toHaveLength(0);
+      await run;
       expect(await readLoop(runsRoot, prepared.id, 228)).toMatchObject({
         status: "failed",
         reason: "step-budget-exhausted",
       });
       const claim = batchPaths(runsRoot).claim(prepared.repoKey, 228);
       await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
-      await run;
     } finally {
       controller.abort();
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
