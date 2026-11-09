@@ -114,6 +114,10 @@ Subcommands:
                                 consolidate and create from the audits that succeeded.
                                 Requires --audit <id>. It never approves a failed
                                 consolidation.
+  agent-loop batch audit remove Remove the work tree and store of a finished audit. Requires
+                                --audit <id>. A paused, needs-owner, or interrupted audit,
+                                and one whose issue write is unreconciled, keeps both and
+                                exits 1. The delete follows no link or junction.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no
