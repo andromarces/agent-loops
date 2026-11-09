@@ -37,6 +37,62 @@ async function ghJson(gh, args, cwd, label) {
 const owner = (reason) => ({ status: "needs-owner", reason, pr: null, requireCi: null });
 
 /**
+ * Reconciles one pull request item against its frozen head. A review-only loop reads no push
+ * state; a work loop continues while its local branch matches, or is ahead of, the frozen head.
+ */
+async function reconcilePullRequest({ loop, repo, gh, git, state }) {
+  let view;
+  try {
+    view = await ghJson(
+      gh,
+      ["pr", "view", String(loop.pr), "--json", "state,headRefOid,headRefName,isCrossRepository"],
+      repo,
+      `the read of pull request ${loop.pr}`,
+    );
+    if (!isJsonObject(view) || typeof view.state !== "string") {
+      throw new Error(`the read of pull request ${loop.pr} named no state`);
+    }
+  } catch (err) {
+    return owner(err.message);
+  }
+  if (view.state === "MERGED") {
+    if (state.head === view.headRefOid) {
+      return { status: "succeeded", reason: null, pr: loop.pr, requireCi: null };
+    }
+    return owner(`pull request ${loop.pr} is merged with another head`);
+  }
+  if (view.state !== "OPEN") {
+    return owner(`pull request ${loop.pr} is closed without a merge`);
+  }
+  if (typeof loop.head === "string" && view.headRefOid !== loop.head) {
+    return owner(
+      `pull request ${loop.pr} head moved: the frozen head is ${loop.head}, the current head is ${view.headRefOid}`,
+    );
+  }
+  if (!state.clean) return owner("the work tree is not clean");
+  if (loop.mode === "review-only") {
+    if (state.head !== view.headRefOid) {
+      return owner(`the local head differs from the head of pull request ${loop.pr}`);
+    }
+    return { status: "resume", reason: null, pr: null, requireCi: null };
+  }
+  const fetched = await git(["fetch", "origin", view.headRefName ?? loop.branch], repo);
+  if (fetched.exitCode !== 0) return owner("the remote branch could not be read");
+  const remote = await git(
+    ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${view.headRefName ?? loop.branch}`],
+    repo,
+  );
+  if (remote.exitCode !== 0 || remote.stdout === "") {
+    return owner("the remote branch could not be read");
+  }
+  if (state.head !== remote.stdout) {
+    const ancestor = await git(["merge-base", "--is-ancestor", remote.stdout, state.head], repo);
+    if (ancestor.exitCode !== 0) return owner("the remote branch head differs from the local head");
+  }
+  return { status: "resume", reason: null, pr: loop.pr, requireCi: loop.pr };
+}
+
+/**
  * Reads the loop's local and remote state and applies the reconciliation rules.
  * `loop` holds `workTree` (`path`, `canonicalPath`, `dev`, `ino`, `branch`) and `pr` (declared).
  * @returns {Promise<{ status: "resume" | "succeeded" | "needs-owner", reason: string | null, pr: number | null, requireCi: number | null }>}
@@ -69,8 +125,12 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   } catch (err) {
     return owner(`the work tree read failed: ${err.message}`);
   }
-  if (state.branch !== workTree.branch) {
+  const detached = loop.workTree?.detached === true;
+  if (detached ? state.branch !== "HEAD" : state.branch !== workTree.branch) {
     return owner("another branch is checked out in the work tree");
+  }
+  if (loop.kind === "pr") {
+    return reconcilePullRequest({ loop, repo, gh, git, state });
   }
 
   const fetched = await git(["fetch", "origin", workTree.branch], repo);
@@ -111,14 +171,18 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
         throw new Error("the pull request list read returned a malformed entry");
       }
     }
-    issue = await ghJson(
-      gh,
-      ["issue", "view", String(loop.issue), "--json", "state,closedByPullRequestsReferences"],
-      repo,
-      "the issue read",
-    );
-    if (!isJsonObject(issue) || typeof issue.state !== "string") {
-      throw new Error("the issue read named no state");
+    if (loop.kind === "task") {
+      issue = { state: "OPEN", closedByPullRequestsReferences: [] };
+    } else {
+      issue = await ghJson(
+        gh,
+        ["issue", "view", String(loop.issue), "--json", "state,closedByPullRequestsReferences"],
+        repo,
+        "the issue read",
+      );
+      if (!isJsonObject(issue) || typeof issue.state !== "string") {
+        throw new Error("the issue read named no state");
+      }
     }
   } catch (err) {
     return owner(err.message);
@@ -165,6 +229,18 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   const merged = details.filter((pull) => pull.state === "MERGED");
   const open = details.filter((pull) => pull.state === "OPEN");
   const closedUnmerged = details.filter((pull) => pull.state === "CLOSED");
+
+  if (loop.kind === "task") {
+    if (merged.length > 0) {
+      for (const pull of merged) {
+        const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, git);
+        if (ahead === null) return owner("the local commit count could not be read");
+        if (ahead === 0)
+          return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
+      }
+      return owner("the merged pull request head lacks a local commit");
+    }
+  }
 
   if (closed) {
     if (merged.length === 0) {

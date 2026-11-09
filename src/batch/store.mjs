@@ -8,6 +8,7 @@ import { removeTemp, writeFileAtomic } from "../lib/atomic-write.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { ownerAlive } from "../lib/process-identity.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
+import { loopSegment } from "./items.mjs";
 
 // One in-process chain per lock path, so concurrent writes of one batch process never meet the
 // live-owner refusal of the cross-process state lock.
@@ -49,15 +50,15 @@ export function batchPaths(runsRoot) {
     claims: join(root, "claims"),
     batchDir,
     manifest: (id) => join(batchDir(id), "batch.json"),
-    loop: (id, issue) => join(batchDir(id), "loops", `issue-${issue}.json`),
-    transcript: (id, issue) => join(batchDir(id), "transcripts", `issue-${issue}.json`),
-    log: (id, issue, attempt) => join(batchDir(id), "logs", `issue-${issue}.${attempt}.log`),
+    loop: (id, key) => join(batchDir(id), "loops", `${loopSegment(key)}.json`),
+    transcript: (id, key) => join(batchDir(id), "transcripts", `${loopSegment(key)}.json`),
+    log: (id, key, attempt) => join(batchDir(id), "logs", `${loopSegment(key)}.${attempt}.log`),
     lock: (id) => join(batchDir(id), "batch.lock"),
     decisions: (id) => join(batchDir(id), "decisions"),
     answers: (id) => join(batchDir(id), "answers"),
     decision: (id, decisionId) => join(batchDir(id), "decisions", `${decisionId}.json`),
     answer: (id, decisionId) => join(batchDir(id), "answers", `${decisionId}.json`),
-    claim: (repoKey, issue) => join(root, "claims", repoKey, `${issue}.json`),
+    claim: (repoKey, key) => join(root, "claims", repoKey, `${key}.json`),
     claimDir: (repoKey) => join(root, "claims", repoKey),
   };
 }

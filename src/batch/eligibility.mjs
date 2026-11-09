@@ -150,12 +150,25 @@ export async function checkEligibility({
   openPrClosures,
   ownPr = null,
   ownBranch = null,
+  requireSpecification = false,
 }) {
   const unverified = (detail) => ({
     ok: false,
     reason: "eligibility-unverified",
     evidence: `the read failed: ${detail}`,
   });
+  try {
+    const pull = await readJson(gh, ["pr", "view", String(issue), "--json", "number"], repo);
+    if (isJsonObject(pull) && Number.isInteger(pull.number)) {
+      return {
+        ok: false,
+        reason: "is-pull-request",
+        evidence: `number ${issue} is pull request ${pull.number}`,
+      };
+    }
+  } catch {
+    // A number that is not a pull request, or a failed probe, falls through to the issue read.
+  }
   let state;
   try {
     state = await readJson(gh, ["issue", "view", String(issue), "--json", "state"], repo);
@@ -226,6 +239,8 @@ export async function checkEligibility({
     }
   }
 
+  if (!requireSpecification) return { ok: true };
+
   let body;
   try {
     body = await readJson(gh, ["issue", "view", String(issue), "--json", "body"], repo);
@@ -240,6 +255,84 @@ export async function checkEligibility({
       ok: false,
       reason: "not-specified",
       evidence: "no acceptance list, or no problem and no scope heading",
+    };
+  }
+  return { ok: true };
+}
+
+function claimSkip(claim, batchId) {
+  if (claim?.exists && claim.held && claim.record?.batchId !== batchId) {
+    return {
+      ok: false,
+      reason: "claimed",
+      evidence: `claimed by batch ${claim.record?.batchId ?? "unknown"}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Applies the eligibility checks of one item kind. An issue keeps its checks, a pull request
+ * checks its state and frozen head, and a free-text task checks only its claim.
+ * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
+ */
+export async function checkItemEligibility(options) {
+  const { item, gh, repo, batchId = null, claim } = options;
+  if (item.kind === "issue") {
+    return checkEligibility({
+      ...options,
+      issue: item.number,
+      requireSpecification: options.requireSpecification === true,
+    });
+  }
+  if (item.kind === "task") {
+    return claimSkip(claim, batchId) ?? { ok: true };
+  }
+  const unverified = (detail) => ({
+    ok: false,
+    reason: "eligibility-unverified",
+    evidence: `the read failed: ${detail}`,
+  });
+  let view;
+  try {
+    view = await readJson(
+      gh,
+      [
+        "pr",
+        "view",
+        String(item.number),
+        "--json",
+        "state,headRefOid,headRefName,isCrossRepository",
+      ],
+      repo,
+    );
+  } catch (err) {
+    return unverified(err.message);
+  }
+  if (!isJsonObject(view) || typeof view.state !== "string") {
+    return unverified("the pull request reply named no state");
+  }
+  if (!isOpen(view.state)) {
+    return {
+      ok: false,
+      reason: "pr-closed",
+      evidence: `the pull request state is ${view.state}`,
+    };
+  }
+  if (view.isCrossRepository === true && item.mode !== "review-only") {
+    return {
+      ok: false,
+      reason: "pr-head-foreign",
+      evidence: `the head of pull request ${item.number} is in another repository`,
+    };
+  }
+  const claimed = claimSkip(claim, batchId);
+  if (claimed !== null) return claimed;
+  if (typeof item.head === "string" && view.headRefOid !== item.head) {
+    return {
+      ok: false,
+      reason: "pr-head-moved",
+      evidence: `the frozen head is ${item.head}, the current head is ${view.headRefOid}`,
     };
   }
   return { ok: true };

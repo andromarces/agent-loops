@@ -1,6 +1,7 @@
 // Argument parsing and pre-write validation for `agent-loop batch` (ADR 0106).
 // The runtime validates explicit values only: it reads no request and prompts for nothing.
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { access, constants, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -10,6 +11,7 @@ import { DEFAULT_TIMEOUT, initRefusal, ROLE_KINDS, roleFlags } from "../lib/args
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
+import { normalizeItems } from "./items.mjs";
 
 const runFile = promisify(execFile);
 const ROLE_FLAGS = roleFlags(ROLE_KINDS);
@@ -40,6 +42,13 @@ export const DEFAULT_TASK_TEMPLATE = [
   "pull request against the base branch whose body closes the issue with `Closes #{issue}`.",
 ].join("\n");
 
+export const DEFAULT_PR_TASK_TEMPLATE = [
+  "Review pull request {issue} of {repo} in this work tree on branch {branch}.",
+  "The work tree holds the pull request head. In work-first or review-first, commit any worker",
+  "correction on the same branch and push it with `git push -u origin {branch}`.",
+  "In review-only, change nothing and finish after the reviewer turn.",
+].join("\n");
+
 const usage = (message) => Object.assign(new Error(message), { usage: true });
 
 function positiveInt(flag, value) {
@@ -58,31 +67,34 @@ function loopCount(value) {
   return number;
 }
 
-/** Throws a usage error for an unknown placeholder, or for a template with no {issue}. */
-function validateTemplate(template) {
+/** Throws a usage error for an unknown placeholder, or for a template with no {issue} when required. */
+function validateTemplate(template, { requireIssue = true } = {}) {
   for (const match of template.matchAll(/\{([^{}]*)\}/g)) {
     if (!PLACEHOLDERS.has(match[1])) {
       throw usage(`Unknown task placeholder: ${match[0]}.`);
     }
   }
-  if (!template.includes("{issue}")) {
+  if (requireIssue && !template.includes("{issue}")) {
     throw usage("The task template must hold {issue}.");
   }
 }
 
 /**
  * Parses `agent-loop batch start` arguments. Throws an error with `usage: true` for a missing or
- * invalid value. Performs no filesystem read and writes nothing.
+ * invalid value. Performs no filesystem read except the explicit `--items-file`, and writes nothing.
  * @param {string[]} argv arguments after `batch start`
  */
 export function parseBatchArgs(argv) {
   const options = {
     repo: null,
     issues: [],
+    items: null,
+    itemsFile: null,
     fromAudit: null,
     base: null,
     workTreeRoot: null,
     taskTemplate: DEFAULT_TASK_TEMPLATE,
+    requireSpecification: false,
     setupCmd: null,
     setupTimeout: DEFAULT_SETUP_TIMEOUT,
     testCmd: null,
@@ -129,6 +141,13 @@ export function parseBatchArgs(argv) {
         options.issues.push(number);
         break;
       }
+      case "--items-file":
+        options.itemsFile = readPath(flag);
+        break;
+      case "--require-specification":
+        if (inline !== null) throw usage("--require-specification does not take a value.");
+        options.requireSpecification = true;
+        break;
       case "--from-audit":
         options.fromAudit = read(flag);
         break;
@@ -190,8 +209,28 @@ export function parseBatchArgs(argv) {
   if (options.fromAudit !== null && options.issues.length > 0) {
     throw usage("--from-audit cannot be combined with --issue.");
   }
-  if (options.fromAudit === null && options.issues.length === 0) {
+  if (options.fromAudit !== null && options.itemsFile !== null) {
+    throw usage("--from-audit cannot be combined with --items-file.");
+  }
+  if (options.fromAudit === null && options.issues.length > 0 && options.itemsFile !== null) {
+    throw usage("--items-file cannot be combined with --issue.");
+  }
+  if (options.fromAudit === null && options.issues.length === 0 && options.itemsFile === null) {
     throw usage("Missing required --issue or --from-audit.");
+  }
+  if (options.itemsFile !== null) {
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync(options.itemsFile, "utf8"));
+    } catch (err) {
+      throw usage(`The items file is unreadable: ${err.message}`);
+    }
+    try {
+      options.items = normalizeItems(raw);
+    } catch (err) {
+      throw usage(err.message);
+    }
+    options.issues = options.items.map((item) => item.key);
   }
   if (options.loops === null) throw usage("Missing required --loops.");
   if (options.maxSteps === null) throw usage("Missing required --max-steps.");
@@ -209,7 +248,10 @@ export function parseBatchArgs(argv) {
   if (refusal) throw usage(refusal);
   const roleRefusal = roleOptionRefusal(options);
   if (roleRefusal) throw usage(roleRefusal);
-  validateTemplate(options.taskTemplate);
+  const needsIssuePlaceholder =
+    options.itemsFile === null ||
+    (options.items ?? []).some((item) => item.kind === "issue" && item.task === null);
+  validateTemplate(options.taskTemplate, { requireIssue: needsIssuePlaceholder });
   return options;
 }
 

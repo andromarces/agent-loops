@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { boundedWarnings } from "../lib/run-warnings.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { redactAndClean } from "../lib/redact.mjs";
+import { parseVerdict } from "../lib/report.mjs";
 
 const BASE_SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"];
 // A finish records exit 0, or exit 4 for an unresolved PR-head compare.
@@ -120,14 +121,48 @@ function warningsOf(data) {
   };
 }
 
+/** The verdict and findings of the last reviewer result in one transcript segment. */
+function reviewerOutcome(events) {
+  let found = null;
+  for (const event of events) {
+    if (event.type !== "result" || event.role !== "reviewer") continue;
+    const result = event.result;
+    if (!isJsonObject(result) || result.status !== "ok") continue;
+    const report = isJsonObject(result.report) ? result.report : null;
+    const response = typeof result.response === "string" ? result.response : "";
+    const stated = report?.verdict ?? result.verdict;
+    const verdict = ["accept", "reject", "unknown"].includes(stated)
+      ? stated
+      : parseVerdict(response);
+    const raw = [
+      report?.findings,
+      result.findings,
+      report?.notes,
+      report?.deferred,
+      report?.why,
+    ].find(
+      (value) =>
+        (typeof value === "string" && value.trim() !== "") ||
+        (Array.isArray(value) && value.length > 0),
+    );
+    found = {
+      verdict,
+      findings:
+        raw === undefined ? null : typeof raw === "string" ? redactAndClean(raw) : redactValue(raw),
+    };
+  }
+  return found;
+}
+
 /**
  * Builds the report of one parsed transcript. `attempts` is the loop attempt count, so a transcript
- * that does not cover the last attempt fails closed. Every copied text is redacted here, at the
- * reporting boundary, and an unread record carries no field that reads as "none".
+ * that does not cover the last attempt fails closed. `reviewOnly` adds the reviewer verdict and
+ * findings. Every copied text is redacted here, at the reporting boundary, and an unread record
+ * carries no field that reads as "none".
  * @param {unknown} data the parsed transcript
- * @param {{ attempts?: number }} [options]
+ * @param {{ attempts?: number, reviewOnly?: boolean }} [options]
  */
-export function buildLoopReport(data, { attempts = 0 } = {}) {
+export function buildLoopReport(data, { attempts = 0, reviewOnly = false } = {}) {
   if (!isJsonObject(data)) return unreadReport("the transcript holds no record");
   if (!Array.isArray(data.events)) return unreadReport("the transcript holds no event list");
   for (const event of data.events) {
@@ -157,6 +192,7 @@ export function buildLoopReport(data, { attempts = 0 } = {}) {
   }
   const error =
     typeof data.error === "string" && data.error.trim() !== "" ? redactAndClean(data.error) : null;
+  const reviewer = reviewOnly ? reviewerOutcome(lastEvents) : null;
 
   return {
     state: "read",
@@ -166,6 +202,9 @@ export function buildLoopReport(data, { attempts = 0 } = {}) {
     warnings: bounded.warnings,
     warningsOverflow: bounded.warningsOverflow,
     transcriptRead: { ok: true },
+    ...(reviewOnly
+      ? { verdict: reviewer?.verdict ?? "unknown", findings: reviewer?.findings ?? null }
+      : {}),
   };
 }
 
@@ -175,7 +214,7 @@ export function buildLoopReport(data, { attempts = 0 } = {}) {
  * @param {string} file
  * @param {{ attempts?: number }} [options]
  */
-export async function readLoopReport(file, { attempts = 0 } = {}) {
+export async function readLoopReport(file, { attempts = 0, reviewOnly = false } = {}) {
   let text;
   try {
     text = await readFile(file, "utf8");
@@ -191,5 +230,5 @@ export async function readLoopReport(file, { attempts = 0 } = {}) {
   } catch {
     return unreadReport("the transcript is not valid JSON");
   }
-  return buildLoopReport(data, { attempts });
+  return buildLoopReport(data, { attempts, reviewOnly });
 }

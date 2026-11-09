@@ -83,6 +83,37 @@ export async function createLoopWorkTree({ repo, base, workTree, branch }) {
   };
 }
 
+/**
+ * Creates the linked work tree of one pull request item at its frozen head. A same-repository
+ * head gets a local branch with the pull request branch name; a foreign head is fetched through
+ * `refs/pull/<n>/head` and checked out detached. The batch-owned local branch may be recreated
+ * at the frozen head, and no remote ref is changed.
+ * @returns {Promise<{ path: string, canonicalPath: string, dev: string, ino: string, branch: string, head: string, detached: boolean }>}
+ */
+export async function createPrWorkTree({ repo, workTree, branch, head, foreign = false, number }) {
+  await mkdir(dirname(workTree), { recursive: true });
+  let detached = false;
+  if (foreign) {
+    await gitOrThrow(["fetch", "origin", `refs/pull/${number}/head`], repo);
+    await gitOrThrow(["worktree", "add", "--no-track", "--detach", workTree, "FETCH_HEAD"], repo);
+    detached = true;
+  } else {
+    await gitOrThrow(["branch", "-f", branch, head], repo);
+    await gitOrThrow(["worktree", "add", "--no-track", workTree, branch], repo);
+  }
+  const identity = await pathIdentity(workTree);
+  if (identity === null) throw new Error("The new work tree is missing after git worktree add.");
+  return {
+    path: resolve(workTree),
+    canonicalPath: await canonicalPath(workTree),
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    branch,
+    head,
+    detached,
+  };
+}
+
 /** The checked-out branch, head commit, and porcelain status of a work tree. */
 export async function readWorkTreeState(workTree) {
   const branch = await gitOrThrow(["rev-parse", "--abbrev-ref", "HEAD"], workTree);

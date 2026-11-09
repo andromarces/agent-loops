@@ -12,7 +12,7 @@ import { tryStateLock } from "../lib/state-lock.mjs";
 import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
 import { execBounded } from "../lib/exec.mjs";
 import { logError, logInfo, logWarn } from "../lib/log.mjs";
-import { renderTask } from "./args.mjs";
+import { renderTask, DEFAULT_TASK_TEMPLATE, DEFAULT_PR_TASK_TEMPLATE } from "./args.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import {
   ABANDON_REASON,
@@ -25,9 +25,16 @@ import {
   readDecision,
   recommendedOf,
 } from "./decisions.mjs";
-import { checkEligibility, readOpenPrClosures } from "./eligibility.mjs";
+import { checkItemEligibility, readOpenPrClosures } from "./eligibility.mjs";
+import { defaultMode, loopSegment, preparedItems } from "./items.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
-import { createLoopWorkTree, git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
+import {
+  createLoopWorkTree,
+  createPrWorkTree,
+  git as gitRead,
+  identityEqual,
+  pathIdentity,
+} from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, readLoopReport } from "./report.mjs";
 import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
@@ -103,22 +110,33 @@ export function progress(message) {
   process.stderr.write(`[agent-loop] batch: ${message}\n`);
 }
 
-function queuedLoop(paths, id, issue, maxSteps) {
+function queuedLoop(paths, id, item, maxSteps) {
+  const key = item.key;
   return {
-    issue,
+    issue: key,
+    key,
+    kind: item.kind,
+    number: item.number ?? null,
+    text: item.text ?? null,
+    mode: item.mode ?? defaultMode(item.kind),
+    head: item.head ?? null,
+    headRefName: item.headRefName ?? null,
+    foreign: item.foreign === true,
+    prTitle: item.title ?? null,
+    taskOverride: item.task ?? null,
     status: "queued",
     skipReason: null,
     reason: null,
     attempts: 0,
-    branch: `batch/${id}/${issue}`,
+    branch: item.kind === "pr" ? (item.headRefName ?? `pr-${item.number}`) : `batch/${id}/${key}`,
     workTree: null,
-    transcript: paths.transcript(id, issue),
+    transcript: paths.transcript(id, key),
     log: null,
     pid: null,
     startTime: null,
     stepsUsed: 0,
     remainingSteps: maxSteps,
-    pr: null,
+    pr: item.kind === "pr" ? item.number : null,
     cleanup: null,
     decision: null,
     decisionAnswer: null,
@@ -129,6 +147,8 @@ function queuedLoop(paths, id, issue, maxSteps) {
 
 /** The argv of one headless run. No shell shim, and the child receives only explicit flags. */
 export function childArguments({ prepared, loop, workTree, transcript, maxSteps, resume }) {
+  const kind = loop.kind ?? "issue";
+  const mode = loop.mode ?? "work-first";
   const args = [
     "--orchestrator",
     prepared.roles.orchestrator.kind,
@@ -144,8 +164,9 @@ export function childArguments({ prepared, loop, workTree, transcript, maxSteps,
     String(maxSteps),
     "--transcript",
     transcript,
-    "--require-accept",
   ];
+  if (kind === "pr" || mode !== "work-first") args.push("--mode", mode);
+  if (mode !== "review-only") args.push("--require-accept");
   for (const role of ["orchestrator", "worker", "reviewer"]) {
     const { model, effort } = prepared.roles[role];
     if (model) args.push(`--${role}-model`, model);
@@ -156,8 +177,9 @@ export function childArguments({ prepared, loop, workTree, transcript, maxSteps,
   args.push("--timeout", String(prepared.timeout ?? 0));
   if (prepared.reviewerSandbox) args.push("--reviewer-sandbox", prepared.reviewerSandbox);
   if (resume.continueFrom) args.push("--continue-from", resume.continueFrom);
-  if (resume.pr !== null && resume.pr !== undefined) {
-    args.push("--pr", String(resume.pr), "--require-ci", String(resume.pr));
+  const pr = resume.pr ?? (kind === "pr" ? loop.pr : null);
+  if (mode !== "review-only" && pr !== null && pr !== undefined) {
+    args.push("--pr", String(pr), "--require-ci", String(pr));
   }
   return args;
 }
@@ -252,6 +274,9 @@ const loopEnded = (status) => terminal(status) || status === "interrupted";
 function loopEntry(loop) {
   return {
     issue: loop.issue,
+    ...(loop.kind !== undefined && loop.kind !== "issue"
+      ? { kind: loop.kind, mode: loop.mode, number: loop.number ?? null }
+      : {}),
     status: loop.status,
     skipReason: loop.skipReason,
     reason: loop.reason,
@@ -295,6 +320,74 @@ function isLive(loop) {
 async function ownerStillLive(loop) {
   if (!isLive(loop)) return false;
   return ownerAlive({ pid: loop.pid, startTime: loop.startTime });
+}
+
+/**
+ * Reads the frozen head, branch, and fork flag of every pull request item before the manifest is
+ * written. A read that fails freezes no head, so eligibility later reports it unverified.
+ */
+export async function freezePullRequestItems(items, { gh, repo }) {
+  const frozen = [];
+  for (const item of items) {
+    if (item.kind !== "pr") {
+      frozen.push(item);
+      continue;
+    }
+    try {
+      const reply = await gh(
+        [
+          "pr",
+          "view",
+          String(item.number),
+          "--json",
+          "state,headRefOid,headRefName,isCrossRepository,title",
+        ],
+        repo,
+      );
+      if (reply?.status !== 0) {
+        frozen.push({ ...item, head: null, headRefName: null, foreign: false });
+        continue;
+      }
+      const view = JSON.parse(reply.stdout);
+      if (typeof view?.headRefOid !== "string") {
+        frozen.push({ ...item, head: null, headRefName: null, foreign: false });
+        continue;
+      }
+      frozen.push({
+        ...item,
+        head: view.headRefOid,
+        headRefName: typeof view.headRefName === "string" ? view.headRefName : null,
+        foreign: view.isCrossRepository === true,
+        title: typeof view.title === "string" ? view.title : null,
+      });
+    } catch {
+      frozen.push({ ...item, head: null, headRefName: null, foreign: false });
+    }
+  }
+  return frozen;
+}
+
+/** The task text of one item. An explicit per-item task replaces the template for that item. */
+export function taskTextFor({ item, loop, prepared, title, branch }) {
+  if (typeof item.task === "string" && item.task.trim() !== "") return item.task;
+  if (item.kind === "task") {
+    const base = item.text ?? loop.text ?? "";
+    const delivery =
+      item.mode === "review-only"
+        ? "Review the work in this work tree and finish after the reviewer turn."
+        : `Commit the change on branch ${branch}, push it with \`git push -u origin ${branch}\`, and open one pull request against the base branch whose body states the task and holds no closing keyword.`;
+    return `${base}\n\n${delivery}`;
+  }
+  const template =
+    item.kind === "pr" && prepared.taskTemplate === DEFAULT_TASK_TEMPLATE
+      ? DEFAULT_PR_TASK_TEMPLATE
+      : prepared.taskTemplate;
+  return renderTask(template, {
+    issue: item.number ?? item.key,
+    title,
+    branch,
+    repo: prepared.repo,
+  });
 }
 
 /**
@@ -402,7 +495,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       for (const issue of manifest.issues) {
         const loop = loops.get(issue);
         if (loop.status !== "needs-owner") continue;
-        const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
+        const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
         const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
         if (release === null) lockSkipped.add(issue);
         else await release();
@@ -430,6 +523,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       ).manifest;
     }
   } else {
+    const freezeItems = deps.freezeItems ?? freezePullRequestItems;
+    const items = await freezeItems(preparedItems(prepared), { gh, repo: prepared.repo });
+    const keys = items.map((item) => item.key);
     manifest = {
       id,
       repo: prepared.repo,
@@ -437,13 +533,15 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       createdAt: new Date().toISOString(),
       base: prepared.base,
       workTreeRoot: prepared.workTreeRoot,
-      issues: prepared.issues,
+      issues: keys,
+      items,
       status: "running",
       completionNotified: false,
       settings: {
         loops: prepared.loops,
         maxSteps: prepared.maxSteps,
         taskTemplate: prepared.taskTemplate,
+        requireSpecification: prepared.requireSpecification === true,
         setupCmd: prepared.setupCmd,
         setupTimeout: prepared.setupTimeout,
         testCmd: prepared.testCmd,
@@ -453,10 +551,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         roles: prepared.roles,
       },
     };
-    for (const issue of prepared.issues)
-      loops.set(issue, queuedLoop(paths, id, issue, prepared.maxSteps));
+    for (const item of items) loops.set(item.key, queuedLoop(paths, id, item, prepared.maxSteps));
     await createBatchStore(runsRoot, manifest, [...loops.values()]);
-    progress(`batch ${id} started (${prepared.issues.length} issue(s), ${prepared.loops} loop(s))`);
+    progress(`batch ${id} started (${items.length} item(s), ${prepared.loops} loop(s))`);
   }
 
   const controller = new AbortController();
@@ -520,7 +617,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       const current = loops.get(issue) ?? (await readLoop(runsRoot, id, issue));
       nextPatch = {
         ...patch,
-        report: await readLoopReport(current.transcript, { attempts: current.attempts }),
+        report: await readLoopReport(current.transcript, {
+          attempts: current.attempts,
+          reviewOnly: current.mode === "review-only",
+        }),
       };
     }
     const changed = await updateLoop(runsRoot, id, issue, (current) => ({
@@ -542,6 +642,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   const createWorkTree = deps.createWorkTree ?? createLoopWorkTree;
+  const createPullRequestWorkTree =
+    deps.createPrWorkTree ?? deps.createWorkTree ?? createPrWorkTree;
   const reconcile = deps.reconcileLoop ?? reconcileLoop;
   const cleanupWorkTree = deps.cleanupLoop ?? cleanupLoop;
   const verifyRecordedWorkTree = async (loop) => {
@@ -553,6 +655,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if ((await canonicalPath(workTree.path)) !== workTree.canonicalPath) {
       return "the recorded work tree identity changed";
+    }
+    if (workTree.detached === true) {
+      const head = await gitRead(["rev-parse", "HEAD"], workTree.path);
+      return head.exitCode === 0 && head.stdout === workTree.head
+        ? null
+        : "the recorded head is not checked out";
     }
     const branch = await gitRead(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
     return branch.exitCode === 0 && branch.stdout === workTree.branch
@@ -679,7 +787,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   const markPrHeadUnresolved = async (issue, loop, { pr, stepsUsed, remainingSteps }) => {
-    const report = await readLoopReport(loop.transcript, { attempts: loop.attempts });
+    const report = await readLoopReport(loop.transcript, {
+      attempts: loop.attempts,
+      reviewOnly: loop.mode === "review-only",
+    });
     return markNeedsOwner(issue, "pr-head-unresolved", {
       evidence: pr === null ? "the transcript records no pull request" : `pull request ${pr}`,
       extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null, report },
@@ -738,31 +849,44 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   const launchIssue = async (issue, { recovery = null } = {}) => {
     let loop = loops.get(issue);
+    const item = {
+      kind: loop.kind ?? "issue",
+      key: loop.issue,
+      number: loop.number ?? (typeof loop.issue === "number" ? loop.issue : null),
+      text: loop.text ?? null,
+      mode: loop.mode ?? "work-first",
+      task: loop.taskOverride ?? null,
+      head: loop.head ?? null,
+      headRefName: loop.headRefName ?? null,
+      foreign: loop.foreign === true,
+    };
     if (recovery === null) {
-      let closures;
-      try {
-        closures = await refreshOpenPr();
-      } catch (err) {
-        pausedReason = err.message;
-        await changeLoop(issue, {
-          status: "queued",
-          reason: "eligibility-unverified",
-          skipReason: "eligibility-unverified",
-        });
-        throw err;
-      }
-      if (closures.incompletePr !== null) {
-        pausedReason = `pull request ${closures.incompletePr} returned a 250-commit page`;
-        await changeLoop(issue, {
-          status: "queued",
-          skipReason: "eligibility-unverified",
-          reason: pausedReason,
-        });
-        throw Object.assign(new Error(pausedReason), { batchWide: true });
+      let closures = null;
+      if (item.kind === "issue") {
+        try {
+          closures = await refreshOpenPr();
+        } catch (err) {
+          pausedReason = err.message;
+          await changeLoop(issue, {
+            status: "queued",
+            reason: "eligibility-unverified",
+            skipReason: "eligibility-unverified",
+          });
+          throw err;
+        }
+        if (closures.incompletePr !== null) {
+          pausedReason = `pull request ${closures.incompletePr} returned a 250-commit page`;
+          await changeLoop(issue, {
+            status: "queued",
+            skipReason: "eligibility-unverified",
+            reason: pausedReason,
+          });
+          throw Object.assign(new Error(pausedReason), { batchWide: true });
+        }
       }
       const claim = await readClaim(runsRoot, prepared.repoKey, issue);
-      const eligibility = await checkEligibility({
-        issue,
+      const eligibility = await checkItemEligibility({
+        item,
         gh,
         repo: prepared.repo,
         batchId: id,
@@ -770,6 +894,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         openPrClosures: closures,
         ownPr: loop.pr,
         ownBranch: loop.branch,
+        requireSpecification: prepared.requireSpecification === true,
       });
       if (!eligibility.ok) {
         if (eligibility.reason === "blocked") {
@@ -833,33 +958,55 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         progress(`issue ${issue}: skipped (claimed by batch ${claimResult.owner ?? "unknown"})`);
         return;
       }
-      let title = `issue ${issue}`;
-      try {
-        const reply = await gh(["issue", "view", String(issue), "--json", "title"], prepared.repo);
-        if (reply?.status === 0) {
-          const parsed = JSON.parse(reply.stdout);
-          if (typeof parsed?.title === "string" && parsed.title.trim() !== "") title = parsed.title;
-        }
-      } catch {
-        // A missing title keeps the issue number in the task.
+      let title = item.kind === "issue" ? `issue ${item.number}` : `pull request ${item.number}`;
+      if (item.kind === "pr" && typeof loop.prTitle === "string" && loop.prTitle.trim() !== "") {
+        title = loop.prTitle;
       }
-      const task = renderTask(prepared.taskTemplate, {
-        issue,
+      if (item.kind === "issue") {
+        try {
+          const reply = await gh(
+            ["issue", "view", String(item.number), "--json", "title"],
+            prepared.repo,
+          );
+          if (reply?.status === 0) {
+            const parsed = JSON.parse(reply.stdout);
+            if (typeof parsed?.title === "string" && parsed.title.trim() !== "") {
+              title = parsed.title;
+            }
+          }
+        } catch {
+          // A missing title keeps the issue number in the task.
+        }
+      }
+      const task = taskTextFor({
+        item,
+        loop,
+        prepared,
         title,
         branch: loop.branch,
-        repo: prepared.repo,
       });
-      const workTreePath = join(prepared.workTreeRoot, `issue-${issue}`);
+      const workTreePath = join(prepared.workTreeRoot, loopSegment(issue));
       const recordedWorkTree = loop.workTree;
       let workTree = recordedWorkTree;
       try {
         if (workTree === null || workTree === undefined) {
-          workTree = await createWorkTree({
-            repo: prepared.repo,
-            base: prepared.base,
-            workTree: workTreePath,
-            branch: loop.branch,
-          });
+          workTree =
+            item.kind === "pr"
+              ? await createPullRequestWorkTree({
+                  repo: prepared.repo,
+                  base: prepared.base,
+                  workTree: workTreePath,
+                  branch: loop.branch,
+                  head: loop.head,
+                  foreign: loop.foreign === true,
+                  number: item.number,
+                })
+              : await createWorkTree({
+                  repo: prepared.repo,
+                  base: prepared.base,
+                  workTree: workTreePath,
+                  branch: loop.branch,
+                });
         }
       } catch (err) {
         await changeLoop(issue, {
@@ -1102,7 +1249,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   const withLoopOwnership = async (issue, fn) => {
-    const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
+    const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
     const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
     if (release === null) {
       lockSkipped.add(issue);
@@ -1119,7 +1266,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
   // requires. A null result means another resume owns the loop and the caller keeps it pending.
   const withLoopResult = async (issue, fn) => {
-    const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
+    const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
     const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
     if (release === null) {
       lockSkipped.add(issue);
