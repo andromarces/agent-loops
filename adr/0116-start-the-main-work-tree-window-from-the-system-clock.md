@@ -1,4 +1,4 @@
-# 0111. Start the main work tree watch window from the system clock
+# 0116. Start the main work tree watch window from the system clock
 
 ## Status
 
@@ -38,7 +38,7 @@ The same run recorded 20 in-window timestamp-preserving restores from 2.896 ms t
 ## Alternatives
 
 1. **Keep the one-millisecond guard.** Rejected. It reported 48 of 302 saved pre-window attempts at head `23c5e73`.
-2. **Keep the performance clock and widen the guard.** Rejected. The replay reports 10 saved pre-window attempts at `origin/main`.
+2. **Keep the performance clock and widen the guard.** Rejected. The saved pre-window change reached 2.100 ms, and the saved performance start was 1.294 ms behind the system clock. A 3.4 ms guard covers both and reports 16 of 20 saved restores.
 3. **Wait only in the tests.** Rejected. The production default then still reports the saved pre-window stamps.
 4. **Read a file system stamp at the start.** Rejected. It needs a probe file and an extra read on every turn.
 

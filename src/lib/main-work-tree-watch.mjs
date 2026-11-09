@@ -26,8 +26,8 @@ const FILE_BATCH_SIZE = 32;
 // it cannot separate from the window.
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read (2.5). The
-// saved Windows probe put a pre-window change time at most 2.100 ms after the start and a
-// timestamp-preserving restore at least 2.896 ms after it.
+// saved Windows probe put a pre-window change time at most 2.100 ms after the start. It put a
+// timestamp-preserving restore at least 2.896 ms after the start.
 const CHANGE_TIME_GUARD_MS = 2.5;
 
 /**
