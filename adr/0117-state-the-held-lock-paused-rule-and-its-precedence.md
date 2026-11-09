@@ -73,6 +73,7 @@ asks for the rule and the precedence in an accepted ADR.
 - [Issue #1728: Report paused when another resume holds the lock of a needs-owner batch loop](https://github.com/andromarces/agent-loops/issues/1728)
 - [PR #1730: Report paused when a held lock skips a needs-owner loop](https://github.com/andromarces/agent-loops/pull/1730)
 - [PR #1732: Release batch loop slots on owner decisions, resume after merges, and notify](https://github.com/andromarces/agent-loops/pull/1732)
+- [PR #1745: State the held-lock paused rule and link PR #1730](https://github.com/andromarces/agent-loops/pull/1745)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
