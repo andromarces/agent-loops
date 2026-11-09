@@ -84,23 +84,26 @@ export async function createLoopWorkTree({ repo, base, workTree, branch }) {
 }
 
 /**
- * Creates the linked work tree of one pull request item at its frozen head. A same-repository
- * head gets a local branch with the pull request branch name; a foreign head is fetched through
- * `refs/pull/<n>/head` and checked out detached. The batch-owned local branch may be recreated
- * at the frozen head, and no remote ref is changed.
+ * Creates the linked work tree of one pull request item at its frozen head. The pull request head
+ * is fetched through `refs/pull/<n>/head` for a same-repository and a foreign head, then checked
+ * out detached. No local branch is created, moved, or reset, so an unpushed local branch keeps its
+ * commits. A fetched commit that differs from the frozen head is refused before checkout.
  * @returns {Promise<{ path: string, canonicalPath: string, dev: string, ino: string, branch: string, head: string, detached: boolean }>}
  */
-export async function createPrWorkTree({ repo, workTree, branch, head, foreign = false, number }) {
+export async function createPrWorkTree({ repo, workTree, branch, head, number }) {
   await mkdir(dirname(workTree), { recursive: true });
-  let detached = false;
-  if (foreign) {
-    await gitOrThrow(["fetch", "origin", `refs/pull/${number}/head`], repo);
-    await gitOrThrow(["worktree", "add", "--no-track", "--detach", workTree, "FETCH_HEAD"], repo);
-    detached = true;
-  } else {
-    await gitOrThrow(["branch", "-f", branch, head], repo);
-    await gitOrThrow(["worktree", "add", "--no-track", workTree, branch], repo);
+  await gitOrThrow(["fetch", "origin", `refs/pull/${number}/head`], repo);
+  const fetched = await gitOrThrow(["rev-parse", "FETCH_HEAD"], repo);
+  if (typeof head !== "string" || head.trim() === "" || fetched !== head) {
+    const error = new Error(
+      `pull request ${number} head moved: the frozen head is ${head ?? "unset"}, the fetched head is ${fetched}`,
+    );
+    error.code = "pr-head-moved";
+    error.frozen = head ?? null;
+    error.current = fetched;
+    throw error;
   }
+  await gitOrThrow(["worktree", "add", "--detach", workTree, fetched], repo);
   const identity = await pathIdentity(workTree);
   if (identity === null) throw new Error("The new work tree is missing after git worktree add.");
   return {
@@ -109,8 +112,8 @@ export async function createPrWorkTree({ repo, workTree, branch, head, foreign =
     dev: String(identity.dev),
     ino: String(identity.ino),
     branch,
-    head,
-    detached,
+    head: fetched,
+    detached: true,
   };
 }
 

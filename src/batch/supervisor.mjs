@@ -295,11 +295,14 @@ function loopEntry(loop) {
   };
 }
 
-function summaryOf(manifest, loops) {
+function summaryOf(manifest, loops, skipped = new Map()) {
+  const keys = Array.isArray(manifest.items)
+    ? manifest.items.map((item) => item.key)
+    : manifest.issues;
   return {
     batchId: manifest.id,
     status: manifest.status,
-    loops: manifest.issues.map((issue) => loopEntry(loops.get(issue))),
+    loops: keys.map((key) => loopEntry(loops.get(key) ?? skipped.get(key))),
   };
 }
 
@@ -457,7 +460,14 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         }))
       ).manifest;
     }
-    return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+    return {
+      exitCode: exitCodeOf(manifest, loops),
+      summary: summaryOf(
+        manifest,
+        loops,
+        new Map((manifest.skipped ?? []).map((loop) => [loop.key, loop])),
+      ),
+    };
   };
 
   if (prepared.resume) {
@@ -524,7 +534,47 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   } else {
     const freezeItems = deps.freezeItems ?? freezePullRequestItems;
-    const items = await freezeItems(preparedItems(prepared), { gh, repo: prepared.repo });
+    const frozenItems = await freezeItems(preparedItems(prepared), {
+      gh,
+      repo: prepared.repo,
+    });
+    const items = [];
+    const skipped = [];
+    for (const item of frozenItems) {
+      if (item.kind !== "pr") {
+        items.push(item);
+        continue;
+      }
+      const eligibility = await checkItemEligibility({
+        item,
+        gh,
+        repo: prepared.repo,
+        batchId: id,
+        claim: { exists: false },
+      });
+      if (eligibility.ok) {
+        items.push(item);
+        continue;
+      }
+      const skippedLoop = queuedLoop(paths, id, item, prepared.maxSteps);
+      skipped.push({
+        ...skippedLoop,
+        status: "skipped",
+        skipReason: eligibility.reason,
+        reason: eligibility.evidence,
+      });
+    }
+    if (items.length === 0) {
+      progress(`batch ${id}: every item was refused before any state write`);
+      return {
+        exitCode: 0,
+        summary: {
+          batchId: id,
+          status: "completed",
+          loops: skipped.map((loop) => loopEntry(loop)),
+        },
+      };
+    }
     const keys = items.map((item) => item.key);
     manifest = {
       id,
@@ -534,7 +584,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       base: prepared.base,
       workTreeRoot: prepared.workTreeRoot,
       issues: keys,
-      items,
+      items: frozenItems,
+      skipped,
       status: "running",
       completionNotified: false,
       settings: {
@@ -1009,6 +1060,18 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
                 });
         }
       } catch (err) {
+        if (err?.code === "pr-head-moved") {
+          await changeLoop(issue, {
+            status: "skipped",
+            skipReason: "pr-head-moved",
+            reason: err.message,
+            workTree: null,
+            remainingSteps: loop.remainingSteps,
+          });
+          await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+          progress(`issue ${issue}: skipped (pr-head-moved: ${err.message})`);
+          return;
+        }
         await changeLoop(issue, {
           status: "failed",
           reason: `work-tree-failed: ${err.message}`,

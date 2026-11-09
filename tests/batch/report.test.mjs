@@ -257,3 +257,28 @@ test("a transcript warning list is redacted, capped, and reports its overflow", 
     else process.env[name] = before;
   }
 });
+
+// Usefulness: a review-only reject carries its actionable blocker even when Notes reads none.
+test("a review-only report keeps the blockers as findings", () => {
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "result",
+          role: "reviewer",
+          result: {
+            status: "ok",
+            response: "Conclusion: no.\n\nVerdict: reject",
+            report: { verdict: "reject", blockers: "fix the guard", notes: "none" },
+          },
+        },
+        { type: "gate" },
+      ],
+      exitCode: 0,
+    },
+    { attempts: 1, reviewOnly: true },
+  );
+  expect(report.verdict).toBe("reject");
+  expect(report.findings).toContain("fix the guard");
+  expect(report.findings).not.toBe("none");
+});

@@ -137,19 +137,29 @@ function reviewerOutcome(events) {
     const raw = [
       report?.findings,
       result.findings,
+      report?.blockers,
       report?.notes,
       report?.deferred,
-      report?.why,
-    ].find(
+    ].filter(
       (value) =>
-        (typeof value === "string" && value.trim() !== "") ||
+        (typeof value === "string" &&
+          value.trim() !== "" &&
+          value.trim().toLowerCase() !== "none") ||
         (Array.isArray(value) && value.length > 0),
     );
-    found = {
-      verdict,
-      findings:
-        raw === undefined ? null : typeof raw === "string" ? redactAndClean(raw) : redactValue(raw),
-    };
+    const findings =
+      raw.length === 0
+        ? null
+        : raw.length === 1
+          ? typeof raw[0] === "string"
+            ? redactAndClean(raw[0])
+            : redactValue(raw[0])
+          : raw
+              .map((value) =>
+                typeof value === "string" ? redactAndClean(value) : redactValue(value),
+              )
+              .flat();
+    found = { verdict, findings };
   }
   return found;
 }

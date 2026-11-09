@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
@@ -161,7 +161,13 @@ test("a moved pull request head is skipped with the frozen and current heads", a
 // Usefulness: a closed pull request is skipped with a named state.
 test("a merged pull request item is skipped", async () => {
   const result = await checkItemEligibility({
-    item: { kind: "pr", key: "pr-7", number: 7, mode: "review-only" },
+    item: {
+      kind: "pr",
+      key: "pr-7",
+      number: 7,
+      mode: "review-only",
+      head: "a".repeat(40),
+    },
     gh: prGh({ state: "MERGED", headRefOid: "a".repeat(40), headRefName: "feature" }),
     repo: "C:/repo",
     claim: { exists: false },
@@ -225,7 +231,11 @@ test("the not-specified check is opt-in", async () => {
   const body = "## Problem\n\nMissing.\n";
   const gh = async (args) => {
     if (args[0] === "pr" && args[1] === "view") {
-      return { status: 1, stdout: "", stderr: "not a pull request" };
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
     }
     if (args[0] === "issue" && args[1] === "view") {
       if (args.includes("body")) {
@@ -324,7 +334,12 @@ function mixedGh({ prHead = "a".repeat(40), prState = "OPEN", afterFreeze = null
   let prReads = 0;
   return async (args) => {
     if (args[0] === "pr" && args[1] === "view") {
-      if (args.includes("number")) return { status: 1, stdout: "", stderr: "not a pull request" };
+      if (args.includes("number"))
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
       prReads += 1;
       if (afterFreeze !== null && prReads > 1) {
         return {
@@ -605,6 +620,142 @@ test("a free-text task survives interrupt and resume with the same identity", as
     expect(second.calls[0].transcript).toBe(started.summary.loops[0].transcript);
     expect(second.calls[0].args).toContain("--continue-from");
     expect(second.calls[0].args[second.calls[0].args.indexOf("--max-steps") + 1]).toBe("10");
+  } finally {
+    await removePath(runsRoot);
+  }
+});
+
+// Usefulness: a PR item with no frozen head never launches, even when the current read succeeds.
+test("a pull request item without a frozen head is refused", async () => {
+  const result = await checkItemEligibility({
+    item: { kind: "pr", key: "pr-7", number: 7, mode: "review-first", head: null },
+    gh: prGh({ state: "OPEN", headRefOid: "a".repeat(40), headRefName: "feature" }),
+    repo: "C:/repo",
+    claim: { exists: false },
+  });
+  expect(result).toMatchObject({ ok: false, reason: "pr-head-unfrozen" });
+});
+
+// Usefulness: a transient PR lookup failure never lets an issue item launch as new work.
+test("a failed PR lookup skips an issue item instead of launching it", async () => {
+  const gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "view") throw new Error("gh failed");
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: [] } }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    throw new Error(`unexpected ${args.join(" ")}`);
+  };
+  const result = await checkItemEligibility({
+    item: { kind: "issue", key: 7, number: 7, mode: "work-first" },
+    gh,
+    repo: "C:/repo",
+    claim: { exists: false },
+    openPrClosures: { closed: new Set(), pr: null, incompletePr: null },
+  });
+  expect(result).toMatchObject({ ok: false, reason: "eligibility-unverified" });
+  expect(result.evidence).toContain("pull request lookup failed");
+});
+
+// Usefulness: a pull request refusal creates no batch store or loop checkpoint.
+test("a refused pull request item leaves no batch store", async () => {
+  const frozen = "a".repeat(40);
+  for (const [view, reason] of [
+    [{ state: "MERGED", headRefOid: frozen, headRefName: "feature" }, "pr-closed"],
+    [
+      {
+        state: "OPEN",
+        headRefOid: "b".repeat(40),
+        headRefName: "feature",
+        isCrossRepository: false,
+      },
+      "pr-head-moved",
+    ],
+    [
+      {
+        state: "OPEN",
+        headRefOid: frozen,
+        headRefName: "feature",
+        isCrossRepository: true,
+      },
+      "pr-head-foreign",
+    ],
+  ]) {
+    const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+    const items = [
+      { kind: "pr", number: 7, key: "pr-7", mode: "work-first", task: null, head: frozen },
+    ];
+    const prepared = preparedWith(items);
+    const child = childDouble();
+    let reads = 0;
+    const gh = async (args) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        reads += 1;
+        const reply = reads === 1 ? { ...view, headRefOid: frozen } : view;
+        return { status: 0, stdout: JSON.stringify(reply), stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected" };
+    };
+    try {
+      const { summary } = await runBatch({
+        prepared,
+        runsRoot,
+        gh,
+        deps: { ...workTreeDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+      });
+      expect(summary.loops[0]).toMatchObject({ status: "skipped", skipReason: reason });
+      expect(child.calls).toHaveLength(0);
+      await expect(
+        stat(join(runsRoot, "batches", prepared.id, "batch.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(join(runsRoot, "batches", prepared.id, "loops"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await removePath(runsRoot);
+    }
+  }
+});
+
+// Usefulness: a head that moves between eligibility and fetch is skipped, not reviewed elsewhere.
+test("a pull request head that moves before the fetch is skipped", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+  const frozen = "a".repeat(40);
+  const items = [
+    { kind: "pr", number: 7, key: "pr-7", mode: "review-first", task: null, head: frozen },
+  ];
+  const prepared = preparedWith(items);
+  const child = childDouble();
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: mixedGh({ prHead: frozen }),
+      deps: {
+        ...workTreeDeps,
+        createPrWorkTree: async () => {
+          const error = new Error(
+            `pull request 7 head moved: the frozen head is ${frozen}, the fetched head is ${"b".repeat(40)}`,
+          );
+          error.code = "pr-head-moved";
+          throw error;
+        },
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "skipped",
+      skipReason: "pr-head-moved",
+    });
+    expect(summary.loops[0].reason).toContain(frozen);
+    expect(child.calls).toHaveLength(0);
+    await expect(
+      stat(join(runsRoot, "batches", "claims", prepared.repoKey, "pr-7.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await removePath(runsRoot);
   }

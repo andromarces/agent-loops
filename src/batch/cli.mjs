@@ -53,7 +53,7 @@ An items-file entry is { kind, number | text, mode, task, id }: kind is issue, p
 task; mode is work-first, review-first, or review-only; task replaces the template for
 that item; id is required for a task item only. The default mode is work-first for an
 issue and a task, and review-first for a pull request.
-An issue keeps its own branch and eligibility. A pull request runs on its head branch in
+An issue keeps its own branch and eligibility. A pull request runs at its head in
 every mode and is skipped before launch when that head moved or it is closed. A task runs
 on branch batch/<batch id>/task-<id> in work tree task-<id>, and in work-first or
 review-first it delivers through a pull request with no closing keyword.

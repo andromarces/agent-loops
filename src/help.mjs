@@ -74,6 +74,9 @@ Subcommands:
                                 issue or task and review-first for a pull request. A task
                                 item needs a short unique id; its branch is
                                 batch/<batch id>/task-<id> and its work tree is task-<id>.
+                                Turn a mixed request into one --items-file list: a local
+                                item becomes a task with a unique id, a pull request
+                                becomes a pr item, and an issue becomes an issue item.
                                 Also requires --orchestrator, --worker, --reviewer,
                                 --loops <1-64>, and --max-steps. Accepts --base,
                                 --work-tree-root, --task-template, --require-specification,
