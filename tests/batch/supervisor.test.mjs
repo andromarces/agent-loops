@@ -16,6 +16,7 @@ import {
   updateManifest,
 } from "../../src/batch/store.mjs";
 import {
+  UNVERIFIED_STEPS_OPTIONS,
   answerDecision,
   createDecision,
   newDecisionId,
@@ -89,6 +90,21 @@ function valueAfter(args, flag) {
 
 // A test never shows a desktop notification. A case that reads notifications passes its own.
 const noNotify = async () => ({ spawned: false, ok: true });
+
+// The new wait and decision cases model the work tree and the gates in process, so no case
+// starts a Git process after the one shared preparation.
+const fakeGitDeps = {
+  createWorkTree: async ({ workTree, branch }) => ({
+    path: workTree,
+    canonicalPath: workTree,
+    dev: "1",
+    ino: "1",
+    branch,
+  }),
+  verifyWorkTree: async () => null,
+  reconcileLoop: async () => ({ status: "resume", reason: null, pr: null, requireCi: null }),
+  cleanupLoop: async () => ({ removed: false, reason: "test" }),
+};
 
 /**
  * A child double that records its arguments and writes a transcript. `hold` keeps each run live
@@ -1281,6 +1297,7 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -1345,6 +1362,7 @@ test("a failed poll read retries on the next poll", async () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -1405,6 +1423,7 @@ test("a closed issue while waiting is skipped and not launched", async () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -1463,6 +1482,7 @@ test("an abort during a poll wait exits 130", async () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -1497,6 +1517,7 @@ test("the notifier receives decision, merge, and completion events", async () =>
       runsRoot: firstRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: async (event) => {
           decisionEvents.push(event);
           return { spawned: false, ok: true };
@@ -1517,6 +1538,7 @@ test("the notifier receives decision, merge, and completion events", async () =>
       runsRoot: firstRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: async (event) => {
           decisionEvents.push(event);
           return { spawned: false, ok: true };
@@ -1534,6 +1556,7 @@ test("the notifier receives decision, merge, and completion events", async () =>
       runsRoot: join(second.workTreeRoot, "runs"),
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: async (event) => {
           completionEvents.push(event);
           return { spawned: false, ok: true };
@@ -1557,7 +1580,12 @@ test("batch status shows decision details and completion", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
@@ -1570,7 +1598,12 @@ test("batch status shows decision details and completion", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     const status = await readBatchStatus({ runsRoot, id: prepared.id });
     expect(status.completion).toEqual({ status: "waiting", complete: false });
@@ -1626,6 +1659,7 @@ test("a waiting issue sends a merge-required notification", async () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: async (event) => {
           events.push(event);
           return { spawned: false, ok: true };
@@ -1664,7 +1698,12 @@ test("a malformed decision keeps the loop needs-owner on resume", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
@@ -1681,7 +1720,7 @@ test("a malformed decision keeps the loop needs-owner on resume", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("needs-owner");
@@ -1732,6 +1771,7 @@ test("a pending decision and a merge wait survive a resume", async () => {
       runsRoot,
       gh: ghWith(true),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: childDouble().spawn,
         installSignal: false,
@@ -1763,6 +1803,7 @@ test("a pending decision and a merge wait survive a resume", async () => {
       runsRoot,
       gh: ghWith(false),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -1844,7 +1885,12 @@ describe("batch decisions and waits", () => {
         prepared,
         runsRoot,
         gh: fakeGh({ closed: new Set([201]) }),
-        deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+        },
       });
       const reason = "a live state";
       const decision = await makeDecision(runsRoot, prepared, 201, { reason });
@@ -1865,7 +1911,7 @@ describe("batch decisions and waits", () => {
         prepared: { ...prepared, resume: true },
         runsRoot,
         gh: fakeGh(),
-        deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+        deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
       });
       expect(child.calls).toHaveLength(0);
       expect(resumed.summary.status).toBe("waiting");
@@ -1885,7 +1931,12 @@ describe("batch decisions and waits", () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     await setNeedsOwner(runsRoot, prepared, 202, {
       reason: "unverified-steps",
@@ -1897,7 +1948,7 @@ describe("batch decisions and waits", () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(0);
     const loop = await readLoop(runsRoot, prepared.id, 202);
@@ -1957,6 +2008,7 @@ describe("batch decisions and waits", () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -1988,7 +2040,12 @@ describe("batch decisions and waits", () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     const reason = "the recorded work tree is missing";
     const first = await makeDecision(runsRoot, prepared, 205, { reason });
@@ -2008,12 +2065,22 @@ describe("batch decisions and waits", () => {
     const transcript = batchPaths(runsRoot).transcript(prepared.id, 205);
     const data = JSON.parse(await readFile(transcript, "utf8"));
     await writeFile(transcript, JSON.stringify({ ...data, exitCode: 130 }));
-    await removePath(join(shared.workTreeRoot, "issue-205"));
     const resumed = await runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        reconcileLoop: async () => ({
+          status: "needs-owner",
+          reason: "the recorded work tree is missing",
+          pr: null,
+          requireCi: null,
+        }),
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     const loop = await readLoop(runsRoot, prepared.id, 205);
     expect(loop.status).toBe("needs-owner");
@@ -2030,7 +2097,12 @@ describe("batch decisions and waits", () => {
       prepared,
       runsRoot,
       gh: fakeGh({ closed: new Set([206, 207]) }),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     const reason = "a live decision";
     const decision = await makeDecision(runsRoot, prepared, 206, { reason });
@@ -2055,6 +2127,7 @@ describe("batch decisions and waits", () => {
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: async (event) => {
           events.push(event);
           return { spawned: false, ok: true };
@@ -2097,7 +2170,12 @@ describe("batch decisions and waits", () => {
       prepared,
       runsRoot,
       gh: fakeGh({ closed: new Set([208, 209]) }),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     await setNeedsOwner(runsRoot, prepared, 208, {
       reason: "unverified-steps",
@@ -2119,7 +2197,7 @@ describe("batch decisions and waits", () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(1);
     expect(resumed.summary.loops[0].status).toBe("needs-owner");
@@ -2135,7 +2213,12 @@ describe("batch decisions and waits", () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childDouble().spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
     });
     const reason = "a waiting state";
     const decision = await makeDecision(runsRoot, prepared, 210, { reason });
@@ -2150,7 +2233,7 @@ describe("batch decisions and waits", () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(0);
     expect(resumed.summary.status).toBe("waiting");
@@ -2202,6 +2285,7 @@ describe("batch decisions and waits", () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -2264,6 +2348,7 @@ describe("batch decisions and waits", () => {
       runsRoot,
       gh,
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -2287,5 +2372,222 @@ describe("batch decisions and waits", () => {
     const { exitCode } = await run;
     expect(exitCode).toBe(130);
     expect(seen).toBe(reason);
+  });
+
+  // Usefulness: a recorded live child holds its only slot until the process dies.
+  test("a recorded live child holds its slot until it dies", async () => {
+    const prepared = prep([213, 214], { loops: 1 });
+    const runsRoot = runsFor(prepared);
+    const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
+    live.catch(() => {});
+    try {
+      await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh({ closed: new Set([213, 214]) }),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+        },
+      });
+      const reason = "a live decision";
+      const decision = await makeDecision(runsRoot, prepared, 213, { reason });
+      await setNeedsOwner(runsRoot, prepared, 213, { reason, decision, pid: live.pid });
+      await updateLoop(runsRoot, prepared.id, 214, (loop) => ({
+        ...loop,
+        status: "queued",
+        attempts: 0,
+        workTree: null,
+        pid: null,
+        startTime: null,
+      }));
+      const child = childDouble({ hold: true });
+      const run = runBatch({
+        prepared: { ...prepared, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: child.spawn,
+          installSignal: false,
+          pollIntervalMs: 50,
+        },
+      });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(child.calls).toHaveLength(0);
+        live.kill("SIGKILL");
+        for (let attempt = 0; attempt < 50 && child.calls.length < 1; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(child.calls).toHaveLength(1);
+        for (const pending of child.pending) pending.resolve({ exitCode: 0 });
+        await run;
+      } finally {
+        for (const pending of child.pending) pending.resolve({ exitCode: 0 });
+        await run.catch(() => {});
+      }
+    } finally {
+      live.kill("SIGKILL");
+    }
+  });
+
+  // Usefulness: a resume after an abandon finalizes the batch and sends one completion.
+  test("a resume after an abandon finalizes the batch", async () => {
+    const prepared = prep([215]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([215]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const reason = "a stopped state";
+    const decision = await makeDecision(runsRoot, prepared, 215, { reason });
+    await setNeedsOwner(runsRoot, prepared, 215, { reason, decision });
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      status: "waiting",
+      completionNotified: false,
+    }));
+    const answered = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: decision,
+      option: "abandon",
+    });
+    expect(answered.ok).toBe(true);
+    const events = [];
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: async (event) => {
+          events.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.summary.status).toBe("failed");
+    expect(resumed.summary.loops[0].status).toBe("failed");
+    expect(events.filter((event) => event.kind === "batch-completed")).toHaveLength(1);
+  });
+
+  // Usefulness: a resume after a skip finalizes the batch as complete with one notification.
+  test("a resume after a skip finalizes the batch", async () => {
+    const prepared = prep([216]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([216]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const id = newDecisionId(prepared.id, 216, 1, "unverified-steps");
+    await createDecision({
+      runsRoot,
+      batchId: prepared.id,
+      id,
+      issue: 216,
+      attempt: 1,
+      reason: "unverified-steps",
+      evidence: "the transcript is missing",
+      options: UNVERIFIED_STEPS_OPTIONS,
+      recommended: "abandon",
+    });
+    await setNeedsOwner(runsRoot, prepared, 216, {
+      reason: "unverified-steps",
+      decision: id,
+    });
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      status: "waiting",
+      completionNotified: false,
+    }));
+    const answered = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: id,
+      option: "skip",
+    });
+    expect(answered.ok).toBe(true);
+    const events = [];
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: async (event) => {
+          events.push(event);
+          return { spawned: false, ok: true };
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.summary.status).toBe("completed");
+    expect(resumed.summary.loops[0].status).toBe("skipped");
+    expect(events.filter((event) => event.kind === "batch-completed")).toHaveLength(1);
+  });
+
+  // Usefulness: a held lock with an unanswered decision reports paused, not waiting.
+  test("a held lock with an unanswered decision reports paused", async () => {
+    const prepared = prep([217]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([217]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const reason = "a waiting state";
+    const decision = await makeDecision(runsRoot, prepared, 217, { reason });
+    await setNeedsOwner(runsRoot, prepared, 217, { reason, decision });
+    await updateManifest(runsRoot, prepared.id, (value) => ({ ...value, status: "waiting" }));
+    const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-217.resume.lock");
+    const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+    try {
+      const resumed = await runBatch({
+        prepared: { ...prepared, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+        },
+      });
+      expect(resumed.exitCode).toBe(1);
+      expect(resumed.summary.status).toBe("paused");
+      expect(resumed.summary.loops[0].status).toBe("needs-owner");
+    } finally {
+      await release?.();
+    }
   });
 });

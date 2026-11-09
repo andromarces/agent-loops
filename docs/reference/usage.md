@@ -426,13 +426,13 @@ Every `--test-cmd` run still passes through the machine-wide test slot, whose de
 
 ### Owner decisions
 
-A loop that stops as `needs-owner` records a pending decision. The decision has a unique id, the reason, the evidence, two option keys, and one recommendation. The options are `resume`, which is recommended, and `abandon`.
+A loop that stops as `needs-owner` records a pending decision. The decision has a unique id, the reason, the evidence, two option keys, and one recommendation. A normal state offers `resume`, which is recommended, and `abandon`. A loop whose step count cannot be proven offers `abandon`, which is recommended, and `skip`.
 
 `batch status` shows the decision state, the option keys, and the recommendation. A pending decision keeps its claim, work tree, transcript, and remaining budget, and it holds no loop slot.
 
 `agent-loop batch answer` binds one listed option to one decision. The answer file is created with no overwrite, so two answers to one decision have exactly one winner. An unknown batch, an unknown decision, another batch's decision, an answered decision, and an unlisted option exit 2 and write nothing.
 
-An answer of `resume` puts the loop back in the queue, and `batch resume` continues it with the remaining budget. An answer of `abandon` ends the loop as `failed` with reason `owner-abandoned` and releases its claim. A malformed decision or answer fails closed and is reported.
+An answer of `resume` puts the loop back in the queue, and `batch resume` continues it with the remaining budget. An answer of `abandon` ends the loop as `failed` with reason `owner-abandoned` and releases its claim. An answer of `skip` ends it as `skipped` with reason `owner-skipped` and releases its claim. A malformed decision or answer fails closed and is reported.
 
 ### Waiting for a blocker merge
 
@@ -483,7 +483,7 @@ The first SIGINT stops new launches, forwards SIGINT to each live child, and wai
 4. GitHub is reconciled before any repeat (below).
 5. The attempt continues the same transcript with `--continue-from <transcript> --transcript <same path> --max-steps <remaining>`. A matching open pull request is supplied as both `--pr <n>` and `--require-ci <n>`.
 
-A pending decision with no answer stays pending and keeps its slot free. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`.
+A pending decision with no answer stays pending and keeps its slot free. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`.
 
 A `waiting` issue is re-checked on the same 15-second poll, and it launches after its blockers close. Both states survive an interrupted session, so `batch resume` keeps them.
 

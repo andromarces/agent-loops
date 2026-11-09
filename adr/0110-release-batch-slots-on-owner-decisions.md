@@ -58,11 +58,16 @@ The loop checkpoint keeps the decision id in `decision`. A later `needs-owner` t
 the same reason reuses that decision while its answer is not applied. A new stop after an applied
 answer creates a new decision with a new id.
 
-A loop with a pending decision is not terminal. The batch counts it as no live slot, so the next
-eligible issue launches in the freed slot. The loop keeps its claim, work tree, transcript, and
-remaining step budget, as `adr/0106-foreground-batch-scheduling.md` decision 7 states for `needs-owner`.
+A loop with a pending decision is not terminal. The batch counts it as no live slot once no
+recorded child process is live, so the next eligible issue launches in the freed slot. The loop
+keeps its claim, work tree, transcript, and remaining step budget, as
+`adr/0106-foreground-batch-scheduling.md` decision 7 states for `needs-owner`.
 
-The two fixed options are `resume` and `abandon`. `resume` is recommended. `resume` returns the
+A loop holds its slot while its recorded child process is alive or its identity cannot be read.
+The batch releases the slot only after the process is proven dead. `--loops` counts every such
+live or unproven child.
+
+A normal decision offers `resume` and `abandon`. `resume` is recommended. `resume` returns the
 loop to the queue after the owner resolves the local or remote state. `abandon` ends the loop as
 `failed` with reason `owner-abandoned`, releases its claim, and keeps its work tree.
 
@@ -121,6 +126,9 @@ and the answer applies only after the process is proven dead.
 
 An answer with `abandon` ends the loop as `failed` and releases its claim. An answer with
 `resume` sets the loop `queued`, and the normal recovery path re-checks the recorded state.
+
+Every path that applies an answer, live or on resume, ends with the same batch finalization. That
+path sets the status, summary, exit code, and one completion notification.
 
 An answer never invents a step budget. A loop whose steps cannot be proven offers no resume
 option, so no answer takes the fresh-launch path.
@@ -181,6 +189,9 @@ is sent while either state remains. The owner answers a decision or merges a blo
 
 The running supervisor applies a live answer to its in-memory loop, queue, status, and completion
 check. It sends one completion notification when the batch completes.
+
+A resume runs every ownership and lock check before it decides that no work remains. The no-op
+shortcut skips only the write.
 
 ### 8. `batch status` shows the decision and wait details
 
@@ -258,8 +269,9 @@ The implementation passes these checks:
 
 ## Owner decisions
 
-1. **Decision options.** Every pending decision offers `resume` and `abandon`, and recommends
-   `resume`.
+1. **Decision options.** A normal pending decision offers `resume` and `abandon`, and recommends
+   `resume`. A loop whose step count cannot be proven offers `abandon` and `skip`, and recommends
+   `abandon`.
 2. **Blocked wait.** A blocked issue waits on a 15-second poll and keeps the batch live.
 3. **Batch exit.** A pending decision or a live merge wait sets status `waiting` and exit 1.
 

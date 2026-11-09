@@ -284,6 +284,64 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   let manifest;
   const loops = new Map();
   let start = true;
+  let interrupted = false;
+  let hard = false;
+  const lockSkipped = new Set();
+  let pausedReason = null;
+  const notifier = deps.notifier ?? defaultNotify;
+  const sendNotification = async (event) => {
+    try {
+      await notifier(event);
+    } catch (err) {
+      logWarn(`the notification failed: ${err?.message ?? err}`);
+    }
+  };
+
+  // Every path that ends the batch uses this finalization, so a resume after an answer
+  // reports the same status, summary, exit code, and one completion notification.
+  const finalizeBatch = async () => {
+    let status;
+    if (interrupted) status = "interrupted";
+    else if (pausedReason !== null) status = "paused";
+    else if (
+      lockSkipped.size > 0 ||
+      [...loops.values()].some((loop) => loop.status === "running")
+    ) {
+      status = "paused";
+      pausedReason ??= "a loop is owned by another resume";
+    } else if (
+      [...loops.values()].some((loop) => ["waiting", "needs-owner"].includes(loop.status))
+    ) {
+      status = "waiting";
+    } else if ([...loops.values()].some((loop) => loop.status === "failed")) {
+      status = "failed";
+    } else status = "completed";
+    const updated = await updateManifestReturning(runsRoot, id, (value) => ({
+      ...value,
+      status,
+      ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
+    }));
+    manifest = updated.manifest;
+    const complete = status === "completed" || status === "failed";
+    if (complete && manifest.completionNotified !== true) {
+      const counts = { succeeded: 0, failed: 0, skipped: 0 };
+      for (const loop of loops.values()) {
+        if (loop.status in counts) counts[loop.status] += 1;
+      }
+      await sendNotification({
+        kind: "batch-completed",
+        title: "Batch complete",
+        text: `Batch ${id} finished with status ${status}. Succeeded: ${counts.succeeded}. Failed: ${counts.failed}. Skipped: ${counts.skipped}.`,
+      });
+      manifest = (
+        await updateManifestReturning(runsRoot, id, (value) => ({
+          ...value,
+          completionNotified: true,
+        }))
+      ).manifest;
+    }
+    return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+  };
 
   if (prepared.resume) {
     manifest = await readManifest(runsRoot, id);
@@ -295,7 +353,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
     });
     if (!pending) {
-      return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+      return finalizeBatch();
     }
     const actionable = [];
     for (const issue of manifest.issues) {
@@ -317,16 +375,26 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       }
     }
     if (actionable.length === 0) {
-      if (manifest.status !== "waiting") {
-        manifest = (
-          await updateManifestReturning(runsRoot, id, (value) => ({
-            ...value,
-            status: "waiting",
-            pauseReason: null,
-          }))
-        ).manifest;
+      for (const issue of manifest.issues) {
+        const loop = loops.get(issue);
+        if (loop.status !== "needs-owner") continue;
+        const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
+        const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+        if (release === null) lockSkipped.add(issue);
+        else await release();
       }
-      return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+      if (lockSkipped.size === 0) {
+        if (manifest.status !== "waiting") {
+          manifest = (
+            await updateManifestReturning(runsRoot, id, (value) => ({
+              ...value,
+              status: "waiting",
+              pauseReason: null,
+            }))
+          ).manifest;
+        }
+        return finalizeBatch();
+      }
     }
     if (manifest.status !== "running") {
       manifest = (
@@ -376,25 +444,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       });
   }
 
-  let interrupted = false;
-  let hard = false;
   const active = new Map();
   const children = new Map();
-  const lockSkipped = new Set();
+  const slots = new Set();
   const waiting = new Set();
   const pendingDecisions = new Set();
-  let pausedReason = null;
-  const notifier = deps.notifier ?? defaultNotify;
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
   const clock = { now: deps.now ?? (() => performance.now()), sleep: deps.sleep ?? defaultSleep };
-
-  const sendNotification = async (event) => {
-    try {
-      await notifier(event);
-    } catch (err) {
-      logWarn(`the notification failed: ${err?.message ?? err}`);
-    }
-  };
 
   const forward = (signal) => {
     for (const child of children.values()) {
@@ -448,6 +504,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
+  const createWorkTree = deps.createWorkTree ?? createLoopWorkTree;
+  const reconcile = deps.reconcileLoop ?? reconcileLoop;
+  const cleanupWorkTree = deps.cleanupLoop ?? cleanupLoop;
   const verifyRecordedWorkTree = async (loop) => {
     const workTree = loop.workTree;
     if (!workTree?.path) return "the recorded work tree is missing";
@@ -463,6 +522,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       ? null
       : "the recorded branch is not checked out";
   };
+
+  const verifyWorkTree = deps.verifyWorkTree ?? verifyRecordedWorkTree;
 
   const optionKeysOf = (decision) =>
     (decision?.options ?? DECISION_OPTIONS).map((option) => option.key).join(", ");
@@ -746,7 +807,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       let workTree = recordedWorkTree;
       try {
         if (workTree === null || workTree === undefined) {
-          workTree = await createLoopWorkTree({
+          workTree = await createWorkTree({
             repo: prepared.repo,
             base: prepared.base,
             workTree: workTreePath,
@@ -766,12 +827,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       loop = { ...loop, task, workTree };
       let freshRecovery = { continueFrom: null, pr: null };
       if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
-        const refused = await verifyRecordedWorkTree(loop);
+        const refused = await verifyWorkTree(loop);
         if (refused !== null) {
           await markNeedsOwner(issue, refused, { evidence: refused });
           return;
         }
-        const decision = await reconcileLoop({
+        const decision = await reconcile({
           loop,
           repo: prepared.repo,
           base: prepared.base,
@@ -867,6 +928,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return;
     }
     children.set(issue, child);
+    slots.add(issue);
     if (interrupted || hard) child.kill?.("SIGINT");
     await changeLoop(issue, { pid: child.pid ?? null, startTime: child.startTime ?? null });
     progress(`issue ${issue}: attempt ${attempt} started (pid ${child.pid ?? "unknown"})`);
@@ -874,6 +936,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       const { exitCode } = await child.done;
       child.close?.();
       children.delete(issue);
+      slots.delete(issue);
       await finishChild(issue, exitCode, { interrupted: interrupted || hard });
     })();
     active.set(issue, promise);
@@ -898,7 +961,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     if (exitCode === 0) {
       await changeLoop(issue, { ...common, status: "succeeded" });
       loop = await readLoop(runsRoot, id, issue);
-      const cleanup = await cleanupLoop({
+      const cleanup = await cleanupWorkTree({
         manifest,
         loop,
         runsRoot,
@@ -941,10 +1004,12 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       startTime: null,
     });
     const updated = await readLoop(runsRoot, id, issue);
-    const cleanup = await cleanupLoop({ manifest, loop: updated, runsRoot, gh }).catch((err) => ({
-      removed: false,
-      reason: err.message,
-    }));
+    const cleanup = await cleanupWorkTree({ manifest, loop: updated, runsRoot, gh }).catch(
+      (err) => ({
+        removed: false,
+        reason: err.message,
+      }),
+    );
     await changeLoop(issue, { cleanup });
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
   };
@@ -1010,6 +1075,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         if (interrupted || hard) return;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
+      slots.delete(issue);
     }
     if (loop.status === "needs-owner") {
       const applied = await applyDecisionAnswer(issue, loop);
@@ -1070,7 +1136,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       });
       return;
     }
-    const decision = await reconcileLoop({
+    const decision = await reconcile({
       loop,
       repo: prepared.repo,
       base: prepared.base,
@@ -1210,6 +1276,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         if (current.status === "queued") remaining.add(issue);
         continue;
       }
+      if (isLive(current)) {
+        if (await ownerAlive({ pid: current.pid, startTime: current.startTime })) {
+          slots.add(issue);
+          continue;
+        }
+        slots.delete(issue);
+      }
       const applied = await withLoopResult(issue, () => applyDecisionAnswer(issue, current));
       if (applied === null) continue;
       if (applied.kind === "resume") {
@@ -1226,19 +1299,45 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       if (current !== null) loops.set(issue, current);
     }
   };
+  // A recorded child that this process did not spawn holds its slot until its process ends.
+  const refreshHeld = async () => {
+    for (const issue of slots) {
+      if (active.has(issue)) continue;
+      const current = await readLoop(runsRoot, id, issue);
+      if (current === null || !isLive(current)) {
+        slots.delete(issue);
+        continue;
+      }
+      if (!(await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
+        slots.delete(issue);
+      }
+    }
+  };
+  for (const issue of manifest.issues) {
+    const loop = loops.get(issue);
+    if (loop !== null && isLive(loop)) {
+      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime })) slots.add(issue);
+    }
+  }
   await refreshPendingDecisions();
-  const canFill = () => active.size < prepared.loops;
+  // An issue that already holds a slot is taken for its own recovery or launch. A new issue
+  // enters only while a slot is free.
+  const canTake = () => {
+    const issue = nextIssue();
+    if (issue === null) return false;
+    return slots.has(issue) || slots.size < prepared.loops;
+  };
   let pollLogged = false;
   let nextPoll = clock.now() + pollIntervalMs;
   for (;;) {
-    while (!interrupted && !hard && pausedReason === null && canFill() && remaining.size > 0) {
+    while (!interrupted && !hard && pausedReason === null && canTake() && remaining.size > 0) {
       const issue = nextIssue();
       remaining.delete(issue);
       const runOne = async () => {
         const current = await readLoop(runsRoot, id, issue);
         loops.set(issue, current);
         if (!start && current.status === "succeeded" && current.cleanup === null) {
-          const cleanup = await cleanupLoop({ manifest, loop: current, runsRoot, gh }).catch(
+          const cleanup = await cleanupWorkTree({ manifest, loop: current, runsRoot, gh }).catch(
             (err) => ({ removed: false, reason: err.message }),
           );
           await changeLoop(issue, { cleanup });
@@ -1276,7 +1375,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if (hard || interrupted) break;
     if (pausedReason !== null && active.size === 0) break;
-    const pollingNeeded = waiting.size > 0 || pendingDecisions.size > 0;
+    const hasRecordedHeld = () => slots.size > active.size;
+    const pollingNeeded =
+      waiting.size > 0 || pendingDecisions.size > 0 || (hasRecordedHeld() && remaining.size > 0);
     if (pollingNeeded && !pollLogged) {
       pollLogged = true;
       logInfo(`waiting poll started for issue(s) ${[...waiting, ...pendingDecisions].join(", ")}`);
@@ -1301,25 +1402,28 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       if (pollElapsed) {
         nextPoll = clock.now() + pollIntervalMs;
         await syncFromDisk();
+        await refreshHeld();
         await refreshWaiting();
         await refreshPendingDecisions();
       }
       continue;
     }
     if (pausedReason !== null) break;
-    if (waiting.size === 0 && pendingDecisions.size === 0) break;
-    if (waiting.size > 0) {
+    if (waiting.size === 0 && pendingDecisions.size === 0 && !hasRecordedHeld()) break;
+    if (waiting.size > 0 || (hasRecordedHeld() && remaining.size > 0)) {
       const wait = Math.max(0, nextPoll - clock.now());
       await pollWait(wait, controller.signal, clock);
       if (interrupted || hard) break;
       nextPoll = clock.now() + pollIntervalMs;
       await syncFromDisk();
+      await refreshHeld();
       await refreshWaiting();
       await refreshPendingDecisions();
       continue;
     }
     // Only pending decisions remain. Apply a live answer that already arrived, then stop.
     await syncFromDisk();
+    await refreshHeld();
     await refreshPendingDecisions();
     if (remaining.size > 0) continue;
     break;
@@ -1329,43 +1433,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   while (active.size > 0 && !hard) await Promise.race(active.values());
 
   if (installSignal) process.removeListener("SIGINT", onSigInt);
-
-  let status;
-  if (interrupted) status = "interrupted";
-  else if (pausedReason !== null) status = "paused";
-  else if (lockSkipped.size > 0 || [...loops.values()].some((loop) => loop.status === "running")) {
-    status = "paused";
-    pausedReason ??= "a loop is owned by another resume";
-  } else if ([...loops.values()].some((loop) => ["waiting", "needs-owner"].includes(loop.status))) {
-    status = "waiting";
-  } else if ([...loops.values()].some((loop) => loop.status === "failed")) {
-    status = "failed";
-  } else status = "completed";
-  const updated = await updateManifestReturning(runsRoot, id, (value) => ({
-    ...value,
-    status,
-    ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
-  }));
-  manifest = updated.manifest;
-  const complete = status === "completed" || status === "failed";
-  if (complete && manifest.completionNotified !== true) {
-    const counts = { succeeded: 0, failed: 0, skipped: 0 };
-    for (const loop of loops.values()) {
-      if (loop.status in counts) counts[loop.status] += 1;
-    }
-    await sendNotification({
-      kind: "batch-completed",
-      title: "Batch complete",
-      text: `Batch ${id} finished with status ${status}. Succeeded: ${counts.succeeded}. Failed: ${counts.failed}. Skipped: ${counts.skipped}.`,
-    });
-    manifest = (
-      await updateManifestReturning(runsRoot, id, (value) => ({
-        ...value,
-        completionNotified: true,
-      }))
-    ).manifest;
-  }
-  return { exitCode: exitCodeOf(manifest, loops), summary: summaryOf(manifest, loops) };
+  return finalizeBatch();
 }
 
 async function updateManifestReturning(runsRoot, id, updater) {
