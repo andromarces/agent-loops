@@ -24,7 +24,7 @@ These parts of `adr/0106-foreground-batch-scheduling.md` are replaced:
 Every other decision, consequence, and acceptance check of `adr/0106-foreground-batch-scheduling.md` stays in force. The batch
 still never merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 
-[adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) decision 13 defers an in-batch decision, a slot release, owner-merge continuation, and notifications. This ADR provides them, so that deferred entry is superseded. No other part of that ADR changes.
+[adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) decision 13 defers an in-batch decision, a slot release, owner-merge continuation, and notifications to milestone 3. This ADR provides those capabilities. This ADR supersedes no part of `adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md`.
 
 ## Date
 
