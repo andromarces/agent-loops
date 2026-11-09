@@ -85,14 +85,13 @@ async function arm(ready, { armDeadlineMs, signal, armWait, fail }) {
 }
 
 /**
- * Watches the main work tree of a linked run for the turn window, with one `Map` of pending paths
- * and merged event kinds. `git check-ignore` drops an ignored path, an in-window lstat
- * records a file, and the `.git` directory stays out. A recorded file is a read-only access, and
- * stays out, when its end modification time predates the window start minus the margin and its end
- * change time is not later than the window start plus a one-millisecond guard. `take()` returns the
- * candidates and then stops the watch on every outcome. A failed watch, read, or bound returns
- * `failed: true` and logs a warning, so the caller reports no path. The options lower the bounds
- * and hold the ignore input, for a test.
+ * Watches the main work tree for the turn window with one `Map` of pending paths and merged event
+ * kinds, and keeps `.git` out. `git check-ignore` drops an ignored path, and an in-window lstat
+ * records a file. A recorded file is a read-only access and stays out when its modification time
+ * predates the window start minus the margin. It also stays out when its change time is at most the
+ * window start plus a one-millisecond guard. `take()` returns the candidates and stops the watch on
+ * every outcome, and the options lower the bounds and hold the ignore input for a test. A failed
+ * watch, read, or bound returns `failed: true`, logs a warning, and reports no path.
  * @param {string} root absolute main work tree root
  * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, armDeadlineMs?: number, wallClock?: () => number, signal?: AbortSignal, watchFactory?: (root: string, onEvent: (type: string, filename: string | Buffer) => void) => { watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
  * @returns {Promise<{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null>}
@@ -115,8 +114,8 @@ export async function startMainWorkTreeWatch(
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
   // past this instant. A read leaves it before. The file system stamps the change time from the
-  // system clock, and the performance clock's wall time can be a per-process millisecond or more
-  // away from it on Windows. The start therefore comes from the system clock.
+  // system clock. The performance clock's wall time can sit a per-process millisecond or more away
+  // from it on Windows, so the start comes from the system clock.
   const windowStart = wallClock();
   // A change time is a write only when it is strictly later than the start plus this one-millisecond
   // guard. A file system stamp can lead the whole-millisecond system clock by less than one

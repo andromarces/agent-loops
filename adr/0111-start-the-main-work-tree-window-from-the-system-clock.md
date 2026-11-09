@@ -4,7 +4,7 @@
 
 accepted
 
-Partially supersedes [ADR 0107: Report a restored main work tree edit that preserves the modification time](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md) decision 3 and its Context sentence that the performance clock matches the file system stamp. The 2000 ms margin, the one-millisecond guard, and decisions 1, 2, 4, and 5 stay in force.
+Partially supersedes [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). The replaced parts are decision 3 and its Context sentence that the performance clock matches the file system stamp. The 2000 ms margin, the one-millisecond guard, and decisions 1, 2, 4, and 5 stay in force.
 
 ## Date
 
