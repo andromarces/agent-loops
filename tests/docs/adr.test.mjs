@@ -353,3 +353,27 @@ test("ADR 0095 supersedes the temporary directory reporting rules and keeps the 
   expect(adr68).not.toContain("qualified by ADR 0076");
   expect(adr68).toContain("ADR 0095");
 });
+
+// Usefulness: ADR 0106 must link the PR that fixed the held-lock status, and an accepted ADR must state the rule and its precedence (issue #1735).
+test("ADR 0117 states the held-lock paused rule and ADR 0106 links PR #1730", async () => {
+  const adr106 = await readFile(join(adrDir, "0106-foreground-batch-scheduling.md"), "utf8");
+  expect(adr106).toContain("https://github.com/andromarces/agent-loops/pull/1730");
+
+  const adr117Name = (await readdir(adrDir)).find((name) => name.startsWith("0117-"));
+  expect(adr117Name).toBeDefined();
+  const adr117 = await readFile(join(adrDir, adr117Name), "utf8");
+  expect(adr117).toMatch(/## Status\s+accepted/);
+  expect(adr117).toMatch(/Partially supersedes \[ADR 0106:/);
+  expect(adr117).toMatch(/It also partially supersedes \[ADR 0110:/);
+  expect(adr117).toMatch(/a loop is owned by another resume/);
+  expect(adr117).toMatch(/held-lock skip reports `paused`/);
+  expect(adr117).toMatch(/examined loop keeps `failed` or `needs-owner` precedence/i);
+
+  const adr110 = await readFile(
+    join(adrDir, "0110-release-batch-slots-on-owner-decisions.md"),
+    "utf8",
+  );
+  expect(adr106).toContain("[adr/0117-");
+  expect(adr110).toContain("[adr/0117-");
+  expect(adr110).toMatch(/## Status\s+partially-superseded/);
+});

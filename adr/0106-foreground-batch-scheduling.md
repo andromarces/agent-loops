@@ -22,6 +22,8 @@ partially-superseded
 
 [adr/0115-batch-loop-final-report.md](0115-batch-loop-final-report.md) partially supersedes this ADR. The replaced part is decision 1's summary field list. The other sentences of decision 1 stay in force.
 
+[adr/0117-state-the-held-lock-paused-rule-and-its-precedence.md](0117-state-the-held-lock-paused-rule-and-its-precedence.md) partially supersedes this ADR. The replaced part is the status rule of decision 1, which lists the exit codes only. A loop skipped for a held resume lock reports `paused` with reason `a loop is owned by another resume`, and a loop this resume examined keeps its `failed` or `needs-owner` precedence.
+
 Every other decision, consequence, and acceptance check stays in force. The batch still never
 merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 
@@ -659,6 +661,8 @@ Andro Marces
 - [PR #1724: Accept ADR 0106 and settle its owner decisions](https://github.com/andromarces/agent-loops/pull/1724)
 - [PR #1727: Implement foreground batch scheduling](https://github.com/andromarces/agent-loops/pull/1727)
 - [Issue #1728: Report paused when another resume holds the lock of a needs-owner batch loop](https://github.com/andromarces/agent-loops/issues/1728)
+- [PR #1730: Report paused when a held lock skips a needs-owner loop](https://github.com/andromarces/agent-loops/pull/1730)
+- [Issue #1735: State the held-lock paused rule of batch resume in the ADR and link PR #1730](https://github.com/andromarces/agent-loops/issues/1735)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
 - [Implementation: batch command and settings](../src/batch/cli.mjs)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
