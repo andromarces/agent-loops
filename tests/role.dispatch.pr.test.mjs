@@ -1,5 +1,7 @@
 import { afterEach, expect, vi } from "vite-plus/test";
+import { execa } from "execa";
 import { executeRoleCommand } from "../src/role/index.mjs";
+import { runGh } from "../src/lib/gh-api.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -9,6 +11,7 @@ import {
   recordingAdapter,
   stdinPrompt,
   withRepo,
+  WORKER_REPLY,
 } from "./role-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
@@ -104,18 +107,24 @@ test("a failed PR read carries no field and keeps the turn ok", async () => {
   }
 });
 
-// Usefulness: verifies a cancel during the PR read keeps the cancel outcome, so it cannot record
-// an ok turn with exit 0.
-test("a cancel during the PR read exits 130 and marks the run interrupted", async () => {
+// Usefulness: verifies a cancel during the PR read keeps the turn evidence. The turn exits 130
+// with the interrupted lifecycle, not an ok turn.
+test("a cancel during the PR read keeps the turn evidence and exits 130", async () => {
   const repo = await newRunRepo();
   const controller = new AbortController();
-  const gh = async () => {
+  const gh = async (args, cwd, options = {}) => {
     controller.abort();
-    throw Object.assign(new Error("canceled"), { isCanceled: true });
+    return runGh(args, cwd, options);
   };
+  const worker = recordingAdapter([
+    async (_state, _prompt, options) => {
+      await execa("git", ["config", "user.name", "Envelope Probe"], { cwd: options.cwd });
+      return WORKER_REPLY;
+    },
+  ]);
 
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
-    agents: agents(),
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
     stdin: stdinPrompt,
     gh,
     signal: controller.signal,
@@ -123,10 +132,10 @@ test("a cancel during the PR read exits 130 and marks the run interrupted", asyn
 
   expect(result.exitCode).toBe(130);
   expect(result.payload.status).toBe("error");
-  expect(String(result.payload.error)).toContain("canceled");
+  expect(result.payload.sharedGitChanged).toContain("user.name");
   const state = await readRepoState(repo);
   expect(state.lifecycle).toBe("interrupted");
-  expect(state.lastResult.status).toBe("error");
+  expect(state.lastResult.sharedGitChanged).toContain("user.name");
 });
 
 // Usefulness: verifies a reviewer turn reads no PR, so the field belongs to the worker only.

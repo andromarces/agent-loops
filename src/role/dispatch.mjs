@@ -3,6 +3,7 @@
 import { appendFile, readFile, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizeAgent } from "../agents/index.mjs";
+import { throwIfCanceled } from "../agents/shared.mjs";
 import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
 import { reportedPathNames } from "../lib/entry-report.mjs";
@@ -30,6 +31,7 @@ import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "../lib/turn-tm
 import { readWorkTreePr } from "../lib/work-tree-pr.mjs";
 import { runChild } from "../child-turn.mjs";
 import {
+  carryTurnEvidence,
   failedTurnEvidence,
   turnResultFields,
   TURN_EVIDENCE_FIELDS,
@@ -365,6 +367,14 @@ async function dispatchLocked(
       const pr = await readWorkTreePr({ cwd: args.cwd, gh, signal });
       if (pr) {
         result = { ...result, workTree: { ...result.workTree, pr } };
+      }
+      // A cancel during the read follows the cancel path at the end of the child turn. The error
+      // carries the evidence that the turn already read, so the catch below reports it too.
+      try {
+        throwIfCanceled(signal, roleName);
+      } catch (err) {
+        carryTurnEvidence(err, result);
+        throw err;
       }
     }
   } catch (err) {

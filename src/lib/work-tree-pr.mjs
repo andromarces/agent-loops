@@ -1,6 +1,5 @@
 // Reads the open pull request of the checked-out branch of a work tree for a worker envelope.
 // A detached head, no match, several matches, a cross-repository match, or a failed read yields null.
-import { canceledError } from "./ci-gate.mjs";
 import { repoSlug } from "./ci-required-sources.mjs";
 import { readableErrorText } from "./error-message.mjs";
 import { DEFAULT_READ_TIMEOUT_MS, boundedCall, ghFailureText, runGh } from "./gh-api.mjs";
@@ -37,8 +36,8 @@ function withoutGhRepo(gh) {
 /**
  * Reads the one open PR whose head branch is the checked-out branch of `cwd`. The `head` is the
  * one GitHub returned, so it can differ from the local work tree head, for example before a push.
- * A detached head returns null with no read. Every other failure warns once. A cancel ends the
- * read with the cancel error. No other failure throws.
+ * A detached head returns null with no read. Every other failure warns once. A cancel returns
+ * null with no warn, so the dispatch decides the turn outcome. No failure throws.
  * @param {{ cwd: string, gh?: Function, signal?: AbortSignal | null, timeoutMs?: number,
  *   git?: Function }} options
  * @returns {Promise<{ number: number, head: string } | null>}
@@ -50,14 +49,15 @@ export async function readWorkTreePr({
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   git = gitRead,
 }) {
-  if (signal?.aborted) throw canceledError();
+  if (signal?.aborted) return null;
   let branch;
   try {
     const result = await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
+    if (signal?.aborted) return null;
     if (result.exitCode !== 0) return null;
     branch = result.stdout.trim();
   } catch (err) {
-    if (err?.isCanceled) throw err;
+    if (signal?.aborted || err?.isCanceled) return null;
     warnFailure(readableErrorText(err));
     return null;
   }
@@ -65,7 +65,8 @@ export async function readWorkTreePr({
   try {
     const call = boundedCall(withoutGhRepo(gh), timeoutMs, signal);
     // The slug read names the work tree repository, and the list read is pinned to it.
-    const slug = await repoSlug(call, cwd, "could not be read");
+    const slug = await repoSlug(call, cwd);
+    if (signal?.aborted) return null;
     const reply = await call(
       [
         "pr",
@@ -83,6 +84,7 @@ export async function readWorkTreePr({
       ],
       cwd,
     );
+    if (signal?.aborted) return null;
     if (!reply || reply.status !== 0) {
       warnFailure(
         `gh pr list failed: ${ghFailureText({
@@ -102,7 +104,7 @@ export async function readWorkTreePr({
     const [entry] = sameRepo;
     return { number: entry.number, head: entry.headRefOid.toLowerCase() };
   } catch (err) {
-    if (err?.isCanceled) throw err;
+    if (signal?.aborted || err?.isCanceled) return null;
     warnFailure(readableErrorText(err));
     return null;
   }

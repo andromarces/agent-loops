@@ -25,7 +25,7 @@ A worker can push the run branch before its report. The runtime can then read th
 3. **Query.** The runtime reads the work tree repository slug with `repoSlug`. It drops `GH_REPO`, so `gh` resolves the work tree remote. The read is `gh pr list --repo <slug> --head <branch> --state open --json number,headRefOid,isCrossRepository`. It reuses the `gh` dependency of dispatch and the existing bounded read helpers. No dependency is added.
 4. **Result.** Exactly one open PR in the work tree repository yields the field. A cross-repository PR is rejected. A read that cannot name the work tree repository yields no field. Zero matches, several matches, a bad number, or a bad head yields no field.
 5. **Validation.** `number` is a positive integer. `head` is a full 40-character SHA, stored in lowercase.
-6. **Failure.** A nonzero exit, a timeout, a parse failure, or a transport error yields no field. It logs one redacted `warn` line, collapsed to one line. It changes no turn status and no exit code. A cancel ends the read with the cancel error. The dispatch then records the interrupted lifecycle and exits 130.
+6. **Failure.** A nonzero exit, a timeout, a parse failure, or a transport error yields no field. It logs one redacted `warn` line, collapsed to one line. It changes no turn status and no exit code. A cancel returns no field. The dispatch then records the interrupted lifecycle and exits 130, with every evidence field the turn read.
 7. **Head source.** The field reports the head that GitHub returned. It can differ from `workTree.head`, for example before a push. The parent compares the two before it relies on the PR head.
 8. **Docs.** The `workTree` bullet of [the orchestrator instructions](../docs/orchestrator-instructions.md) names the field as the PR source. The parent reads the PR number there for `declare-pr`, `wait-checks --pr`, and `finish --compare-head`. Step 2 of the PR declaration reads it in place of the worker report.
 
@@ -34,7 +34,7 @@ A worker can push the run branch before its report. The runtime can then read th
 - A worker turn that opens a PR gives the parent the PR number and head without free text from the child.
 - A run with no open PR, an ambiguous branch, a fork PR, or a failed read keeps its turn status. The parent reads no field and adds no PR source.
 - A cancel keeps the turn canceled: exit 130 and an interrupted lifecycle.
-- The worker envelope read is one extra `git` read and one extra `gh` read per worker turn. A detached head reads no GitHub state.
+- The worker envelope read is one extra `git` read and two extra `gh` reads per worker turn. A detached head reads no GitHub state.
 - A PR head that moves after the worker push stays visible. The parent compares it with `workTree.head` before a completion decision.
 - The headless `agent-loop` loop keeps its own resolver and does not share this field.
 
