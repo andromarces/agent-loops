@@ -204,6 +204,9 @@ Apply these parent rules:
 - A worker envelope carries `workTree`, the runtime-owned `head` and `clean` state read after
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.
+  - `workTree.pr` is the runtime read `{number, head}` of the open PR from the branch. Compare
+    `head` with `workTree.head` before you rely on the PR head, then read the PR number there for
+    `declare-pr`, `wait-checks --pr`, and `finish --compare-head`.
 - A worker envelope carries `sharedGitChanged` only when the turn changed shared Git state outside
   the work tree: `core.hooksPath`, a file in the common `hooks/` directory, or a remote. The field
   names the items, such as `core.hooksPath`, `hooks/pre-push`, and `remote.origin`, and never a

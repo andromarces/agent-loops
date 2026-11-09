@@ -3,6 +3,7 @@
 import { appendFile, readFile, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { normalizeAgent } from "../agents/index.mjs";
+import { throwIfCanceled } from "../agents/shared.mjs";
 import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
 import { reportedPathNames } from "../lib/entry-report.mjs";
@@ -27,8 +28,10 @@ import { readSparseCheckout } from "../lib/sparse-checkout.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "../lib/test-cmd.mjs";
 import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
+import { readWorkTreePr } from "../lib/work-tree-pr.mjs";
 import { runChild } from "../child-turn.mjs";
 import {
+  carryTurnEvidence,
   failedTurnEvidence,
   turnResultFields,
   TURN_EVIDENCE_FIELDS,
@@ -352,6 +355,28 @@ async function dispatchLocked(
       gh,
       onEvent,
     });
+    // A worker envelope carries the open PR of the run branch beside the work tree state. Only a
+    // caller that injects `gh` reads it, and a failed read or no match adds no field. A cancel
+    // reaches the catch below, which records the interrupted lifecycle and exit 130.
+    if (
+      roleName === "worker" &&
+      result.status === "ok" &&
+      result.workTree &&
+      typeof gh === "function"
+    ) {
+      const pr = await readWorkTreePr({ cwd: args.cwd, gh, signal });
+      if (pr) {
+        result = { ...result, workTree: { ...result.workTree, pr } };
+      }
+      // A cancel during the read follows the cancel path at the end of the child turn. The error
+      // carries the evidence that the turn already read, so the catch below reports it too.
+      try {
+        throwIfCanceled(signal, roleName);
+      } catch (err) {
+        carryTurnEvidence(err, result);
+        throw err;
+      }
+    }
   } catch (err) {
     const canceled = Boolean(readProp(err, "isCanceled"));
     const refusedModel = readProp(err, "refusedModel");
