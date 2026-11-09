@@ -80,6 +80,38 @@ test("answer of an unknown decision exits 2", async () => {
   expect(out).toBe("");
 });
 
+// Usefulness: an audit start with no settings is a usage refusal before any store or child.
+test("an audit start with no settings exits 2", async () => {
+  const { code, out } = await runQuiet(["audit", "start"]);
+  expect(code).toBe(2);
+  expect(out).toBe("");
+});
+
+// Usefulness: audit status needs a known id to be a usage refusal, not a crash.
+test("audit status of an unknown audit exits 2", async () => {
+  const { code } = await runQuiet(["audit", "status", "--audit", "no-such-audit"]);
+  expect(code).toBe(2);
+});
+
+// Usefulness: an audit resume without an id is refused.
+test("audit resume without --audit exits 2", async () => {
+  const { code } = await runQuiet(["audit", "resume"]);
+  expect(code).toBe(2);
+});
+
+// Usefulness: an unknown audit command is refused.
+test("an unknown audit command exits 2", async () => {
+  const { code } = await runQuiet(["audit", "wat"]);
+  expect(code).toBe(2);
+});
+
+// Usefulness: audit help prints the command surface and the exit codes.
+test("audit help prints the commands and exit codes", async () => {
+  const { code, out } = await runQuiet(["audit", "--help"]);
+  expect(code).toBe(0);
+  expect(out).toContain("agent-loop batch audit start");
+  expect(out).toContain("130");
+});
 // Usefulness: decision 8 keeps checkpoints outside any repository, so a runs root inside the
 // target work tree is refused before any state write.
 test("a runs root inside the repository is refused before any write", async () => {

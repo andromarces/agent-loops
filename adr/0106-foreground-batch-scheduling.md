@@ -6,8 +6,9 @@ partially-superseded
 
 ## Superseded by
 
-[ADR 0109](0109-release-batch-slots-on-owner-decisions.md) partially supersedes this ADR.
-These parts are replaced:
+[adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) partially supersedes this ADR. The replaced parts are decision 16's entry that reviewer audit coordination and consolidated issue creation are deferred to milestone 2, and the Context sentence that lists reviewer audit coordination as out of scope. Decisions 1 to 15 stay in force, and milestone 1 stays standalone.
+
+[adr/0110-release-batch-slots-on-owner-decisions.md](0110-release-batch-slots-on-owner-decisions.md) partially supersedes this ADR. These parts are replaced:
 
 - Decision 1's return rule. The command also returns with status `waiting` for a pending decision.
 - Decision 5's sentence that a `needs-owner` loop keeps its slot.

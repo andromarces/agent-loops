@@ -1,4 +1,4 @@
-// Owner decisions of one batch (adr/0109-release-batch-slots-on-owner-decisions.md decisions 1
+// Owner decisions of one batch (adr/0110-release-batch-slots-on-owner-decisions.md decisions 1
 // to 4). A decision records the reason, the evidence, the options, and the recommendation. An
 // answer is an exclusive file bound to one decision, so two answers cannot both win. Every
 // malformed record fails closed.

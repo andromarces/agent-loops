@@ -1126,6 +1126,51 @@ test("a loop owned by another resume is not reported complete", async () => {
   }
 });
 
+// Usefulness: a held lock reports paused even when the skipped loop keeps a needs-owner checkpoint.
+test("a needs-owner loop owned by another resume reports paused", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  let release;
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "needs-owner",
+      reason: "the owner must resolve the remote state",
+      pid: null,
+      startTime: null,
+    }));
+    const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-1.resume.lock");
+    release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+    expect(release).not.toBe(null);
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.exitCode).toBe(1);
+    expect(resumed.summary.status).toBe("paused");
+    expect(resumed.summary.loops[0].status).toBe("needs-owner");
+  } finally {
+    await release?.();
+    await cleanupRepo(repo);
+  }
+});
+
 // Usefulness: a queued checkpoint trusts no replaced work tree; it stops as needs-owner.
 test("a queued checkpoint with a replaced work tree stops before launch", async () => {
   const repo = await batchRepo();

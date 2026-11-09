@@ -89,6 +89,29 @@ Subcommands:
                                 Requires --batch <id>, --decision <id>, and --option <key>.
                                 An unknown, answered, or foreign decision exits 2 and
                                 writes nothing.
+  agent-loop batch audit start  Run two or more read-only reviewers on one frozen revision,
+                                then one consolidation worker, then create one issue per
+                                finding that no open or closed issue covers. Requires
+                                --repo <main work tree>, --reviewer <cli> (repeatable, at
+                                least twice), and --worker. Accepts --base,
+                                --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
+                                --reviewer-sandbox, a --reviewer-model or --reviewer-effort
+                                after each --reviewer, and --worker-model or
+                                --worker-effort. A failed audit creates no issue until
+                                batch audit resume succeeds or batch audit approve
+                                accepts the partial results. A changed audit checkout
+                                stops the run for the owner and deletes nothing. Exits 0
+                                when the issue set is created, 1 when the audit paused or
+                                needs an owner, 2 for a refused setting, and 130 on SIGINT.
+  agent-loop batch audit status Read an audit and write nothing. --audit <id> names one;
+                                with no id it lists the local audits, newest first.
+  agent-loop batch audit resume Retry the reviewers and the consolidation that failed, then
+                                continue creation. Requires --audit <id>.
+  agent-loop batch audit approve
+                                Record the owner's approval of partial audit results, then
+                                consolidate and create from the audits that succeeded.
+                                Requires --audit <id>. It never approves a failed
+                                consolidation.
   agent-loop harness-check      Exit 0 only when the nearest harness process above the
                                 shell matches the named harness, 3 when another harness
                                 is nearest, and 1 when the check cannot run or finds no

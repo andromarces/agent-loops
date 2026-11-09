@@ -1,4 +1,4 @@
-# 0109. Release batch loop slots on owner decisions, resume after merges, and notify
+# 0110. Release batch loop slots on owner decisions, resume after merges, and notify
 
 ## Status
 
@@ -17,12 +17,14 @@ These parts of `adr/0106-foreground-batch-scheduling.md` are replaced:
 - Decision 6's `blocked` skip. A blocked issue waits and is polled, and it launches after its
   blockers close. It is not a final skip.
 - Decision 16's deferred in-batch decision request, slot release, owner-merge continuation, and
-  desktop notifications. `adr/0109-release-batch-slots-on-owner-decisions.md` provides all four.
+  desktop notifications. `adr/0110-release-batch-slots-on-owner-decisions.md` provides all four.
 - The consequence that a `needs-owner` loop holds a slot until milestone 3. The milestone 1
   standalone sentence also says that such a loop holds one slot.
 
 Every other decision, consequence, and acceptance check of `adr/0106-foreground-batch-scheduling.md` stays in force. The batch
 still never merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
+
+[adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md](0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md) decision 13 defers an in-batch decision, a slot release, owner-merge continuation, and notifications. This ADR provides them, so that deferred entry is superseded. No other part of that ADR changes.
 
 ## Date
 
@@ -189,14 +191,20 @@ state is `pending`, `answered`, or `malformed`.
 The batch entry carries `completion: { status, complete }`. `complete` is true only for the
 statuses `completed` and `failed`. `batch status` writes nothing.
 
-### 9. Documentation for milestone 3
+### 9. Milestone 2 owner stops stay with the audit commands
+
+An audit run that stops as `needs-owner` for `work-tree-missing` does not use the decision protocol, because the audit holds no batch loop slot. An audit run that stops for `work-tree-changed` also stays with `batch audit resume`, because the audit holds no loop slot. An audit that pauses for a retry or approval keeps its own `batch audit resume` and `batch audit approve`, because it holds no loop slot.
+
+A batch loop whose resume lock is held reports `paused` and keeps its existing decision, as #1728 requires.
+
+### 10. Documentation for milestone 3
 
 The implementation updates the batch text of `docs/reference/usage.md`,
 `docs/reference/architecture.md`, `docs/orchestrator-instructions.md`, and `src/help.mjs`. The
 orchestrator instructions replace only the sentence that defers decisions, slot release, and merge
 continuation. README and onboarding expansion stay out of scope.
 
-### 10. Acceptance checks for milestone 3
+### 11. Acceptance checks for milestone 3
 
 The implementation passes these checks:
 

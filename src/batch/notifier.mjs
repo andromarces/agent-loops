@@ -1,4 +1,4 @@
-// Desktop notifications of a batch (adr/0109-release-batch-slots-on-owner-decisions.md decision
+// Desktop notifications of a batch (adr/0110-release-batch-slots-on-owner-decisions.md decision
 // 6). The text reaches the command as an argument or an environment value, never inside the
 // script. A missing binary, a failure, and a timeout only warn, so a notification never fails or
 // stalls the batch.

@@ -1,8 +1,20 @@
-// `agent-loop batch start|status|resume` (ADR 0106 decision 1). stdout carries one JSON object;
-// progress and logs go to stderr.
+// `agent-loop batch start|status|resume|answer|audit` (adr/0106-foreground-batch-scheduling.md,
+// adr/0109-coordinate-reviewer-audits-and-consolidated-issue-creation.md,
+// adr/0110-release-batch-slots-on-owner-decisions.md). stdout carries one JSON
+// object; progress and logs go to stderr.
 import { setLogsToStderr, logError } from "../lib/log.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
+import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree } from "./args.mjs";
+import {
+  listAuditStatus,
+  newAuditId,
+  parseAuditArgs,
+  prepareAudit,
+  readAudit,
+  readAuditStatus,
+  runAudit,
+} from "./audit.mjs";
 import { runGh } from "../lib/gh-api.mjs";
 import { answerDecision } from "./decisions.mjs";
 import { listBatchStatus, newBatchId, readBatchStatus, runBatch } from "./supervisor.mjs";
@@ -19,6 +31,12 @@ Usage:
   agent-loop batch resume --batch <id>
   agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 
+  agent-loop batch audit start --repo <dir> --reviewer <cli> --reviewer <cli> \\
+    --worker <cli> [settings]
+  agent-loop batch audit status [--audit <id>]
+  agent-loop batch audit resume --audit <id>
+  agent-loop batch audit approve --audit <id>
+
 The batch runs one headless loop per issue in its own work tree, at most --loops at once.
 Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
 --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
@@ -27,19 +45,49 @@ Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeou
 A needs-owner loop becomes a pending decision and releases its slot. \`batch status\` shows
 the options and the recommendation. \`batch answer\` binds one listed option to one decision.
 
-Exit codes: 0 every issue succeeded or was skipped, 1 a loop failed or a batch waits on an
-owner decision or merge, 2 a refused setting or answer, 130 SIGINT.
+The audit runs two or more read-only reviewers on one revision, then one consolidation
+worker. It then creates one issue per finding that no open or closed issue covers.
+Audit settings: --base, --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
+--reviewer-sandbox, --reviewer-model and --reviewer-effort after each --reviewer,
+and --worker-model and --worker-effort.
+
+Exit codes: 0 every issue succeeded or was skipped, or the audit created its issue set. 1 a
+loop failed, the batch waits on an owner decision or merge, the queue paused, or an audit
+paused. 2 a refused setting or a refusal before any state write. 130 SIGINT.
 `.trim();
 
-function readBatchFlag(argv) {
+const AUDIT_USAGE = `
+Usage:
+
+  agent-loop batch audit start --repo <dir> --reviewer <cli> --reviewer <cli> \\
+    --worker <cli> [--reviewer-model <model>] [--reviewer-effort <effort>] \\
+    [--worker-model <model>] [--worker-effort <effort>] \\
+    [--base <branch>] [--work-tree-root <dir>] [--setup-cmd <command>] \\
+    [--setup-timeout <seconds>] [--timeout <seconds>] [--reviewer-sandbox <mode>]
+
+  agent-loop batch audit status [--audit <id>]
+  agent-loop batch audit resume --audit <id>
+  agent-loop batch audit approve --audit <id>
+
+Two or more reviewers audit one frozen revision in one read-only work tree. After every
+requested audit succeeds, or after the owner approves the partial results with approve,
+one worker consolidates the findings against the open and closed issues and the runtime
+creates one issue per finding that no issue covers. A failed audit creates no issue until
+a retry succeeds or the owner approves the partial results. The created issue set is frozen.
+
+Exit codes: 0 the issue set is created, 1 the audit paused, 2 a refused setting or a
+refusal before any state write, 130 SIGINT.
+`.trim();
+
+function readIdFlag(argv, name) {
   let id = null;
   for (let i = 0; i < argv.length; i += 1) {
     const raw = argv[i];
     const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
     const flag = eq === -1 ? raw : raw.slice(0, eq);
-    if (flag === "--batch") {
+    if (flag === name) {
       const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
-      if (!value) throw Object.assign(new Error("Missing value for --batch."), { usage: true });
+      if (!value) throw Object.assign(new Error(`Missing value for ${name}.`), { usage: true });
       id = value;
       continue;
     }
@@ -69,6 +117,8 @@ function readAnswerArgs(argv) {
   }
   return values;
 }
+
+const readBatchFlag = (argv) => readIdFlag(argv, "--batch");
 
 async function preparedForResume(manifest) {
   const settings = manifest.settings ?? {};
@@ -100,6 +150,87 @@ async function preparedForResume(manifest) {
   });
 }
 
+function preparedFromAudit(state, mode) {
+  return {
+    id: state.id,
+    repo: state.repo,
+    repoKey: state.repoKey,
+    base: state.base,
+    revision: state.revision,
+    workTreeRoot: state.workTreeRoot,
+    reviewers: state.settings?.reviewers ?? [],
+    worker: state.settings?.worker ?? { kind: null, model: null, effort: null },
+    timeout: state.settings?.timeout ?? null,
+    reviewerSandbox: state.settings?.reviewerSandbox ?? null,
+    setupCmd: state.settings?.setupCmd ?? null,
+    setupTimeout: state.settings?.setupTimeout,
+    mode,
+  };
+}
+
+async function runAuditCommand({ prepared, runsRoot }) {
+  const controller = new AbortController();
+  const removeSigIntListener = cancelOnSigInt(controller);
+  try {
+    const { exitCode, summary } = await runAudit({
+      prepared,
+      runsRoot,
+      gh: runGh,
+      signal: controller.signal,
+    });
+    console.log(JSON.stringify(summary, null, 2));
+    return exitCode;
+  } finally {
+    removeSigIntListener();
+  }
+}
+
+async function runAuditMain(argv, runsRoot) {
+  const command = argv[0];
+  if (command === undefined || command === "--help" || command === "-h") {
+    console.log(AUDIT_USAGE);
+    return 0;
+  }
+  if (command === "status") {
+    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    if (help) {
+      console.log(AUDIT_USAGE);
+      return 0;
+    }
+    if (id === null) {
+      console.log(JSON.stringify(await listAuditStatus(runsRoot), null, 2));
+      return 0;
+    }
+    console.log(JSON.stringify(await readAuditStatus({ runsRoot, id }), null, 2));
+    return 0;
+  }
+  if (command === "start") {
+    const options = parseAuditArgs(argv.slice(1));
+    const id = newAuditId();
+    const prepared = await prepareAudit({ ...options, id });
+    prepared.mode = "start";
+    await refuseRunsRootInGitWorkTree(runsRoot);
+    return runAuditCommand({ prepared, runsRoot });
+  }
+  if (command === "resume" || command === "approve") {
+    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    if (help) {
+      console.log(AUDIT_USAGE);
+      return 0;
+    }
+    if (id === null) {
+      throw Object.assign(new Error("Missing required --audit."), { usage: true });
+    }
+    const state = await readAudit(runsRoot, id);
+    if (state === null) {
+      throw Object.assign(new Error(`No audit ${id}.`), { usage: true });
+    }
+    await refuseRunsRootInGitWorkTree(runsRoot);
+    return runAuditCommand({ prepared: preparedFromAudit(state, command), runsRoot });
+  }
+  throw Object.assign(new Error(`Unknown audit command: ${command}`), { usage: true });
+}
+
 /**
  * Runs one `agent-loop batch` command.
  * @param {string[]} argv the words after `batch`
@@ -114,6 +245,9 @@ export async function runBatchMain(argv) {
   }
   const runsRoot = stateRoot();
   try {
+    if (command === "audit") {
+      return await runAuditMain(argv.slice(1), runsRoot);
+    }
     if (command === "start") {
       const options = parseBatchArgs(argv.slice(1));
       const id = newBatchId();

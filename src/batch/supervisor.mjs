@@ -45,12 +45,12 @@ import {
 } from "./store.mjs";
 
 // A needs-owner loop becomes a pending decision and releases its slot
-// (adr/0109-release-batch-slots-on-owner-decisions.md decision 1). A waiting loop keeps its
-// checkpoint and is re-checked on the poll (adr/0109-release-batch-slots-on-owner-decisions.md
+// (adr/0110-release-batch-slots-on-owner-decisions.md decision 1). A waiting loop keeps its
+// checkpoint and is re-checked on the poll (adr/0110-release-batch-slots-on-owner-decisions.md
 // decision 5).
 const TERMINAL = new Set(["succeeded", "skipped", "failed"]);
 const INTERRUPT_WAIT_MS = 30_000;
-/** The wait between two re-checks of a blocked issue (adr/0109-release-batch-slots-on-owner-decisions.md decision 5). */
+/** The wait between two re-checks of a blocked issue (adr/0110-release-batch-slots-on-owner-decisions.md decision 5). */
 export const POLL_INTERVAL_MS = 15_000;
 /** The bound on one poll read of the wait state. */
 export const POLL_READ_TIMEOUT_MS = 60_000;
@@ -977,6 +977,22 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
+  // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
+  // requires. A null result means another resume owns the loop and the caller keeps it pending.
+  const withLoopResult = async (issue, fn) => {
+    const lockFile = join(paths.batchDir(id), "loops", `issue-${issue}.resume.lock`);
+    const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
+    if (release === null) {
+      lockSkipped.add(issue);
+      return null;
+    }
+    try {
+      return await fn();
+    } finally {
+      await release();
+    }
+  };
+
   const recover = async (issue, initial) => {
     let loop = initial;
     if (isLive(loop)) {
@@ -1194,7 +1210,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         if (current.status === "queued") remaining.add(issue);
         continue;
       }
-      const applied = await applyDecisionAnswer(issue, current);
+      const applied = await withLoopResult(issue, () => applyDecisionAnswer(issue, current));
+      if (applied === null) continue;
       if (applied.kind === "resume") {
         pendingDecisions.delete(issue);
         remaining.add(issue);
@@ -1316,16 +1333,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   let status;
   if (interrupted) status = "interrupted";
   else if (pausedReason !== null) status = "paused";
-  else if ([...loops.values()].some((loop) => ["waiting", "needs-owner"].includes(loop.status))) {
+  else if (lockSkipped.size > 0 || [...loops.values()].some((loop) => loop.status === "running")) {
+    status = "paused";
+    pausedReason ??= "a loop is owned by another resume";
+  } else if ([...loops.values()].some((loop) => ["waiting", "needs-owner"].includes(loop.status))) {
     status = "waiting";
   } else if ([...loops.values()].some((loop) => loop.status === "failed")) {
     status = "failed";
-  } else if (
-    lockSkipped.size > 0 ||
-    [...loops.values()].some((loop) => loop.status === "running")
-  ) {
-    status = "paused";
-    pausedReason ??= "a loop is owned by another resume";
   } else status = "completed";
   const updated = await updateManifestReturning(runsRoot, id, (value) => ({
     ...value,
