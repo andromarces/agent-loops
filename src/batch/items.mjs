@@ -103,14 +103,3 @@ export function preparedItems(prepared) {
     task: null,
   }));
 }
-
-/** The item stored in one loop checkpoint. */
-export function loopItem(loop) {
-  return {
-    kind: loop.kind ?? "issue",
-    number: loop.number ?? (typeof loop.issue === "number" ? loop.issue : null),
-    key: loop.issue,
-    mode: loop.mode ?? "work-first",
-    task: loop.task ?? null,
-  };
-}
