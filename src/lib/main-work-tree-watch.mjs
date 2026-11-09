@@ -94,7 +94,7 @@ async function arm(ready, { armDeadlineMs, signal, armWait, fail }) {
  * `failed: true` and logs a warning, so the caller reports no path. The options lower the bounds
  * and hold the ignore input, for a test.
  * @param {string} root absolute main work tree root
- * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, armDeadlineMs?: number, signal?: AbortSignal, watchFactory?: (root: string, onEvent: (type: string, filename: string | Buffer) => void) => { watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
+ * @param {{ maxPending?: number, maxSeenFiles?: number, maxCandidates?: number, maxReads?: number, drainDeadlineMs?: number, armDeadlineMs?: number, wallClock?: () => number, signal?: AbortSignal, watchFactory?: (root: string, onEvent: (type: string, filename: string | Buffer) => void) => { watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }, beforeIgnoreInputEnds?: (bound: { pid: number, signal: AbortSignal }) => Promise<void>, beforeFileKind?: (bound: { signal: AbortSignal }) => Promise<void> }} [options]
  * @returns {Promise<{ take: () => Promise<{ candidates: string[], failed: boolean }>, stop: () => Promise<void>, pendingCount: () => number, seenFileCount: () => number } | null>}
  */
 export async function startMainWorkTreeWatch(
@@ -106,6 +106,7 @@ export async function startMainWorkTreeWatch(
     maxReads = MAX_READS,
     drainDeadlineMs = DRAIN_DEADLINE_MS,
     armDeadlineMs = ARM_DEADLINE_MS,
+    wallClock = () => Date.now(),
     signal = null,
     beforeIgnoreInputEnds = null,
     beforeFileKind = null,
@@ -113,14 +114,13 @@ export async function startMainWorkTreeWatch(
   } = {},
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
-  // past this instant. A read leaves it before. The file system stamps a change time from the
-  // system clock at sub-millisecond precision, and Date.now() steps in whole milliseconds that can
-  // lag that clock. The start therefore comes from the performance clock's wall time, which matches
-  // the file system stamp.
-  const windowStart = performance.timeOrigin + performance.now();
+  // past this instant. A read leaves it before. The file system stamps the change time from the
+  // system clock, and the performance clock's wall time can be a per-process millisecond or more
+  // away from it on Windows. The start therefore comes from the system clock.
+  const windowStart = wallClock();
   // A change time is a write only when it is strictly later than the start plus this one-millisecond
-  // guard. A timestamp-preserving change made before the start stays out, and an in-window restore
-  // inside the guard is not reported.
+  // guard. A file system stamp can lead the whole-millisecond system clock by less than one
+  // millisecond, so a timestamp-preserving change made before the start stays out.
   const changeTimeAfterStart = windowStart + 1;
   let failed = false;
   let watcherClosed = false;
