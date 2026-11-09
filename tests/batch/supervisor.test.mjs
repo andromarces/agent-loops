@@ -2205,6 +2205,18 @@ describe("batch decisions and waits", () => {
   });
   const runsFor = (prepared) => join(shared.workTreeRoot, `runs-${prepared.id}`);
 
+  // A freed slot can launch the next issue before the finished loop's state is written, so wait
+  // for the status rather than for a later child's call.
+  const waitForStatus = async (runsRoot, batchId, issue, status) => {
+    let loop = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      loop = await readLoop(runsRoot, batchId, issue);
+      if (loop?.status === status) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return loop;
+  };
+
   async function setNeedsOwner(
     runsRoot,
     prepared,
@@ -3053,13 +3065,13 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
+      const loop = await waitForStatus(runsRoot, prepared.id, 219, "needs-owner");
+      expect(stopped.calls).toHaveLength(1);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      expect(stopped.calls).toHaveLength(1);
       expect(holding.calls).toHaveLength(1);
-      const loop = await readLoop(runsRoot, prepared.id, 219);
-      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       const answered = await answerDecision({
         runsRoot,
         batchId: prepared.id,
@@ -3130,11 +3142,12 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
+      const loop = await waitForStatus(runsRoot, prepared.id, 222, "needs-owner");
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      const loop = await readLoop(runsRoot, prepared.id, 222);
-      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      expect(holding.calls).toHaveLength(1);
       blocked = true;
       const answered = await answerDecision({
         runsRoot,
@@ -3187,11 +3200,12 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
+      const loop = await waitForStatus(runsRoot, prepared.id, 224, "needs-owner");
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      const loop = await readLoop(runsRoot, prepared.id, 224);
-      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      expect(holding.calls).toHaveLength(1);
       const answered = await answerDecision({
         runsRoot,
         batchId: prepared.id,
@@ -3264,11 +3278,12 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
+      const loop = await waitForStatus(runsRoot, prepared.id, 226, "needs-owner");
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      const loop = await readLoop(runsRoot, prepared.id, 226);
-      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      expect(holding.calls).toHaveLength(1);
       closing = true;
       const answered = await answerDecision({
         runsRoot,
@@ -3321,11 +3336,12 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
+      const loop = await waitForStatus(runsRoot, prepared.id, 228, "needs-owner");
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      const loop = await readLoop(runsRoot, prepared.id, 228);
-      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      expect(holding.calls).toHaveLength(1);
       const answered = await answerDecision({
         runsRoot,
         batchId: prepared.id,
@@ -3405,11 +3421,12 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
+      const loop = await waitForStatus(runsRoot, prepared.id, 230, "needs-owner");
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
       for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
-      const loop = await readLoop(runsRoot, prepared.id, 230);
-      expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
+      expect(holding.calls).toHaveLength(1);
       closing = true;
       const answered = await answerDecision({
         runsRoot,
