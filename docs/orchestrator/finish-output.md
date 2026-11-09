@@ -4,11 +4,12 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 ## Completion in `review-only`
 
-The gate is on the turn, not on a report: a turn that ended in an error satisfies
-it, so the finish can carry no report. The runtime checks that all five
-summary keys are non-empty strings. It refuses a finish that holds any other
+The gate is on the turn, not on a report. A turn that ended in an error satisfies
+it, so the finish can carry no report. The runtime checks that all five required
+summary keys are non-empty strings, and an optional `notes` key is accepted.
+It refuses a finish that holds any other
 key and names each unknown key. The `role finish`
-stdin object allows the five summary keys and an optional boolean
+stdin object allows the six summary keys and an optional boolean
 `unresolvedCompare`. It never compares the summary content with what the
 reviewer returned.
 
@@ -28,8 +29,9 @@ Record what the run did not cover in `notDone` and `open`.
 ## Summary shape
 
 `finish` reads the summary as JSON on stdin and is accepted only from the
-`active` lifecycle. All five keys are required and carry the same keys as the
-orchestrator action contract (`validateAction`):
+`active` lifecycle. The five base keys are required, and an optional `notes`
+key carries reviewer notes. The keys match the orchestrator action contract
+(`validateAction`):
 
 ```bash
 printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...","open":"..."}' \
@@ -37,18 +39,18 @@ printf '%s' '{"changed":"...","verified":"...","deferred":"...","notDone":"...",
 ```
 
 A finish that records an unresolved PR-head compare instead of aborting sets
-`"unresolvedCompare": true` beside the five keys:
+`"unresolvedCompare": true` beside the summary keys:
 
 ```bash
 printf '%s' '{"changed":"...","verified":"not verified: PR head unresolved","deferred":"...","notDone":"PR head unresolved","open":"PR head unresolved","unresolvedCompare":true}' \
   | agent-loop role finish --cwd "<work tree>"
 ```
 
-The value must be a boolean, and the key is not one of the five summary keys:
-`summary` keeps exactly those five. A refused finish keeps the lifecycle,
-`active` or `interrupted`. The stdin object allows only the five
+The value must be a boolean, and the key is not one of the six summary keys:
+`summary` keeps only those keys. A refused finish keeps the lifecycle,
+`active` or `interrupted`. The stdin object allows only the six
 summary keys and `unresolvedCompare`. A finish with any other key is refused and the
-refusal names each unknown key; resend the finish with only the allowed keys.
+refusal names each unknown key. Resend the finish with only the allowed keys.
 
 The envelope then carries
 `"unresolvedCompare": true` and the state file records the same field beside

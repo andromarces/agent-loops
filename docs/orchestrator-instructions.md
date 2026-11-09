@@ -597,7 +597,7 @@ The rule is in [Child dispatch](reference/role.md#interactive-child-dispatch-age
   The gate is on the turn, not on a report, and neither path takes
   `--require-accept` in this mode.
 
-`finish` reads a five-key summary as JSON on stdin and is accepted only from the
+`finish` reads the summary as JSON on stdin, with five required keys and an optional `notes` key, and is accepted only from the
 `active` lifecycle. A pending
 or failing check goes into `notDone` or blocks the finish.
 
@@ -614,13 +614,17 @@ Map the child report fields into the finish summary:
   name the unrun check in `verified` as not verified. Do not dispatch another
   turn to run that check, unless the task states that the check must pass in
   this run.
-- Reviewer `Notes` that no later turn addressed go into `open`.
+- Reviewer `Notes` that no later turn addressed go into `notes`.
 - Do not send an accepted note to the worker automatically. To act on a note,
   dispatch the worker for that change, then obtain another reviewer `accept` on
   the new state before `finish`.
-- `review-only`: `Blockers` and `Notes` go into `open`, and reviewer `Deferred`
-  items go into `deferred`. `deferred` holds out-of-scope items in every mode;
+- `review-only`: `Blockers` go into `open`, `Notes` go into `notes`, and reviewer `Deferred`
+  items go into `deferred`. `deferred` holds out-of-scope items in every mode.
   `open` holds unresolved in-scope findings.
+
+A finish that holds any other key in either object is refused. The refusal names each unknown key. Resend the finish with only the allowed keys.
+
+A refused cleanup of a cache entry that existed before the turn is not a finding. A cache entry that existed before the turn is not a finding either. Do not carry either into `open`. Output under a path that the reviewer chose, such as its temporary directory or the scratch folder, stays turn output.
 
 ## PR declaration
 

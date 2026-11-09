@@ -9,6 +9,7 @@ import { logDebug, logWarn } from "./log.mjs";
 import { readProcessTable } from "./process-ancestry.mjs";
 import { ownerAlive } from "./process-identity.mjs";
 import { rootPins } from "./root-pins.mjs";
+import { recordRunWarning } from "./run-warnings.mjs";
 import {
   TURN_DIR_NAME,
   registerTurnTmpdir,
@@ -112,8 +113,11 @@ async function createTurnTmpdir() {
  * refuses and leaves the directory in place.
  */
 async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
-  const failure = (reason) =>
-    logWarn(`turn temporary directory not removed, delete it by hand: ${dir}: ${reason}`);
+  const failure = (reason) => {
+    const message = `turn temporary directory not removed, delete it by hand: ${dir}: ${reason}`;
+    logWarn(message);
+    recordRunWarning(message);
+  };
   try {
     const result = await execBounded(
       process.execPath,

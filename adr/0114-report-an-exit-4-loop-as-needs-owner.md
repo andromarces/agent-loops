@@ -8,10 +8,11 @@ accepted
 
 This ADR partially supersedes
 [adr/0106-foreground-batch-scheduling.md](0106-foreground-batch-scheduling.md).
-The replaced parts are the exit 4 rule of decision 10 and the exit 4 part of decision 12.
+The replaced parts are the exit 4 rule of decision 10, the exit 4 part of decision 12, and part of decision 6's `closed-by-open-pr` rule.
 
 - Decision 10's sentence "A loop that ended 1, 2, or 4 is `failed`" now applies to exit 1 and exit 2 only.
 - Decision 12's sentence that a loop ending on a nonzero headless exit is `failed` now excludes exit 4.
+- Decision 6's `closed-by-open-pr` rule now ignores an open pull request that the loop itself recorded in a live `resume` answer.
 
 Every other decision, consequence, and acceptance check stays in force.
 
