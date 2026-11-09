@@ -47,6 +47,7 @@ Andro Marces
 ## Links
 
 - [Issue #1740](https://github.com/andromarces/agent-loops/issues/1740)
+- [PR #1743](https://github.com/andromarces/agent-loops/pull/1743)
 - [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md) (decision 3 and one Context sentence superseded)
 - Implementation: `wallClock` and `windowStart` in `src/lib/main-work-tree-watch.mjs`
 - Tests: `tests/lib/main-work-tree-watch.test.mjs`
