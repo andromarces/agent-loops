@@ -1353,15 +1353,15 @@ async function auditWorkTreeBlocker(state) {
   }
   if (typeof state.workTreeRoot !== "string") return "the recorded work tree root is missing";
   if (typeof state.repo !== "string") return "the recorded repository is missing";
+  const identity = await pathIdentity(workTree.path);
+  if (identity === null) return null;
+  if (!identityEqual(identity, workTree)) return "the work tree identity changed";
+
   const canonical = await canonicalPath(workTree.path);
   if (canonical !== workTree.canonicalPath) return "the work tree identity changed";
   const root = await canonicalPath(state.workTreeRoot);
   if (!isInside(root, canonical)) return "the path is outside the audit work tree root";
   if (canonical === (await canonicalPath(state.repo))) return "the main work tree is never removed";
-
-  const identity = await pathIdentity(workTree.path);
-  if (identity === null) return null;
-  if (!identityEqual(identity, workTree)) return "the work tree identity changed";
 
   let entries;
   try {
