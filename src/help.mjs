@@ -92,9 +92,10 @@ Subcommands:
                                 after each --reviewer, and --worker-model or
                                 --worker-effort. A failed audit creates no issue until
                                 batch audit resume succeeds or batch audit approve
-                                accepts the partial results. Exits 0 when the issue set is
-                                created, 1 when the audit paused, 2 for a refused setting,
-                                and 130 on SIGINT.
+                                accepts the partial results. A changed audit checkout
+                                stops the run for the owner and deletes nothing. Exits 0
+                                when the issue set is created, 1 when the audit paused or
+                                needs an owner, 2 for a refused setting, and 130 on SIGINT.
   agent-loop batch audit status Read an audit and write nothing. --audit <id> names one;
                                 with no id it lists the local audits, newest first.
   agent-loop batch audit resume Retry the reviewers and the consolidation that failed, then

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -145,9 +145,9 @@ test("an audit reviewer receives the reviewer prompt and codex defaults to no sa
   expect(claude.sandboxMode).toBeNull();
 });
 
-// Usefulness: a reviewer that changes the audit checkout fails that audit, the checkout is
-// restored before the next reviewer, and its findings never reach consolidation or creation.
-test("a reviewer that changes the checkout fails and does not contaminate the next audit", async () => {
+// Usefulness: a reviewer that changes the audit checkout fails that audit and stops for the
+// owner, leaving the file as found and launching no later reviewer or create (ADR 0019).
+test("a reviewer that changes the checkout stops for the owner and leaves the file", async () => {
   const prepared = await preparedAudit();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const gh = fakeGh();
@@ -157,17 +157,8 @@ test("a reviewer that changes the checkout fails and does not contaminate the ne
         await writeFile(join(request.cwd, "mutation.txt"), "changed\n");
         return fenced({ findings: [{ title: "Contaminated", body: "Body", evidence: "" }] });
       },
-      agy: async (request) => {
-        const status = await git(["status", "--porcelain"], request.cwd);
-        expect(status.stdout).toBe("");
-        return fenced({ findings: [{ title: "Clean", body: "Body", evidence: "" }] });
-      },
+      agy: fenced({ findings: [{ title: "Clean", body: "Body", evidence: "" }] }),
     },
-    consolidations: [
-      fenced({
-        findings: [{ title: "Clean", body: "Body", evidence: "", existingIssue: null }],
-      }),
-    ],
   });
   const { exitCode, summary } = await runAudit({
     prepared,
@@ -177,20 +168,23 @@ test("a reviewer that changes the checkout fails and does not contaminate the ne
   });
 
   expect(exitCode).toBe(1);
-  expect(summary.status).toBe("paused");
-  expect(summary.pauseReason).toBe("audit-failed");
+  expect(summary.status).toBe("needs-owner");
+  expect(summary.pauseReason).toBe("work-tree-changed");
   expect(summary.reviewers[0].status).toBe("failed");
-  expect(summary.reviewers[1].status).toBe("succeeded");
+  expect(summary.reviewers[1].status).toBe("pending");
   expect(summary.issues).toEqual([]);
+  expect(turns.calls.some((call) => call.roleName === "worker")).toBe(false);
+  expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
   expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
   const status = await git(["status", "--porcelain"], prepared.workTree.path);
-  expect(status.stdout).toBe("");
-  await expect(stat(join(prepared.workTree.path, "mutation.txt"))).rejects.toMatchObject({
-    code: "ENOENT",
-  });
+  expect(status.stdout).toContain("mutation.txt");
+  expect(await readFile(join(prepared.workTree.path, "mutation.txt"), "utf8")).toBe("changed\n");
 });
 
-async function pausedAudit(prepared, { reviewerOne = null, reviewerTwo = null } = {}) {
+async function pausedAudit(
+  prepared,
+  { reviewerOne = null, reviewerTwo = null, ...overrides } = {},
+) {
   const state = {
     id: prepared.id,
     repo: prepared.repo,
@@ -212,6 +206,8 @@ async function pausedAudit(prepared, { reviewerOne = null, reviewerTwo = null } 
     pauseReason: "audit-failed",
     reason: "the audit did not succeed for: agy",
     approvedPartial: false,
+    approvedRevision: null,
+    approvedFailed: [],
     approvedAt: null,
     reviewers: [
       {
@@ -247,15 +243,16 @@ async function pausedAudit(prepared, { reviewerOne = null, reviewerTwo = null } 
     pendingCreate: null,
     created: [],
     issues: [],
+    ...overrides,
   };
   await mkdir(auditPaths(join(prepared.workTreeRoot, "runs")).root, { recursive: true });
   await writeAudit(join(prepared.workTreeRoot, "runs"), state);
   return state;
 }
 
-// Usefulness: a resume that finds a moved HEAD restores the frozen revision, discards the saved
-// findings, and reruns the reviewer instead of feeding the old result to creation.
-test("a resume discards saved findings when the checkout moved", async () => {
+// Usefulness: a resume that finds a moved HEAD stops for the owner, leaves the checkout as
+// found, and discards the saved findings so the old result cannot feed creation.
+test("a resume stops for the owner when the checkout moved", async () => {
   const prepared = await preparedAudit();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   await pausedAudit(prepared);
@@ -272,7 +269,26 @@ test("a resume discards saved findings when the checkout moved", async () => {
     ],
     prepared.workTree.path,
   );
+  const moved = (await git(["rev-parse", "HEAD"], prepared.workTree.path)).stdout;
   const gh = fakeGh();
+  const blocked = fakeTurns();
+
+  const first = await runAudit({
+    prepared: { ...prepared, mode: "resume" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: blocked.runTurn },
+  });
+
+  expect(first.exitCode).toBe(1);
+  expect(first.summary.status).toBe("needs-owner");
+  expect(first.summary.pauseReason).toBe("work-tree-changed");
+  expect(first.summary.issues).toEqual([]);
+  expect(blocked.calls).toHaveLength(0);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+  expect((await git(["rev-parse", "HEAD"], prepared.workTree.path)).stdout).toBe(moved);
+
+  await git(["reset", "--hard", prepared.revision], prepared.workTree.path);
   const turns = fakeTurns({
     reviewers: {
       claude: fenced({ findings: [{ title: "Fresh", body: "Body", evidence: "" }] }),
@@ -284,28 +300,49 @@ test("a resume discards saved findings when the checkout moved", async () => {
       }),
     ],
   });
-  const { exitCode, summary } = await runAudit({
+  const second = await runAudit({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
+  expect(second.exitCode).toBe(0);
   expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(2);
-  expect(summary.issues.map((issue) => issue.title)).toEqual(["Fresh"]);
-  const head = await git(["rev-parse", "HEAD"], prepared.workTree.path);
-  expect(head.stdout).toBe(prepared.revision);
+  expect(second.summary.issues.map((issue) => issue.title)).toEqual(["Fresh"]);
 });
 
-// Usefulness: the owner's approval does not feed a saved result from a changed checkout; the
-// reviewer runs again and the failed reviewer stays failed.
+// Usefulness: the owner's approval does not feed a saved result from a changed checkout; drift
+// discards the approval, and a later approval after the owner restores the checkout proceeds.
 test("approve does not feed a saved result from a changed checkout", async () => {
   const prepared = await preparedAudit();
   const runsRoot = join(prepared.workTreeRoot, "runs");
-  await pausedAudit(prepared, { reviewerTwo: new Error("failed") });
+  await pausedAudit(prepared, {
+    reviewerTwo: new Error("failed"),
+    approvedPartial: true,
+    approvedRevision: prepared.revision,
+    approvedFailed: [1],
+  });
   await writeFile(join(prepared.workTree.path, "init.txt"), "dirty\n");
   const gh = fakeGh();
+  const blocked = fakeTurns();
+
+  const first = await runAudit({
+    prepared: { ...prepared, mode: "approve" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: blocked.runTurn },
+  });
+
+  expect(first.exitCode).toBe(1);
+  expect(first.summary.status).toBe("needs-owner");
+  expect(first.summary.approvedPartial).toBe(false);
+  expect(first.summary.issues).toEqual([]);
+  expect(blocked.calls).toHaveLength(0);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+  expect(await readFile(join(prepared.workTree.path, "init.txt"), "utf8")).toBe("dirty\n");
+
+  await git(["reset", "--hard", prepared.revision], prepared.workTree.path);
   const turns = fakeTurns({
     reviewers: {
       claude: fenced({ findings: [{ title: "Fresh approval", body: "Body", evidence: "" }] }),
@@ -316,18 +353,98 @@ test("approve does not feed a saved result from a changed checkout", async () =>
       }),
     ],
   });
-  const { exitCode, summary } = await runAudit({
+  const second = await runAudit({
     prepared: { ...prepared, mode: "approve" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
-  expect(summary.approvedPartial).toBe(true);
-  expect(summary.reviewers[1].status).toBe("failed");
-  expect(summary.issues.map((issue) => issue.title)).toEqual(["Fresh approval"]);
+  expect(second.exitCode).toBe(0);
+  expect(second.summary.approvedPartial).toBe(true);
+  expect(second.summary.issues.map((issue) => issue.title)).toEqual(["Fresh approval"]);
   expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
+});
+
+// Usefulness: setup that changes the audit checkout is a drift, so the run stops for the owner,
+// launches no reviewer, and leaves the setup's file as found (ADR 0109).
+test("setup that changes the checkout stops for the owner and launches no reviewer", async () => {
+  const prepared = await preparedAudit();
+  await mkdir(prepared.workTreeRoot, { recursive: true });
+  const setupScript = join(prepared.workTreeRoot, "setup.cjs");
+  await writeFile(setupScript, "require('node:fs').writeFileSync('init.txt','changed');\n");
+  prepared.setupCmd = `node ${setupScript}`;
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const turns = fakeTurns();
+  const { exitCode, summary } = await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(summary.status).toBe("needs-owner");
+  expect(summary.pauseReason).toBe("work-tree-changed");
+  expect(turns.calls).toHaveLength(0);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+  expect(await readFile(join(prepared.workTree.path, "init.txt"), "utf8")).toBe("changed");
+});
+
+// Usefulness: an approval for another failed set does not authorize creation; the stale approval
+// is discarded and the audit pauses with no issue.
+test("an approval bound to another failed set is discarded", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, {
+    reviewerOne: new Error("failed"),
+    approvedPartial: true,
+    approvedRevision: prepared.revision,
+    approvedFailed: [1],
+  });
+  const gh = fakeGh();
+  const turns = fakeTurns({ reviewers: { claude: new Error("still failed") } });
+  const { exitCode, summary } = await runAudit({
+    prepared: { ...prepared, mode: "resume" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(summary.status).toBe("paused");
+  expect(summary.pauseReason).toBe("audit-failed");
+  expect(summary.approvedPartial).toBe(false);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+  expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
+});
+
+// Usefulness: an approval for another revision does not authorize creation; the stale approval is
+// discarded and the audit pauses with no issue.
+test("an approval bound to another revision is discarded", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, {
+    reviewerTwo: new Error("failed"),
+    approvedPartial: true,
+    approvedRevision: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    approvedFailed: [1],
+  });
+  const gh = fakeGh();
+  const turns = fakeTurns({ reviewers: { agy: new Error("still failed") } });
+  const { exitCode, summary } = await runAudit({
+    prepared: { ...prepared, mode: "resume" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(summary.status).toBe("paused");
+  expect(summary.pauseReason).toBe("audit-failed");
+  expect(summary.approvedPartial).toBe(false);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
 });
 
 // Usefulness: a repeated worker flag with a different value is refused, not silently overwritten.
@@ -611,7 +728,15 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
   const prepared = await preparedAudit();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const gh = fakeGh({
-    issues: [{ number: 5, title: "Already landed", state: "OPEN", url: "https://example/5" }],
+    issues: [
+      {
+        number: 5,
+        title: "Already landed",
+        state: "OPEN",
+        url: "https://example/5",
+        body: "Audit-Finding: id-1",
+      },
+    ],
   });
   const state = {
     id: prepared.id,
@@ -664,7 +789,7 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
       error: null,
       findings: [{ title: "Already landed", body: "Body", evidence: "", existingIssue: null }],
     },
-    pendingCreate: { title: "Already landed" },
+    pendingCreate: { identity: "id-1", title: "Already landed" },
     created: [],
     issues: [],
   };
@@ -682,6 +807,51 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
   expect(exitCode).toBe(0);
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(0);
   expect(summary.issues[0].number).toBe(5);
+});
+
+// Usefulness: an uncertain create is reconciled by its stable body marker, so a reworded re-audit
+// links the created issue instead of creating a duplicate.
+test("a reworded re-audit reconciles a pending creation by its marker", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, {
+    existingIssues: null,
+    consolidation: { status: "pending", error: null, findings: [] },
+    pendingCreate: { identity: "id-2", title: "Old title" },
+  });
+  const gh = fakeGh({
+    issues: [
+      {
+        number: 9,
+        title: "Old title",
+        state: "OPEN",
+        url: "https://example/9",
+        body: "Audit-Finding: id-2",
+      },
+    ],
+  });
+  const turns = fakeTurns({
+    consolidations: [
+      fenced({
+        findings: [{ title: "Reworded finding", body: "Body", evidence: "", existingIssue: 9 }],
+      }),
+    ],
+  });
+  const { exitCode, summary } = await runAudit({
+    prepared: { ...prepared, mode: "resume" },
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(0);
+  expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(0);
+  expect(summary.issues).toHaveLength(1);
+  expect(summary.issues[0]).toMatchObject({
+    number: 9,
+    title: "Reworded finding",
+    existing: true,
+  });
 });
 
 // Usefulness: a status read is a pure read, so it changes no store mtime.

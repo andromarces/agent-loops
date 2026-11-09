@@ -41,6 +41,15 @@ class Pause extends Error {
   }
 }
 
+/** A stop that leaves the audit work tree as found for the owner (ADR 0019, ADR 0109). */
+class NeedsOwner extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.pauseReason = reason;
+    this.needsOwner = true;
+  }
+}
+
 function positiveInt(flag, value) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < 1) {
@@ -421,6 +430,8 @@ function auditSummary(state) {
     pauseReason: state.pauseReason ?? null,
     reason: state.reason ?? null,
     approvedPartial: state.approvedPartial === true,
+    approvedRevision: state.approvedRevision ?? null,
+    approvedFailed: Array.isArray(state.approvedFailed) ? state.approvedFailed : [],
     reviewers: (state.reviewers ?? []).map((reviewer) => ({
       kind: reviewer.kind,
       model: reviewer.model,
@@ -458,6 +469,8 @@ function initialState(prepared) {
     pauseReason: null,
     reason: null,
     approvedPartial: false,
+    approvedRevision: null,
+    approvedFailed: [],
     approvedAt: null,
     reviewers: prepared.reviewers.map((reviewer, index) => ({
       index,
@@ -504,21 +517,18 @@ export async function readAuditCheckout(workTree) {
   return { head: head.stdout, clean: status.stdout === "" };
 }
 
-/** Restores an audit checkout to its frozen revision and returns the new state. */
-export async function restoreAuditCheckout({ workTree, revision }) {
-  await git(["reset", "--hard", revision], workTree);
-  await git(["clean", "-fd"], workTree);
-  return readAuditCheckout(workTree);
-}
-
 function checkoutIsFrozen(checkout, revision) {
   return checkout !== null && checkout.head === revision && checkout.clean === true;
 }
 
-/** Drops every saved audit result when the checkout no longer holds the audited revision. */
+/** Drops every saved audit result and the owner approval when the audit evidence changed. */
 function discardSavedFindings(state) {
   return {
     ...state,
+    approvedPartial: false,
+    approvedRevision: null,
+    approvedFailed: [],
+    approvedAt: null,
     reviewers: state.reviewers.map((reviewer) =>
       reviewer.status === "succeeded" || reviewer.status === "running"
         ? {
@@ -533,6 +543,42 @@ function discardSavedFindings(state) {
     ),
     consolidation: { status: "pending", error: null, findings: [] },
   };
+}
+
+function sameIndexes(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  const sortedLeft = [...left].sort((a, b) => a - b);
+  const sortedRight = [...right].sort((a, b) => a - b);
+  return sortedLeft.every((value, index) => value === sortedRight[index]);
+}
+
+function failedIndexes(state) {
+  return state.reviewers
+    .filter((reviewer) => reviewer.status === "failed")
+    .map((reviewer) => reviewer.index);
+}
+
+/** True when the owner approved this exact failed set on this exact audited revision. */
+function approvalMatches(state) {
+  return (
+    state.approvedPartial === true &&
+    state.approvedRevision === state.revision &&
+    sameIndexes(state.approvedFailed, failedIndexes(state))
+  );
+}
+
+/** Clears an approval whose failed set or revision changed since the owner gave it. */
+function clearStaleApproval(state) {
+  if (state.approvedPartial === true && !approvalMatches(state)) {
+    return {
+      ...state,
+      approvedPartial: false,
+      approvedRevision: null,
+      approvedFailed: [],
+      approvedAt: null,
+    };
+  }
+  return state;
 }
 
 function savedFindingsAreBound(state) {
@@ -688,7 +734,7 @@ async function defaultRunTurn({
   );
 }
 
-async function readIssueList({ gh, repo }) {
+async function readIssueList({ gh, repo, withBody = false }) {
   let reply;
   try {
     reply = await gh(
@@ -700,7 +746,7 @@ async function readIssueList({ gh, repo }) {
         "--limit",
         String(ISSUE_PAGE_LIMIT),
         "--json",
-        "number,title,state,url",
+        withBody ? "number,title,state,url,body" : "number,title,state,url",
       ],
       repo,
     );
@@ -741,9 +787,61 @@ async function readIssueList({ gh, repo }) {
       title: entry.title,
       state: entry.state,
       url: typeof entry.url === "string" ? entry.url : null,
+      ...(withBody ? { body: typeof entry.body === "string" ? entry.body : "" } : {}),
     });
   }
   return issues;
+}
+
+function pendingMarker(identity) {
+  return `Audit-Finding: ${identity}`;
+}
+
+/**
+ * Reconciles one pending create by its stable marker in the issue body. A write that landed is
+ * adopted whatever title a re-audit gives the finding; a write that did not land clears the record.
+ */
+async function reconcilePendingCreate({ state, gh }) {
+  const pending = state.pendingCreate;
+  if (pending === null) return state;
+  const issues = await readIssueList({ gh, repo: state.repo, withBody: true });
+  const marker = pendingMarker(pending.identity);
+  const found = issues.find((issue) => issue.body.includes(marker));
+  if (found === undefined) {
+    return { ...state, pendingCreate: null };
+  }
+  const entry = {
+    identity: pending.identity,
+    title: found.title,
+    number: found.number,
+    url: found.url,
+    createdAt: new Date().toISOString(),
+  };
+  const created = [...(state.created ?? [])];
+  if (!created.some((item) => item.identity === pending.identity)) created.push(entry);
+  const frozen = Array.isArray(state.issues) ? [...state.issues] : [];
+  upsertIssue(frozen, { ...entry, existing: false });
+  const existingIssues = Array.isArray(state.existingIssues)
+    ? [...state.existingIssues]
+    : state.existingIssues;
+  if (
+    Array.isArray(existingIssues) &&
+    !existingIssues.some((issue) => issue.number === found.number)
+  ) {
+    existingIssues.push({
+      number: found.number,
+      title: found.title,
+      state: found.state,
+      url: found.url,
+    });
+  }
+  return {
+    ...state,
+    pendingCreate: null,
+    created,
+    issues: frozen,
+    existingIssues,
+  };
 }
 
 function issueNumberFromUrl(stdout) {
@@ -751,13 +849,24 @@ function issueNumberFromUrl(stdout) {
   return match ? Number(match[1]) : null;
 }
 
-function createdBody({ finding, auditId, revision }) {
+function createdBody({ finding, auditId, revision, identity }) {
   const evidence = finding.evidence === "" ? "" : `\n\nEvidence: ${finding.evidence}`;
-  return `${finding.body}${evidence}\n\nAudit-Run: ${auditId}\nAudit-Revision: ${revision}`;
+  return `${finding.body}${evidence}\n\nAudit-Run: ${auditId}\nAudit-Finding: ${identity}\nAudit-Revision: ${revision}`;
 }
 
 function sameTitle(left, right) {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/** Adds an issue to the frozen set, or updates the entry for the same number or identity. */
+function upsertIssue(issues, entry) {
+  const index = issues.findIndex(
+    (issue) =>
+      issue.number === entry.number ||
+      (entry.identity !== undefined && issue.identity === entry.identity),
+  );
+  if (index === -1) issues.push(entry);
+  else issues[index] = { ...issues[index], ...entry };
 }
 
 async function writeState(runsRoot, state) {
@@ -802,12 +911,14 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       throw usage(`No audit ${prepared.id}.`);
     }
 
-    if (mode === "approve" && state.approvedPartial !== true) {
-      const failed = state.reviewers.some((reviewer) => reviewer.status === "failed");
-      if (failed) {
+    if (mode === "approve") {
+      const failed = failedIndexes(state);
+      if (failed.length > 0) {
         state = {
           ...state,
           approvedPartial: true,
+          approvedRevision: state.revision,
+          approvedFailed: failed.sort((left, right) => left - right),
           approvedAt: new Date().toISOString(),
         };
         await writeState(runsRoot, state);
@@ -831,30 +942,32 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     } else {
       const identity = await pathIdentity(state.workTree.path);
       if (identity === null) {
-        throw new Pause("work-tree-missing", "the recorded audit work tree is missing");
+        throw new NeedsOwner("work-tree-missing", "the recorded audit work tree is missing");
       }
       if (!identityEqual(identity, state.workTree)) {
-        throw new Pause("work-tree-changed", "the recorded audit work tree identity changed");
+        throw new NeedsOwner("work-tree-changed", "the recorded audit work tree identity changed");
       }
     }
 
     const runTurn = deps.runTurn ?? defaultRunTurn;
     const readCheckout = deps.readCheckout ?? readAuditCheckout;
-    const restoreCheckout = deps.restoreCheckout ?? restoreAuditCheckout;
 
     const ensureFrozenCheckout = async () => {
       let checkout = await readCheckout(state.workTree.path);
-      if (!checkoutIsFrozen(checkout, state.revision) || !savedFindingsAreBound(state)) {
-        checkout = await restoreCheckout({
-          workTree: state.workTree.path,
-          revision: state.revision,
-        });
-        if (!checkoutIsFrozen(checkout, state.revision)) {
-          throw new Pause(
-            "work-tree-changed",
-            "the audit checkout no longer holds the frozen revision",
-          );
-        }
+      if (!checkoutIsFrozen(checkout, state.revision)) {
+        state = {
+          ...discardSavedFindings(state),
+          status: "needs-owner",
+          pauseReason: "work-tree-changed",
+          reason: "the audit checkout no longer holds the frozen revision",
+        };
+        await writeState(runsRoot, state);
+        throw new NeedsOwner(
+          "work-tree-changed",
+          "the audit checkout no longer holds the frozen revision",
+        );
+      }
+      if (!savedFindingsAreBound(state)) {
         state = discardSavedFindings(state);
         await writeState(runsRoot, state);
         progress(`audit ${state.id}: discarded saved findings because the checkout changed`);
@@ -881,7 +994,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
 
     for (const reviewer of state.reviewers) {
       if (reviewer.status === "succeeded") continue;
-      if (state.approvedPartial && reviewer.status === "failed") continue;
+      if (approvalMatches(state) && reviewer.status === "failed") continue;
       if (signal?.aborted) throw Object.assign(new Error("interrupted"), { isCanceled: true });
       state = {
         ...state,
@@ -919,7 +1032,10 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
         }
         const after = await readCheckout(state.workTree.path);
         if (!checkoutIsFrozen(after, state.revision)) {
-          throw new Error("the reviewer changed the audited revision or left the work tree dirty");
+          throw new NeedsOwner(
+            "work-tree-changed",
+            "the reviewer changed the audited revision or left the work tree dirty",
+          );
         }
         state = {
           ...state,
@@ -941,16 +1057,6 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
         );
       } catch (err) {
         if (err?.isCanceled || signal?.aborted) throw err;
-        const restored = await restoreCheckout({
-          workTree: state.workTree.path,
-          revision: state.revision,
-        });
-        if (!checkoutIsFrozen(restored, state.revision)) {
-          throw new Pause(
-            "work-tree-changed",
-            "a reviewer changed the audit checkout and it could not be restored",
-          );
-        }
         state = {
           ...state,
           reviewers: state.reviewers.map((entry) =>
@@ -966,6 +1072,9 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
           ),
         };
         await writeState(runsRoot, state);
+        if (err?.needsOwner || err?.name === "MutationError") {
+          throw new NeedsOwner("work-tree-changed", errorText(err));
+        }
         if (err?.pauseReason) throw err;
         progress(`audit ${state.id}: reviewer ${reviewer.kind} failed`);
       }
@@ -973,10 +1082,12 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     }
 
     await ensureFrozenCheckout();
+    state = clearStaleApproval(state);
+    await writeState(runsRoot, state);
 
     const unsuccessful = state.reviewers.filter((reviewer) => reviewer.status !== "succeeded");
     const approvedFailures =
-      state.approvedPartial && unsuccessful.every((reviewer) => reviewer.status === "failed");
+      approvalMatches(state) && unsuccessful.every((reviewer) => reviewer.status === "failed");
     if (unsuccessful.length > 0 && !approvedFailures) {
       const names = unsuccessful.map((reviewer) => reviewer.kind).join(", ");
       state = {
@@ -993,6 +1104,11 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     if (state.existingIssues === null) {
       const issues = await readIssueList({ gh, repo: prepared.repo });
       state = { ...state, existingIssues: issues };
+      await writeState(runsRoot, state);
+    }
+
+    if (state.pendingCreate !== null) {
+      state = await reconcilePendingCreate({ state, gh });
       await writeState(runsRoot, state);
     }
 
@@ -1075,6 +1191,16 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       return { exitCode: 130, summary: auditSummary(interrupted) };
     }
     if (err?.usage) throw err;
+    if (err?.needsOwner) {
+      const owner = {
+        ...discardSavedFindings(state),
+        status: "needs-owner",
+        pauseReason: err.pauseReason ?? "work-tree-changed",
+        reason: errorText(err),
+      };
+      await writeState(runsRoot, owner);
+      return { exitCode: 1, summary: auditSummary(owner) };
+    }
     const paused = {
       ...state,
       status: "paused",
@@ -1094,6 +1220,10 @@ function errorText(err) {
 }
 
 async function createIssues({ state, runsRoot, gh, signal }) {
+  if (state.pendingCreate !== null) {
+    state = await reconcilePendingCreate({ state, gh });
+    await writeState(runsRoot, state);
+  }
   const frozen = state.consolidation.findings;
   const created = [...(state.created ?? [])];
   const issues = Array.isArray(state.issues) ? [...state.issues] : [];
@@ -1107,7 +1237,7 @@ async function createIssues({ state, runsRoot, gh, signal }) {
     const existing =
       named ?? state.existingIssues.find((issue) => sameTitle(issue.title, finding.title));
     if (existing) {
-      issues.push({
+      upsertIssue(issues, {
         title: finding.title,
         number: existing.number,
         url: existing.url,
@@ -1123,34 +1253,15 @@ async function createIssues({ state, runsRoot, gh, signal }) {
 
     const alreadyCreated = created.find((entry) => sameTitle(entry.title, finding.title));
     if (alreadyCreated) {
-      issues.push({ ...alreadyCreated, existing: false });
+      upsertIssue(issues, { ...alreadyCreated, existing: false });
       state = { ...state, issues: [...issues] };
       await writeState(runsRoot, state);
       continue;
     }
 
-    if (state.pendingCreate !== null && sameTitle(state.pendingCreate.title, finding.title)) {
-      const fresh = await readIssueList({ gh, repo: state.repo });
-      const adopted = fresh.find((issue) => sameTitle(issue.title, finding.title));
-      if (adopted) {
-        const entry = {
-          title: finding.title,
-          number: adopted.number,
-          url: adopted.url,
-          createdAt: new Date().toISOString(),
-        };
-        created.push(entry);
-        issues.push({ ...entry, existing: false });
-        state = { ...state, pendingCreate: null, created: [...created], issues: [...issues] };
-        await writeState(runsRoot, state);
-        continue;
-      }
-      state = { ...state, pendingCreate: null };
-      await writeState(runsRoot, state);
-    }
-
     if (signal?.aborted) throw Object.assign(new Error("interrupted"), { isCanceled: true });
-    state = { ...state, pendingCreate: { title: finding.title } };
+    const identity = randomUUID();
+    state = { ...state, pendingCreate: { identity, title: finding.title } };
     await writeState(runsRoot, state);
     let reply;
     try {
@@ -1161,7 +1272,7 @@ async function createIssues({ state, runsRoot, gh, signal }) {
           "--title",
           finding.title,
           "--body",
-          createdBody({ finding, auditId: state.id, revision: state.revision }),
+          createdBody({ finding, auditId: state.id, revision: state.revision, identity }),
         ],
         state.repo,
       );
@@ -1176,13 +1287,14 @@ async function createIssues({ state, runsRoot, gh, signal }) {
       throw new Pause("issue-create-failed", "the created issue returned no number");
     }
     const entry = {
+      identity,
       title: finding.title,
       number,
       url: String(reply.stdout).trim(),
       createdAt: new Date().toISOString(),
     };
     created.push(entry);
-    issues.push({ ...entry, existing: false });
+    upsertIssue(issues, { ...entry, existing: false });
     state = { ...state, pendingCreate: null, created: [...created], issues: [...issues] };
     await writeState(runsRoot, state);
   }

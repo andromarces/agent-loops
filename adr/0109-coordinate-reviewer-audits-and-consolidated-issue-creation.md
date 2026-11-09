@@ -36,7 +36,7 @@ The command family is:
 - `agent-loop batch audit resume --audit <id>` retries the reviewers and the consolidation that failed, then continues creation.
 - `agent-loop batch audit approve --audit <id>` records the owner's approval of the partial results of a failed audit, then consolidates and creates from the audits that succeeded.
 
-`start`, `resume`, and `approve` print progress on stderr and one JSON summary on stdout. There is no daemon, no detached supervisor, and no process that outlives the command on a normal exit. The exit code is 0 when the issue set is created, 1 when the run pauses at a failed audit, a failed consolidation, or an uncertain remote write, 2 for a refused setting or a refusal before any state write, and 130 when SIGINT ends the run.
+`start`, `resume`, and `approve` print progress on stderr and one JSON summary on stdout. There is no daemon, no detached supervisor, and no process that outlives the command on a normal exit. The exit code is 0 when the issue set is created, 1 when the run pauses at a failed audit or consolidation, stops as `needs-owner` at a changed checkout, or meets an uncertain remote write, 2 for a refused setting or a refusal before any state write, and 130 when SIGINT ends the run.
 
 ### 2. The skill resolves the request; the runtime validates it
 
@@ -64,7 +64,7 @@ The default work-tree root is `<repo parent>/<repo name>-audit-<audit id>`, and 
 
 Every reviewer reads that one work tree at that one SHA, whatever `origin/<base>` does later. The audit never writes a branch, a commit, or a tag. The work tree is kept for inspection; this milestone adds no removal rule.
 
-The run may run a supplied `--setup-cmd` once in the work tree before the first reviewer, within `--setup-timeout`, as a batch setup command does. The setup command must leave the checkout clean: a tracked or unignored change pauses the run with reason `work-tree-changed` and starts no reviewer. A failed setup pauses the run with reason `setup-failed`.
+The run may run a supplied `--setup-cmd` once in the work tree before the first reviewer, within `--setup-timeout`, as a batch setup command does. The setup command must leave the checkout clean: a tracked or unignored change stops the run as `needs-owner` with reason `work-tree-changed`, starts no reviewer, and deletes nothing. A failed setup pauses the run with reason `setup-failed`.
 
 ### 4. Every requested reviewer audits independently
 
@@ -72,7 +72,7 @@ Each requested reviewer runs one read-only turn in its own session, in the reque
 
 The reviewer turn is the existing reviewer turn. Its prompt is built by the reviewer prompt builder, so an audit reviewer receives the test-slot rule, the secret-file restriction, the process restriction, the required-check rule, and the sandbox note of ADR 0038 and ADR 0044. The audit instructions are the task under those rules. A Codex reviewer runs with sandbox mode `none` unless the operator passes `--reviewer-sandbox`, so a read-only mode is a choice and not an accidental default.
 
-The runtime binds every saved result to the audited revision. After each reviewer turn it reads the work tree HEAD and `git status --porcelain`. A HEAD other than the recorded revision, or a non-empty status, fails that audit, restores the work tree to the recorded revision, and keeps no findings from the turn. A later reviewer therefore starts on the frozen revision. A resume reads the same evidence before it reuses a saved result; saved findings that do not name the current revision, or that were saved over a changed checkout, are discarded and the reviewer runs again.
+The runtime binds every saved result to the audited revision. After each reviewer turn it reads the work tree HEAD and `git status --porcelain`. A HEAD other than the recorded revision, or a non-empty status, fails that audit and stops the run as `needs-owner` with reason `work-tree-changed`. The runtime restores nothing: it never reverts a change, and it never deletes or overwrites an owner edit or an untracked file (ADR 0019). No later reviewer runs on the changed checkout. A resume reads the same evidence before it reuses a saved result; saved findings that do not name the current revision, or that were saved over a changed checkout, are discarded. The owner restores the checkout and runs `batch audit resume` again.
 
 The audit task asks for a fenced JSON document with this shape:
 
@@ -90,7 +90,7 @@ The consolidation step runs only when every requested reviewer ended `succeeded`
 
 `batch audit resume` retries only the reviewers that did not succeed. It does not rerun a successful reviewer, so the successful audits stay the same. If the retry succeeds, the run continues to consolidation.
 
-`batch audit approve` records the owner's approval of the partial results. It then consolidates only the audits that succeeded and records the failed reviewers and the approval in the summary. An approval never applies to a failed consolidation: a consolidation with no valid result can only be retried. An approval also never revives a saved result that is not bound to the frozen revision: the runtime discards it and pauses rather than feed it to creation. The runtime never prompts for an approval and never treats silence as one.
+`batch audit approve` records the owner's approval of the partial results. It then consolidates only the audits that succeeded and records the failed reviewers and the approval in the summary. An approval is bound to the exact failed reviewer set and the audited revision. A changed failed set, a changed revision, or a checkout drift discards the approval, and a new owner approval is required before any creation. An approval never applies to a failed consolidation: a consolidation with no valid result can only be retried. An approval also never revives a saved result that is not bound to the frozen revision: the runtime discards it and pauses rather than feed it to creation. The runtime never prompts for an approval and never treats silence as one.
 
 ### 6. One consolidation worker merges findings and checks the issue set
 
@@ -120,7 +120,7 @@ For each valid entry the runtime applies these rules in order:
 2. **An exact title match.** A stored open or closed issue whose title equals the finding title, compared case-insensitively and after trimming, covers the finding. The runtime links that issue and creates no duplicate. This check holds even when the worker named no existing issue.
 3. **A new finding.** The runtime creates one issue with `gh issue create --title <title> --body <body>`.
 
-The created body carries the finding body and evidence, the audit id, and the revision SHA, so a retry can match its own earlier write. The runtime writes no label, no comment, and no issue edit. A creation that fails pauses the run with reason `issue-create-failed`; the issues already created stay recorded. Before a retry creates anything, it reads the issue list again and adopts an issue whose exact title matches a recorded pending creation, so a write that succeeded before a crash is not repeated. An adopted issue is recorded once.
+The created body carries the finding body and evidence, the audit id, a stable `Audit-Finding` identity, and the revision SHA. The runtime writes no label, no comment, and no issue edit. A creation that fails pauses the run with reason `issue-create-failed`; the issues already created stay recorded. Before a retry creates anything, it records the stable identity before the write, then reads the issue list with bodies and adopts an issue whose body carries that identity. The identity does not depend on the current finding title, so a reworded re-audit links the same issue instead of creating a duplicate. An adopted issue is recorded once and joins the issue set that the consolidation worker checks.
 
 ### 8. The selected issue set is frozen for the run
 
@@ -136,7 +136,7 @@ One audit lock serializes two commands on the same audit id. A command that cann
 
 ### 10. Failure isolation, interruption, and retry
 
-A failed reviewer, a failed setup, a failed consolidation, or a failed issue read pauses only that audit run. It creates no issue until a retry succeeds or the owner approves the audits that succeeded. A failed issue creation keeps every issue created before it and names the failure.
+A failed reviewer, a failed setup, a failed consolidation, or a failed issue read pauses only that audit run. A changed or drifted checkout stops it as `needs-owner` and leaves every file as found. It creates no issue until a retry succeeds or the owner approves the audits that succeeded. A failed issue creation keeps every issue created before it and names the failure.
 
 The first SIGINT aborts the audit turn, records the audit as `interrupted`, and exits 130. A turn that a signal cancels is not a success. The next `resume` reruns every reviewer that is not `succeeded`, because a read-only reviewer turn is idempotent, and it reuses the stored issue list and the stored successful audits.
 
@@ -188,7 +188,7 @@ Milestone 2 does not provide, and does not depend on:
 - The audit work tree stays on disk for inspection, so each run costs one checkout until the owner removes it.
 - The issue list is read once, so an issue created after that read is outside the dedupe. The exact-title check and the open or closed lookup catch the common case.
 - The frozen set is local. A later run is a deliberate second command, and no state of the first run blocks it.
-- A reviewer that changes the checkout fails that audit, and the runtime restores the frozen revision before the next reviewer. A saved result that does not name the current revision is discarded, so a changed checkout cannot feed issue creation, including through an owner approval.
+- A reviewer that changes the checkout fails that audit and stops the run as `needs-owner`, leaving every file as found. A saved result that does not name the current revision is discarded, and an owner approval is discarded when the failed set, the revision, or the checkout changes, so a changed checkout cannot feed issue creation.
 - The accepted limit: an issue that another process creates with the same title between the read and the create is not distinguished from this run's own pending write. The recorded provenance and the owner's review remain the protection.
 
 ## Alternatives
