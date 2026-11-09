@@ -524,6 +524,7 @@ agent-loop batch audit start --repo <main work tree> \
 agent-loop batch audit status --audit <id>
 agent-loop batch audit resume --audit <id>
 agent-loop batch audit approve --audit <id>
+agent-loop batch audit remove --audit <id>
 ```
 
 `start` requires `--repo` (the main work tree, never a linked one), at least two `--reviewer` entries, and `--worker`. A `--reviewer-model` or `--reviewer-effort` after a `--reviewer` sets that reviewer's value; `--worker-model` and `--worker-effort` set the consolidation worker's values. It accepts `--base`, `--work-tree-root`, `--setup-cmd`, `--setup-timeout`, `--timeout`, and `--reviewer-sandbox`. The sandbox flag is accepted only when every reviewer is `codex`. Every refusal exits 2 before a store, work tree, or child exists.
@@ -544,9 +545,9 @@ The audit store is `<runs root>/batches/audits/<audit id>.json`. It holds the re
 
 Exit codes:
 
-- `0`: the audit created its issue set.
-- `1`: the audit paused at a failed audit, a failed consolidation, a failed read, or a failed creation, or stopped as `needs-owner` at a changed checkout.
+- `0`: the audit created its issue set, or `remove` deleted a finished audit.
+- `1`: the audit paused at a failed audit, a failed consolidation, a failed read, or a failed creation, stopped as `needs-owner` at a changed checkout, or `remove` kept the audit.
 - `2`: a refused setting, or a refusal before any state write.
 - `130`: SIGINT ended the audit.
 
-The audit keeps its work tree for inspection. It removes no work tree, creates no label, comments on no issue, and edits no issue. Removal stays with the owner.
+The audit keeps its work tree and store for inspection until the owner removes them. `agent-loop batch audit remove --audit <id>` removes both only for a finished audit: status `created`, a frozen issue set, and no unreconciled issue write. It removes the work tree first, then the store, and the audit root only when it is empty. A `paused`, `needs-owner`, `interrupted`, or running audit, and an audit whose issue write is unreconciled, keeps both and the summary names the reason. The removal checks the recorded path, root, identity, registration, frozen revision, cleanliness, and work-tree lock, and it follows no link or junction. The audit creates no label, comments on no issue, and edits no issue.

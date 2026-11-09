@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -10,9 +10,11 @@ import {
   prepareAudit,
   readAudit,
   readAuditStatus,
+  removeAudit,
   runAudit,
   writeAudit,
 } from "../../src/batch/audit.mjs";
+import { canonicalPath } from "../../src/lib/canonical-path.mjs";
 import { git, pathIdentity } from "../../src/batch/git.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
@@ -919,6 +921,160 @@ test("findings parse only from a valid fenced document", () => {
     { title: "T", body: "B", evidence: "E", existingIssue: null },
   ]);
   expect(parseFindings(fenced({ findings: [{ title: "", body: "B" }] }))).toBeNull();
+});
+
+async function finishedAudit(overrides = {}) {
+  const base = await mkdtemp(join(tmpdir(), "audit-remove-"));
+  roots.push(base);
+  const repo = await createTempRepo();
+  repos.push(repo);
+  const revision = (await git(["rev-parse", "HEAD"], repo)).stdout;
+  const workTreeRoot = join(base, "root");
+  const workTreePath = join(workTreeRoot, "revision");
+  await mkdir(workTreeRoot, { recursive: true });
+  await git(["worktree", "add", "--detach", workTreePath, revision], repo);
+  const identity = await pathIdentity(workTreePath);
+  const state = {
+    id: "20260101-000000-remove",
+    repo,
+    repoKey: "abc123abc123",
+    createdAt: new Date().toISOString(),
+    base: "main",
+    revision,
+    workTreeRoot,
+    workTree: {
+      path: workTreePath,
+      canonicalPath: await canonicalPath(workTreePath),
+      dev: String(identity.dev),
+      ino: String(identity.ino),
+      revision,
+    },
+    settings: {
+      reviewers: [
+        { kind: "claude", model: null, effort: null },
+        { kind: "agy", model: null, effort: null },
+      ],
+      worker: { kind: "codex", model: null, effort: null },
+      timeout: null,
+      reviewerSandbox: null,
+      setupCmd: null,
+      setupTimeout: 600,
+    },
+    status: "created",
+    pauseReason: null,
+    reason: null,
+    approvedPartial: false,
+    approvedRevision: null,
+    approvedFailed: [],
+    approvedAt: null,
+    reviewers: [
+      {
+        index: 0,
+        kind: "claude",
+        model: null,
+        effort: null,
+        status: "succeeded",
+        error: null,
+        findings: [],
+        auditedRevision: revision,
+        clean: true,
+      },
+      {
+        index: 1,
+        kind: "agy",
+        model: null,
+        effort: null,
+        status: "succeeded",
+        error: null,
+        findings: [],
+        auditedRevision: revision,
+        clean: true,
+      },
+    ],
+    existingIssues: [],
+    consolidation: { status: "succeeded", error: null, findings: [] },
+    pendingCreate: null,
+    created: [],
+    issues: [
+      {
+        title: "Frozen finding",
+        number: 4,
+        url: "https://example/4",
+        existing: false,
+        reviewers: ["claude", "agy"],
+      },
+    ],
+    ...overrides,
+  };
+  const runsRoot = join(base, "runs");
+  await mkdir(auditPaths(runsRoot).root, { recursive: true });
+  await writeAudit(runsRoot, state);
+  return { base, runsRoot, state };
+}
+
+// Usefulness: a finished audit's work tree folder and store are the two artifacts that cost disk
+// after the frozen issue set exists, and both are gone after remove (ADR 0118).
+test("remove deletes the work tree and store of a finished audit", async () => {
+  const { runsRoot, state } = await finishedAudit();
+  const result = await removeAudit({ runsRoot, id: state.id });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.summary.status).toBe("removed");
+  expect(result.summary.removed).toBe(true);
+  expect(await pathIdentity(state.workTree.path)).toBe(null);
+  expect(await readAudit(runsRoot, state.id)).toBe(null);
+  expect(await pathIdentity(state.workTreeRoot)).toBe(null);
+});
+
+// Usefulness: a paused or needs-owner audit can still be resumed or inspected, so remove keeps
+// both the work tree and the store (ADR 0118).
+test("remove keeps a paused or needs-owner audit", async () => {
+  for (const status of ["paused", "needs-owner"]) {
+    const { runsRoot, state } = await finishedAudit({ status });
+    const result = await removeAudit({ runsRoot, id: state.id });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.summary.removed).toBe(false);
+    expect(result.summary.reason).toContain(status);
+    expect(await pathIdentity(state.workTree.path)).not.toBe(null);
+    expect(await readAudit(runsRoot, state.id)).not.toBe(null);
+  }
+});
+
+// Usefulness: the store holds the stable identity that reconciles an uncertain issue write, so
+// remove keeps both artifacts while the write is unreconciled (ADR 0118).
+test("remove keeps an audit with an unreconciled issue write", async () => {
+  const { runsRoot, state } = await finishedAudit({
+    pendingCreate: { identity: "id-9", title: "Unreconciled" },
+  });
+  const result = await removeAudit({ runsRoot, id: state.id });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.summary.removed).toBe(false);
+  expect(result.summary.reason).toContain("unreconciled");
+  expect(await pathIdentity(state.workTree.path)).not.toBe(null);
+  expect(await readAudit(runsRoot, state.id)).not.toBe(null);
+});
+
+// Usefulness: a link inside the work tree that names a directory outside it must survive, so the
+// removal never follows a link or junction (ADR 0106 decision 13, ADR 0118).
+test("remove does not follow a link outside the work tree", async () => {
+  const { base, runsRoot, state } = await finishedAudit();
+  const outside = join(base, "outside");
+  await mkdir(outside, { recursive: true });
+  await writeFile(join(outside, "keep.txt"), "kept\n");
+  await writeFile(join(state.repo, ".git", "info", "exclude"), "linked\n", { flag: "a" });
+  await symlink(
+    outside,
+    join(state.workTree.path, "linked"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  const result = await removeAudit({ runsRoot, id: state.id });
+
+  expect(result.exitCode).toBe(0);
+  expect(await readFile(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
+  expect(await pathIdentity(state.workTree.path)).toBe(null);
 });
 
 // Usefulness: a refusal before the store exists is a usage error, not a partial audit.

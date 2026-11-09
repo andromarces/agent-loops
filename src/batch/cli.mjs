@@ -13,6 +13,7 @@ import {
   prepareAudit,
   readAudit,
   readAuditStatus,
+  removeAudit,
   runAudit,
 } from "./audit.mjs";
 import { runGh } from "../lib/gh-api.mjs";
@@ -36,6 +37,7 @@ Usage:
   agent-loop batch audit status [--audit <id>]
   agent-loop batch audit resume --audit <id>
   agent-loop batch audit approve --audit <id>
+  agent-loop batch audit remove --audit <id>
 
 The batch runs one headless loop per issue in its own work tree, at most --loops at once.
 Settings: --base, --work-tree-root, --task-template, --setup-cmd, --setup-timeout,
@@ -70,6 +72,7 @@ Usage:
   agent-loop batch audit status [--audit <id>]
   agent-loop batch audit resume --audit <id>
   agent-loop batch audit approve --audit <id>
+  agent-loop batch audit remove --audit <id>
 
 Two or more reviewers audit one frozen revision in one read-only work tree. After every
 requested audit succeeds, or after the owner approves the partial results with approve,
@@ -77,8 +80,12 @@ one worker consolidates the findings against the open and closed issues and the 
 creates one issue per finding that no issue covers. A failed audit creates no issue until
 a retry succeeds or the owner approves the partial results. The created issue set is frozen.
 
-Exit codes: 0 the issue set is created, 1 the audit paused, 2 a refused setting or a
-refusal before any state write, 130 SIGINT.
+remove deletes the work tree and store of a finished audit with a frozen issue set. A
+paused, needs-owner, or interrupted audit, and one whose issue write is unreconciled,
+keeps both.
+
+Exit codes: 0 the issue set is created or the audit is removed, 1 the audit paused or
+remove kept it, 2 a refused setting or a refusal before any state write, 130 SIGINT.
 `.trim();
 
 function readIdFlag(argv, name) {
@@ -229,6 +236,24 @@ async function runAuditMain(argv, runsRoot) {
     }
     await refuseRunsRootInGitWorkTree(runsRoot);
     return runAuditCommand({ prepared: preparedFromAudit(state, command), runsRoot });
+  }
+  if (command === "remove") {
+    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    if (help) {
+      console.log(AUDIT_USAGE);
+      return 0;
+    }
+    if (id === null) {
+      throw Object.assign(new Error("Missing required --audit."), { usage: true });
+    }
+    const state = await readAudit(runsRoot, id);
+    if (state === null) {
+      throw Object.assign(new Error(`No audit ${id}.`), { usage: true });
+    }
+    await refuseRunsRootInGitWorkTree(runsRoot);
+    const { exitCode, summary } = await removeAudit({ runsRoot, id });
+    console.log(JSON.stringify(summary, null, 2));
+    return exitCode;
   }
   throw Object.assign(new Error(`Unknown audit command: ${command}`), { usage: true });
 }

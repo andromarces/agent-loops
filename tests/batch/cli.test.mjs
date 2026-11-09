@@ -105,11 +105,21 @@ test("an unknown audit command exits 2", async () => {
   expect(code).toBe(2);
 });
 
+// Usefulness: remove needs one known audit id, so a missing or foreign id is a usage refusal
+// rather than a removal of something else (ADR 0118).
+test("audit remove requires a known audit id", async () => {
+  expect((await runQuiet(["audit", "remove"])).code).toBe(2);
+  const unknown = await runQuiet(["audit", "remove", "--audit", "no-such-audit"]);
+  expect(unknown.code).toBe(2);
+  expect(unknown.err.flat().join("\n")).toContain("No audit no-such-audit");
+});
+
 // Usefulness: audit help prints the command surface and the exit codes.
 test("audit help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["audit", "--help"]);
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch audit start");
+  expect(out).toContain("agent-loop batch audit remove");
   expect(out).toContain("130");
 });
 // Usefulness: decision 8 keeps checkpoints outside any repository, so a runs root inside the

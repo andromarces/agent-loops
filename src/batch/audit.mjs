@@ -2,7 +2,17 @@
 // more read-only reviewer turns on one frozen revision, one consolidation turn after every requested
 // audit succeeds, and one runtime-owned issue write per consolidated finding. No child creates,
 // edits, comments on, or labels an issue.
-import { access, constants, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import {
+  access,
+  constants,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rmdir,
+  stat,
+  unlink,
+} from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { defaultAgents, supportedAgents } from "../agents/index.mjs";
@@ -22,7 +32,15 @@ import {
   refuseWorkTreeRootInGitWorkTree,
   roleOptionRefusalFor,
 } from "./args.mjs";
-import { git, gitOrThrow, identityEqual, pathIdentity } from "./git.mjs";
+import {
+  git,
+  gitOrThrow,
+  identityEqual,
+  isInside,
+  pathIdentity,
+  readRegisteredWorkTrees,
+  removeWorkTree,
+} from "./git.mjs";
 import { progress, runSetup } from "./supervisor.mjs";
 
 const MAX_REVIEWERS = 16;
@@ -1314,4 +1332,134 @@ async function createIssues({ state, runsRoot, gh, signal }) {
   };
   await writeState(runsRoot, state);
   return state;
+}
+
+/** A finished audit is the only removable state: the frozen set exists and no write is open. */
+function removalBlocker(state) {
+  if (state.status !== "created") return `the audit is ${state.status ?? "not finished"}`;
+  if (state.pendingCreate !== null && state.pendingCreate !== undefined) {
+    return "an issue write is unreconciled";
+  }
+  if (!Array.isArray(state.issues)) return "the audit has no frozen issue set";
+  return null;
+}
+
+// The ADR 0106 decision 13 identity, registration, revision, and cleanliness checks, applied to
+// the detached audit work tree. A null return means remove.
+async function auditWorkTreeBlocker(state) {
+  const workTree = state.workTree;
+  if (workTree === null || typeof workTree !== "object" || typeof workTree.path !== "string") {
+    return "the recorded work tree is missing";
+  }
+  if (typeof state.workTreeRoot !== "string") return "the recorded work tree root is missing";
+  if (typeof state.repo !== "string") return "the recorded repository is missing";
+  const canonical = await canonicalPath(workTree.path);
+  if (canonical !== workTree.canonicalPath) return "the work tree identity changed";
+  const root = await canonicalPath(state.workTreeRoot);
+  if (!isInside(root, canonical)) return "the path is outside the audit work tree root";
+  if (canonical === (await canonicalPath(state.repo))) return "the main work tree is never removed";
+
+  const identity = await pathIdentity(workTree.path);
+  if (identity === null) return null;
+  if (!identityEqual(identity, workTree)) return "the work tree identity changed";
+
+  let entries;
+  try {
+    entries = await readRegisteredWorkTrees(state.repo);
+  } catch (err) {
+    return `the work tree list read failed: ${err.message}`;
+  }
+  const own = [];
+  for (const entry of entries) {
+    if ((await canonicalPath(entry.path)) === canonical) own.push(entry);
+  }
+  if (own.length !== 1) return "the path is not the registered audit work tree";
+  if (own[0].locked) return "the work tree is locked by a live run";
+
+  const head = await git(["rev-parse", "HEAD"], workTree.path);
+  if (head.exitCode !== 0 || head.stdout !== state.revision) {
+    return "the recorded revision is not checked out";
+  }
+  const status = await git(["status", "--porcelain"], workTree.path);
+  if (status.exitCode !== 0 || status.stdout !== "") return "the work tree is not clean";
+  return null;
+}
+
+// Removes the audit root only when it is the recorded parent, a real directory, and empty. A link
+// or any remaining entry keeps it, and rmdir never follows a link.
+async function removeEmptyAuditRoot(workTree, workTreeRoot) {
+  if (typeof workTreeRoot !== "string" || typeof workTree?.path !== "string") return;
+  if (dirname(resolve(workTree.path)) !== resolve(workTreeRoot)) return;
+  try {
+    const found = await lstat(workTreeRoot);
+    if (!found.isDirectory() || found.isSymbolicLink()) return;
+    await rmdir(workTreeRoot);
+  } catch {
+    // A remaining entry, a link, or a failed removal keeps the root.
+  }
+}
+
+/**
+ * Removes one finished audit's work tree and store. Only a `created` audit with a frozen issue set
+ * and no unreconciled write is removable; every other state keeps both. The store goes last, so a
+ * failed work-tree removal leaves the record that a retry needs.
+ * @returns {Promise<{ exitCode: number, summary: object }>}
+ */
+export async function removeAudit({ runsRoot, id }) {
+  const paths = auditPaths(runsRoot);
+  const release = await tryStateLock(paths.lock(id), { label: "Audit", noun: "audit" });
+  if (release === null) {
+    return {
+      exitCode: 1,
+      summary: {
+        auditId: id,
+        status: "locked",
+        removed: false,
+        reason: "another command owns the audit",
+      },
+    };
+  }
+
+  try {
+    const state = await readAudit(runsRoot, id);
+    if (state === null) throw usage(`No audit ${id}.`);
+    const keep = (reason) => ({
+      exitCode: 1,
+      summary: {
+        auditId: state.id,
+        status: state.status ?? null,
+        removed: false,
+        reason,
+        workTree: state.workTree?.path ?? null,
+        store: paths.file(state.id),
+      },
+    });
+
+    const blocker = removalBlocker(state) ?? (await auditWorkTreeBlocker(state));
+    if (blocker !== null) return keep(blocker);
+
+    const removal = await removeWorkTree(state.repo, state.workTree.path, {
+      dev: state.workTree.dev,
+      ino: state.workTree.ino,
+    });
+    if (!removal.removed) return keep(removal.reason ?? "the work tree removal failed");
+
+    await removeEmptyAuditRoot(state.workTree, state.workTreeRoot);
+    await unlink(paths.file(state.id)).catch((err) => {
+      if (err?.code !== "ENOENT") throw err;
+    });
+    return {
+      exitCode: 0,
+      summary: {
+        auditId: state.id,
+        status: "removed",
+        removed: true,
+        reason: null,
+        workTree: state.workTree.path,
+        store: paths.file(state.id),
+      },
+    };
+  } finally {
+    await release();
+  }
 }
