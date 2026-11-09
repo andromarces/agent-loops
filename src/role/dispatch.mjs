@@ -27,6 +27,7 @@ import { readSparseCheckout } from "../lib/sparse-checkout.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
 import { DEFAULT_TEST_CMD_TIMEOUT_SECONDS, testCmdInput } from "../lib/test-cmd.mjs";
 import { removeAbandonedTurnTmpdir, recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
+import { readWorkTreePr } from "../lib/work-tree-pr.mjs";
 import { runChild } from "../child-turn.mjs";
 import {
   failedTurnEvidence,
@@ -382,6 +383,20 @@ async function dispatchLocked(
         sparseCheckout,
       ),
     };
+  }
+
+  // A worker envelope carries the open PR of the run branch beside the work tree state. Only a
+  // caller that injects `gh` reads it, and a cancel, a failed read, or no match adds no field.
+  if (
+    roleName === "worker" &&
+    result.status === "ok" &&
+    result.workTree &&
+    typeof gh === "function"
+  ) {
+    const pr = await readWorkTreePr({ cwd: args.cwd, gh, signal });
+    if (pr) {
+      result = { ...result, workTree: { ...result.workTree, pr } };
+    }
   }
 
   if (firstRoleTurn && result.status === "error" && typeof result.refusedModel === "string") {

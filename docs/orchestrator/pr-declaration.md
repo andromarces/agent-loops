@@ -51,7 +51,7 @@ The PR does not exist at init when the task is "address issue N through a PR".
 Declare the PR after the worker opens it:
 
 1. Init the run with no `--pr`, and dispatch the worker.
-2. Read the PR number from the worker report.
+2. Read the PR number from `workTree.pr` of the worker envelope.
 3. Run `agent-loop role declare-pr --cwd <dir> --parent-session <id> --pr <n>`.
    The envelope is `{"status": "ok", "lifecycle": "active", "pr": <n>}`.
 4. From then on, the run is a declared run: every reviewer prompt carries the

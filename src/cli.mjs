@@ -45,6 +45,7 @@ import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runTestSlot } from "./lib/test-slot-cli.mjs";
 import { createTranscriptWriter } from "./lib/transcript.mjs";
 import { withRunWarnings } from "./lib/run-warnings.mjs";
+import { runGh } from "./lib/gh-api.mjs";
 import { printHelp } from "./help.mjs";
 import { runProbeTurn } from "./child-turn.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
@@ -293,7 +294,7 @@ export async function main(
   }
 
   if (argv[0] === "role") {
-    await runRoleMain(argv.slice(1), { agents });
+    await runRoleMain(argv.slice(1), { agents, gh: gh ?? runGh });
     return;
   }
 

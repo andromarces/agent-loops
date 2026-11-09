@@ -492,7 +492,7 @@ export async function executeRoleCommand(args, deps = {}) {
  * usage and exits 0. All lifecycle logging goes to stderr. A stdout write that
  * fails leaves no envelope to print, so it exits non-zero with a stderr message.
  */
-export async function main(argv, { agents = defaultAgents } = {}) {
+export async function main(argv, { agents = defaultAgents, gh } = {}) {
   setLogsToStderr(true);
 
   const controller = new AbortController();
@@ -543,6 +543,7 @@ export async function main(argv, { agents = defaultAgents } = {}) {
     const { exitCode, payload } = await executeRoleCommand(args, {
       agents,
       signal: controller.signal,
+      gh,
     });
 
     await emitEnvelope(payload, exitCode);
