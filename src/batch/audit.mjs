@@ -13,7 +13,7 @@ import { writeFileAtomic } from "../lib/atomic-write.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
-import { withMutationCheck } from "../lib/snapshot.mjs";
+import { isFatalTurnError, withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import { escapeLineSeparators } from "../prompts/escape.mjs";
 import { reviewerPrompt } from "../prompts/reviewer.mjs";
@@ -1072,8 +1072,12 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
           ),
         };
         await writeState(runsRoot, state);
-        if (err?.needsOwner || err?.name === "MutationError") {
+        if (err?.needsOwner) throw err;
+        if (err?.name === "MutationError") {
           throw new NeedsOwner("work-tree-changed", errorText(err));
+        }
+        if (isFatalTurnError(err)) {
+          throw new Pause("snapshot-failed", errorText(err));
         }
         if (err?.pauseReason) throw err;
         progress(`audit ${state.id}: reviewer ${reviewer.kind} failed`);
@@ -1237,11 +1241,12 @@ async function createIssues({ state, runsRoot, gh, signal }) {
     const existing =
       named ?? state.existingIssues.find((issue) => sameTitle(issue.title, finding.title));
     if (existing) {
+      const ownWrite = created.some((entry) => entry.number === existing.number);
       upsertIssue(issues, {
         title: finding.title,
         number: existing.number,
         url: existing.url,
-        existing: true,
+        existing: !ownWrite,
         reviewers: state.reviewers
           .filter((reviewer) => reviewer.status === "succeeded")
           .map((reviewer) => reviewer.kind),

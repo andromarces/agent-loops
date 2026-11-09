@@ -366,6 +366,40 @@ test("approve does not feed a saved result from a changed checkout", async () =>
   expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
 });
 
+// Usefulness: a fatal post-turn snapshot failure stops the audit before the next reviewer, so a
+// possibly changed checkout is never read by another audit or fed to issue creation.
+test("a snapshot failure stops the audit before the next reviewer", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const gh = fakeGh();
+  const turns = fakeTurns({
+    reviewers: {
+      claude: () => {
+        throw Object.assign(new Error("the post-turn snapshot failed"), {
+          name: "SnapshotError",
+        });
+      },
+      agy: fenced({ findings: [{ title: "Later", body: "Body", evidence: "" }] }),
+    },
+  });
+  const { exitCode, summary } = await runAudit({
+    prepared,
+    runsRoot,
+    gh: gh.gh,
+    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+  });
+
+  expect(exitCode).toBe(1);
+  expect(summary.status).toBe("paused");
+  expect(summary.pauseReason).toBe("snapshot-failed");
+  expect(summary.reviewers[0].status).toBe("failed");
+  expect(summary.reviewers[1].status).toBe("pending");
+  expect(summary.issues).toEqual([]);
+  expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
+  expect(turns.calls.some((call) => call.roleName === "worker")).toBe(false);
+  expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+});
+
 // Usefulness: setup that changes the audit checkout is a drift, so the run stops for the owner,
 // launches no reviewer, and leaves the setup's file as found (ADR 0109).
 test("setup that changes the checkout stops for the owner and launches no reviewer", async () => {
@@ -850,7 +884,7 @@ test("a reworded re-audit reconciles a pending creation by its marker", async ()
   expect(summary.issues[0]).toMatchObject({
     number: 9,
     title: "Reworded finding",
-    existing: true,
+    existing: false,
   });
 });
 

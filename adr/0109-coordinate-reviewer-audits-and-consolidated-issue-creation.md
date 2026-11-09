@@ -72,7 +72,7 @@ Each requested reviewer runs one read-only turn in its own session, in the reque
 
 The reviewer turn is the existing reviewer turn. Its prompt is built by the reviewer prompt builder, so an audit reviewer receives the test-slot rule, the secret-file restriction, the process restriction, the required-check rule, and the sandbox note of ADR 0038 and ADR 0044. The audit instructions are the task under those rules. A Codex reviewer runs with sandbox mode `none` unless the operator passes `--reviewer-sandbox`, so a read-only mode is a choice and not an accidental default.
 
-The runtime binds every saved result to the audited revision. After each reviewer turn it reads the work tree HEAD and `git status --porcelain`. A HEAD other than the recorded revision, or a non-empty status, fails that audit and stops the run as `needs-owner` with reason `work-tree-changed`. The runtime restores nothing: it never reverts a change, and it never deletes or overwrites an owner edit or an untracked file (ADR 0019). No later reviewer runs on the changed checkout. A resume reads the same evidence before it reuses a saved result; saved findings that do not name the current revision, or that were saved over a changed checkout, are discarded. The owner restores the checkout and runs `batch audit resume` again.
+The runtime binds every saved result to the audited revision. After each reviewer turn it reads the work tree HEAD and `git status --porcelain`. A HEAD other than the recorded revision, or a non-empty status, fails that audit and stops the run as `needs-owner` with reason `work-tree-changed`. The runtime restores nothing: it never reverts a change, and it never deletes or overwrites an owner edit or an untracked file (ADR 0019). No later reviewer runs on the changed checkout. A fatal turn error, such as a post-turn snapshot failure, stops the run before another reviewer launches. A resume reads the same evidence before it reuses a saved result; saved findings that do not name the current revision, or that were saved over a changed checkout, are discarded. The owner restores the checkout and runs `batch audit resume` again.
 
 The audit task asks for a fenced JSON document with this shape:
 
@@ -108,7 +108,7 @@ The worker merges findings that describe the same defect, drops a finding that i
 
 `existingIssue` is the number of an open or closed issue that already covers the finding, or null when no issue covers it. The worker does not create, edit, comment on, or label an issue. The runtime owns every remote write.
 
-A `gh issue list` that fails, returns an unreadable value, or returns exactly 1000 entries is an incomplete read, which pauses the run with reason `issue-read-incomplete` or `issue-read-failed`. The list is stored once and reused, so a retry does not change the dedupe set. The accepted limit is that an issue created by another process after that read is not seen; the exact-title check in decision 7 is the remaining protection.
+A `gh issue list` that fails, returns an unreadable value, or returns exactly 1000 entries is an incomplete read, which pauses the run with reason `issue-read-incomplete` or `issue-read-failed`. The list is stored once and reused, so a retry does not change the dedupe set. The accepted limit is that an issue created by another process after that read is not seen. The runtime's own uncertain write is reconciled by the stable identity that decision 7 records before the write.
 
 ### 7. The runtime validates the consolidation and creates the issues once
 
@@ -186,10 +186,11 @@ Milestone 2 does not provide, and does not depend on:
 - An owner can audit one revision with several reviewers, get one issue per finding, and never get a duplicate of an open or closed issue.
 - A failed audit, a failed read, or a malformed consolidation creates no issue and leaves a resumable record. The owner chooses a retry or approves the partial audits.
 - The audit work tree stays on disk for inspection, so each run costs one checkout until the owner removes it.
-- The issue list is read once, so an issue created after that read is outside the dedupe. The exact-title check and the open or closed lookup catch the common case.
+- The issue list is read once, so an issue created by another process after that read is outside the dedupe. Within the stored list, the worker's match and the exact-title check link an existing issue; the owner's review remains the protection for a later issue.
 - The frozen set is local. A later run is a deliberate second command, and no state of the first run blocks it.
 - A reviewer that changes the checkout fails that audit and stops the run as `needs-owner`, leaving every file as found. A saved result that does not name the current revision is discarded, and an owner approval is discarded when the failed set, the revision, or the checkout changes, so a changed checkout cannot feed issue creation.
-- The accepted limit: an issue that another process creates with the same title between the read and the create is not distinguished from this run's own pending write. The recorded provenance and the owner's review remain the protection.
+- An issue adopted from a pending write carries the stable identity recorded before the write and is marked as created by this run, not as a pre-existing issue. A reworded re-audit links the same issue.
+- The accepted limit: an issue that another process creates with the same body marker between the read and the create is not distinguished from this run's own pending write. The identity is a random value recorded before the write, so a collision needs a deliberate edit of the issue body, and the recorded provenance and the owner's review remain the protection.
 
 ## Alternatives
 
