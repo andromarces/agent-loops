@@ -167,6 +167,9 @@ const localReadError = (reason, context) =>
 export function readWorkTree(cwd, args, { signal, allowExit = [], ...options } = {}) {
   return gitRead(cwd, args, {
     timeoutMs: WORK_TREE_READ_TIMEOUT_MS,
+    // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
+    // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
+    // of a path.
     stripFinalNewline: false,
     ...options,
     ...(signal === undefined ? {} : { signal }),
