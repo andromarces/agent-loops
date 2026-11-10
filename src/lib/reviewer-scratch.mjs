@@ -46,9 +46,9 @@ export async function removeReviewerScratch(dir) {
   const rev = dirname(dir);
   const parent = dirname(rev);
   for (const component of [parent, rev]) {
-    // `false` marks a read that failed for another reason, which warns below as a link does.
+    // `undefined` marks a read that failed for another reason, which warns below as a link does.
     // `lstatOrNull` never follows the entry, and Node reports a Windows junction as a symbolic link.
-    const entry = await lstatOrNull(component).catch(() => false);
+    const entry = await lstatOrNull(component).catch(() => undefined);
     if (entry?.isDirectory()) continue;
     if (entry === null) return;
     logWarn(
