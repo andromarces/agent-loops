@@ -19,6 +19,10 @@ let dirs = [];
 
 const tempDir = () => trackedTempDir("runstate-test-", dirs);
 
+// One read of this process's stamp serves every case that needs the value, not the source.
+let ownStampPromise;
+const ownStamp = () => (ownStampPromise ??= processStartTime(process.pid));
+
 afterEach(async () => {
   for (const dir of dirs) {
     await removePath(dir);
@@ -467,7 +471,7 @@ const startTimeTest = test.skipIf(!hostHasStartTimeSource);
 // A stamp of another process: the last number of a real stamp (epoch seconds, or
 // clock ticks on Linux) moved by a day, so the kind and the boot id stay the same.
 async function otherProcessStamp() {
-  return (await processStartTime(process.pid)).replace(/\d+$/, (n) => String(Number(n) + 86_400));
+  return (await ownStamp()).replace(/\d+$/, (n) => String(Number(n) + 86_400));
 }
 
 // Usefulness: verifies the issue #498 acceptance: a lock whose pid is alive but
@@ -493,7 +497,7 @@ startTimeTest(
 startTimeTest("withStateLock keeps a lock whose live pid has the same start time", async () => {
   const dir = await tempDir();
   const lockFile = join(dir, "state.lock");
-  const startTime = await processStartTime(process.pid);
+  const startTime = await ownStamp();
   expect(startTime).toMatch(/^(linux-proc|darwin-lstart|win32-creation):/);
   await writeFile(
     lockFile,
@@ -526,7 +530,7 @@ startTimeTest("withStateLock records the owner start time in the lock", async ()
 
   const content = await withStateLock(lockFile, async () => readFile(lockFile, "utf8"));
 
-  expect(JSON.parse(content).startTime).toBe(await processStartTime(process.pid));
+  expect(JSON.parse(content).startTime).toBe(await ownStamp());
 });
 
 // Usefulness: verifies the orphan-claim scan applies the same reuse check, so a
@@ -611,7 +615,7 @@ startTimeTest(
         JSON.stringify({
           pid: process.pid,
           startedAt: "old",
-          startTime: await processStartTime(process.pid),
+          startTime: await ownStamp(),
         }),
         "utf8",
       );
@@ -664,9 +668,7 @@ test.skipIf(process.platform === "linux" || !hostHasStartTimeSource)(
   async () => {
     const dir = await tempDir();
     const lockFile = join(dir, "state.lock");
-    const startTime = (await processStartTime(process.pid)).replace(/\d+$/, (n) =>
-      String(Number(n) + 1),
-    );
+    const startTime = (await ownStamp()).replace(/\d+$/, (n) => String(Number(n) + 1));
     await writeFile(
       lockFile,
       JSON.stringify({ pid: process.pid, startedAt: "old", startTime }),

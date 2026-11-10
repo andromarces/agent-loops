@@ -340,8 +340,14 @@ export async function ownerAlive(owner, cache) {
   if (typeof owner.startTime !== "string") {
     return true;
   }
-  const current = cache
-    ? await cache.probe(owner.pid, owner.startTime)
-    : await processStartTime(owner.pid);
+  // Without a cache, the own stamp is memoized, so a lock of this process needs no query per check.
+  let current;
+  if (owner.pid === process.pid && cache === undefined) {
+    current = (await ownStartTime()) ?? null;
+  } else if (cache) {
+    current = await cache.probe(owner.pid, owner.startTime);
+  } else {
+    current = await processStartTime(owner.pid);
+  }
   return current === null || !startTimesDiffer(owner.startTime, current);
 }

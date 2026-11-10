@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,7 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 import { parseTestSlotArgs, runTestSlot } from "../../src/lib/test-slot-cli.mjs";
+import { holdTestSlot } from "../../src/lib/test-slot.mjs";
 
 const CLI = fileURLToPath(new URL("../../src/cli.mjs", import.meta.url));
 const SLOT_ENV = [
@@ -143,6 +144,14 @@ function runInProcess(ctx, args, env = {}) {
   return runTestSlot(args);
 }
 
+// Holds a slot in this process for a case that asserts the slot decision and runs no command.
+function holdInProcess(ctx, { ifHeld = false, slots = 1, waitSeconds = 10 } = {}, env = {}) {
+  for (const name of SLOT_ENV) delete process.env[name];
+  process.env.AGENT_LOOP_TEST_SLOTS_ROOT = ctx.root;
+  Object.assign(process.env, env);
+  return holdTestSlot({ slots, waitSeconds, ifHeld, signal: new AbortController().signal });
+}
+
 const waitForFile = (path, ms = 10_000) =>
   vi.waitFor(() => expect(existsSync(path), `${path} did not appear`).toBe(true), {
     timeout: ms,
@@ -151,55 +160,42 @@ const waitForFile = (path, ms = 10_000) =>
 
 // Usefulness: acceptance (#847) — with one slot, two concurrent wrappers run their
 // commands one after the other, which is the whole point of the slot.
+// In process: both callers are holdTestSlot, so the serialization starts no command.
 test("with --slots 1, two concurrent wrappers run their commands one after the other", async () => {
-  const ctx = await setup({
-    "serial.mjs":
-      "import { appendFileSync } from 'node:fs';\n" +
-      "appendFileSync('order.log', 's');\n" +
-      "setTimeout(() => appendFileSync('order.log', 'e'), 1000);\n",
-  });
-  const first = runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "60",
-    "--",
-    inProcess(ctx, "serial.mjs"),
-  ]);
-  const second = runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "60",
-    "--",
-    inProcess(ctx, "serial.mjs"),
-  ]);
-  const results = await Promise.all([first, second]);
-  expect(results).toEqual([0, 0]);
-  expect(await readFile(join(ctx.cwd, "order.log"), "utf8")).toBe("sese");
+  const ctx = await setup();
+  const first = await holdInProcess(ctx, { slots: 1 });
+  expect(first).not.toBeNull();
+
+  const logs = [];
+  for (const name of ["log", "error"]) {
+    vi.spyOn(console, name).mockImplementation((line) => logs.push(String(line)));
+  }
+  const waiting = holdInProcess(ctx, { slots: 1 });
+  await vi.waitFor(() => expect(logs.join("\n")).toMatch(/waiting for a test slot/));
+  // The second caller holds no slot while the first holds the only one.
+  expect(existsSync(join(ctx.root, "slot-1.lock"))).toBe(false);
+
+  await first.release();
+  const second = await waiting;
+  expect(second).not.toBeNull();
+  await second.release();
 }, 60_000);
 
 // Usefulness: acceptance (#847) — a slot left by a process that no longer exists is
 // reclaimed, so a crashed wrapper cannot block every later run until the wait bound.
+// In process: the reclaimed slot name and owner are the whole outcome.
 test("a slot left by a dead process is reclaimed", async () => {
-  const ctx = await setup({
-    "mark.mjs": "import { writeFileSync } from 'node:fs';\nwriteFileSync('mark', 'x');\n",
-  });
+  const ctx = await setup();
   await holdSlot(ctx.root, {
     pid: await deadPid(),
     startedAt: new Date().toISOString(),
     nonce: "n",
   });
-  const code = await runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "10",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(code).toBe(0);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  const slot = await holdInProcess(ctx, { slots: 1 });
+  expect(slot).not.toBeNull();
+  expect(JSON.parse(await readFile(join(ctx.root, "slot-0.lock"), "utf8")).pid).toBe(process.pid);
+  await slot.release();
+  expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
 });
 
 // Usefulness: acceptance (#847) — at the wait bound the command does not run and the
@@ -213,7 +209,7 @@ test("at the wait bound the command does not run and the wrapper exits 75", asyn
   const errors = vi.spyOn(console, "error").mockImplementation(() => {});
   const code = await runInProcess(ctx, ["--", inProcess(ctx, "mark.mjs")], {
     AGENT_LOOP_TEST_SLOTS: "1",
-    AGENT_LOOP_TEST_SLOT_WAIT: "1",
+    AGENT_LOOP_TEST_SLOT_WAIT: "0.05",
   });
   expect(code).toBe(75);
   expect(errors.mock.calls.flat().join("\n")).toMatch(/no test slot/i);
@@ -311,29 +307,14 @@ test("an invalid --slots value exits 64 without running the command", async () =
 
 // Usefulness: issue #847 contract — a caller starts only while fewer than its own N slots are
 // held by live owners, so an N=1 caller waits while an N=2 caller holds any slot.
+// In process: the held slot and the returned slot are the whole outcome.
 test("a caller with --slots 1 waits while another caller holds any slot", async () => {
-  const ctx = await setup({ "mark.mjs": MARK });
+  const ctx = await setup();
   await holdSlot(ctx.root, liveOwner(), 1);
-  const one = await runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "1",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(one).toBe(75);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
-  const two = await runInProcess(ctx, [
-    "--slots",
-    "2",
-    "--wait",
-    "5",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(two).toBe(0);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  expect(await holdInProcess(ctx, { slots: 1, waitSeconds: 0.05 })).toBeNull();
+  const two = await holdInProcess(ctx, { slots: 2 });
+  expect(two).not.toBeNull();
+  await two.release();
 }, 30_000);
 
 // Usefulness: issue #847 review — a nested-call marker that names no slot held by a live
@@ -345,17 +326,18 @@ test.each([
     (root) => JSON.stringify({ lock: join(root, "slot-0.lock"), nonce: "gone" }),
   ],
 ])("%s does not bypass the slot", async (_name, marker) => {
-  const ctx = await setup({ "mark.mjs": MARK });
+  const ctx = await setup();
   const dead = { pid: await deadPid(), startedAt: new Date().toISOString(), nonce: "gone" };
   await holdSlot(ctx.root, dead);
   await holdSlot(ctx.root, liveOwner(), 1);
-  const code = await runInProcess(
-    ctx,
-    ["--slots", "1", "--wait", "1", "--", inProcess(ctx, "mark.mjs")],
-    { AGENT_LOOP_TEST_SLOT_HELD: marker(ctx.root) },
-  );
-  expect(code).toBe(75);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  // In process: `holdTestSlot` reads the marker, so the decision needs no command.
+  expect(
+    await holdInProcess(
+      ctx,
+      { slots: 1, waitSeconds: 0.05 },
+      { AGENT_LOOP_TEST_SLOT_HELD: marker(ctx.root) },
+    ),
+  ).toBeNull();
 });
 
 // Usefulness: issue #847 review — when the outer wrapper ends its command tree, the command
@@ -383,6 +365,7 @@ test.skipIf(process.platform === "win32")(
 
 // Usefulness: issue #847 review — a nested wrapper that a signal reaches exits with the
 // documented signal code, not the code of the killed command.
+// Process: the command must run in a child so the signal can end it.
 test("a nested wrapper ended by SIGTERM exits 143", async () => {
   const ctx = await setup({ "hang.mjs": HANG });
   const command = inProcess(ctx, "hang.mjs");
@@ -402,8 +385,8 @@ test("a nested wrapper ended by SIGTERM exits 143", async () => {
 test("a slot won after the wait bound does not run the command", async () => {
   const ctx = await setup({ "mark.mjs": MARK });
   const command = inProcess(ctx, "mark.mjs");
-  slowLock.ms = 1500;
-  expect(await runTestSlot(["--slots", "1", "--wait", "1", "--", command])).toBe(75);
+  slowLock.ms = 120;
+  expect(await runTestSlot(["--slots", "1", "--wait", "0.05", "--", command])).toBe(75);
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
   expect(existsSync(join(ctx.root, "slot-0.lock"))).toBe(false);
 }, 30_000);
@@ -459,32 +442,16 @@ test("an argument vector needs -- and a non-empty executable", () => {
   expect(usageRefusal(() => parseTestSlotArgs(["--", "", "x"], {})).usage).toBe(true);
 });
 
-// Usefulness: maintainer decision (#847) — `--wait 0` is one attempt: the command runs when a
-// slot is free now, and the wrapper exits 75 at once without running it otherwise.
-test("--wait 0 runs on a free slot and exits 75 on a held one", async () => {
-  const ctx = await setup({ "mark.mjs": MARK });
-  const free = await runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(free).toBe(0);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
-  await rm(join(ctx.cwd, "mark"));
+// Usefulness: maintainer decision (#847) — `--wait 0` is one attempt: a free slot is taken now,
+// and a held one gives up at once.
+// In process: the held slot is the whole outcome, so no command process starts.
+test("--wait 0 takes a free slot and gives up on a held one", async () => {
+  const ctx = await setup();
+  const free = await holdInProcess(ctx, { slots: 1, waitSeconds: 0 });
+  expect(free).not.toBeNull();
+  await free.release();
   await holdSlot(ctx.root, liveOwner());
-  const held = await runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(held).toBe(75);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  expect(await holdInProcess(ctx, { slots: 1, waitSeconds: 0 })).toBeNull();
 }, 30_000);
 
 // Usefulness: issue #847 review — a slot file that cannot be read counts as held, so a caller
@@ -546,123 +513,61 @@ test("a failed slot claim and a failed acquisition-lock release are both reporte
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
 }, 30_000);
 
-// A command that writes `started`, then runs until the file `release` exists.
-const GATE = [
-  "import { existsSync, writeFileSync } from 'node:fs';",
-  "writeFileSync('started', 'x');",
-  "const timer = setInterval(() => existsSync('release') && (clearInterval(timer), process.exit(0)), 50);",
-].join(" ");
-
-// Usefulness: issue #921 (option 2) — with `--if-held` and all slots free, the command runs at once
-// and takes no slot: while it runs, a plain wrapper for the only slot still starts at once.
+// Usefulness: issue #921 (option 2) — with `--if-held` and all slots free, the caller runs at once
+// without a slot, so another caller takes it.
+// In process: the returned slot entry is the whole outcome, so no command process starts.
 test("--if-held runs at once while all slots are free and leaves the slot to others", async () => {
-  const ctx = await setup({ "gate.mjs": GATE, "mark.mjs": MARK });
-  const first = runInProcess(ctx, [
-    "--if-held",
-    "--slots",
-    "1",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "gate.mjs"),
-  ]);
-  await waitForFile(join(ctx.cwd, "started"));
-  const other = await runInProcess(ctx, [
-    "--slots",
-    "1",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(other).toBe(0);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
-  await writeFile(join(ctx.cwd, "release"), "x", "utf8");
-  expect(await first).toBe(0);
+  const ctx = await setup();
+  const direct = await holdInProcess(ctx, { ifHeld: true, waitSeconds: 0 });
+  expect(direct).toMatchObject({ nested: false, env: undefined });
+  const other = await holdInProcess(ctx, { slots: 1, waitSeconds: 0 });
+  expect(other).not.toBeNull();
+  await other.release();
 }, 30_000);
 
-// Usefulness: issue #921 (option 2) — with `--if-held`, a held slot makes the command wait as a
-// slot holder, so a targeted run under load is throttled and exits 75 at the wait bound.
-test("--if-held waits while a slot is held and exits 75 at the bound", async () => {
-  const ctx = await setup({ "mark.mjs": MARK });
+// Usefulness: issue #921 (option 2) — a held slot makes `--if-held` wait, so a targeted run under
+// load gives up at the bound.
+test("--if-held waits while a slot is held and gives up at the bound", async () => {
+  const ctx = await setup();
   await holdSlot(ctx.root, liveOwner());
-  const code = await runInProcess(ctx, [
-    "--if-held",
-    "--slots",
-    "1",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(code).toBe(75);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
+  expect(await holdInProcess(ctx, { ifHeld: true, waitSeconds: 0.05 })).toBeNull();
 }, 30_000);
 
 // Usefulness: issue #921 (option 2) — any held slot counts, not only a full table: with one of two
-// slots held, the command runs in the free slot, so a plain wrapper at once finds no slot (exit 75).
+// slots held, the caller takes the free slot, so a plain caller at once finds no slot.
 test("--if-held runs as a slot holder when one of two slots is held", async () => {
-  const ctx = await setup({ "gate.mjs": GATE, "mark.mjs": MARK });
+  const ctx = await setup();
   await holdSlot(ctx.root, liveOwner());
-  const first = runInProcess(ctx, [
-    "--if-held",
-    "--slots",
-    "2",
-    "--wait",
-    "5",
-    "--",
-    inProcess(ctx, "gate.mjs"),
-  ]);
-  await waitForFile(join(ctx.cwd, "started"));
-  const other = await runInProcess(ctx, [
-    "--slots",
-    "2",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(other).toBe(75);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
-  await writeFile(join(ctx.cwd, "release"), "x", "utf8");
-  expect(await first).toBe(0);
+  const held = await holdInProcess(ctx, { ifHeld: true, slots: 2, waitSeconds: 5 });
+  expect(held.env).toBeDefined();
+  expect(held.nested).toBe(false);
+  expect(await holdInProcess(ctx, { slots: 2, waitSeconds: 0 })).toBeNull();
+  await held.release();
 }, 30_000);
 
 // Usefulness: issue #921 (option 2) — a slot left by a dead process is not held, so `--if-held`
 // stays direct and a crashed holder never makes edit loops wait.
 test("--if-held ignores a slot whose owner is gone", async () => {
-  const ctx = await setup({ "mark.mjs": MARK });
+  const ctx = await setup();
   await holdSlot(ctx.root, {
     pid: await deadPid(),
     startedAt: new Date().toISOString(),
     nonce: "dead",
   });
-  const code = await runInProcess(ctx, [
-    "--if-held",
-    "--slots",
-    "1",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(code).toBe(0);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  expect(await holdInProcess(ctx, { ifHeld: true, waitSeconds: 0 })).toMatchObject({
+    nested: false,
+    env: undefined,
+  });
 }, 30_000);
 
 // Usefulness: issue #921 (option 2) — a missing slot directory means no slot is held, so the
 // first targeted run on a host runs directly instead of failing.
 test("--if-held runs directly when the slot directory does not exist", async () => {
-  const ctx = await setup({ "mark.mjs": MARK });
-  const code = await runInProcess(ctx, [
-    "--if-held",
-    "--wait",
-    "0",
-    "--",
-    inProcess(ctx, "mark.mjs"),
-  ]);
-  expect(code).toBe(0);
-  expect(existsSync(join(ctx.cwd, "mark"))).toBe(true);
+  const ctx = await setup();
+  expect(await holdInProcess(ctx, { ifHeld: true, waitSeconds: 0 })).toMatchObject({
+    nested: false,
+    env: undefined,
+  });
 }, 30_000);
 
 // Returns the usage error that `run` throws, so a test checks its flag and message.
