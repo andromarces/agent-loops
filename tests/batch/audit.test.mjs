@@ -38,6 +38,17 @@ function fenced(value) {
   return `Reasoning before the document.\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
 }
 
+/** Runs `parse`, then returns the stderr lines it logged. */
+function warningsFrom(parse) {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    parse();
+    return spy.mock.calls.map((call) => String(call[0]));
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 function fakeGh({ issues = [] } = {}) {
   const calls = [];
   const all = issues.map((issue) => ({ ...issue }));
@@ -1365,9 +1376,9 @@ test("audit arguments require two reviewers and one worker", () => {
   expect(() =>
     parseAuditArgs(["--repo", ".", "--reviewer", "claude", "--reviewer", "agy"]),
   ).toThrow("Missing required --worker.");
-  expect(() => parseAuditArgs([...base, "--reviewer-model", "x"])).toThrow(
-    "Unsupported reviewer model: x",
-  );
+  expect(warningsFrom(() => parseAuditArgs([...base, "--reviewer-model", "x"]))).toEqual([
+    expect.stringContaining("Unknown reviewer model: x"),
+  ]);
   expect(() => parseAuditArgs(["--repo", ".", "--reviewer-model", "x"])).toThrow(
     "--reviewer-model requires a preceding --reviewer.",
   );

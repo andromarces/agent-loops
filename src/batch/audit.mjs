@@ -30,8 +30,8 @@ import { escapeLineSeparators } from "../prompts/escape.mjs";
 import { reviewerPrompt } from "../prompts/reviewer.mjs";
 import {
   canonicalWritePath,
+  logRoleOptionWarnings,
   refuseWorkTreeRootInGitWorkTree,
-  roleOptionRefusalFor,
 } from "./args.mjs";
 import {
   git,
@@ -79,7 +79,8 @@ function positiveInt(flag, value) {
 
 /**
  * Parses `agent-loop batch audit start` arguments. Throws an error with `usage: true` for a missing
- * or invalid value. Performs no filesystem read and writes nothing.
+ * or invalid value. An unknown model or effort logs one warning. Performs no filesystem read and
+ * writes nothing.
  * @param {string[]} argv arguments after `batch audit start`
  */
 export function parseAuditArgs(argv) {
@@ -214,6 +215,7 @@ export function parseAuditArgs(argv) {
     if (seen.has(key)) throw usage(`Duplicate reviewer settings: ${reviewer.kind}.`);
     seen.add(key);
   }
+  const logged = new Set();
   for (const reviewer of options.reviewers) {
     if (!supportedAgents.has(reviewer.kind)) {
       throw usage(`Unsupported reviewer: ${reviewer.kind}`);
@@ -225,13 +227,7 @@ export function parseAuditArgs(argv) {
       reviewer.effort,
     );
     if (openCode) throw usage(openCode);
-    const roleRefusal = roleOptionRefusalFor(
-      "reviewer",
-      reviewer.kind,
-      reviewer.model,
-      reviewer.effort,
-    );
-    if (roleRefusal) throw usage(roleRefusal);
+    logRoleOptionWarnings("reviewer", reviewer.kind, reviewer.model, reviewer.effort, logged);
   }
   if (!supportedAgents.has(options.worker)) {
     throw usage(`Unsupported worker: ${options.worker}`);
@@ -243,13 +239,13 @@ export function parseAuditArgs(argv) {
     options.workerEffort,
   );
   if (workerOpenCode) throw usage(workerOpenCode);
-  const workerRefusal = roleOptionRefusalFor(
+  logRoleOptionWarnings(
     "worker",
     options.worker,
     options.workerModel,
     options.workerEffort,
+    logged,
   );
-  if (workerRefusal) throw usage(workerRefusal);
   if (
     options.reviewerSandbox !== null &&
     !options.reviewers.every((reviewer) => normalizeAgent(reviewer.kind) === "codex")
