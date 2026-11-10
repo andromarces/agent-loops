@@ -340,10 +340,11 @@ export async function ownerAlive(owner, cache) {
   if (typeof owner.startTime !== "string") {
     return true;
   }
-  // Without a cache, the own stamp is memoized, so a lock of this process needs no query per check.
+  // Without a cache, the own stamp is memoized after a good read, so a lock of this process needs
+  // no query per check. A memoized failure still probes, so a recovered source frees the lock.
   let current;
   if (owner.pid === process.pid && cache === undefined) {
-    current = (await ownStartTime()) ?? null;
+    current = (await ownStartTime()) ?? (await processStartTime(process.pid));
   } else if (cache) {
     current = await cache.probe(owner.pid, owner.startTime);
   } else {
