@@ -5,15 +5,28 @@ import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.
+//
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// The converted cases assert no Git result.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
+// Counts the top-level and common-directory reads of one init dispatch.
+const gitReads = vi.hoisted(() => ({ topLevel: 0, commonDir: 0 }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) =>
-      gitDouble.answer
+    execa: (command, args, options) => {
+      if (command === "git") {
+        if (args[0] === "rev-parse" && args[1] === "--show-toplevel") gitReads.topLevel++;
+        if (args[0] === "rev-parse" && args[1] === "--git-common-dir") gitReads.commonDir++;
+      }
+      return gitDouble.answer
         ? gitDouble.answer(command, args, options)
-        : real.execa(command, args, options),
+        : real.execa(command, args, options);
+    },
   };
 });
 
@@ -66,6 +79,8 @@ async function createDotGitDir() {
 
 afterEach(async () => {
   gitDouble.answer = null;
+  gitReads.topLevel = 0;
+  gitReads.commonDir = 0;
   await cleanup();
 });
 
@@ -73,7 +88,7 @@ afterEach(async () => {
 // the same worker session; the adapter receives the persisted session id on
 // the second call.
 test("two consecutive worker dispatches resume the same worker session", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
 
@@ -104,7 +119,7 @@ test("two consecutive worker dispatches resume the same worker session", async (
 // Usefulness: acceptance #1494 on the interactive path. The first worker turn carries the work tree
 // edit rule, so a dispatched worker edits its run work tree and maps a path from another checkout.
 test("the interactive worker preamble limits every edit to the run work tree", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const worker = recordingAdapter([]);
 
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -127,7 +142,7 @@ test("the interactive worker preamble limits every edit to the run work tree", a
 // commit and push hook output. It reports the result in Checks, so a cut pre-push result cannot
 // reach the parent as a missing check.
 test("the interactive worker preamble keeps and reports the hook output", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const worker = recordingAdapter([]);
 
   const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
@@ -150,9 +165,8 @@ test("the interactive worker preamble keeps and reports the hook output", async 
 // directory other than the process cwd, the session entry for --parent-session
 // resolves to that run's state file through the shared helper.
 test("session entry resolves a run dispatched into a different --cwd", async () => {
-  const runsRoot = await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newCleanRunRepo(gitDouble);
+  const runsRoot = process.env.AGENT_LOOP_RUNS_ROOT;
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
     ...basicDeps(),
@@ -171,7 +185,7 @@ test("session entry resolves a run dispatched into a different --cwd", async () 
 // Usefulness: verifies acceptance — a worker dispatch under mode review-only
 // exits non-zero and spawns no CLI.
 test("review-only mode rejects a worker dispatch without spawning a CLI", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
 
   const init = withRepo(
     dispatchArgv(
@@ -315,7 +329,7 @@ test("a later dispatch at the live run's own --cwd is refused and changes no run
 // the null worker of a review-only run is rejected as a change after init
 // instead of throwing on the missing role.
 test("a later --worker against a null review-only worker is rejected", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
 
   const init = withRepo(
     dispatchArgv(
@@ -352,7 +366,7 @@ test("a later --worker against a null review-only worker is rejected", async () 
 // Usefulness: verifies acceptance — a dispatch past the step budget or in any
 // terminal lifecycle exits non-zero and spawns no CLI.
 test("dispatch past the step budget or in a terminal lifecycle is rejected", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
 
   const worker = recordingAdapter([]);
   const agents = { fake1: worker, fake2: recordingAdapter([]) };
@@ -389,7 +403,7 @@ test("dispatch past the step budget or in a terminal lifecycle is rejected", asy
 // refusal charges no step and names the refused model, so the parent can run role set-model and
 // dispatch again inside the same budget.
 test("a first-turn model refusal charges no step and names the refused model", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const agents = { fake1: refusingAdapter("gpt-6.1"), fake2: recordingAdapter([]) };
 
   const refused = await executeRoleCommand(
@@ -420,7 +434,7 @@ test("a first-turn model refusal charges no step and names the refused model", a
 // reviewer role is refunded even though the worker already has a turn, so the role, not the run,
 // decides which turn is first.
 test("a first-turn reviewer model refusal charges no step after a worker turn", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
 
   const refused = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
@@ -445,7 +459,7 @@ test("a first-turn reviewer model refusal charges no step after a worker turn", 
 // Usefulness: verifies acceptance of #1565 — a first-turn failure that is not a model refusal
 // still charges a step, so the refund is narrow.
 test("a first-turn failure without a model refusal charges a step", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const adapter = recordingAdapter([]);
   adapter.run = async () => {
     throw new Error("the provider failed");
@@ -463,7 +477,7 @@ test("a first-turn failure without a model refusal charges a step", async () => 
 // Usefulness: verifies acceptance of #1565 — a model refusal on a later turn charges a step as
 // before, so only the first turn of the role is refunded.
 test("a model refusal on a later turn charges a step", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
 
   const refused = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
@@ -481,7 +495,7 @@ test("a model refusal on a later turn charges a step", async () => {
 // Usefulness: verifies #1565 — a legacy state without `turns` cannot prove a first turn when the
 // role kept a session from an earlier successful turn, so its refusal charges a step.
 test("a legacy state with an earlier role turn charges a refusal", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
 
@@ -503,7 +517,7 @@ test("a legacy state with an earlier role turn charges a refusal", async () => {
 // refusal after a worker dispatch recreates a history that holds only the worker turn. The state
 // has no `turnsComplete` mark, so the refund never applies.
 test("a legacy state with both roles run does not refund a later reviewer refusal", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), basicDeps());
@@ -530,7 +544,7 @@ test("a legacy state with both roles run does not refund a later reviewer refusa
 // the payload, and the reviewer session id is recorded in state. Parser edge
 // cases are unit-tested in tests/lib/report.test.mjs.
 test("reviewer dispatch exposes the parsed verdict in the payload", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
 
   const reviewer = recordingAdapter([]);
   reviewer.run = async (state) => {
@@ -609,7 +623,7 @@ test("reviewer dispatch reports clean: false on an uncommitted work tree", async
 // event per dispatched turn, in the headless event shape, accumulated across
 // calls.
 test("dispatch appends invocation and result events to the transcript", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
   const transcriptPath = join(paths.stateDir, "transcript.jsonl");
 
@@ -640,7 +654,7 @@ test("dispatch appends invocation and result events to the transcript", async ()
 
 // Usefulness: verifies --prompt-file feeds the child prompt instead of stdin.
 test("dispatch reads the prompt from --prompt-file", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const promptFile = join(repo, "prompt.txt");
   await writeFile(promptFile, "work from the file", "utf8");
 
@@ -667,7 +681,7 @@ test("dispatch reads the prompt from --prompt-file", async () => {
 // Usefulness: verifies an empty stdin prompt exits non-zero, charges no step,
 // and spawns no CLI (regression: the empty check only covered --prompt-file).
 test("empty stdin prompt is rejected without charging a step", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
   const before = await readRepoState(repo);
@@ -690,7 +704,7 @@ test("empty stdin prompt is rejected without charging a step", async () => {
 // `interrupted`, exits non-zero, and spawns no child, even with an explicit
 // `--resume-interrupted`; a maintainer can resume on a later call.
 test("resume-interrupted from dispatched marks interrupted first and runs no child", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
 
   await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
@@ -722,9 +736,8 @@ test("resume-interrupted from dispatched marks interrupted first and runs no chi
 
 // Usefulness: verifies an init whose session entry write fails leaves a run that `--resume-interrupted` can still dispatch under `--max-steps 1`, which no other test covers because the other init failures write no state.
 test("init whose session entry write fails keeps the step budget for a resume", async () => {
-  const runsRoot = await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newCleanRunRepo(gitDouble);
+  const runsRoot = process.env.AGENT_LOOP_RUNS_ROOT;
   const paths = statePaths({ cwd: repo });
   // A file where the session entry directory belongs makes the entry write fail after the state write.
   await writeFile(join(runsRoot, "session-runs"), "not a directory", "utf8");
@@ -748,7 +761,7 @@ test("init whose session entry write fails keeps the step budget for a resume", 
 
 // Usefulness: verifies `--resume-interrupted` refuses a claude session that a live process holds, before the step is charged (#671, ADR 0031), which no other test covers.
 test("resume-interrupted refuses a claude session that a live process holds", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
   const heldId = "11111111-2222-4333-8444-555555555555";
   const worker = recordingAdapter([]);
@@ -790,7 +803,7 @@ test("resume-interrupted refuses a claude session that a live process holds", as
 
 // Usefulness: verifies a cancel of the process-table read during `--resume-interrupted` exits 130 with the SIGINT envelope and charges no step (#725, ADR 0031 decision 2), which the refusal test does not cover.
 test("resume-interrupted exits 130 when the process-table read is canceled", async () => {
-  const repo = await newRunRepo();
+  const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
   const worker = recordingAdapter([]);
   const deps = {
@@ -820,6 +833,22 @@ test("resume-interrupted exits 130 when the process-table read is canceled", asy
   expect(result.payload).toEqual({ status: "error", error: "Interrupted by SIGINT" });
   expect(worker.recorded.length).toBe(recordedBefore);
   expect((await readState(paths.stateFile)).stepsUsed).toBe(state.stepsUsed);
+});
+
+// Usefulness: asserts one init dispatch runs 3 top-level reads and 2 common-directory reads, below origin/main's 7 and 5.
+test("one init dispatch holds the work tree identity read counts", async () => {
+  const repo = await newRunRepo();
+  const worker = recordingAdapter([]);
+  gitReads.topLevel = 0;
+  gitReads.commonDir = 0;
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(gitReads).toEqual({ topLevel: 3, commonDir: 2 });
 });
 
 // A `gh` double for the gate's reads of PR 42 whose required check `ci (macos-latest)`

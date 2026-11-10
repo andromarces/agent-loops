@@ -9,7 +9,7 @@ import {
   cleanup,
   dispatchArgv,
   initRun,
-  newRunRepo,
+  newCleanRunRepo,
   readRepoState,
   recordingAdapter,
   repos,
@@ -18,11 +18,39 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 
-afterEach(cleanup);
-afterEach(() => {
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newRunRepo = () => newCleanRunRepo(gitDouble);
+
+/** A second repo under the runs root that the current case already set. */
+async function newSecondRepo() {
+  const repo = await createCleanRepoDir();
+  repos.push(repo);
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+}
+
+afterEach(async () => {
+  gitDouble.answer = null;
   vi.unstubAllEnvs();
+  await cleanup();
 });
 
 /** The marker a worker process of the run in `repo` receives from `exec`. */
@@ -39,8 +67,7 @@ const startRunWith = (repo, maxSteps, agents) =>
 
 /** Starts a run in a second work tree under the runs root that `newRunRepo` made. */
 async function startRunInNewRepo(maxSteps, agents) {
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newSecondRepo();
   await startRunWith(repo, maxSteps, agents);
   return repo;
 }
@@ -159,8 +186,7 @@ test("extend refuses a terminal run and a path with no run state", async () => {
   expect(ended.payload.error).toBe("Run is already aborted.");
   expect((await readRepoState(repo)).maxSteps).toBe(1);
 
-  const other = await createTempRepo();
-  repos.push(other);
+  const other = await newSecondRepo();
   const none = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "9"), other));
   expect(none.exitCode).toBe(1);
   expect(none.payload.error).toContain("No run state");
@@ -188,8 +214,7 @@ test("extend reports a parent session mismatch before a terminal lifecycle", asy
 test("the parent session checks run in the same order for extend, declare-pr, and set-model", async () => {
   const agents = { fake1: recordingAdapter([]), fake2: recordingAdapter([]) };
   const withRun = await startRun(1, agents);
-  const noRun = await createTempRepo();
-  repos.push(noRun);
+  const noRun = await newSecondRepo();
   const operations = [
     ["extend", ["--max-steps", "9"]],
     ["declare-pr", ["--pr", "42"]],

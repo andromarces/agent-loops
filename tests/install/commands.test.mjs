@@ -6,6 +6,7 @@ import { main as cliMain } from "../../src/cli.mjs";
 import { HARNESS_MISMATCH_EXIT, runHarnessCheckCommand } from "../../src/harness-check.mjs";
 import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
 import { restoreAgentLoopHome } from "../env-helpers.mjs";
+import { setVerbose } from "../../src/lib/log.mjs";
 import { makeHome, cleanupHomes } from "./install-helpers.mjs";
 import { createBarrierTest } from "../barrier-helpers.mjs";
 
@@ -111,6 +112,51 @@ test("CLI install rejects --verbose=1", async () => {
   } finally {
     console.log = originalLog;
     console.error = originalError;
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: --verbose names the lock, each target write, and the manifest write on install and uninstall.
+test("CLI install and uninstall --verbose log the lock, target writes, and manifest", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (message) => lines.push(String(message));
+  console.error = () => {};
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness", "claude", "--yes", "--verbose"]);
+    expect(process.exitCode).toBe(0);
+    const installed = lines.join("\n");
+    expect(installed).toContain("debug: taking the install manifest lock");
+    expect(installed).toContain("debug: write settings target");
+    expect(installed).toContain("debug: write file target");
+    expect(installed).toContain("debug: write install manifest");
+
+    lines.length = 0;
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--harness", "claude", "--yes", "--verbose"]);
+    expect(process.exitCode).toBe(0);
+    const removed = lines.join("\n");
+    expect(removed).toContain("debug: taking the install manifest lock");
+    expect(removed).toContain("debug: delete settings target");
+    expect(removed).toContain("debug: delete file target");
+    expect(removed).toContain("debug: remove install manifest");
+
+    lines.length = 0;
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--harness", "claude", "--yes", "--verbose"]);
+    expect(process.exitCode).toBe(0);
+    const absent = lines.join("\n");
+    expect(absent).toContain("debug: taking the install manifest lock");
+    expect(absent).not.toContain("debug: remove install manifest");
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    setVerbose(false);
     restoreAgentLoopHome();
     process.exitCode = 0;
   }

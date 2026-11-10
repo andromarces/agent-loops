@@ -1,10 +1,37 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 import { main } from "../src/cli.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
+
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// The converted cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newDoubleRepo = async () => {
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+};
+
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
@@ -15,7 +42,7 @@ const BASE = ["--orchestrator", "codex", "--worker", "claude", "--reviewer", "ag
 // shared redactor. An environment value that matches part of it never reaches the transcript or
 // stderr.
 test("the fallback error text for an empty thrown value is redacted", async () => {
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   const transcriptPath = join(repo, "transcript.json");
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -143,7 +170,7 @@ test.each([
 // reaches two places as `[redacted:NAME]`. Those places are the stderr report and the transcript
 // error (issue #431, ADR 0017).
 test("a fatal headless error redacts a secret value in the stderr report and the transcript", async () => {
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   const transcriptPath = join(repo, "transcript.json");
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -191,7 +218,7 @@ test.each([
   ["an array message", (secret) => ({ message: [secret] })],
   ["a thrown string", (secret) => secret],
 ])("a headless thrown value with %s is redacted", async (_name, make) => {
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   const transcriptPath = join(repo, "transcript.json");
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -232,7 +259,7 @@ test.each([
 // Usefulness: verifies the headless transcript write warning prints a secret-named environment
 // value in the transcript path or the error as `[redacted:NAME]` (issue #431, ADR 0017).
 test("the headless transcript write warning redacts a secret value", async () => {
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const synthetic = "synthetic-probe-value-8f3a1c";
@@ -256,7 +283,7 @@ test("the headless transcript write warning redacts a secret value", async () =>
 // Usefulness: verifies the headless stderr report and transcript redact a value that holds a quote
 // and a backslash. A thrown object carries the value (issue #431, ADR 0017).
 test("a headless thrown object that holds a value with a quote and a backslash is redacted", async () => {
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   const transcriptPath = join(repo, "transcript.json");
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

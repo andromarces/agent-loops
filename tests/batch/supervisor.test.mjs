@@ -33,6 +33,7 @@ import {
 } from "../../src/batch/supervisor.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
+import { pollUntil, within } from "../wait-helpers.mjs";
 
 const BODY = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", ""].join("\n");
 const SUMMARY = {
@@ -226,6 +227,36 @@ function childDouble({
     };
   };
   return { spawn, calls, pending };
+}
+
+// Waits 10 s for call `index` of `child` and its transcript write on one deadline. A timeout
+// names the launch.
+async function waitForLaunch(child, index = 0) {
+  const deadline = performance.now() + 10_000;
+  const timeout = () => new Error(`child launch ${index} was not ready within 10000 ms.`);
+  let call;
+  try {
+    call = await pollUntil(() => child.calls[index], deadline - performance.now());
+  } catch {
+    throw timeout();
+  }
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw timeout();
+  try {
+    await within(call.written, remaining, `launch ${index}`);
+  } catch {
+    throw timeout();
+  }
+  return call;
+}
+
+// A freed slot can launch the next issue before the finished loop's state is written. Wait for
+// the status, not a later child's call.
+async function waitForStatus(runsRoot, batchId, issue, status) {
+  return pollUntil(async () => {
+    const loop = await readLoop(runsRoot, batchId, issue);
+    return loop?.status === status ? loop : undefined;
+  }, 10_000);
 }
 
 // One immutable repository and bare remote for the file. Each case gets its own work-tree root
@@ -435,12 +466,12 @@ test("the loop limit bounds live children and a freed slot starts the next issue
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child, 1);
     expect(child.calls.length).toBe(2);
     child.pending[0].resolve({ exitCode: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child, 2);
     expect(child.calls.length).toBe(3);
     expect(peak).toBeLessThanOrEqual(2);
     child.pending[1].resolve({ exitCode: 0 });
@@ -465,9 +496,9 @@ test("two batches for one issue produce one launch and one claimed skip", async 
       prepared: first,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     expect(child.calls).toHaveLength(1);
     const childB = childDouble();
     const runB = await runBatch({
@@ -502,7 +533,7 @@ test("a failed loop does not stop or retry another loop", async () => {
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
     });
     expect(exitCode).toBe(1);
     expect(summary.status).toBe("failed");
@@ -537,7 +568,7 @@ test("SIGINT marks unfinished loops interrupted and exits 130", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     expect(child.calls).toHaveLength(1);
     controller.abort();
     const { exitCode, summary } = await run;
@@ -571,7 +602,7 @@ test("a resume with 3 of 10 steps spent passes --max-steps 7 and the same transc
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const first = child.calls[0];
@@ -608,13 +639,14 @@ test("a status read writes nothing and reports a dead owner as stale", async () 
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const file = batchPaths(runsRoot).loop(prepared.id, 1);
@@ -639,7 +671,7 @@ test("the selected set is frozen at start", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(2);
     const manifest = await readManifest(runsRoot, prepared.id);
@@ -661,7 +693,7 @@ test("a closed issue is skipped with its reason and no child", async () => {
       prepared,
       runsRoot,
       gh: fakeGh({ closed: new Set([1]) }),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(0);
     expect(summary.loops[0]).toMatchObject({ status: "skipped", skipReason: "closed" });
@@ -688,7 +720,7 @@ test("a resume with no pending work writes nothing", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     const checkpoint = batchPaths(runsRoot).loop(prepared.id, 1);
     const manifestFile = batchPaths(runsRoot).manifest(prepared.id);
@@ -752,7 +784,7 @@ test("an answered decision resumes the loop after the owner resolves the state",
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     await pushLoop(prepared);
@@ -813,13 +845,14 @@ test("a transcript that exited 0 is not restarted on recovery", async () => {
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;
@@ -902,13 +935,14 @@ test("a transcript that exited 2 is not retried on recovery", async () => {
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;
@@ -1094,7 +1128,7 @@ test("a transcript that exited 4 stops needs-owner on recovery", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;
@@ -1170,7 +1204,7 @@ test("an exit 4 loop keeps its report on recovery", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;
@@ -1219,7 +1253,7 @@ test("two simultaneous resumes launch a loop once", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     await pushLoop(prepared);
@@ -1236,10 +1270,10 @@ test("two simultaneous resumes launch a loop once", async () => {
       gh: fakeGh(),
       deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    expect(resumeChild.calls).toHaveLength(1);
+    await waitForLaunch(resumeChild);
     resumeChild.pending[0]?.resolve({ exitCode: 0 });
     await Promise.all([a, b]);
+    expect(resumeChild.calls).toHaveLength(1);
   } finally {
     await cleanupRepo(repo);
   }
@@ -1252,27 +1286,26 @@ test("a live recorded process with no start stamp is not restarted", async () =>
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const child = childDouble({ hold: true });
   const controller = new AbortController();
-  const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
-  live.catch(() => {});
   try {
     const run = runBatch({
       prepared,
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
       status: "running",
-      pid: live.pid,
+      pid: process.pid,
       startTime: null,
     }));
     const resumeChild = childDouble();
@@ -1288,12 +1321,15 @@ test("a live recorded process with no start stamp is not restarted", async () =>
         signal: resumeController.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await pollUntil(async () => {
+      const loop = await readLoop(runsRoot, prepared.id, 1);
+      return loop?.reason === "unverified-process-identity" ? loop : undefined;
+    }, 10_000);
     resumeController.abort();
     const first = await resumed;
     expect(resumeChild.calls).toHaveLength(0);
     expect(first.summary.loops[0].status).toBe("needs-owner");
-    expect((await readLoop(runsRoot, prepared.id, 1)).pid).toBe(live.pid);
+    expect((await readLoop(runsRoot, prepared.id, 1)).pid).toBe(process.pid);
     const secondChild = childDouble();
     const second = await runBatch({
       prepared: { ...prepared, resume: true },
@@ -1304,7 +1340,6 @@ test("a live recorded process with no start stamp is not restarted", async () =>
     expect(secondChild.calls).toHaveLength(0);
     expect(second.summary.loops[0].status).toBe("needs-owner");
   } finally {
-    live.kill("SIGKILL");
     await cleanupRepo(repo);
   }
 });
@@ -1354,7 +1389,7 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     await pushLoop(prepared);
@@ -1450,9 +1485,7 @@ test("a forced kill ends the child process tree", async () => {
   });
   expect(Number.isInteger(pid)).toBe(true);
   endSubprocessTree(subprocess);
-  for (let attempt = 0; attempt < 20 && pidAlive(pid); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  await pollUntil(() => (pidAlive(pid) ? undefined : true), 10_000);
   expect(pidAlive(pid)).toBe(false);
 });
 
@@ -1468,7 +1501,7 @@ test("a queued checkpoint does not restart a proven transcript", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
@@ -1480,7 +1513,7 @@ test("a queued checkpoint does not restart a proven transcript", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
@@ -1502,13 +1535,14 @@ test("a fatal exit without a gate event is not retried", async () => {
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;
@@ -1527,7 +1561,7 @@ test("a fatal exit without a gate event is not retried", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1" });
@@ -1549,13 +1583,14 @@ test("a pending decision frees its only slot and the next issue launches", async
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
@@ -1570,7 +1605,7 @@ test("a pending decision frees its only slot and the next issue launches", async
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(1);
     expect(resumeChild.calls[0].cwd).toContain("issue-2");
@@ -1596,13 +1631,14 @@ test("a loop owned by another resume is not reported complete", async () => {
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const lockFile = join(runsRoot, "batches", prepared.id, "loops", "issue-1.resume.lock");
@@ -1613,7 +1649,7 @@ test("a loop owned by another resume is not reported complete", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.exitCode).toBe(1);
@@ -1637,9 +1673,9 @@ test("a needs-owner loop owned by another resume reports paused", async () => {
       prepared,
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: child.spawn, installSignal: false, signal: controller.signal },
+      deps: { ...fakeGitDeps, spawn: child.spawn, installSignal: false, signal: controller.signal },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
@@ -1657,7 +1693,7 @@ test("a needs-owner loop owned by another resume reports paused", async () => {
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { spawn: resumeChild.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, spawn: resumeChild.spawn, installSignal: false },
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.exitCode).toBe(1);
@@ -1688,7 +1724,7 @@ test("a queued checkpoint with a replaced work tree stops before launch", async 
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const workTree = join(prepared.workTreeRoot, "issue-1");
@@ -2022,6 +2058,7 @@ test("an abort during a poll wait exits 130", async () => {
   };
   const child = childDouble();
   const controller = new AbortController();
+  let polling = false;
   try {
     const run = runBatch({
       prepared,
@@ -2034,13 +2071,15 @@ test("an abort during a poll wait exits 130", async () => {
         installSignal: false,
         signal: controller.signal,
         pollIntervalMs: 60_000,
-        sleep: (ms, signal) =>
-          new Promise((resolve) => {
+        sleep: (ms, signal) => {
+          polling = true;
+          return new Promise((resolve) => {
             signal?.addEventListener("abort", resolve, { once: true });
-          }),
+          });
+        },
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await pollUntil(() => (polling ? true : undefined), 10_000);
     controller.abort();
     const { exitCode, summary } = await run;
     expect(exitCode).toBe(130);
@@ -2238,7 +2277,7 @@ test("a waiting issue sends a merge-required notification", async () => {
           }),
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await pollUntil(() => events.find((event) => event.kind === "merge-required"), 10_000);
     controller.abort();
     await run;
     const merge = events.filter((event) => event.kind === "merge-required");
@@ -2361,7 +2400,8 @@ test("a pending decision and a merge wait survive a resume", async () => {
           }),
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await waitForStatus(runsRoot, prepared.id, 1, "waiting");
+    await waitForStatus(runsRoot, prepared.id, 2, "succeeded");
     firstController.abort();
     await first;
     expect((await readLoop(runsRoot, prepared.id, 1)).status).toBe("waiting");
@@ -2419,18 +2459,6 @@ describe("batch decisions and waits", () => {
   });
   const runsFor = (prepared) => join(shared.workTreeRoot, `runs-${prepared.id}`);
 
-  // A freed slot can launch the next issue before the finished loop's state is written, so wait
-  // for the status rather than for a later child's call.
-  const waitForStatus = async (runsRoot, batchId, issue, status) => {
-    let loop = null;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      loop = await readLoop(runsRoot, batchId, issue);
-      if (loop?.status === status) break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    return loop;
-  };
-
   async function setNeedsOwner(
     runsRoot,
     prepared,
@@ -2468,49 +2496,43 @@ describe("batch decisions and waits", () => {
   test("a live answer on a resumed loop never launches", async () => {
     const prepared = prep([201]);
     const runsRoot = runsFor(prepared);
-    const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 8000)"]);
-    live.catch(() => {});
-    try {
-      await runBatch({
-        prepared,
-        runsRoot,
-        gh: fakeGh({ closed: new Set([201]) }),
-        deps: {
-          ...fakeGitDeps,
-          notifier: noNotify,
-          spawn: childDouble().spawn,
-          installSignal: false,
-        },
-      });
-      const reason = "a live state";
-      const decision = await makeDecision(runsRoot, prepared, 201, { reason });
-      await setNeedsOwner(runsRoot, prepared, 201, {
-        reason,
-        decision,
-        pid: live.pid,
-      });
-      const answered = await answerDecision({
-        runsRoot,
-        batchId: prepared.id,
-        decisionId: decision,
-        option: "abandon",
-      });
-      expect(answered.ok).toBe(true);
-      const child = childDouble();
-      const resumed = await runBatch({
-        prepared: { ...prepared, resume: true },
-        runsRoot,
-        gh: fakeGh(),
-        deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
-      });
-      expect(child.calls).toHaveLength(0);
-      expect(resumed.summary.status).toBe("waiting");
-      const loop = await readLoop(runsRoot, prepared.id, 201);
-      expect(loop.pid).toBe(live.pid);
-      expect(loop.status).toBe("needs-owner");
-    } finally {
-      live.kill("SIGKILL");
-    }
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([201]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const reason = "a live state";
+    const decision = await makeDecision(runsRoot, prepared, 201, { reason });
+    await setNeedsOwner(runsRoot, prepared, 201, {
+      reason,
+      decision,
+      pid: process.pid,
+    });
+    const answered = await answerDecision({
+      runsRoot,
+      batchId: prepared.id,
+      decisionId: decision,
+      option: "abandon",
+    });
+    expect(answered.ok).toBe(true);
+    const child = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(child.calls).toHaveLength(0);
+    expect(resumed.summary.status).toBe("waiting");
+    const loop = await readLoop(runsRoot, prepared.id, 201);
+    expect(loop.pid).toBe(process.pid);
+    expect(loop.status).toBe("needs-owner");
   });
 
   // Usefulness: an unverified-steps decision lists no resume option that relaunches.
@@ -2624,9 +2646,7 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
-      for (let attempt = 0; attempt < 50 && child.calls.length < 2; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(child, 1);
       expect(child.calls).toHaveLength(2);
       for (const pending of child.pending) pending.resolve({ exitCode: 0 });
       await run;
@@ -2650,9 +2670,7 @@ describe("batch decisions and waits", () => {
       deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     try {
-      for (let attempt = 0; attempt < 50 && child.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await pollUntil(() => child.calls[0], 10_000);
       expect(child.calls).toHaveLength(1);
       expect(child.pending).toHaveLength(1);
       child.pending[0].resolve({ exitCode: 0 });
@@ -2772,9 +2790,7 @@ describe("batch decisions and waits", () => {
       },
     });
     try {
-      for (let attempt = 0; attempt < 100 && child.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(child);
       expect(child.calls).toHaveLength(1);
       const answered = await answerDecision({
         runsRoot,
@@ -2783,7 +2799,6 @@ describe("batch decisions and waits", () => {
         option: "abandon",
       });
       expect(answered.ok).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 300));
       for (const pending of child.pending) pending.resolve({ exitCode: 0 });
       const { exitCode, summary } = await run;
       expect(exitCode).toBe(1);
@@ -2946,7 +2961,7 @@ describe("batch decisions and waits", () => {
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await pollUntil(() => pollOptions ?? undefined, 10_000);
     controller.abort();
     await run;
     expect(pollOptions).not.toBeNull();
@@ -3011,6 +3026,7 @@ describe("batch decisions and waits", () => {
     };
     const reason = { code: "operator-cancel" };
     let seen = null;
+    let polling = false;
     const controller = new AbortController();
     const child = childDouble();
     const run = runBatch({
@@ -3024,8 +3040,9 @@ describe("batch decisions and waits", () => {
         installSignal: false,
         signal: controller.signal,
         pollIntervalMs: 60_000,
-        sleep: (ms, signal) =>
-          new Promise((resolve) => {
+        sleep: (ms, signal) => {
+          polling = true;
+          return new Promise((resolve) => {
             signal?.addEventListener(
               "abort",
               () => {
@@ -3034,10 +3051,11 @@ describe("batch decisions and waits", () => {
               },
               { once: true },
             );
-          }),
+          });
+        },
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await pollUntil(() => (polling ? true : undefined), 10_000);
     controller.abort(reason);
     const { exitCode } = await run;
     expect(exitCode).toBe(130);
@@ -3277,6 +3295,7 @@ describe("batch decisions and waits", () => {
         startTime: null,
       }));
       const child = childDouble({ hold: true });
+      const firstPoll = deferred();
       const run = runBatch({
         prepared: { ...prepared, resume: true },
         runsRoot,
@@ -3287,15 +3306,27 @@ describe("batch decisions and waits", () => {
           spawn: child.spawn,
           installSignal: false,
           pollIntervalMs: 50,
+          sleep: async (ms, signal) => {
+            firstPoll.resolve();
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, ms);
+              signal?.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(timer);
+                  resolve();
+                },
+                { once: true },
+              );
+            });
+          },
         },
       });
       try {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await within(firstPoll.promise, 10_000, "the first poll wait");
         expect(child.calls).toHaveLength(0);
         live.kill("SIGKILL");
-        for (let attempt = 0; attempt < 50 && child.calls.length < 1; attempt += 1) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
+        await waitForLaunch(child);
         expect(child.calls).toHaveLength(1);
         for (const pending of child.pending) pending.resolve({ exitCode: 0 });
         await run;
@@ -3535,9 +3566,7 @@ describe("batch decisions and waits", () => {
       const loop = await waitForStatus(runsRoot, prepared.id, 219, "needs-owner");
       expect(stopped.calls).toHaveLength(1);
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(holding);
       expect(holding.calls).toHaveLength(1);
       const answered = await answerDecision({
         runsRoot,
@@ -3547,9 +3576,7 @@ describe("batch decisions and waits", () => {
       });
       expect(answered.ok).toBe(true);
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
-      for (let attempt = 0; attempt < 200 && continued.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(continued);
       expect(continued.calls).toHaveLength(1);
       const args = continued.calls[0].args;
       const continueIndex = args.indexOf("--continue-from");
@@ -3611,9 +3638,7 @@ describe("batch decisions and waits", () => {
     try {
       const loop = await waitForStatus(runsRoot, prepared.id, 222, "needs-owner");
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(holding);
       expect(holding.calls).toHaveLength(1);
       blocked = true;
       const answered = await answerDecision({
@@ -3624,11 +3649,7 @@ describe("batch decisions and waits", () => {
       });
       expect(answered.ok).toBe(true);
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const current = await readLoop(runsRoot, prepared.id, 222);
-        if (continued.calls.length > 0 || current.status === "waiting") break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForStatus(runsRoot, prepared.id, 222, "waiting");
       expect(continued.calls).toHaveLength(0);
       expect((await readLoop(runsRoot, prepared.id, 222)).status).toBe("waiting");
     } finally {
@@ -3669,9 +3690,7 @@ describe("batch decisions and waits", () => {
     try {
       const loop = await waitForStatus(runsRoot, prepared.id, 224, "needs-owner");
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(holding);
       expect(holding.calls).toHaveLength(1);
       const answered = await answerDecision({
         runsRoot,
@@ -3747,9 +3766,7 @@ describe("batch decisions and waits", () => {
     try {
       const loop = await waitForStatus(runsRoot, prepared.id, 226, "needs-owner");
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(holding);
       expect(holding.calls).toHaveLength(1);
       closing = true;
       const answered = await answerDecision({
@@ -3760,9 +3777,7 @@ describe("batch decisions and waits", () => {
       });
       expect(answered.ok).toBe(true);
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
-      for (let attempt = 0; attempt < 100 && continued.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(continued);
       expect(continued.calls).toHaveLength(1);
       const args = continued.calls[0].args;
       const continueIndex = args.indexOf("--continue-from");
@@ -3805,9 +3820,7 @@ describe("batch decisions and waits", () => {
     try {
       const loop = await waitForStatus(runsRoot, prepared.id, 228, "needs-owner");
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(holding);
       expect(holding.calls).toHaveLength(1);
       const answered = await answerDecision({
         runsRoot,
@@ -3817,11 +3830,7 @@ describe("batch decisions and waits", () => {
       });
       expect(answered.ok).toBe(true);
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const current = await readLoop(runsRoot, prepared.id, 228);
-        if (continued.calls.length > 0 || current.status === "failed") break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForStatus(runsRoot, prepared.id, 228, "failed");
       expect(continued.calls).toHaveLength(0);
       await run;
       expect(await readLoop(runsRoot, prepared.id, 228)).toMatchObject({
@@ -3890,9 +3899,7 @@ describe("batch decisions and waits", () => {
     try {
       const loop = await waitForStatus(runsRoot, prepared.id, 230, "needs-owner");
       expect(loop).toMatchObject({ status: "needs-owner", reason: "pr-head-unresolved" });
-      for (let attempt = 0; attempt < 100 && holding.calls.length < 1; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForLaunch(holding);
       expect(holding.calls).toHaveLength(1);
       closing = true;
       const answered = await answerDecision({
@@ -3903,11 +3910,7 @@ describe("batch decisions and waits", () => {
       });
       expect(answered.ok).toBe(true);
       for (const pending of holding.pending) pending.resolve({ exitCode: 0 });
-      for (let attempt = 0; attempt < 100 && continued.calls.length < 1; attempt += 1) {
-        const current = await readLoop(runsRoot, prepared.id, 230);
-        if (current.status === "skipped") break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      await waitForStatus(runsRoot, prepared.id, 230, "skipped");
       expect(continued.calls).toHaveLength(0);
       expect(await readLoop(runsRoot, prepared.id, 230)).toMatchObject({
         status: "skipped",
@@ -4094,7 +4097,7 @@ test("a recovered transcript reports its finish summary", async () => {
       signal: controller.signal,
     },
   });
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await waitForLaunch(child);
   controller.abort();
   await run;
   const transcript = child.calls[0].transcript;

@@ -118,6 +118,9 @@ export function parseBatchArgs(argv) {
     const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
     const flag = eq === -1 ? raw : raw.slice(0, eq);
     const inline = eq === -1 ? null : raw.slice(eq + 1);
+    if (flag === "--help" || flag === "-h") {
+      return { help: true };
+    }
     const read = (name) => {
       if (inline !== null) {
         if (inline === "") throw usage(`Missing value for ${name}.`);
@@ -218,7 +221,7 @@ export function parseBatchArgs(argv) {
     throw usage("--items-file cannot be combined with --issue.");
   }
   if (options.fromAudit === null && options.issues.length === 0 && options.itemsFile === null) {
-    throw usage("Missing required --issue or --from-audit.");
+    throw usage("Missing required --issue, --from-audit, or --items-file.");
   }
   if (options.itemsFile !== null) {
     let raw;

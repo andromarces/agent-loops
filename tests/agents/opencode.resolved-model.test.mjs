@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { verifyResolvedModels } from "../../src/lib/continuation.mjs";
 import { exec } from "../../src/lib/exec.mjs";
@@ -10,8 +10,35 @@ import { readState, statePaths } from "../../src/lib/runstate.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import { runLoop } from "../../src/runtime.mjs";
 import { scripted } from "../agent-doubles.mjs";
-import { createTempRepo } from "../git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "../git-helpers.mjs";
 import { errorEvent, textEvent, trackDispatchPaths } from "./opencode-helpers.mjs";
+
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// The converted cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newDoubleRepo = async () => {
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+};
+
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -403,7 +430,7 @@ test.each([["export"], ["before"]])(
   async (landing) => {
     const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
     dispatchPaths.push(runsRoot);
-    const repo = await createTempRepo();
+    const repo = await newDoubleRepo();
     dispatchPaths.push(repo);
     process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
     const agents = { opencode: { run: runOpenCode } };
@@ -451,7 +478,7 @@ test.each([["export"], ["before"]])(
 test.each([["export"], ["before"]])(
   "the headless loop ends canceled and starts no further turn when a cancel lands at the %s",
   async (landing) => {
-    const repo = await createTempRepo();
+    const repo = await newDoubleRepo();
     dispatchPaths.push(repo);
     const controller = new AbortController();
     queueCancel(controller, landing);
@@ -544,7 +571,7 @@ test.each(POST_EXIT_STREAMS)(
   async (_name, lines) => {
     const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
     dispatchPaths.push(runsRoot);
-    const repo = await createTempRepo();
+    const repo = await newDoubleRepo();
     dispatchPaths.push(repo);
     process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
     const agents = { opencode: { run: runOpenCode } };
@@ -589,7 +616,7 @@ test.each(POST_EXIT_STREAMS)(
 test.each(POST_EXIT_STREAMS)(
   "the headless loop ends canceled for a late cancel and %s",
   async (_name, lines) => {
-    const repo = await createTempRepo();
+    const repo = await newDoubleRepo();
     dispatchPaths.push(repo);
     const controller = new AbortController();
     queueLateCancel(controller, lines);

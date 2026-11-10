@@ -13,7 +13,7 @@
 import { lstatSync } from "node:fs";
 import { dirname } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
-import { logWarn, logWarnFull } from "../lib/log.mjs";
+import { logDebug, logWarn, logWarnFull } from "../lib/log.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
 import {
   backupPathFor,
@@ -220,7 +220,11 @@ async function planSettingsWrite(target, previous) {
 }
 
 async function applyWrite(plan, { dryRun, dirs, write }) {
-  if (dryRun || !plan.content) {
+  if (!plan.content) {
+    return;
+  }
+  logDebug(`${dryRun ? "would write" : "write"} ${plan.kind} target ${plan.path}`);
+  if (dryRun) {
     return;
   }
   await ensureDir(dirname(plan.path), dirs);
@@ -275,6 +279,7 @@ function keepPriorRecords(records, targets, priorRecords) {
 }
 
 function withManifestLock(home, fn) {
+  logDebug(`taking the install manifest lock at ${manifestLockFile(home)}`);
   return withStateLock(manifestLockFile(home), fn, {
     label: "The install manifest",
     noun: "install manifest",
@@ -481,6 +486,7 @@ async function restoreOrDelete(record, kind, dryRun) {
     if (backup === null) {
       return uninstallReport(record, kind, "skip", "backup missing; left unchanged");
     }
+    logDebug(`${dryRun ? "would restore" : "restore"} ${kind} target ${record.path}`);
     if (!dryRun) {
       await writeTextAtomic(record.path, backup, {
         mode: (await fileMode(backupFile)) ?? undefined,
@@ -489,6 +495,7 @@ async function restoreOrDelete(record, kind, dryRun) {
     }
     return uninstallReport(record, kind, "restore");
   }
+  logDebug(`${dryRun ? "would delete" : "delete"} ${kind} target ${record.path}`);
   if (!dryRun) {
     await removeFileQuiet(record.path);
   }
@@ -519,11 +526,13 @@ async function restoreSettings(record, dryRun) {
   if (!record.existedBefore && Object.keys(settings).length === 0) {
     // Install created this file and the user edited nothing else, so removing
     // the entry empties it. Delete it instead of leaving `{}`.
+    logDebug(`${dryRun ? "would delete" : "delete"} settings target ${record.path}`);
     if (!dryRun) {
       await removeFileQuiet(record.path);
     }
     return uninstallReport(record, "settings", "delete");
   }
+  logDebug(`${dryRun ? "would write" : "write"} settings target ${record.path}`);
   if (!dryRun) {
     await writeTextAtomic(record.path, serializeSettings(settings, current));
   }

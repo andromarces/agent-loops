@@ -138,9 +138,12 @@ export async function sha256File(path, { signal } = {}) {
 
 const gitIn = (cwd, args, bound) => gitRead(cwd, args, { ...bound, allowExit: [0] });
 
-/** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
-export async function workTreeRoot(cwd, bound) {
-  const rootResult = await readTopLevel(cwd, bound);
+/**
+ * The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`.
+ * `fresh` reads the root again, so a root that changed during a turn is seen.
+ */
+export async function workTreeRoot(cwd, { fresh = false, ...bound } = {}) {
+  const rootResult = await readTopLevel(cwd, { ...bound, fresh });
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
   }
@@ -197,7 +200,7 @@ const hashEntries = (root, entries, signal) =>
  */
 export async function snapshot(cwd, bound) {
   // git status/ls-files emit repository-root-relative paths, so run them at the root.
-  const root = await workTreeRoot(cwd, bound);
+  const root = await workTreeRoot(cwd, { ...bound, fresh: true });
 
   const group = new AbortController();
   const signal = bound?.signal ? AbortSignal.any([bound.signal, group.signal]) : group.signal;

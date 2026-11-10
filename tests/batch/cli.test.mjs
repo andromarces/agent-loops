@@ -52,6 +52,29 @@ test("an unknown batch command exits 2", async () => {
   expect(code).toBe(2);
 });
 
+// Usefulness: a start help request prints the usage and exits 0, not an unknown argument refusal.
+test("batch start and audit start --help print usage and exit 0", async () => {
+  for (const argv of [
+    ["start", "--help"],
+    ["audit", "start", "--help"],
+  ]) {
+    const { code, out, err } = await runQuiet(argv);
+    expect(code).toBe(0);
+    expect(out).toContain("agent-loop batch");
+    expect(err).toEqual([]);
+  }
+});
+
+// Usefulness: --help as a value of a value flag keeps the missing-value refusal for both start commands.
+test("batch start and audit start keep --help as a flag value", async () => {
+  const batch = await runQuiet(["start", "--repo", "REPO", "--task-template", "--help"]);
+  expect(batch.code).toBe(2);
+  expect(batch.err.flat().join("\n")).toContain("Missing value for --task-template.");
+  const audit = await runQuiet(["audit", "start", "--focus", "--help"]);
+  expect(audit.code).toBe(2);
+  expect(audit.err.flat().join("\n")).toContain("Missing value for --focus.");
+});
+
 // Usefulness: batch help prints the command surface.
 test("batch help prints the commands and exit codes", async () => {
   const { code, out } = await runQuiet(["--help"]);

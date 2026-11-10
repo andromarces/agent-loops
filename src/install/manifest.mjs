@@ -6,8 +6,15 @@
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { readTextOrNull, removeDirQuiet, removeFileQuiet, writeTextAtomic } from "./fsutil.mjs";
+import {
+  pathExists,
+  readTextOrNull,
+  removeDirQuiet,
+  removeFileQuiet,
+  writeTextAtomic,
+} from "./fsutil.mjs";
 import { isJsonObject } from "../lib/json.mjs";
+import { logDebug } from "../lib/log.mjs";
 
 const MANIFEST_VERSION = 1;
 
@@ -216,6 +223,7 @@ export async function writeManifest(home, manifest) {
   if ((await readTextOrNull(path)) === text) {
     return;
   }
+  logDebug(`write install manifest ${path}`);
   await mkdir(dirname(path), { recursive: true });
   await writeTextAtomic(path, text);
 }
@@ -223,7 +231,11 @@ export async function writeManifest(home, manifest) {
 /** Deletes the manifest and its now-empty directory once no harness is recorded. */
 export async function removeManifest(home) {
   const root = installRoot(home);
-  await removeFileQuiet(manifestPath(home));
+  const path = manifestPath(home);
+  if (await pathExists(path)) {
+    logDebug(`remove install manifest ${path}`);
+  }
+  await removeFileQuiet(path);
   try {
     await removeDirQuiet(root);
   } catch (err) {

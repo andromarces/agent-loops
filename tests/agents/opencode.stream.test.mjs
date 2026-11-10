@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { runOpenCode } from "../../src/agents/opencode.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 import {} from "../../src/lib/log.mjs";
@@ -12,8 +12,35 @@ import {
   parsesOnlyWithBoldLabels,
 } from "../../src/lib/report.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
-import { createTempRepo } from "../git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "../git-helpers.mjs";
 import { textEvent, trackDispatchPaths } from "./opencode-helpers.mjs";
+
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// The converted cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newDoubleRepo = async () => {
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+};
+
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -195,7 +222,7 @@ test("opencode joins a mid-sentence split without a line break", async () => {
 test("an opencode stream split before the closing block reaches the dispatch envelope", async () => {
   const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
   dispatchPaths.push(runsRoot);
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   dispatchPaths.push(repo);
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
 
@@ -245,7 +272,7 @@ test("an opencode stream split before the closing block reaches the dispatch env
 test("an all-bold stream split across unidentified parts fails closed into raw", async () => {
   const runsRoot = await mkdtemp(join(tmpdir(), "opencode-test-runs-"));
   dispatchPaths.push(runsRoot);
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
   dispatchPaths.push(repo);
   process.env.AGENT_LOOP_RUNS_ROOT = runsRoot;
 
