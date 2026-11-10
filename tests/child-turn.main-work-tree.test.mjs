@@ -21,12 +21,8 @@ vi.mock("execa", async (importOriginal) => {
 import { execa } from "execa";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
-import {
-  failedMainWorkTreeChanged,
-  failedMainWorkTreeChangedInTurn,
-  failedMainWorkTreeFastForward,
-  readMainWorkTree,
-} from "../src/lib/main-work-tree-change.mjs";
+import { readMainWorkTree } from "../src/lib/main-work-tree-change.mjs";
+import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";
@@ -250,7 +246,7 @@ test("a canceled worker turn carries the main work tree change", async () => {
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedMainWorkTreeChanged(error)).toEqual(["init.txt"]);
+  expect(failedTurnEvidence(error).mainWorkTreeChanged).toEqual(["init.txt"]);
 });
 
 // Usefulness: verifies requirement "a commit of a tracked main work tree file is reported"
@@ -373,7 +369,9 @@ test("a canceled worker turn carries the clean fast-forward", async () => {
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedMainWorkTreeFastForward(error)).toMatchObject({ before: expect.any(String) });
+  expect(failedTurnEvidence(error).mainWorkTreeFastForward).toMatchObject({
+    before: expect.any(String),
+  });
 });
 
 // Usefulness: verifies requirement "a failed worker turn carries the main work tree change"
@@ -715,5 +713,5 @@ test("a canceled worker turn carries the in-turn main work tree change", async (
   release();
   const error = await run;
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedMainWorkTreeChangedInTurn(error)).toEqual(["init.txt"]);
+  expect(failedTurnEvidence(error).mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
 });

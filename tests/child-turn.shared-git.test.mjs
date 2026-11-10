@@ -16,7 +16,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
-import { failedSharedGitChanged } from "../src/lib/shared-git.mjs";
+import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createLinkedWorkTree, createTempRepo } from "./git-helpers.mjs";
@@ -131,7 +131,7 @@ test("a canceled worker turn carries the shared Git change", async () => {
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedSharedGitChanged(error)).toEqual(["remote.origin"]);
+  expect(failedTurnEvidence(error).sharedGitChanged).toEqual(["remote.origin"]);
 });
 
 // Usefulness: verifies the same when the turn signal is already aborted. The shared Git compare must
@@ -144,7 +144,7 @@ test("a worker turn that fails after a cancel still carries the shared Git chang
     throw new Error("adapter failed");
   }, controller.signal).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedSharedGitChanged(error)).toEqual(["remote.origin"]);
+  expect(failedTurnEvidence(error).sharedGitChanged).toEqual(["remote.origin"]);
 });
 
 // Usefulness: verifies a fatal error that cannot take a property still carries the field.
@@ -155,7 +155,7 @@ test("a frozen fatal error still carries the shared Git change", async () => {
     throw fatal;
   }).catch((err) => err);
   expect(error).toBe(fatal);
-  expect(failedSharedGitChanged(error)).toEqual(["remote.origin"]);
+  expect(failedTurnEvidence(error).sharedGitChanged).toEqual(["remote.origin"]);
 });
 
 // Usefulness: verifies a canceled turn that changed no shared Git state carries no field.
@@ -164,7 +164,7 @@ test("a canceled worker turn that changed no shared Git state carries no field",
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedSharedGitChanged(error)).toBeUndefined();
+  expect(failedTurnEvidence(error).sharedGitChanged).toBeUndefined();
 });
 
 // Usefulness: verifies requirement "a canceled worker turn ends within the bound when the shared Git
@@ -183,5 +183,5 @@ test("a canceled worker turn ends at the bound when the shared Git read stalls",
   ).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
   expect(Date.now() - started).toBeLessThan(5_000);
-  expect(failedSharedGitChanged(error)).toBeUndefined();
+  expect(failedTurnEvidence(error).sharedGitChanged).toBeUndefined();
 });

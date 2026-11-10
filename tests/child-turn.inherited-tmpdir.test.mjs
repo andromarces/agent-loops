@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import { failedInheritedTmpdirEntries } from "../src/lib/tmpdir-entries.mjs";
+import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
@@ -112,7 +112,7 @@ test("a reviewer mutation error carries the entries that appeared", async () => 
     return "done";
   }).catch((err) => err);
   expect(error).toBeInstanceOf(MutationError);
-  expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+  expect(failedTurnEvidence(error).inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
 });
 
 // Usefulness: verifies the same for a cancel, which ends the turn by a different throw.
@@ -122,7 +122,7 @@ test("a canceled reviewer turn carries the entries that appeared", async () => {
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+  expect(failedTurnEvidence(error).inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
 });
 
 // Usefulness: verifies a fatal error that cannot take a property still carries the entries, as a
@@ -134,5 +134,5 @@ test("a frozen fatal error still carries the entries", async () => {
     throw fatal;
   }).catch((err) => err);
   expect(error).toBe(fatal);
-  expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+  expect(failedTurnEvidence(error).inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
 });

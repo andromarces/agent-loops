@@ -1,5 +1,5 @@
 import { errorLine } from "./error-message.mjs";
-import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { reportedEntryNames } from "./entry-report.mjs";
 import { gitRead, stripLf } from "./git-read.mjs";
 import { logWarn } from "./log.mjs";
 import { snapshot } from "./snapshot.mjs";
@@ -205,38 +205,3 @@ export function diffMainWorkTreeInTurn(before, after, candidates, { exclude = []
   }
   return reportedEntryNames(restored);
 }
-
-const carrier = entryCarrier("mainWorkTreeChanged");
-
-/**
- * Carries the paths on a fatal error as `err.mainWorkTreeChanged`. A frozen error or a throwing
- * setter keeps the original error, and the paths stay readable through `failedMainWorkTreeChanged`.
- */
-export const carryMainWorkTreeChanged = carrier.carry;
-
-/** Returns the paths a fatal error carries, or `undefined` when it carries none. */
-export const failedMainWorkTreeChanged = carrier.failed;
-
-const inTurnCarrier = entryCarrier("mainWorkTreeChangedInTurn");
-
-/**
- * Carries the in-window paths on a fatal error as `err.mainWorkTreeChangedInTurn`. A frozen error
- * or a throwing setter keeps the original error, and the paths stay readable through
- * `failedMainWorkTreeChangedInTurn`.
- */
-export const carryMainWorkTreeChangedInTurn = inTurnCarrier.carry;
-
-/** Returns the in-window paths a fatal error carries, or `undefined` when it carries none. */
-export const failedMainWorkTreeChangedInTurn = inTurnCarrier.failed;
-
-const fastForwardCarrier = entryCarrier("mainWorkTreeFastForward");
-
-/**
- * Carries the clean fast-forward heads on a fatal error as `err.mainWorkTreeFastForward`. A frozen
- * error or a throwing setter keeps the original error, and the heads stay readable through
- * `failedMainWorkTreeFastForward`.
- */
-export const carryMainWorkTreeFastForward = fastForwardCarrier.carry;
-
-/** Returns the fast-forward heads a fatal error carries, or `undefined` when it carries none. */
-export const failedMainWorkTreeFastForward = fastForwardCarrier.failed;

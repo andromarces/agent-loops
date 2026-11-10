@@ -3,12 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import {
-  changedInPackageStore,
-  failedPackageStoreEntries,
-  snapshotPackageStore,
-} from "../src/lib/package-store-entries.mjs";
-import { failedInheritedTmpdirEntries } from "../src/lib/tmpdir-entries.mjs";
+import { changedInPackageStore, snapshotPackageStore } from "../src/lib/package-store-entries.mjs";
+import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
@@ -136,7 +132,7 @@ test("a reviewer mutation error carries the package store entries", async () => 
     return "done";
   }).catch((err) => err);
   expect(error).toBeInstanceOf(MutationError);
-  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+  expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
 });
 
 // Usefulness: verifies the same for a cancel, which ends the turn by a different throw.
@@ -146,7 +142,7 @@ test("a canceled reviewer turn carries the package store entries", async () => {
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+  expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
 });
 
 // Usefulness: verifies a fatal error that cannot take a property still carries the entries.
@@ -157,7 +153,7 @@ test("a frozen fatal error still carries the package store entries", async () =>
     throw fatal;
   }).catch((err) => err);
   expect(error).toBe(fatal);
-  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+  expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
 });
 
 // Usefulness: verifies requirement "a cancel ends the turn as a cancel on every path" (issue #1045):
@@ -184,7 +180,7 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
   expect(error).toMatchObject({ isCanceled: true });
   // The reads ran before the cancel check, so the cancel error carries what they found, as the
   // fatal path does, because the dispatcher builds its envelope and `lastResult` from the error.
-  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+  expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
 });
 
 // Usefulness: verifies requirement "a cancel after the post-turn reads scans each advisory list once"
@@ -216,8 +212,8 @@ test("a cancel after the post-turn reads scans each advisory list once", async (
       signal: controller.signal,
     }).catch((err) => err);
     expect(error).toMatchObject({ isCanceled: true });
-    expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
-    expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+    expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
+    expect(failedTurnEvidence(error).inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
     const lines = warn.mock.calls.map((call) => String(call[0]));
     expect(lines.filter((line) => line.includes("inherited temporary directory"))).toHaveLength(1);
     expect(lines.filter((line) => line.includes("package store entries changed"))).toHaveLength(1);
@@ -251,7 +247,7 @@ test("a reviewer turn that fails after a cancel carries the temporary directory 
       signal: controller.signal,
     }).catch((err) => err);
     expect(error).toMatchObject({ isCanceled: true });
-    expect(failedInheritedTmpdirEntries(error)).toEqual(["m54-3db54ca8"]);
+    expect(failedTurnEvidence(error).inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
   } finally {
     await removePath(temp);
   }
@@ -375,7 +371,7 @@ test("a canceled reviewer turn with an aborted signal still carries the entries"
     signal: controller.signal,
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedPackageStoreEntries(error)).toEqual(INSTALL_NAMES);
+  expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
 });
 
 // Usefulness: verifies the size bound covers the root directory too, because the root listing is

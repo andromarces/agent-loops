@@ -1,5 +1,4 @@
-import { entryCarrier } from "./entry-report.mjs";
-import { readableErrorText, readProp } from "./error-message.mjs";
+import { readableErrorText } from "./error-message.mjs";
 import { execBounded, KILL_GRACE_MS } from "./exec.mjs";
 import { logError, logInfo, logWarn } from "./log.mjs";
 import { redactAndClean } from "./redact.mjs";
@@ -21,19 +20,6 @@ export const testCmdInput = (command, timeoutSeconds) =>
 const CAPTURE_WINDOW_BYTES = 16 * 1024;
 export const TAIL_CHARS = 8 * 1024;
 
-const testRunCarrier = entryCarrier("testRun");
-
-/**
- * Carries the result on a fatal error as `err.testRun`. A frozen error or a throwing setter
- * keeps the original error, and the result stays readable through `failedTestRun`.
- */
-export const carryTestRun = testRunCarrier.carry;
-
-/**
- * Returns the result a fatal error carries, or `undefined` when it carries none. The property
- * fallback reads a result that `canceledError` sets directly, which `carry` never recorded.
- */
-export const failedTestRun = (err) => testRunCarrier.failed(err) ?? readProp(err, "testRun");
 // The clause of a canceled or timed-out summary that states what the kill reaches.
 const KILL_CLAUSE =
   "the runtime killed the command's own process group on POSIX or its process tree on Windows, and an orphan that left it can survive";

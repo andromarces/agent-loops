@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { mapInBatches } from "./batches.mjs";
 import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
-import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { reportedEntryNames } from "./entry-report.mjs";
 import { isTurnTmpdirName } from "./turn-tmpdir.mjs";
 import { isRegisteredTurnTmpdir } from "./turn-tmpdir-registry.mjs";
 
@@ -142,15 +142,3 @@ export async function appearedInInheritedTmpdir(before, { includeInherited = tru
     ...literalAppeared,
   ]);
 }
-
-const carrier = entryCarrier("inheritedTmpdirEntries");
-
-/**
- * Carries the list on a fatal error as `err.inheritedTmpdirEntries`. A frozen error or a throwing
- * setter keeps the original error, and the list stays readable through
- * `failedInheritedTmpdirEntries`.
- */
-export const carryInheritedTmpdirEntries = carrier.carry;
-
-/** Returns the list a fatal error carries, or `undefined` when it carries none. */
-export const failedInheritedTmpdirEntries = carrier.failed;
