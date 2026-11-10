@@ -9,6 +9,7 @@ import { DEFAULT_TIMEOUT, initRefusal, ROLE_KINDS, roleFlags } from "../lib/args
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
+import { logWarn } from "../lib/log.mjs";
 import { gitOrThrow } from "./git.mjs";
 import { normalizeItems } from "./items.mjs";
 
@@ -18,19 +19,19 @@ const MAX_LOOPS = 64;
 const DEFAULT_SETUP_TIMEOUT = 600;
 
 // The model and effort values that a supported CLI accepts. The adapters pass these through, so a
-// value outside the set is a usage error before any child exists.
+// value outside the set logs a warning. The agent CLI refuses a bad value at launch.
 const MODEL_PATTERNS = {
-  claude: /^(?:claude-|opus$|sonnet$|haiku$)/i,
+  claude: /^(?:claude-|opus$|sonnet$|haiku$|fable$)/i,
   codex: /^(?:gpt-|o\d|codex)/i,
-  copilot: /^(?:gpt-|claude-|o\d|gemini-|opus$|sonnet$|haiku$)/i,
+  copilot: /^(?:gpt-|claude-|o\d|gemini-|opus$|sonnet$|haiku$|auto$)/i,
   agy: /^gemini-/i,
   opencode: /^[^\s/]+\/\S+$/,
 };
 const EFFORTS = {
-  claude: new Set(["low", "medium", "high", "max"]),
+  claude: new Set(["low", "medium", "high", "xhigh", "max"]),
   codex: new Set(["minimal", "low", "medium", "high", "xhigh"]),
-  copilot: new Set(["low", "medium", "high"]),
-  agy: new Set(["low", "medium", "high"]),
+  copilot: new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
+  agy: new Set(["low", "medium", "high", "xhigh", "max"]),
 };
 
 export const DEFAULT_TASK_TEMPLATE = [
@@ -79,7 +80,8 @@ function validateTemplate(template, { requireIssue = true } = {}) {
 
 /**
  * Parses `agent-loop batch start` arguments. Throws an error with `usage: true` for a missing or
- * invalid value. Performs no filesystem read except the explicit `--items-file`, and writes nothing.
+ * invalid value. An unknown model or effort logs one warning. Performs no filesystem read except
+ * the explicit `--items-file`, and writes nothing.
  * @param {string[]} argv arguments after `batch start`
  */
 export function parseBatchArgs(argv) {
@@ -244,8 +246,16 @@ export function parseBatchArgs(argv) {
     pathRefusal: () => null,
   });
   if (refusal) throw usage(refusal);
-  const roleRefusal = roleOptionRefusal(options);
-  if (roleRefusal) throw usage(roleRefusal);
+  const logged = new Set();
+  for (const role of ROLE_KINDS) {
+    logRoleOptionWarnings(
+      role,
+      options[role],
+      options[`${role}Model`],
+      options[`${role}Effort`],
+      logged,
+    );
+  }
   const needsIssuePlaceholder =
     options.itemsFile === null ||
     (options.items ?? []).some((item) => item.kind === "issue" && item.task === null);
@@ -271,32 +281,33 @@ function setReviewerSandbox(options, value, viaAlias) {
   options.reviewerSandbox = value;
 }
 
-/** The refusal for one configured role's model or effort, or null. */
-export function roleOptionRefusalFor(role, kind, model, effort) {
+/**
+ * The warnings for one configured role's unknown model or effort values, in that order. The agent
+ * CLI refuses a bad value at launch.
+ */
+function roleOptionWarningsFor(role, kind, model, effort) {
   const normalized = kind === null ? null : normalizeAgent(kind);
-  if (normalized === null) return null;
+  if (normalized === null) return [];
+  const warnings = [];
   if (model !== null && !(MODEL_PATTERNS[normalized]?.test(model) ?? true)) {
-    return `Unsupported ${role} model: ${model}`;
+    warnings.push(`Unknown ${role} model: ${model}. The agent CLI refuses a bad value at launch.`);
   }
   const allowed = EFFORTS[normalized];
   if (effort !== null && allowed !== undefined && !allowed.has(effort)) {
-    return `Unsupported ${role} effort: ${effort}`;
+    warnings.push(
+      `Unknown ${role} effort: ${effort}. The agent CLI refuses a bad value at launch.`,
+    );
   }
-  return null;
+  return warnings;
 }
 
-/** The first unsupported model or effort of a configured role, or null. */
-function roleOptionRefusal(options) {
-  for (const role of ROLE_KINDS) {
-    const refusal = roleOptionRefusalFor(
-      role,
-      options[role],
-      options[`${role}Model`],
-      options[`${role}Effort`],
-    );
-    if (refusal) return refusal;
+/** Logs each warning for one configured role once, skipping a text that `logged` holds. */
+export function logRoleOptionWarnings(role, kind, model, effort, logged) {
+  for (const warning of roleOptionWarningsFor(role, kind, model, effort)) {
+    if (logged.has(warning)) continue;
+    logged.add(warning);
+    logWarn(warning);
   }
-  return null;
 }
 
 /**

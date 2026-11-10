@@ -93,6 +93,36 @@ test("a canceled reviewer turn still removes the scratch folder", async () => {
   }
 });
 
+// Usefulness: proves acceptance #1759 — a cancel inside the baseline read leaves no reviewer scratch folder.
+test("a cancel during the baseline read removes the scratch folder", async () => {
+  const repo = await createTempRepo();
+  const controller = new AbortController();
+  try {
+    await writeFile(join(repo, "note.txt"), "probe\n");
+    // The copied-source list cancels the turn when the baseline read names it, so the cancel
+    // lands inside `beforeTurn`, after the folder exists.
+    const copied = new Proxy(["note.txt"], {
+      get(target, prop, receiver) {
+        if (prop === "length") controller.abort();
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const run = runChild({
+      agents: { rev: scripted([async () => "done"]) },
+      role: { kind: "rev", sessionId: null },
+      roleName: "reviewer",
+      prompt: "review it",
+      cwd: repo,
+      signal: controller.signal,
+      localFilesCopied: copied,
+    });
+    await expect(run).rejects.toMatchObject({ isCanceled: true });
+    expect(await exists(join(repo, SCRATCH_PARENT))).toBe(false);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies a real mutation is still reported and the scratch folder is still removed,
 // so the removal never hides a mutation (#920).
 test("a reviewer mutation is still reported and the scratch folder is removed", async () => {
