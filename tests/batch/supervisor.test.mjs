@@ -228,8 +228,10 @@ async function waitForLaunch(child, index = 0) {
   } catch {
     throw timeout();
   }
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw timeout();
   try {
-    await within(call.written, Math.max(0, deadline - performance.now()), `launch ${index}`);
+    await within(call.written, remaining, `launch ${index}`);
   } catch {
     throw timeout();
   }
