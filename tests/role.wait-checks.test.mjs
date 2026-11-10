@@ -1,16 +1,38 @@
 import { access, mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import { statePaths } from "../src/lib/runstate.mjs";
-import { cleanup, newRunRepo, repos, setup } from "./role-helpers.mjs";
+import { cleanup, newCleanRunRepo, repos, setup } from "./role-helpers.mjs";
 import { parseRoleArgs } from "../src/role/index.mjs";
 import { fakeClock, blockOf, HEAD_A, HEAD_B, scriptedGh } from "./lib/check-wait-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 import { pageStdout } from "./gh-doubles.mjs";
 
-afterEach(cleanup);
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newRunRepo = () => newCleanRunRepo(gitDouble);
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 const PENDING = { status: 8, checks: [{ name: "ci", state: "IN_PROGRESS", bucket: "pending" }] };
 const SETTLED = { status: 0, checks: [{ name: "ci", state: "SUCCESS", bucket: "pass" }] };
