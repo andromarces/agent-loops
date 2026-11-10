@@ -7,7 +7,10 @@ pnpm fmt         # Format files with vp fmt (Oxfmt)
 pnpm fmt:check   # Check formatting
 pnpm lint        # Lint files with vp lint (Oxlint)
 pnpm test        # Run the test suite with vp test (Vitest)
+pnpm test:duration  # Print total time and the 20 slowest files and tests
 ```
+
+`pnpm test:duration` runs the suite and prints the total wall time. It lists the 20 slowest test files and the 20 slowest tests with durations. A total time per operating system more than 10% over the base branch needs a PR justification. Compare only runs with the same runner class, test configuration, worker count, and sharding configuration.
 
 The toolchain config lives in `vite.config.mjs`. A `vite-plus` upgrade re-pins the
 `vite` and `vitest` overrides in `pnpm-workspace.yaml` to the values that `vite-plus`
