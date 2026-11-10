@@ -5,20 +5,14 @@ import { isJsonObject } from "../lib/json.mjs";
 const DISPATCH_ACTIONS = new Set(["run_worker", "run_reviewer"]);
 
 /**
- * Counts the charged steps of a loop transcript, whose segments split at each `continued` event.
- * Each segment contributes its highest `result` event's `stepsUsed`; a trailing dispatch action
- * with no later result adds one, because the runtime charges a step before the child starts. The
- * checkpoint count is a cross-check, and the larger value wins.
- * @param {string} text the transcript JSON
- * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
+ * Counts the charged steps of one parsed loop transcript. Its segments split at each `continued`
+ * event. Each segment contributes its highest `result` event's `stepsUsed`. A trailing dispatch
+ * action with no later result adds one, because the runtime charges a step before the child starts.
+ * The checkpoint count is a cross-check, and the larger value wins.
+ * @param {unknown} data the parsed transcript
+ * @returns {{ ok: true, steps: number, segments: number } | { ok: false, reason: string }}
  */
-export function countSteps(text, { checkpointSteps = 0 } = {}) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: "the transcript is not valid JSON" };
-  }
+export function countStepsFromData(data, { checkpointSteps = 0 } = {}) {
   if (!isJsonObject(data) || !Array.isArray(data.events)) {
     return { ok: false, reason: "the transcript holds no event list" };
   }
@@ -57,18 +51,28 @@ export function countSteps(text, { checkpointSteps = 0 } = {}) {
 }
 
 /**
- * Reads `file` and counts its steps. A missing file is a proven zero only for a loop with no
- * attempt; any other missing or malformed record cannot establish a budget.
+ * Counts the charged steps of a transcript text. The checkpoint count is a cross-check, and the
+ * larger value wins.
+ * @param {string} text the transcript JSON
+ * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
  */
-export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } = {}) {
-  let text;
+export function countSteps(text, options) {
+  let data;
   try {
-    text = await readFile(file, "utf8");
-  } catch (err) {
-    if (err?.code === "ENOENT" && attempts === 0) return { ok: true, steps: checkpointSteps };
-    return { ok: false, reason: "the transcript is missing" };
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: "the transcript is not valid JSON" };
   }
-  const counted = countSteps(text, { checkpointSteps });
+  return countStepsFromData(data, options);
+}
+
+/**
+ * Counts the steps of an already-parsed transcript. A transcript with fewer segments than attempts
+ * cannot prove its count.
+ * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
+ */
+export function stepsUsedFromData(data, { checkpointSteps = 0, attempts = 0 } = {}) {
+  const counted = countStepsFromData(data, { checkpointSteps });
   if (!counted.ok) return counted;
   if (attempts > 0 && counted.segments < attempts) {
     return {
@@ -80,10 +84,49 @@ export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } 
 }
 
 /**
+ * Reads `file` and counts its steps. A missing file is a proven zero only for a loop with no
+ * attempt. Any other missing or malformed record cannot establish a budget.
+ */
+export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } = {}) {
+  let text;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (err) {
+    if (err?.code === "ENOENT" && attempts === 0) return { ok: true, steps: checkpointSteps };
+    return { ok: false, reason: "the transcript is missing" };
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, reason: "the transcript is not valid JSON" };
+  }
+  return stepsUsedFromData(data, { checkpointSteps, attempts });
+}
+
+/**
+ * Reads the recorded exit code of a parsed transcript. `ok` is false for a malformed record, which
+ * proves nothing about the last attempt. `proven` is true when the run ended with its `gate` event,
+ * or when a nonzero exit carries an error text.
+ * @returns {{ ok: true, exitCode: number | null, proven: boolean } | { ok: false, reason: string }}
+ */
+export function transcriptExitFromData(data) {
+  if (!isJsonObject(data) || !("exitCode" in data)) {
+    return { ok: false, reason: "the transcript holds no exit code" };
+  }
+  if (data.exitCode !== null && !Number.isInteger(data.exitCode)) {
+    return { ok: false, reason: "the transcript holds an unreadable exit code" };
+  }
+  const last = Array.isArray(data.events) ? data.events.at(-1) : null;
+  const errorText = typeof data.error === "string" ? data.error.trim() : "";
+  const proven =
+    last?.type === "gate" || (data.exitCode !== 0 && data.exitCode !== null && errorText !== "");
+  return { ok: true, exitCode: data.exitCode, proven };
+}
+
+/**
  * Reads the recorded exit code of a transcript. `ok` is false for a missing or malformed record,
- * which proves nothing about the last attempt. `proven` is true when the run ended with its `gate`
- * event, or when a nonzero exit carries an error text, so the default `exitCode: 1` of a transcript
- * written before the first turn is never read as a finished run.
+ * which proves nothing about the last attempt.
  * @returns {Promise<{ ok: true, exitCode: number | null, proven: boolean } | { ok: false, reason: string }>}
  */
 export async function readTranscriptExit(file) {
@@ -102,15 +145,5 @@ export async function readTranscriptExit(file) {
   } catch {
     return { ok: false, reason: "the transcript is not valid JSON" };
   }
-  if (!isJsonObject(data) || !("exitCode" in data)) {
-    return { ok: false, reason: "the transcript holds no exit code" };
-  }
-  if (data.exitCode !== null && !Number.isInteger(data.exitCode)) {
-    return { ok: false, reason: "the transcript holds an unreadable exit code" };
-  }
-  const last = Array.isArray(data.events) ? data.events.at(-1) : null;
-  const errorText = typeof data.error === "string" ? data.error.trim() : "";
-  const proven =
-    last?.type === "gate" || (data.exitCode !== 0 && data.exitCode !== null && errorText !== "");
-  return { ok: true, exitCode: data.exitCode, proven };
+  return transcriptExitFromData(data);
 }

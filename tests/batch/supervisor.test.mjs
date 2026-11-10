@@ -24,6 +24,7 @@ import {
 } from "../../src/batch/decisions.mjs";
 import {
   childArguments,
+  freezePullRequestItems,
   newBatchId,
   readBatchStatus,
   runBatch,
@@ -53,6 +54,17 @@ function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy,body")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: closed.has(Number(args[2])) ? "CLOSED" : "OPEN",
+            blockedBy: { nodes: blocked },
+            body: BODY,
+          }),
+          stderr: "",
+        };
+      }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: blocked } }), stderr: "" };
       }
@@ -284,6 +296,34 @@ async function pushLoop(prepared, issue = 1) {
 // The shared repository and remote are removed once for the file. Each case removes only the
 // work-tree root it created, at `afterAll`, so no case depends on another case's teardown.
 async function cleanupRepo() {}
+
+// Usefulness: a frozen pull request list keeps item order when reads finish out of order.
+test("frozen pull request items keep their order", async () => {
+  const items = [
+    { kind: "pr", number: 1, key: "pr-1" },
+    { kind: "pr", number: 2, key: "pr-2" },
+    { kind: "task", key: "task" },
+  ];
+  const gh = async (args) => {
+    const number = Number(args[2]);
+    if (number === 1) await new Promise((resolve) => setTimeout(resolve, 30));
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        state: "OPEN",
+        headRefOid: `head-${number}`,
+        headRefName: `branch-${number}`,
+        isCrossRepository: false,
+        title: `title-${number}`,
+      }),
+      stderr: "",
+    };
+  };
+  const frozen = await freezePullRequestItems(items, { gh, repo: "o/r" });
+  expect(frozen.map((item) => item.key)).toEqual(["pr-1", "pr-2", "task"]);
+  expect(frozen[0].head).toBe("head-1");
+  expect(frozen[1].head).toBe("head-2");
+});
 
 // Usefulness: the real headless child writes its output to the log file (the one end-to-end run of this entry point).
 test("the real headless child writes its output to the log file", async () => {
@@ -794,6 +834,56 @@ test("a transcript that exited 0 is not restarted on recovery", async () => {
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: one resumed loop end reads its transcript once, so a late delete cannot hide a read.
+test("a resumed loop end reads its transcript once", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 3, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    const text = JSON.stringify({ ...data, exitCode: 0 });
+    let reads = 0;
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        readTranscript: async () => {
+          reads += 1;
+          await removePath(transcript);
+          return text;
+        },
+      },
+    });
+    expect(reads).toBe(1);
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+    expect(resumed.summary.loops[0].report.state).toBe("read");
   } finally {
     await cleanupRepo(repo);
   }
@@ -1656,6 +1746,13 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads <= 2 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
         if (args.includes("state,blockedBy")) {
           polls += 1;
           return {
@@ -1736,6 +1833,13 @@ test("a failed poll read retries on the next poll", async () => {
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
       }
       if (args.includes("body"))
@@ -1803,6 +1907,17 @@ test("a closed issue while waiting is skipped and not launched", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              body: BODY,
+            }),
+            stderr: "",
+          };
+        }
         return {
           status: 0,
           stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -1869,6 +1984,17 @@ test("an abort during a poll wait exits 130", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              body: BODY,
+            }),
+            stderr: "",
+          };
+        }
         return {
           status: 0,
           stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2050,6 +2176,17 @@ test("a waiting issue sends a merge-required notification", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              body: BODY,
+            }),
+            stderr: "",
+          };
+        }
         return {
           status: 0,
           stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2174,6 +2311,13 @@ test("a pending decision and a merge wait survive a resume", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         const open = openIssue1 && issue === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
       }
       if (args.includes("body"))
@@ -2430,6 +2574,13 @@ describe("batch decisions and waits", () => {
         if (args.some((arg) => arg.includes("blockedBy"))) {
           blockedReads += issue === 203 ? 1 : 0;
           const open = issue === 203 && blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
+          if (args.includes("state,blockedBy,body")) {
+            return {
+              status: 0,
+              stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+              stderr: "",
+            };
+          }
           return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
         }
         if (args.includes("body"))
@@ -2743,6 +2894,17 @@ describe("batch decisions and waits", () => {
           };
         }
         if (args.some((arg) => arg.includes("blockedBy"))) {
+          if (args.includes("state,blockedBy,body")) {
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                state: "OPEN",
+                blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+                body: BODY,
+              }),
+              stderr: "",
+            };
+          }
           return {
             status: 0,
             stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2811,6 +2973,17 @@ describe("batch decisions and waits", () => {
           };
         }
         if (args.some((arg) => arg.includes("blockedBy"))) {
+          if (args.includes("state,blockedBy,body")) {
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                state: "OPEN",
+                blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+                body: BODY,
+              }),
+              stderr: "",
+            };
+          }
           return {
             status: 0,
             stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2869,6 +3042,209 @@ describe("batch decisions and waits", () => {
     const { exitCode } = await run;
     expect(exitCode).toBe(130);
     expect(seen).toBe(reason);
+  });
+
+  // Usefulness: parallel wait reads keep the manifest order when the second read finishes first.
+  test("parallel wait reads keep the manifest order", async () => {
+    const prepared = prep([301, 302]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([301, 302]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (const issue of [301, 302]) {
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "waiting",
+        reason: null,
+        skipReason: "blocked",
+        blockingIssues: [],
+        pid: null,
+        startTime: null,
+      }));
+    }
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const events = [];
+    const controller = new AbortController();
+    const gh = async (args) => {
+      if (args[0] === "issue" && args[1] === "view" && args.includes("state,blockedBy")) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const issue = Number(args[2]);
+        await new Promise((resolve) => setTimeout(resolve, issue === 301 ? 60 : 10));
+        inFlight -= 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: "OPEN",
+            blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+          }),
+          stderr: "",
+        };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const result = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: async (event) => {
+          if (event.kind === "merge-required") events.push(event.text);
+          if (events.length === 2) controller.abort();
+          return { spawned: false, ok: true };
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 10,
+      },
+    });
+    expect(maxInFlight).toBe(2);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain("issue 301");
+    expect(events[1]).toContain("issue 302");
+    expect(result.summary.status).toBe("interrupted");
+  });
+
+  // Usefulness: an abort during parallel wait reads keeps the cancel result and its reason.
+  test("an abort during parallel wait reads keeps the cancel result", async () => {
+    const prepared = prep([303, 304]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([303, 304]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (const issue of [303, 304]) {
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "waiting",
+        reason: null,
+        skipReason: "blocked",
+        blockingIssues: [],
+        pid: null,
+        startTime: null,
+      }));
+    }
+    let started = 0;
+    let startedBeforeAbort = 0;
+    let seenReason = null;
+    const reason = { code: "operator-cancel" };
+    const controller = new AbortController();
+    const gh = (args, cwd, options) => {
+      if (args[0] === "issue" && args[1] === "view" && args.includes("state,blockedBy")) {
+        started += 1;
+        return new Promise((resolve) => {
+          const done = () => {
+            seenReason = options.signal.reason;
+            resolve({
+              status: 0,
+              stdout: JSON.stringify({
+                state: "OPEN",
+                blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              }),
+              stderr: "",
+            });
+          };
+          if (options.signal.aborted) done();
+          else options.signal.addEventListener("abort", done, { once: true });
+        });
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const run = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 10,
+      },
+    });
+    for (let attempt = 0; attempt < 100 && started < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    startedBeforeAbort = started;
+    controller.abort(reason);
+    const { exitCode, summary } = await run;
+    expect(startedBeforeAbort).toBe(2);
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(seenReason).toBe(reason);
+  });
+
+  // Usefulness: one repository read serves every issue launch in a batch.
+  test("one repository read serves every issue launch", async () => {
+    const prepared = prep([305, 306]);
+    const runsRoot = runsFor(prepared);
+    let repositoryReads = 0;
+    const gh = (args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ number: 99, closingIssuesReferences: [], headRefName: "b" }]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        repositoryReads += 1;
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      if (args[0] === "api") return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      if (args[0] === "issue" && args[1] === "view") {
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] }, body: BODY }),
+            stderr: "",
+          };
+        }
+        if (args.includes("title")) {
+          return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+        }
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    const result = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(repositoryReads).toBe(1);
+    expect(result.summary.loops).toHaveLength(2);
   });
 
   // Usefulness: a recorded live child holds its only slot until the process dies.

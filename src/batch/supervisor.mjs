@@ -41,8 +41,9 @@ import {
   planPrWorkTree,
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
-import { missingLoopReport, readLoopReport } from "./report.mjs";
-import { readStepsUsed, readTranscriptExit } from "./steps.mjs";
+import { missingLoopReport, loopReportFromRead, readLoopReport } from "./report.mjs";
+import { readStepsUsed, stepsUsedFromData, transcriptExitFromData } from "./steps.mjs";
+import { mapInBatches } from "../lib/batches.mjs";
 import {
   acquireClaim,
   batchPaths,
@@ -66,6 +67,13 @@ const INTERRUPT_WAIT_MS = 30_000;
 export const POLL_INTERVAL_MS = 15_000;
 /** The bound on one poll read of the wait state. */
 export const POLL_READ_TIMEOUT_MS = 60_000;
+/** The most independent reads in flight at once. */
+const READ_BATCH_SIZE = 4;
+
+/** The value a store read returns for `value`, so an absent undefined key stays absent. */
+function storedValue(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
 
 function defaultSleep(ms, signal) {
   return new Promise((resolve) => {
@@ -344,12 +352,8 @@ async function ownerStillLive(loop) {
  * written. A read that fails freezes no head, so eligibility later reports it unverified.
  */
 export async function freezePullRequestItems(items, { gh, repo }) {
-  const frozen = [];
-  for (const item of items) {
-    if (item.kind !== "pr") {
-      frozen.push(item);
-      continue;
-    }
+  return mapInBatches(items, READ_BATCH_SIZE, async (item) => {
+    if (item.kind !== "pr") return item;
     try {
       const reply = await gh(
         [
@@ -362,26 +366,23 @@ export async function freezePullRequestItems(items, { gh, repo }) {
         repo,
       );
       if (reply?.status !== 0) {
-        frozen.push({ ...item, head: null, headRefName: null, foreign: false });
-        continue;
+        return { ...item, head: null, headRefName: null, foreign: false };
       }
       const view = JSON.parse(reply.stdout);
       if (typeof view?.headRefOid !== "string") {
-        frozen.push({ ...item, head: null, headRefName: null, foreign: false });
-        continue;
+        return { ...item, head: null, headRefName: null, foreign: false };
       }
-      frozen.push({
+      return {
         ...item,
         head: view.headRefOid,
         headRefName: typeof view.headRefName === "string" ? view.headRefName : null,
         foreign: view.isCrossRepository === true,
         title: typeof view.title === "string" ? view.title : null,
-      });
+      };
     } catch {
-      frozen.push({ ...item, head: null, headRefName: null, foreign: false });
+      return { ...item, head: null, headRefName: null, foreign: false };
     }
-  }
-  return frozen;
+  });
 }
 
 /** The task text of one item. An explicit per-item task replaces the template for that item. */
@@ -562,13 +563,17 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const items = [];
     const skipped = [];
     const startPlanTree = deps.planPrWorkTree ?? planPrWorkTree;
-    for (const item of frozenItems) {
-      const eligibility = await preflightItemEligibility({
+    const preflight = await mapInBatches(frozenItems, READ_BATCH_SIZE, (item) =>
+      preflightItemEligibility({
         item,
         gh,
         repo: prepared.repo,
         batchId: id,
-      });
+      }),
+    );
+    for (let index = 0; index < frozenItems.length; index += 1) {
+      const item = frozenItems[index];
+      const eligibility = preflight[index];
       if (!eligibility.ok) {
         skipped.push(skippedLoop(paths, id, item, prepared.maxSteps, eligibility));
         continue;
@@ -696,36 +701,49 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   }
 
   // A loop end reads its transcript once and stores the report in the same checkpoint write as the
-  // status change. The report adds no store write.
-  const changeLoop = async (issue, patch) => {
+  // status change. The report adds no store write. A caller that already read the transcript passes
+  // the read result in `transcript`, so the end adds no second read.
+  const changeLoop = async (issue, patch, { transcript } = {}) => {
     let nextPatch = patch;
     if (patch?.status !== undefined && loopEnded(patch.status) && patch.report === undefined) {
       const current = loops.get(issue) ?? (await readLoop(runsRoot, id, issue));
+      const options = {
+        attempts: current.attempts,
+        reviewOnly: current.mode === "review-only",
+      };
       nextPatch = {
         ...patch,
-        report: await readLoopReport(current.transcript, {
-          attempts: current.attempts,
-          reviewOnly: current.mode === "review-only",
-        }),
+        report:
+          transcript === undefined
+            ? await readLoopReport(current.transcript, options)
+            : loopReportFromRead(transcript, options),
       };
     }
+    let next;
     const changed = await updateLoop(
       runsRoot,
       id,
       issue,
-      (current) => ({
-        ...current,
-        ...nextPatch,
-      }),
+      (current) => {
+        next = { ...current, ...nextPatch };
+        return next;
+      },
       { initial: loops.get(issue) ?? null },
     );
-    loops.set(issue, await readLoop(runsRoot, id, issue));
+    loops.set(issue, storedValue(next));
     return changed;
   };
 
+  let openPrSlug = null;
   const refreshOpenPr = async () => {
     try {
-      return await readOpenPrClosures({ gh, repo: prepared.repo });
+      const closures = await readOpenPrClosures({
+        gh,
+        repo: prepared.repo,
+        slug: openPrSlug,
+      });
+      openPrSlug = closures.slug;
+      return closures;
     } catch (err) {
       throw Object.assign(new Error(`the open pull request read failed: ${err.message}`), {
         batchWide: true,
@@ -879,11 +897,19 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     return created;
   };
 
-  const markPrHeadUnresolved = async (issue, loop, { pr, stepsUsed, remainingSteps }) => {
-    const report = await readLoopReport(loop.transcript, {
+  const markPrHeadUnresolved = async (
+    issue,
+    loop,
+    { pr, stepsUsed, remainingSteps, transcript },
+  ) => {
+    const options = {
       attempts: loop.attempts,
       reviewOnly: loop.mode === "review-only",
-    });
+    };
+    const report =
+      transcript === undefined
+        ? await readLoopReport(loop.transcript, options)
+        : loopReportFromRead(transcript, options);
     return markNeedsOwner(issue, "pr-head-unresolved", {
       evidence: pr === null ? "the transcript records no pull request" : `pull request ${pr}`,
       extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null, report },
@@ -925,7 +951,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         skipReason: null,
         decisionAnswer: option,
       });
-      return { kind: "resume", loop: await readLoop(runsRoot, id, issue) };
+      return { kind: "resume", loop: loops.get(issue) };
     }
     if (option === "abandon" || option === "skip") {
       const patch =
@@ -1293,7 +1319,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if (exitCode === 0) {
       await changeLoop(issue, { ...common, status: "succeeded" });
-      loop = await readLoop(runsRoot, id, issue);
+      loop = loops.get(issue);
       const cleanup = await cleanupWorkTree({
         manifest,
         loop,
@@ -1311,7 +1337,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       const transcript = await readTranscript(loop.transcript);
       let declaredPr = loop.pr;
       try {
-        declaredPr = declaredPrFromTranscript(transcript) ?? loop.pr;
+        declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
       } catch (err) {
         await markNeedsOwner(
           issue,
@@ -1320,7 +1346,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         );
         return;
       }
-      await markPrHeadUnresolved(issue, loop, { ...common, pr: declaredPr });
+      await markPrHeadUnresolved(issue, loop, { ...common, pr: declaredPr, transcript });
       progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
     }
@@ -1334,26 +1360,43 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     progress(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
   };
 
+  // One transcript read result: `{ ok: true, data }`, or a refusal that names the cause.
   const readTranscript = async (file) => {
+    const readText = deps.readTranscript ?? ((path) => readFile(path, "utf8"));
+    let text;
     try {
-      return JSON.parse(await readFile(file, "utf8"));
+      text = await readText(file);
+    } catch (err) {
+      return {
+        ok: false,
+        missing: err?.code === "ENOENT",
+        reason:
+          err?.code === "ENOENT" ? "the transcript is missing" : (err?.message ?? String(err)),
+      };
+    }
+    try {
+      return { ok: true, data: JSON.parse(text) };
     } catch {
-      return null;
+      return { ok: false, reason: "the transcript is not valid JSON" };
     }
   };
 
-  const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr }) => {
-    await changeLoop(issue, {
-      status: "succeeded",
-      reason: null,
-      skipReason: null,
-      stepsUsed,
-      remainingSteps,
-      pr: pr ?? loop.pr,
-      pid: null,
-      startTime: null,
-    });
-    const updated = await readLoop(runsRoot, id, issue);
+  const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr, transcript }) => {
+    await changeLoop(
+      issue,
+      {
+        status: "succeeded",
+        reason: null,
+        skipReason: null,
+        stepsUsed,
+        remainingSteps,
+        pr: pr ?? loop.pr,
+        pid: null,
+        startTime: null,
+      },
+      { transcript },
+    );
+    const updated = loops.get(issue);
     const cleanup = await cleanupWorkTree({ manifest, loop: updated, runsRoot, gh }).catch(
       (err) => ({
         removed: false,
@@ -1364,16 +1407,20 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
   };
 
-  const finishFailure = async (issue, loop, reason, { stepsUsed, remainingSteps }) => {
+  const finishFailure = async (issue, loop, reason, { stepsUsed, remainingSteps, transcript }) => {
     logError(`issue ${issue}: failed (${reason})`);
-    await changeLoop(issue, {
-      status: "failed",
-      reason,
-      stepsUsed,
-      remainingSteps,
-      pid: null,
-      startTime: null,
-    });
+    await changeLoop(
+      issue,
+      {
+        status: "failed",
+        reason,
+        stepsUsed,
+        remainingSteps,
+        pid: null,
+        startTime: null,
+      },
+      { transcript },
+    );
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
   };
 
@@ -1409,13 +1456,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   /**
-   * Continues one loop from its transcript. It reads the steps, applies the exhaustion check,
-   * reconciles GitHub, and launches with --continue-from and the recorded pull request.
+   * Continues one loop from its transcript. It reads the transcript once, then the steps, the
+   * exhaustion check, the GitHub reconciliation, and the launch with --continue-from.
    */
   const continueLoop = async (issue, initial) => {
     let loop = initial;
     const transcript = await readTranscript(loop.transcript);
-    if (transcript === null && loop.attempts > 0) {
+    if (!transcript.ok && loop.attempts > 0) {
       await markNeedsOwner(issue, "unverified-steps", {
         evidence: "the transcript is missing",
       });
@@ -1423,7 +1470,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     let declaredPr = loop.pr;
     try {
-      declaredPr = declaredPrFromTranscript(transcript) ?? loop.pr;
+      declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
     } catch (err) {
       await markNeedsOwner(
         issue,
@@ -1436,15 +1483,21 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     loop = { ...loop, pr: declaredPr };
 
-    const recordedExit = await readTranscriptExit(loop.transcript);
-    const steps = await readStepsUsed(loop.transcript, {
-      checkpointSteps: loop.stepsUsed,
-      attempts: loop.attempts,
-    });
+    const recordedExit = transcript.ok
+      ? transcriptExitFromData(transcript.data)
+      : { ok: false, reason: transcript.reason };
+    const steps = !transcript.ok
+      ? transcript.missing && loop.attempts === 0
+        ? { ok: true, steps: loop.stepsUsed }
+        : { ok: false, reason: transcript.reason }
+      : stepsUsedFromData(transcript.data, {
+          checkpointSteps: loop.stepsUsed,
+          attempts: loop.attempts,
+        });
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
     if (recordedExit.ok && recordedExit.proven && recordedExit.exitCode === 0) {
-      await finishSuccess(issue, loop, { stepsUsed, remainingSteps, pr: loop.pr });
+      await finishSuccess(issue, loop, { stepsUsed, remainingSteps, pr: loop.pr, transcript });
       return;
     }
     if (
@@ -1457,6 +1510,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         pr: loop.pr,
         stepsUsed,
         remainingSteps,
+        transcript,
       });
       return;
     }
@@ -1464,6 +1518,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await finishFailure(issue, loop, `exit-${recordedExit.exitCode}`, {
         stepsUsed,
         remainingSteps,
+        transcript,
       });
       return;
     }
@@ -1478,6 +1533,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await finishFailure(issue, loop, "step-budget-exhausted", {
         stepsUsed,
         remainingSteps: 0,
+        transcript,
       });
       return;
     }
@@ -1487,12 +1543,14 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       base: prepared.base,
       gh,
       deps,
+      transcript: transcript.ok ? transcript.data : null,
     });
     if (decision.status === "succeeded") {
       await finishSuccess(issue, loop, {
         stepsUsed,
         remainingSteps,
         pr: decision.pr ?? loop.pr,
+        transcript,
       });
       return;
     }
@@ -1582,15 +1640,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       .filter(Number.isInteger);
     return { state: value.state, open };
   };
-  const recheckWaiting = async (issue) => {
-    let read;
-    try {
-      read = await readWaitState(issue);
-    } catch (err) {
-      if (interrupted || hard) return "wait";
-      logWarn(`issue ${issue}: the wait read failed: ${err.message}. Retrying on the next poll`);
-      return "wait";
-    }
+  // Applies one wait read in checkpoint order. A read that failed keeps the issue waiting.
+  const applyWaitRead = async (issue, read) => {
     if (String(read.state).toUpperCase() !== "OPEN") {
       await changeLoop(issue, {
         status: "skipped",
@@ -1629,8 +1680,27 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     return "ready";
   };
   const refreshWaiting = async () => {
-    for (const issue of waiting) {
-      const result = await recheckWaiting(issue);
+    const issues = [...waiting];
+    const outcomes = await mapInBatches(issues, READ_BATCH_SIZE, (issue) =>
+      readWaitState(issue).then(
+        (read) => ({ read }),
+        (error) => ({ error }),
+      ),
+    );
+    for (let index = 0; index < issues.length; index += 1) {
+      const issue = issues[index];
+      const outcome = outcomes[index];
+      let result;
+      if (outcome.error === undefined) {
+        result = await applyWaitRead(issue, outcome.read);
+      } else if (interrupted || hard) {
+        result = "wait";
+      } else {
+        logWarn(
+          `issue ${issue}: the wait read failed: ${outcome.error.message}. Retrying on the next poll`,
+        );
+        result = "wait";
+      }
       if (result === "done") waiting.delete(issue);
       else if (result === "ready") {
         waiting.delete(issue);
@@ -1638,9 +1708,9 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       }
     }
   };
-  const refreshPendingDecisions = async () => {
+  const refreshPendingDecisions = async (reads = null) => {
     for (const issue of pendingDecisions) {
-      const current = await readLoop(runsRoot, id, issue);
+      const current = reads?.has(issue) ? reads.get(issue) : await readLoop(runsRoot, id, issue);
       if (current === null) continue;
       loops.set(issue, current);
       if (current.status !== "needs-owner") {
@@ -1666,16 +1736,19 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
   const syncFromDisk = async () => {
+    const reads = new Map();
     for (const issue of manifest.issues) {
       const current = await readLoop(runsRoot, id, issue);
+      reads.set(issue, current);
       if (current !== null) loops.set(issue, current);
     }
+    return reads;
   };
   // A recorded child that this process did not spawn holds its slot until its process ends.
-  const refreshHeld = async () => {
+  const refreshHeld = async (reads = null) => {
     for (const issue of slots) {
       if (active.has(issue)) continue;
-      const current = await readLoop(runsRoot, id, issue);
+      const current = reads?.has(issue) ? reads.get(issue) : await readLoop(runsRoot, id, issue);
       if (current === null || !isLive(current)) {
         slots.delete(issue);
         continue;
@@ -1786,10 +1859,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       if (interrupted || hard) break;
       if (pollElapsed) {
         nextPoll = clock.now() + pollIntervalMs;
-        await syncFromDisk();
-        await refreshHeld();
+        const reads = await syncFromDisk();
+        await refreshHeld(reads);
         await refreshWaiting();
-        await refreshPendingDecisions();
+        await refreshPendingDecisions(reads);
       }
       continue;
     }
@@ -1800,16 +1873,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       await pollWait(wait, controller.signal, clock);
       if (interrupted || hard) break;
       nextPoll = clock.now() + pollIntervalMs;
-      await syncFromDisk();
-      await refreshHeld();
+      const reads = await syncFromDisk();
+      await refreshHeld(reads);
       await refreshWaiting();
-      await refreshPendingDecisions();
+      await refreshPendingDecisions(reads);
       continue;
     }
     // Only pending decisions remain. Apply a live answer that already arrived, then stop.
-    await syncFromDisk();
-    await refreshHeld();
-    await refreshPendingDecisions();
+    const reads = await syncFromDisk();
+    await refreshHeld(reads);
+    await refreshPendingDecisions(reads);
     if (remaining.size > 0) continue;
     break;
   }
@@ -1822,8 +1895,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 }
 
 async function updateManifestReturning(runsRoot, id, updater) {
-  const changed = await updateManifest(runsRoot, id, updater);
-  return { manifest: await readManifest(runsRoot, id), changed };
+  let next;
+  const changed = await updateManifest(runsRoot, id, async (value) => {
+    next = await updater(value);
+    return next;
+  });
+  const manifest = next == null ? await readManifest(runsRoot, id) : storedValue(next);
+  return { manifest, changed };
 }
 
 async function decisionView(runsRoot, batchId, loop) {

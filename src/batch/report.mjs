@@ -219,6 +219,16 @@ export function buildLoopReport(data, { attempts = 0, reviewOnly = false } = {})
 }
 
 /**
+ * Builds one loop report from an already-read transcript. `read` holds `{ ok: true, data }` or
+ * `{ ok: false, missing, reason }`. A missing transcript of a loop with no attempt is an empty report.
+ */
+export function loopReportFromRead(read, { attempts = 0, reviewOnly = false } = {}) {
+  if (read.ok) return buildLoopReport(read.data, { attempts, reviewOnly });
+  if (read.missing === true && attempts === 0) return emptyLoopReport();
+  return unreadReport(read.reason);
+}
+
+/**
  * Reads one loop transcript and builds its report. A missing transcript of a loop with no attempt
  * is an empty report. Every other read or parse failure fails closed.
  * @param {string} file
@@ -229,16 +239,24 @@ export async function readLoopReport(file, { attempts = 0, reviewOnly = false } 
   try {
     text = await readFile(file, "utf8");
   } catch (err) {
-    if (err?.code === "ENOENT" && attempts === 0) return emptyLoopReport();
-    return unreadReport(
-      err?.code === "ENOENT" ? "the transcript is missing" : "the transcript is unreadable",
+    return loopReportFromRead(
+      {
+        ok: false,
+        missing: err?.code === "ENOENT",
+        reason:
+          err?.code === "ENOENT" ? "the transcript is missing" : "the transcript is unreadable",
+      },
+      { attempts, reviewOnly },
     );
   }
   let data;
   try {
     data = JSON.parse(text);
   } catch {
-    return unreadReport("the transcript is not valid JSON");
+    return loopReportFromRead(
+      { ok: false, reason: "the transcript is not valid JSON" },
+      { attempts, reviewOnly },
+    );
   }
-  return buildLoopReport(data, { attempts, reviewOnly });
+  return loopReportFromRead({ ok: true, data }, { attempts, reviewOnly });
 }

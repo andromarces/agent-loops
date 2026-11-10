@@ -37,14 +37,18 @@ async function ghJson(gh, args, cwd, label) {
 
 const owner = (reason) => ({ status: "needs-owner", reason, pr: null, requireCi: null });
 
-/** The work-tree heads that this loop's own transcript recorded for a worker or reviewer turn. */
-async function readRecordedHeads(loop) {
-  if (typeof loop.transcript !== "string") return [];
-  let data;
-  try {
-    data = JSON.parse(await readFile(loop.transcript, "utf8"));
-  } catch {
-    return [];
+/**
+ * The work-tree heads that this loop's own transcript recorded for a worker or reviewer turn.
+ * `data` is the already-parsed transcript, or undefined to read the recorded file.
+ */
+async function readRecordedHeads(loop, data) {
+  if (data === undefined) {
+    if (typeof loop.transcript !== "string") return [];
+    try {
+      data = JSON.parse(await readFile(loop.transcript, "utf8"));
+    } catch {
+      return [];
+    }
   }
   if (!isJsonObject(data) || !Array.isArray(data.events)) return [];
   const heads = [];
@@ -126,12 +130,13 @@ async function reconcilePullRequest({ loop, repo, gh, git, state, headsOf }) {
 /**
  * Reads the loop's local and remote state and applies the reconciliation rules.
  * `loop` holds `workTree` (`path`, `canonicalPath`, `dev`, `ino`, `branch`) and `pr` (declared).
+ * `transcript` is the already-parsed transcript, or undefined to read the recorded file.
  * @returns {Promise<{ status: "resume" | "succeeded" | "needs-owner", reason: string | null, pr: number | null, requireCi: number | null }>}
  */
-export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
+export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcript }) {
   const git = asGit(deps);
   const canonical = deps.canonicalPath ?? canonicalPath;
-  const headsOf = deps.recordedHeads ?? readRecordedHeads;
+  const headsOf = deps.recordedHeads ?? ((target) => readRecordedHeads(target, transcript));
   const identityOf = deps.pathIdentity ?? pathIdentity;
   const workTree = loop.workTree;
   if (!workTree?.path || typeof workTree.path !== "string") {
@@ -192,14 +197,14 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
         "--state",
         "all",
         "--json",
-        "number,state,headRefOid,isCrossRepository,baseRefName",
+        "number,state,headRefOid,isCrossRepository,baseRefName,mergeCommit",
       ],
       repo,
       "the pull request list read",
     );
     if (!Array.isArray(pulls)) throw new Error("the pull request list read returned no list");
     for (const pull of pulls) {
-      if (!isJsonObject(pull) || !Number.isInteger(pull.number)) {
+      if (!isJsonObject(pull) || !Number.isInteger(pull.number) || typeof pull.state !== "string") {
         throw new Error("the pull request list read returned a malformed entry");
       }
     }
@@ -220,23 +225,7 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
     return owner(err.message);
   }
 
-  const details = [];
-  for (const pull of pulls) {
-    try {
-      const view = await ghJson(
-        gh,
-        ["pr", "view", String(pull.number), "--json", "state,headRefOid,mergeCommit"],
-        repo,
-        `the read of pull request ${pull.number}`,
-      );
-      if (!isJsonObject(view) || typeof view.state !== "string") {
-        throw new Error(`the read of pull request ${pull.number} named no state`);
-      }
-      details.push({ ...pull, ...view });
-    } catch (err) {
-      return owner(err.message);
-    }
-  }
+  const details = pulls;
 
   if (loop.pr !== null && loop.pr !== undefined) {
     if (!details.some((pull) => pull.number === loop.pr)) {
