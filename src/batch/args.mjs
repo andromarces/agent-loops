@@ -338,7 +338,7 @@ export async function canonicalWritePath(path) {
 }
 
 /** The nearest existing directory at or above `path`. */
-export async function nearestExistingDirectory(path) {
+async function nearestExistingDirectory(path) {
   let current = resolve(path);
   for (;;) {
     try {

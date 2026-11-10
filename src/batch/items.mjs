@@ -3,8 +3,8 @@
 // A pull request and a free-text task use a prefixed string, which is also a safe path segment.
 
 /** The loop modes of one item, the same values as the single-task `--mode`. */
-export const ITEM_MODES = new Set(["work-first", "review-first", "review-only"]);
-export const ITEM_KINDS = new Set(["issue", "pr", "task"]);
+const ITEM_MODES = new Set(["work-first", "review-first", "review-only"]);
+const ITEM_KINDS = new Set(["issue", "pr", "task"]);
 const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** The default mode of one kind. */
@@ -13,7 +13,7 @@ export function defaultMode(kind) {
 }
 
 /** The stable identity of one item, across start and resume. */
-export function itemKey(kind, { number = null, id = null } = {}) {
+function itemKey(kind, { number = null, id = null } = {}) {
   if (kind === "issue") return number;
   if (kind === "pr") return `pr-${number}`;
   if (kind === "task") return `task-${id}`;
@@ -32,7 +32,7 @@ const nonEmpty = (value) => typeof value === "string" && value.trim() !== "";
  * Normalizes one `--items-file` entry. Throws an Error whose message states the malformed field;
  * the caller marks it as a usage error.
  */
-export function normalizeItem(raw, index) {
+function normalizeItem(raw, index) {
   const at = `Item ${index + 1}`;
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(`${at} is not a JSON object.`);

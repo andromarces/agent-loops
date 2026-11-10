@@ -612,7 +612,7 @@ function initialState(prepared) {
 }
 
 /** Creates the one linked work tree of an audit at its frozen revision. */
-export async function createAuditWorkTree({ repo, revision, workTree }) {
+async function createAuditWorkTree({ repo, revision, workTree }) {
   await mkdir(dirname(workTree), { recursive: true });
   await gitOrThrow(["worktree", "add", "--detach", workTree, revision], repo);
   const identity = await pathIdentity(workTree);
@@ -630,7 +630,7 @@ export async function createAuditWorkTree({ repo, revision, workTree }) {
  * The HEAD and clean state of an audit checkout. Returns null when Git cannot read it, so a caller
  * fails closed instead of treating an unreadable checkout as clean.
  */
-export async function readAuditCheckout(workTree) {
+async function readAuditCheckout(workTree) {
   const head = await git(["rev-parse", "HEAD"], workTree);
   const status = await git(["status", "--porcelain"], workTree);
   if (head.exitCode !== 0 || status.exitCode !== 0) return null;
@@ -758,7 +758,7 @@ function normalizeFindings(raw) {
 }
 
 /** Validates a consolidation against the frozen issue list, or null when it is not usable. */
-export function validateConsolidation(findings, issues) {
+function validateConsolidation(findings, issues) {
   if (findings === null) return null;
   const numbers = new Set(issues.map((issue) => issue.number));
   const titles = new Set();
