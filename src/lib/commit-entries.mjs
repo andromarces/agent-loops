@@ -9,7 +9,7 @@ import { isJsonObject } from "./json.mjs";
 // every non-completed status fails the gate.
 const PASS_CHECK_CONCLUSIONS = new Set(["success", "skipped", "neutral"]);
 
-const CHECK_RUN_STATUSES = new Set([
+const CHECK_STATUSES = new Set([
   "queued",
   "in_progress",
   "completed",
@@ -18,15 +18,6 @@ const CHECK_RUN_STATUSES = new Set([
   "pending",
 ]);
 const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"]);
-
-const CHECK_SUITE_STATUSES = new Set([
-  "queued",
-  "in_progress",
-  "completed",
-  "waiting",
-  "requested",
-  "pending",
-]);
 
 // The status read, the check wait, and the source probe parse the check-run and commit-status
 // replies strictly. The gate accepts a missing or malformed field as an empty list. In strict mode,
@@ -83,7 +74,7 @@ const isWellFormedRun = (run) =>
   isJsonObject(run) &&
   typeof run.name === "string" &&
   run.name !== "" &&
-  CHECK_RUN_STATUSES.has(run.status) &&
+  CHECK_STATUSES.has(run.status) &&
   !(run.status === "completed" && typeof run.conclusion !== "string") &&
   // A queued run has not started, so it can carry no start time.
   (run.status === "completed" || run.status === "in_progress"
@@ -102,7 +93,7 @@ const isWellFormedSuite = (suite, sha) =>
   isJsonObject(suite) &&
   Number.isFinite(suite.id) &&
   suite.head_sha === sha &&
-  CHECK_SUITE_STATUSES.has(suite.status) &&
+  CHECK_STATUSES.has(suite.status) &&
   (suite.status !== "completed" || typeof suite.conclusion === "string") &&
   isJsonObject(suite.app) &&
   typeof suite.app.slug === "string" &&

@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { canonicalPath } from "./canonical-path.mjs";
+import { canonicalPath, fileIdentity } from "./canonical-path.mjs";
 import { sha256 } from "./hash.mjs";
 import { rootPath } from "./root-pins.mjs";
 import { isJsonObject } from "./json.mjs";
@@ -15,7 +15,7 @@ import { resolveWriteTarget, writeFileAtomic } from "./atomic-write.mjs";
 
 const identity = (path) =>
   stat(path, { bigint: true }).then(
-    (info) => `${info.dev}:${info.ino}`,
+    (info) => fileIdentity(info),
     () => null,
   );
 

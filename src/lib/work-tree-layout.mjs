@@ -27,10 +27,8 @@ export async function lstatOrNull(path, options) {
 }
 
 /** True when `path` holds a control character: a line feed, a carriage return, a tab, and so on. */
-export const hasControlCharacter = (path) =>
-  Array.from(path, (character) => character.codePointAt(0)).some(
-    (code) => code < 0x20 || code === 0x7f,
-  );
+// eslint-disable-next-line no-control-regex -- The control set is the contract.
+export const hasControlCharacter = (path) => /[\u0000-\u001f\u007f]/.test(path);
 
 /**
  * Reads `git worktree list --porcelain -z` into entries, in Git's order. A Git that rejects `-z`
@@ -166,26 +164,26 @@ const localReadError = (reason, context) =>
     exit: (result) => result.exitCode ?? "none",
   });
 
-export function readWorkTree(cwd, args, { signal, ...options } = {}) {
+export function readWorkTree(cwd, args, { signal, allowExit = [], ...options } = {}) {
   return gitRead(cwd, args, {
     timeoutMs: WORK_TREE_READ_TIMEOUT_MS,
     stripFinalNewline: false,
     ...options,
     ...(signal === undefined ? {} : { signal }),
-    allowExit: [0],
+    allowExit: [0, ...allowExit],
     createError: localReadError,
   });
 }
+
+/** A `read` callback that binds `signal` to each `readWorkTree` call. */
+export const signalBoundReadWorkTree = (signal) => (dir, args, options) =>
+  readWorkTree(dir, args, { signal, ...options });
 
 /**
  * Returns the canonical path of the main work tree for a linked `cwd`. The result is null when `cwd`
  * is the main work tree or the layout has none. The resolution matches the local-file copy.
  */
 export async function mainWorkTreePath(cwd, { signal } = {}) {
-  const located = await locateWorkTrees(
-    cwd,
-    (dir, args, options) => readWorkTree(dir, args, { signal, ...options }),
-    { quiet: true },
-  );
+  const located = await locateWorkTrees(cwd, signalBoundReadWorkTree(signal), { quiet: true });
   return located?.mainReal ?? null;
 }

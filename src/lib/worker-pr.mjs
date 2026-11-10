@@ -2,12 +2,14 @@
 // The runtime calls it after a worker turn of a headless run that has no PR input. No child turn
 // names or changes the result.
 import { readableErrorText } from "./error-message.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, ghFailureText, runGh } from "./gh-api.mjs";
+import {
+  DEFAULT_READ_TIMEOUT_MS,
+  isPrListEntry,
+  PR_LIST_LIMIT,
+  readPrList,
+  runGh,
+} from "./gh-api.mjs";
 import { gitRead } from "./git-read.mjs";
-import { isJsonObject } from "./json.mjs";
-
-// Cap of the list read. A reply of this size holds too many PRs to name one, so it is ambiguous.
-const LIST_LIMIT = 100;
 
 const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;
 
@@ -76,13 +78,7 @@ async function readRunState(cwd, signal) {
 
 // One entry of the `gh pr list` reply as the resolver reads it. Any other shape is malformed.
 const isListEntry = (entry) =>
-  isJsonObject(entry) &&
-  Number.isSafeInteger(entry.number) &&
-  entry.number > 0 &&
-  typeof entry.headRefName === "string" &&
-  typeof entry.headRefOid === "string" &&
-  typeof entry.isCrossRepository === "boolean" &&
-  typeof entry.url === "string";
+  isPrListEntry(entry) && typeof entry.headRefName === "string" && typeof entry.url === "string";
 
 /**
  * Finds the one open PR whose head branch is the checked-out branch of `cwd`, whose base
@@ -129,29 +125,27 @@ export async function resolveWorkerPr({
     if (before.head !== head) {
       return { pr: null, reason: "the work tree head changed after the worker turn" };
     }
-    const { status, stdout, stderr } = await gh(
-      [
-        "pr",
-        "list",
-        "--head",
-        branch,
-        "--state",
-        "open",
-        "--json",
-        "number,headRefName,headRefOid,isCrossRepository,url",
-        "--limit",
-        String(LIST_LIMIT),
-      ],
-      cwd,
-      { signal, timeoutMs },
+    const argv = [
+      "pr",
+      "list",
+      "--head",
+      branch,
+      "--state",
+      "open",
+      "--json",
+      "number,headRefName,headRefOid,isCrossRepository,url",
+      "--limit",
+      String(PR_LIST_LIMIT),
+    ];
+    const read = await readPrList(
+      (args) => gh(args, cwd, { signal, timeoutMs }),
+      argv,
+      isListEntry,
     );
-    if (status !== 0) {
-      return { pr: null, reason: `gh pr list failed: ${ghFailureText({ status, stderr })}` };
+    if (read.failure) {
+      return { pr: null, reason: read.failure };
     }
-    const list = JSON.parse(stdout);
-    if (!Array.isArray(list) || list.length >= LIST_LIMIT || !list.every(isListEntry)) {
-      return { pr: null, reason: "the gh pr list reply is not a list that names one PR" };
-    }
+    const { list } = read;
     const sameRepo = list.filter(
       (entry) => entry.headRefName === branch && !entry.isCrossRepository,
     );

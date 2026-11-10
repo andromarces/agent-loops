@@ -12,3 +12,6 @@ export async function canonicalPath(path) {
     return resolve(path);
   }
 }
+
+/** The `dev:ino` identity string of a `bigint` stat. */
+export const fileIdentity = (info) => `${info.dev}:${info.ino}`;
