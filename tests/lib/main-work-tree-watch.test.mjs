@@ -16,6 +16,9 @@ afterEach(async () => {
   dir = undefined;
 });
 
+// A short drain bound proves the deadline fires without a one-second wait (issue #1556).
+const SHORT_DRAIN_MS = 100;
+
 // Usefulness: verifies requirement "a write after a reopened watch is reported" (issue #1628).
 // A dropped first event leaves the restored path out of the field.
 test("a write after a reopened watch is reported", async () => {
@@ -472,6 +475,7 @@ test("a write after the turn end is not reported", async () => {
     await startedP;
     const queued = handle.pendingCount();
     await writeFile(join(dir, "late-new.txt"), "late\n");
+    // The closed watcher sends no signal for a late write, so a bounded window lets a wrong report appear.
     const until = performance.now() + 500;
     while (performance.now() < until && handle.pendingCount() === queued) {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -490,6 +494,7 @@ test("a missed drain deadline reports no candidates and warns", async () => {
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   dir = await createTempRepo();
   const handle = await startMainWorkTreeWatch(dir, {
+    drainDeadlineMs: SHORT_DRAIN_MS,
     beforeIgnoreInputEnds: ({ signal }) =>
       new Promise((resolve) => {
         signal.addEventListener("abort", () => resolve(), { once: true });
@@ -499,8 +504,8 @@ test("a missed drain deadline reports no candidates and warns", async () => {
   const started = performance.now();
   const result = await handle.take();
   const elapsed = performance.now() - started;
-  expect(elapsed).toBeGreaterThanOrEqual(DRAIN_DEADLINE_MS - 100);
-  expect(elapsed).toBeLessThan(DRAIN_DEADLINE_MS + 1_000);
+  expect(elapsed).toBeGreaterThanOrEqual(SHORT_DRAIN_MS - 50);
+  expect(elapsed).toBeLessThan(SHORT_DRAIN_MS + 1_000);
   expect(result).toEqual({ candidates: [], failed: true });
   expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
     true,
@@ -517,6 +522,7 @@ test("the drain deadline covers a held file read", async () => {
     started = resolve;
   });
   const handle = await startMainWorkTreeWatch(dir, {
+    drainDeadlineMs: SHORT_DRAIN_MS,
     beforeFileKind: async ({ signal }) => {
       started();
       await new Promise((resolve) => {
@@ -529,7 +535,7 @@ test("the drain deadline covers a held file read", async () => {
   const startedAt = performance.now();
   const result = await handle.take();
   const elapsed = performance.now() - startedAt;
-  expect(elapsed).toBeGreaterThanOrEqual(DRAIN_DEADLINE_MS - 100);
+  expect(elapsed).toBeGreaterThanOrEqual(SHORT_DRAIN_MS - 50);
   expect(result).toEqual({ candidates: [], failed: true });
   expect(warn.mock.calls.some((call) => String(call[0]).includes("main work tree watch"))).toBe(
     true,

@@ -16,11 +16,12 @@ let stateTempCounter = 0;
 // `renameWithRetry` share it.
 const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 
-// A transient unlink failure clears once the holder lets go, so a failed removal
-// is retried once. A persistent failure is swallowed: this runs on the way out
-// of an already-failed operation, and the leftover temp is a lesser problem than
-// replacing the error the caller must act on (#353).
-
+/**
+ * A transient unlink failure clears once the holder lets go, so a failed removal
+ * is retried once. A persistent failure is swallowed: this runs on the way out
+ * of an already-failed operation, and the leftover temp is a lesser problem than
+ * replacing the error the caller must act on (#353).
+ */
 export async function removeTemp(path) {
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -92,22 +93,24 @@ export async function resolveWriteTarget(file) {
   return step.value;
 }
 
-// Writes `text` to `file` atomically: a private temp file in the same directory
-// is renamed over the destination, so a concurrent reader sees the old content
-// or the new content, never a partial write. Node rename replaces an existing
-// destination on Windows and POSIX. A file symlink keeps its link: the write
-// goes to the final target, with the temp beside it (#658). A failed write or
-// rename removes the temp on a best-effort basis and rethrows the original error
-// (#353). `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and
-// suppresses a cleanup failure that persists, so the temp can remain. With `mode`, the temp is
-// created with those permission bits and chmod-ed to them before the rename, so the destination is
-// never briefly more open. Without it, the file gets the default mode of a new file. `mode` can be a
-// function that receives the resolved destination and returns the mode or `undefined`, so a caller
-// reads the mode of the file that the rename replaces, not of a path that a link can retarget. The default
-// temp name is `<pid>.<counter>` and an existing file of that name is overwritten. With
-// `exclusive`, the temp name carries a random token and is created with `wx`: a name that is
-// somehow taken fails the write with `EEXIST`, and the cleanup leaves that file alone, because this
-// call did not create it.
+/**
+ * Writes `text` to `file` atomically: a private temp file in the same directory
+ * is renamed over the destination, so a concurrent reader sees the old content
+ * or the new content, never a partial write. Node rename replaces an existing
+ * destination on Windows and POSIX. A file symlink keeps its link: the write
+ * goes to the final target, with the temp beside it (#658). A failed write or
+ * rename removes the temp on a best-effort basis and rethrows the original error
+ * (#353). `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and
+ * suppresses a cleanup failure that persists, so the temp can remain. With `mode`, the temp is
+ * created with those permission bits and chmod-ed to them before the rename, so the destination is
+ * never briefly more open. Without it, the file gets the default mode of a new file. `mode` can be a
+ * function that receives the resolved destination and returns the mode or `undefined`, so a caller
+ * reads the mode of the file that the rename replaces, not of a path that a link can retarget. The default
+ * temp name is `<pid>.<counter>` and an existing file of that name is overwritten. With
+ * `exclusive`, the temp name carries a random token and is created with `wx`: a name that is
+ * somehow taken fails the write with `EEXIST`, and the cleanup leaves that file alone, because this
+ * call did not create it.
+ */
 export async function writeFileAtomic(file, text, { mode, exclusive = false } = {}) {
   const destination = await resolveWriteTarget(file);
   const targetMode = typeof mode === "function" ? await mode(destination) : mode;

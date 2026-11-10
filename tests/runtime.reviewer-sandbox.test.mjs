@@ -24,10 +24,17 @@ import { removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
 import { SUMMARY } from "./run-fixtures.mjs";
 
-vi.mock("../src/lib/exec.mjs", async (importOriginal) => ({
-  ...(await importOriginal()),
-  exec: vi.fn(),
-}));
+// `exec` is replaced by the cases. The turn directory removal is answered in this process, so no
+// `turn-tmpdir-remove.mjs` child starts per turn.
+vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  const { turnTmpdirRemovalDouble } = await import("./turn-tmpdir-removal.mjs");
+  return {
+    ...actual,
+    exec: vi.fn(),
+    execBounded: turnTmpdirRemovalDouble(actual.execBounded),
+  };
+});
 
 // Behavior of the Codex reviewer sandbox modes (issue #421, ADR 0019, ADR 0038). Every role runs the real
 // Codex adapter against a mocked CLI, so the assertions read the argv each turn received.

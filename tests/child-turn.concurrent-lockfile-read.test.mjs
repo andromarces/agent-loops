@@ -61,6 +61,7 @@ vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
   };
 });
 
+// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
 let repo;
 beforeEach(async () => {
   repo = await createTempRepo();

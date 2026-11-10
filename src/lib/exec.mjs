@@ -322,9 +322,9 @@ export async function exec(command, args = [], options = {}) {
     };
     if (marked) {
       const markedEnv = withNpmLogSettings({ ...process.env, ...childEnv }, env);
+      // A worker and a reviewer also get the pnpm deps check set to `warn`.
       execaOptions.env = withPnpmDepsCheckWarn(markedEnv);
       execaOptions.extendEnv = false;
-      // A worker and a reviewer also get the pnpm deps check set to `warn`.
     } else {
       // Any other role keeps the inherited environment, with `env` over it.
       execaOptions.env = childEnv;

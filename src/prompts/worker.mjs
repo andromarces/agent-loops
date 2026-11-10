@@ -115,17 +115,17 @@ const laterTurnTmpdirRule =
   "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
 
 /**
- * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
- * body, commit-link, staging, temporary-path, and closing-block rules only. `task` adds the init
- * task block. `slotOptions` overrides the Node and CLI paths of the slot rules, as `testSlotRule`
+ * Builds a worker turn prompt. `firstTurn` adds the full preamble. A later turn gets a shorter
+ * prompt with the rules that its conversation still needs. `task` adds the init task block.
+ * `slotOptions` overrides the Node and CLI paths of the slot rules, as `testSlotRule`
  * accepts.
  */
 export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
-    // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
-    // repeats the PR body, named push, commit-link, staging, and temporary-path rules. It repeats the closing block too, because a worker drifts from the block as the
-    // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
-    // (issue #1179).
+    // A later turn can commit and push a fix with no preamble yet. So it repeats the push,
+    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path, and closing-block
+    // rules. It repeats the closing block because a worker drifts from it as the conversation grows
+    // (issue #1118). The rules also name the `Conclusion:` line as its first line (issue #1179).
     return escapeLineSeparators(`${prompt}
 
 ${prTurnRules.join("\n\n")}

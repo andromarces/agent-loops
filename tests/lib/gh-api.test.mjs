@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   bodyClassOf,
+  boundedRunner,
   ghApiFailure,
   ghReadError,
   isCleanServerError,
@@ -115,5 +116,49 @@ describe("ghApiFailure", () => {
         stderr: CONNECTION_RESET,
       }).transient,
     ).toBeFalsy();
+  });
+});
+
+describe("boundedRunner", () => {
+  // Usefulness: a reply that ends after the caller aborts never reaches the caller as data.
+  it("throws on a reply that ends after the caller abort, keeping the reason", async () => {
+    const reason = new Error("the caller stopped");
+    const controller = new AbortController();
+    const gh = (args, cwd, options) =>
+      new Promise((resolve) => {
+        options.signal.addEventListener(
+          "abort",
+          () => resolve({ status: 0, stdout: "", stderr: "" }),
+          { once: true },
+        );
+      });
+    const call = boundedRunner(gh, 60_000, controller.signal);
+    const pending = call(["pr", "view", "1"], ".");
+    controller.abort(reason);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError", cause: reason });
+  });
+
+  // Usefulness: a cancel that fired before the deadline keeps its reason after a late reply.
+  it("keeps a cancel that fired before the deadline", async () => {
+    const reason = new Error("stopped before the deadline");
+    const controller = new AbortController();
+    const gh = () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: 0, stdout: "", stderr: "" }), 60),
+      );
+    const call = boundedRunner(gh, 30, controller.signal);
+    const pending = call(["pr", "view", "1"], ".");
+    setTimeout(() => controller.abort(reason), 5);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError", cause: reason });
+  });
+
+  // Usefulness: a deadline that fires first still reports the read timeout.
+  it("reports a timeout when the deadline fires first", async () => {
+    const gh = () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: 0, stdout: "", stderr: "" }), 60),
+      );
+    const call = boundedRunner(gh, 20);
+    await expect(call(["pr", "view", "1"], ".")).rejects.toMatchObject({ timedOut: true });
   });
 });

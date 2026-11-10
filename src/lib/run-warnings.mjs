@@ -5,7 +5,7 @@ import { redactAndClean } from "./redact.mjs";
 // warnings, and the interactive `role` path records none.
 const storage = new AsyncLocalStorage();
 
-export const MAX_RUN_WARNINGS = 20;
+const MAX_RUN_WARNINGS = 20;
 
 /**
  * Sorts and deduplicates `warnings`, redacts each one, and keeps the first 20. `warningsOverflow`

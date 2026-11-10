@@ -30,6 +30,7 @@ afterEach(async () => {
   shim = undefined;
 });
 
+// Process: the reader starts `ps` as a child, so its exit code, timeout, and output are read here.
 async function useShim(body, options) {
   shim = await createPsShim(body, options);
   vi.stubEnv("PATH", `${shim.dir}${delimiter}${process.env.PATH}`);

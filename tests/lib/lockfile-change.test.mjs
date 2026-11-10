@@ -189,7 +189,7 @@ test("a stalled lockfile hash read ends at the bound and reports every lockfile"
   const warn = vi.spyOn(console, "error").mockImplementation(() => {});
   hashing.stall = true;
   const started = Date.now();
-  const after = await readLockfiles(repo, { boundMs: 2_000 });
+  const after = await readLockfiles(repo, { boundMs: 200 });
   expect(Date.now() - started).toBeLessThan(5_000);
   expect(diffLockfiles(before, after)).toContain("pnpm-lock.yaml");
   expect(warn.mock.calls.some((call) => String(call[0]).includes("lockfile"))).toBe(true);

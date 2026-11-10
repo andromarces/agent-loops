@@ -11,11 +11,17 @@ import { isEphemeralPackageRoot } from "../../src/install/package-root.mjs";
 import { removePath, symlinkOrSkip } from "../fs-helpers.mjs";
 import { OK_EVENTS, withInheritedTmp, fakeCodex, runTurn } from "./codex-tmpdir-helpers.mjs";
 
-// Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.
-vi.mock("../../src/lib/exec.mjs", async (importActual) => ({
-  ...(await importActual()),
-  exec: vi.fn(),
-}));
+// `exec` is replaced by the cases. The turn directory removal is answered in this process, so no
+// `turn-tmpdir-remove.mjs` child starts per turn.
+vi.mock("../../src/lib/exec.mjs", async (importActual) => {
+  const actual = await importActual();
+  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal.mjs");
+  return {
+    ...actual,
+    exec: vi.fn(),
+    execBounded: turnTmpdirRemovalDouble(actual.execBounded),
+  };
+});
 
 const ROOT_OVERRIDES = [
   "AGENT_LOOP_RUNS_ROOT",

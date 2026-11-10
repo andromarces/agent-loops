@@ -134,6 +134,19 @@ test("conflicting sandbox flags are refused in both orders", () => {
   ).toThrow("--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.");
 });
 
+// Usefulness: an inline value on the sandbox alias is refused before the sandbox conflict.
+test("an inline value on the sandbox alias wins over a conflict", () => {
+  const codex = BASE.map((value) => (value === "agy" ? "codex" : value));
+  expect(() =>
+    parseBatchArgs([
+      ...codex,
+      "--reviewer-sandbox",
+      "read-only",
+      "--reviewer-workspace-write=true",
+    ]),
+  ).toThrow("--reviewer-workspace-write does not take a value.");
+});
+
 // Usefulness: an unsupported agent is refused with the headless wording.
 test("an unknown agent is a usage error", () => {
   expect(() => parseBatchArgs([...BASE].map((v) => (v === "agy" ? "nope" : v)))).toThrow(

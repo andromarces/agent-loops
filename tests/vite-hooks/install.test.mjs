@@ -34,6 +34,7 @@ async function setup({ vpScript = "process.exit(0);" } = {}) {
   const env = { GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" };
   await execa("git", ["init", "-q", repo], { env });
   const git = (...args) => execa("git", args, { cwd: repo, env, reject: false });
+  // Process: the guard starts the stub `vp` as a child, so its exit code and signal surface here.
   const prepare = (extraEnv = {}) =>
     execa(process.execPath, [join(".vite-hooks", "install.mjs")], {
       cwd: repo,
