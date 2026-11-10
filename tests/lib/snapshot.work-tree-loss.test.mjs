@@ -103,7 +103,7 @@ test("a snapshot refuses a linked work tree whose gitdir was removed", async () 
   }
 });
 
-// Usefulness: verifies the memo re-reads a root that changed between two snapshots, when a subdirectory becomes its own work tree (#760).
+// Usefulness: verifies a fresh root read sees a root that changed between two snapshots, when a subdirectory becomes its own work tree (#760).
 test("a snapshot covers the new root after the cwd becomes its own work tree", async () => {
   const repo = await createRepo();
   try {

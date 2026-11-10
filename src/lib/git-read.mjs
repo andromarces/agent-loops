@@ -31,8 +31,8 @@ export const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text
 const identityReads = new AsyncLocalStorage();
 
 /**
- * Runs `fn` with one identity-read memo, so each phase of a command reads the work tree top level
- * and the common Git directory once each. A failed read is never kept.
+ * Runs `fn` with one identity-read memo. A settled successful read is reused until the next clear,
+ * and a failed read is never kept.
  */
 export function withGitIdentityReads(fn) {
   return identityReads.run(new Map(), fn);

@@ -6,7 +6,7 @@ import { afterEach, expect, vi } from "vite-plus/test";
 // Answers `git` from memory for the tests that switch it on (see
 // `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
-// Counts the two identity reads that one command can resolve once.
+// Counts the top-level and common-directory reads of one init dispatch.
 const gitReads = vi.hoisted(() => ({ topLevel: 0, commonDir: 0 }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -831,7 +831,7 @@ test("resume-interrupted exits 130 when the process-table read is canceled", asy
   expect((await readState(paths.stateFile)).stepsUsed).toBe(state.stepsUsed);
 });
 
-// Usefulness: counts one init dispatch's identity reads, so a repeated top-level or common-directory read fails.
+// Usefulness: asserts one init dispatch runs 3 top-level reads and 2 common-directory reads, below origin/main's 7 and 5.
 test("one init dispatch holds the work tree identity read counts", async () => {
   const repo = await newRunRepo();
   const worker = recordingAdapter([]);
