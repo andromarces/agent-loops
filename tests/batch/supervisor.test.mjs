@@ -345,6 +345,79 @@ test("a real spawn failure fails the loop with its code and no started line", as
   }
 });
 
+// Usefulness: a gh read that never returns ends at the bound, so the batch cannot hang.
+test("a gh read that never returns ends at the bound", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const gh = (args, cwd, options = {}) =>
+    new Promise((resolve) => {
+      const end = () => resolve({ status: null, stdout: "", stderr: "", timedOut: true });
+      if (options.signal?.aborted) end();
+      else options.signal?.addEventListener("abort", end, { once: true });
+    });
+  let guardTimer;
+  const guard = new Promise((resolve) => {
+    guardTimer = setTimeout(() => resolve("hung"), 3000);
+  });
+  try {
+    const result = await Promise.race([
+      runBatch({
+        prepared,
+        runsRoot: join(prepared.workTreeRoot, "runs"),
+        gh,
+        deps: { notifier: noNotify, installSignal: false, ghTimeoutMs: 20 },
+      }),
+      guard,
+    ]);
+    expect(result).not.toBe("hung");
+    expect(result.summary.loops[0].skipReason).toBe("eligibility-unverified");
+    expect(result.summary.loops[0].reason).toContain("timed out after 20ms");
+  } finally {
+    clearTimeout(guardTimer);
+  }
+});
+
+// Usefulness: a gh read ends on the run abort, so an abort does not wait on a hung read.
+test("a gh read ends on the run abort", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const abort = new AbortController();
+  const gh = (args, cwd, options = {}) =>
+    new Promise((resolve, reject) => {
+      const end = () =>
+        reject(Object.assign(new Error("the read was aborted"), { name: "AbortError" }));
+      if (options.signal?.aborted) end();
+      else options.signal?.addEventListener("abort", end, { once: true });
+    });
+  const abortTimer = setTimeout(() => abort.abort(), 10);
+  let guardTimer;
+  const guard = new Promise((resolve) => {
+    guardTimer = setTimeout(() => resolve("hung"), 3000);
+  });
+  try {
+    const result = await Promise.race([
+      runBatch({
+        prepared,
+        runsRoot: join(prepared.workTreeRoot, "runs"),
+        gh,
+        deps: {
+          notifier: noNotify,
+          installSignal: false,
+          signal: abort.signal,
+          ghTimeoutMs: 60_000,
+        },
+      }),
+      guard,
+    ]);
+    expect(result).not.toBe("hung");
+    expect(result.summary.loops[0].skipReason).toBe("eligibility-unverified");
+    expect(result.summary.loops[0].reason).toContain("the read was aborted");
+  } finally {
+    clearTimeout(guardTimer);
+    clearTimeout(abortTimer);
+  }
+});
+
 // Usefulness: three issues get three work trees, three branches, and one child each.
 test("three selected issues create three work trees and one child each", async () => {
   const repo = await batchRepo();

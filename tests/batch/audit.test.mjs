@@ -490,6 +490,39 @@ test("an approval bound to another revision is discarded", async () => {
   expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
 });
 
+// Usefulness: the audit issue read ends at the bound instead of hanging the run.
+test("an audit issue read that never returns ends at the bound", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, { existingIssues: null });
+  const gh = (args, cwd, options = {}) =>
+    new Promise((resolve) => {
+      const end = () => resolve({ status: null, stdout: "", stderr: "", timedOut: true });
+      if (options.signal?.aborted) end();
+      else options.signal?.addEventListener("abort", end, { once: true });
+    });
+  let guardTimer;
+  const guard = new Promise((resolve) => {
+    guardTimer = setTimeout(() => resolve("hung"), 3000);
+  });
+  try {
+    const result = await Promise.race([
+      runAudit({
+        prepared: { ...prepared, mode: "resume" },
+        runsRoot,
+        gh,
+        deps: { ...depsWith(prepared.workTree), ghTimeoutMs: 20 },
+      }),
+      guard,
+    ]);
+    expect(result).not.toBe("hung");
+    expect(result.exitCode).toBe(1);
+    expect(result.summary.pauseReason).toBe("issue-read-failed");
+  } finally {
+    clearTimeout(guardTimer);
+  }
+});
+
 // Usefulness: a repeated worker flag with a different value is refused, not silently overwritten.
 test("a repeated worker flag with a conflicting value is a usage error", () => {
   expect(() =>

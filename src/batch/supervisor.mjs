@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { canonicalPath } from "../lib/canonical-path.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/gh-api.mjs";
 import { declaredPrFromTranscript } from "../lib/gate.mjs";
 import { endSubprocessTree, killTreeOnExit } from "../lib/exec-tree.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
@@ -430,6 +431,17 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
+  // The run controller exists here, so every read before the loop slots sees the run signal.
+  const controller = new AbortController();
+  if (deps.signal) {
+    if (deps.signal.aborted) controller.abort(deps.signal.reason);
+    else
+      deps.signal.addEventListener("abort", () => controller.abort(deps.signal.reason), {
+        once: true,
+      });
+  }
+  gh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, controller.signal);
+
   // Every path that ends the batch uses this finalization.
   // A resume after an answer reports the same status, summary, exit code, and one completion
   // notification.
@@ -640,15 +652,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const storedLoops = [...loops.values()].filter((loop) => loop.kind !== "pr");
     await createBatchStore(runsRoot, manifest, storedLoops);
     progress(`batch ${id} started (${items.length} item(s), ${prepared.loops} loop(s))`);
-  }
-
-  const controller = new AbortController();
-  if (deps.signal) {
-    if (deps.signal.aborted) controller.abort(deps.signal.reason);
-    else
-      deps.signal.addEventListener("abort", () => controller.abort(deps.signal.reason), {
-        once: true,
-      });
   }
 
   const active = new Map();

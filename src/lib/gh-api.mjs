@@ -617,6 +617,26 @@ export function boundedCall(gh, timeoutMs, signal = null) {
   return call;
 }
 
+/**
+ * A runner for one long command, such as a batch run. Every call ends when its bound expires or
+ * the run signal aborts. A caller bound wins over the default, and a caller signal joins the run
+ * signal. A reply that the bound cut short throws `readTimeout` and reaches the caller as no data.
+ * @param {Function} gh
+ * @param {number} timeoutMs
+ * @param {AbortSignal | null} [signal]
+ */
+export function boundedRunner(gh, timeoutMs, signal = null) {
+  return async (args, cwd, options = {}) => {
+    const bound = options.timeoutMs ?? timeoutMs;
+    const deadline = AbortSignal.timeout(bound);
+    const signals = [options.signal, signal, deadline].filter(Boolean);
+    const combined = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    const reply = await gh(args, cwd, { ...options, timeoutMs: bound, signal: combined });
+    if (reply?.timedOut || deadline.aborted) throw readTimeout(bound);
+    return reply;
+  };
+}
+
 // The first failure of a group, in sequential order, carried past the wait for
 // the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
 // had already fired when the failure was captured. A failure captured before the
