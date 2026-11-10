@@ -661,11 +661,13 @@ function canceledCall(reason) {
   return Object.assign(new Error("the call was canceled"), { name: "AbortError", cause: reason });
 }
 
-// The first failure of a group, in sequential order, carried past the wait for
-// the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
-// had already fired when the failure was captured. A failure captured before the
-// deadline stays the outcome, so a deadline that expires during the wait cannot
-// replace it. The entry points unwrap it with `failureOf`.
+/**
+ * The first failure of a group, in sequential order, carried past the wait for
+ * the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
+ * had already fired when the failure was captured. A failure captured before the
+ * deadline stays the outcome, so a deadline that expires during the wait cannot
+ * replace it. The entry points unwrap it with `failureOf`.
+ */
 export class ReadFailure {
   constructor(cause, expired) {
     this.cause = cause;
@@ -675,15 +677,17 @@ export class ReadFailure {
 
 export const failureOf = (err) => (err instanceof ReadFailure ? err.cause : err);
 
-// Runs independent reads together. Each maker receives a runner that the group
-// can cancel. The reads are awaited in list order, so the first failure in that
-// order throws as soon as it is reached, the error the same reads run in sequence
-// surfaced. A later sibling that is slow or stalled never delays that error. On a
-// failure the remaining reads are cancelled and settled before the throw, so no
-// `gh` child outlives the caller. `stopWhen(value)` ends the group early, as a
-// sequential caller that returns at that value would: the later reads are
-// cancelled and settled, their failures are never surfaced, and the values read
-// so far are returned.
+/**
+ * Runs independent reads together. Each maker receives a runner that the group
+ * can cancel. The reads are awaited in list order, so the first failure in that
+ * order throws as soon as it is reached, the error the same reads run in sequence
+ * surfaced. A later sibling that is slow or stalled never delays that error. On a
+ * failure the remaining reads are cancelled and settled before the throw, so no
+ * `gh` child outlives the caller. `stopWhen(value)` ends the group early, as a
+ * sequential caller that returns at that value would: the later reads are
+ * cancelled and settled, their failures are never surfaced, and the values read
+ * so far are returned.
+ */
 export async function inOrder(gh, makers, stopWhen = () => false) {
   const group = new AbortController();
   const scoped = withSignal(gh, group.signal);

@@ -79,7 +79,7 @@ export function hasStructuralMinimum(body) {
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
  * commit read reached the API's 250-commit page. The caller then stops launching. `slug` is the
  * repository name, read when it is null and returned for the next call.
- * @returns {Promise<{ closed: Set<number>, pr: number | null, incompletePr: number | null, slug: string | null }>}
+ * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, slug: string | null }>}
  */
 export async function readOpenPrClosures({ gh, repo, slug = null }) {
   const list = await readJson(

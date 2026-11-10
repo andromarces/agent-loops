@@ -115,9 +115,6 @@ function testRunLines(testRun) {
 // breach (issue #422).
 const remoteWriteRule = `Do not write to GitHub or any remote: ${REMOTE_WRITE_ACTIONS} A read-only query changes nothing, so it stays allowed.`;
 
-// The reviewer variant of the probe-copy rule names its install ban and the runtime environment
-// (issue #1026, issue #1145). The runtime does not detect a breach.
-
 // The file-change rule bars a change to the work tree and Git state only. Without this scope a
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
 // runtime mutation check is unchanged: it does not see an ignored or outside-repository write, so
@@ -204,6 +201,8 @@ const sandboxNotes = {
   ],
 };
 
+// The reviewer variant of the probe-copy rule names its install ban and the runtime environment
+// (issue #1026, issue #1145). The runtime does not detect a breach.
 /**
  * Builds a reviewer turn prompt from one options object.
  * `prChecks` adds the runtime-read required-check status.

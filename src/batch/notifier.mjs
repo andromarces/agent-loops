@@ -8,13 +8,13 @@ import { logWarn } from "../lib/log.mjs";
 /** The longest notification text, in UTF-16 code units. */
 export const NOTIFY_MAX_CHARS = 500;
 /** The bound on one notifier process. */
-export const NOTIFY_TIMEOUT_MS = 5000;
+const NOTIFY_TIMEOUT_MS = 5000;
 
 // eslint-disable-next-line no-control-regex -- the control characters are what the cleaning removes.
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
 /** Removes control characters except a newline and a tab, and bounds the length. */
-export function cleanNotificationText(value) {
+function cleanNotificationText(value) {
   return String(value ?? "")
     .replace(CONTROL, "")
     .slice(0, NOTIFY_MAX_CHARS);

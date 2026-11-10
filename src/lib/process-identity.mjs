@@ -1,5 +1,6 @@
 // Process identity: liveness of a pid and its start-time stamp, which tells a live owner from a
-// reused pid (#173, ADR 0020). Reads the process table or /proc; the state lock only calls it.
+// reused pid (#173, ADR 0020). Reads the process table or /proc. The state lock and six other
+// modules import it.
 import { readFile, readlink } from "node:fs/promises";
 import { execBounded } from "./exec.mjs";
 
@@ -198,13 +199,15 @@ export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } 
 
 let ownStartTimeQuery;
 
-// The start time stamp of this process, read once on the first lock creation: the
-// lock content of every acquisition carries it. Linux reads /proc; macOS spawns one
-// `ps`; Windows spawns one PowerShell (a startup of about 0.8 s on a loaded 16-CPU Windows host, 2026-10-23, bounded by
-// START_TIME_QUERY_MS). Node has no cheaper source of the OS start time:
-// `process.uptime()` stops during a system sleep on POSIX, so `Date.now()` minus it
-// is not the start time.
-// known-limit: the Windows spawn is paid once by each process that takes a lock.
+/**
+ * The start time stamp of this process, read once on the first lock creation: the
+ * lock content of every acquisition carries it. Linux reads /proc; macOS spawns one
+ * `ps`; Windows spawns one PowerShell (a startup of about 0.8 s on a loaded 16-CPU Windows host, 2026-10-23, bounded by
+ * START_TIME_QUERY_MS). Node has no cheaper source of the OS start time:
+ * `process.uptime()` stops during a system sleep on POSIX, so `Date.now()` minus it
+ * is not the start time.
+ * known-limit: the Windows spawn is paid once by each process that takes a lock.
+ */
 export function ownStartTime() {
   ownStartTimeQuery ??= processStartTime(process.pid).then((stamp) => stamp ?? undefined);
   return ownStartTimeQuery;
@@ -308,25 +311,27 @@ function startTimesDiffer(recorded, current) {
   return Math.abs(a.seconds - b.seconds) > START_TIME_TOLERANCE_S;
 }
 
-// True when the owner of a lock or claim still runs. Checks in order:
-// 1. A valid `linux-proc` stamp whose PID namespace differs from the reader, or any
-//    valid `linux-proc` stamp while the reader namespace cannot be read, reads as alive
-//    before the pid probe, whether its pid is alive here or not. A differing namespace
-//    means the recorded pid belongs to another namespace (a container that shares the
-//    runs root), so `pidAlive` cannot say whether that owner runs. An unreadable
-//    reader namespace means the reader cannot tell whether the stamp namespace is its
-//    own, so it keeps the lock. Other stamp kinds skip this step.
-// 2. A dead pid reads as dead, with any stamp or none (the pid-only check).
-// 3. A live pid reads as dead only when its recorded stamp and the stamp of the process
-//    now at that pid are valid, of one kind, and differ (see `startTimesDiffer`): the
-//    pid was reused. Every other live pid reads as alive: no recorded stamp (an older
-//    version, or an owner that could not read its own), an invalid stamp, a kind
-//    mismatch, and a current read that is null (failed, timed out, empty, or
-//    unparseable).
-// known-limit: step 1 never takes a lock over, even when its owner is dead: a crashed
-// owner of another namespace, and a crashed owner of this namespace when the reader
-// cannot read its own PID namespace, keep the lock until a person checks that the owner
-// is gone and removes the lock file (and any `.reap.<digest>` claim beside it).
+/**
+ * True when the owner of a lock or claim still runs. Checks in order:
+ * 1. A valid `linux-proc` stamp whose PID namespace differs from the reader, or any
+ *    valid `linux-proc` stamp while the reader namespace cannot be read, reads as alive
+ *    before the pid probe, whether its pid is alive here or not. A differing namespace
+ *    means the recorded pid belongs to another namespace (a container that shares the
+ *    runs root), so `pidAlive` cannot say whether that owner runs. An unreadable
+ *    reader namespace means the reader cannot tell whether the stamp namespace is its
+ *    own, so it keeps the lock. Other stamp kinds skip this step.
+ * 2. A dead pid reads as dead, with any stamp or none (the pid-only check).
+ * 3. A live pid reads as dead only when its recorded stamp and the stamp of the process
+ *    now at that pid are valid, of one kind, and differ (see `startTimesDiffer`): the
+ *    pid was reused. Every other live pid reads as alive: no recorded stamp (an older
+ *    version, or an owner that could not read its own), an invalid stamp, a kind
+ *    mismatch, and a current read that is null (failed, timed out, empty, or
+ *    unparseable).
+ * known-limit: step 1 never takes a lock over, even when its owner is dead: a crashed
+ * owner of another namespace, and a crashed owner of this namespace when the reader
+ * cannot read its own PID namespace, keep the lock until a person checks that the owner
+ * is gone and removes the lock file (and any `.reap.<digest>` claim beside it).
+ */
 export async function ownerAlive(owner, cache) {
   const recorded = parseStamp(owner.startTime);
   if (recorded?.kind === "linux-proc" && recorded.namespace !== (await readerPidNamespace())) {

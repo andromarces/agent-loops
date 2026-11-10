@@ -6,29 +6,29 @@ import { readableErrorText, readProp } from "./error-message.mjs";
 import { normalizeAgent } from "./agent-kinds.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "./gate-refusal.mjs";
 
-function missingValue(flag) {
-  return new Error(`Missing value for ${flag}.`);
-}
+const defaultError = (message) => new Error(message);
 
 /**
  * Reads the value that follows `flag`. A value that starts with `-` is refused,
  * except a lone `-` where `allowDash` is set (stdin for `--task-file`).
+ * `error` builds the missing-value refusal.
  */
-function readArgValue(argv, flag, index, allowDash = false) {
+function readArgValue(argv, flag, index, allowDash = false, error = defaultError) {
   const value = argv[index];
   if (!value || (value.startsWith("-") && !(allowDash && value === "-"))) {
-    throw missingValue(flag);
+    throw error(`Missing value for ${flag}.`);
   }
   return value;
 }
 
 /**
- * Returns the value of an inline `--flag=value`. Throws the shared missing-value
- * error when the value is empty, so every CLI parser reports the same message.
+ * Returns the value of an inline `--flag=value`. Throws a missing-value refusal
+ * when the value is empty, so every CLI parser reports the same message.
+ * `error` builds the refusal.
  */
-function readInlineValue(inline, flag) {
+function readInlineValue(inline, flag, error = defaultError) {
   if (inline.value === "") {
-    throw missingValue(flag);
+    throw error(`Missing value for ${flag}.`);
   }
   return inline.value;
 }
@@ -340,16 +340,25 @@ export function initRefusal(
 export const STOP_FLAG_WALK = Symbol("stop flag walk");
 
 /**
- * Walks `argv[start..]` and hands each flag to `onFlag(arg, readInline, inline)`, which returns true
- * when it consumed `arg`, `STOP_FLAG_WALK` to consume it and end the walk, or false for an unknown
- * flag. `readInline(flag, allowDash)` reads the value of the flag, inline or from the next argument.
+ * Walks `argv[start..]` and hands each flag to `onFlag(arg, readInline, inline)`.
+ * The handler returns true when it consumed `arg`, `STOP_FLAG_WALK` to consume it and end the walk,
+ * or false for an unknown flag.
+ * `readInline(flag, allowDash)` reads the value of the flag, inline or from the next argument.
  * A flag whose handler read no value is boolean, so an inline value on it is an error rather than a
  * silently dropped argument.
+ * `error` builds each refusal, so a parser keeps its own error type.
+ * `allowInlineOnStop` lets a stopping flag ignore its inline value.
  * @param {string[]} argv
  * @param {number} start index of the first flag
  * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean | symbol} onFlag
+ * @param {{ error?: (message: string) => Error, allowInlineOnStop?: boolean }} [options]
  */
-export function walkFlags(argv, start, onFlag) {
+export function walkFlags(
+  argv,
+  start,
+  onFlag,
+  { error = defaultError, allowInlineOnStop = false } = {},
+) {
   for (let i = start; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
@@ -357,18 +366,18 @@ export function walkFlags(argv, start, onFlag) {
     let inlineUsed = false;
     const readInline = (flag, allowDash) => {
       if (!inline) {
-        return readArgValue(argv, flag, ++i, allowDash);
+        return readArgValue(argv, flag, ++i, allowDash, error);
       }
       inlineUsed = true;
-      return readInlineValue(inline, flag);
+      return readInlineValue(inline, flag, error);
     };
 
     const consumed = onFlag(arg, readInline, inline);
     if (!consumed) {
-      throw new Error(`Unknown argument: ${raw}`);
+      throw error(`Unknown argument: ${raw}`);
     }
-    if (inline && !inlineUsed) {
-      throw new Error(`${arg} does not take a value.`);
+    if (inline && !inlineUsed && !(allowInlineOnStop && consumed === STOP_FLAG_WALK)) {
+      throw error(`${arg} does not take a value.`);
     }
     if (consumed === STOP_FLAG_WALK) {
       return;

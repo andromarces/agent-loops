@@ -25,7 +25,6 @@ import {
 } from "../../src/batch/decisions.mjs";
 import {
   childArguments,
-  freezePullRequestItems,
   newBatchId,
   readBatchStatus,
   runBatch,
@@ -328,34 +327,6 @@ async function pushLoop(prepared, issue = 1) {
 // The shared repository and remote are removed once for the file. Each case removes only the
 // work-tree root it created, at `afterAll`, so no case depends on another case's teardown.
 async function cleanupRepo() {}
-
-// Usefulness: a frozen pull request list keeps item order when reads finish out of order.
-test("frozen pull request items keep their order", async () => {
-  const items = [
-    { kind: "pr", number: 1, key: "pr-1" },
-    { kind: "pr", number: 2, key: "pr-2" },
-    { kind: "task", key: "task" },
-  ];
-  const gh = async (args) => {
-    const number = Number(args[2]);
-    if (number === 1) await new Promise((resolve) => setTimeout(resolve, 30));
-    return {
-      status: 0,
-      stdout: JSON.stringify({
-        state: "OPEN",
-        headRefOid: `head-${number}`,
-        headRefName: `branch-${number}`,
-        isCrossRepository: false,
-        title: `title-${number}`,
-      }),
-      stderr: "",
-    };
-  };
-  const frozen = await freezePullRequestItems(items, { gh, repo: "o/r" });
-  expect(frozen.map((item) => item.key)).toEqual(["pr-1", "pr-2", "task"]);
-  expect(frozen[0].head).toBe("head-1");
-  expect(frozen[1].head).toBe("head-2");
-});
 
 // Usefulness: the real headless child writes its output to the log file (the one end-to-end run of this entry point).
 test("the real headless child writes its output to the log file", async () => {

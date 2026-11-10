@@ -36,8 +36,8 @@ import { finishRun } from "./finish.mjs";
 import { readStdin, refuseUnreadableGate, releaseWorkTreeLock, requireState } from "./state.mjs";
 
 // Every operation of `agent-loop role`, in default-first usage order. `runEnding` marks an
-// operation that ends, extends, or changes the PR or a model of a run. A child process of that run
-// never runs one.
+// operation that ends, extends, changes the PR or a model, or refreshes the local state of a run.
+// A child process of that run never runs one.
 const ROLE_OPERATIONS = [
   { name: "dispatch", runEnding: false, run: dispatch },
   { name: "finish", runEnding: true, run: finish },
@@ -416,9 +416,9 @@ async function waitChecksOperation(
     // The bound cannot move with wall time, and every child timeout stays an integer.
     now = () => Math.floor(performance.now()),
     sleep,
-    assertWorkTree = assertGitWorkTree,
     // `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it.
     // A test can spend clock time on validation and check that the time comes out of the bound.
+    assertWorkTree = assertGitWorkTree,
     // Injectable so a test can use a short ceiling; production keeps the wait default (issue #1465).
     childExitCeilingMs,
   } = {},

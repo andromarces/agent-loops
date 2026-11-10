@@ -5,6 +5,7 @@ import { isJsonObject } from "../lib/json.mjs";
 const DISPATCH_ACTIONS = new Set(["run_worker", "run_reviewer"]);
 
 /**
+/**
  * Counts the charged steps of one parsed loop transcript. Its segments split at each `continued`
  * event. Each segment contributes its highest `result` event's `stepsUsed`. A trailing dispatch
  * action with no later result adds one, because the runtime charges a step before the child starts.

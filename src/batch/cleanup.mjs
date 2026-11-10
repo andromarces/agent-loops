@@ -1,22 +1,21 @@
 // Cleanup of one batch loop (ADR 0106 decision 13). Only a pushed success is removed, and only
 // while every identity, branch, cleanliness, claim, and work-tree-lock check passes.
-import { canonicalPath } from "../lib/canonical-path.mjs";
+import { canonicalPath, isInside } from "../lib/canonical-path.mjs";
 import {
   commitsAhead,
+  findRegisteredWorkTrees,
   identityEqual,
   fetchRemoteBranch,
-  git,
   isAncestor,
-  isInside,
   pathIdentity,
-  readRegisteredWorkTrees,
+  readWorkTreeGitState,
   removeWorkTree,
 } from "./git.mjs";
 import { readClaim, releaseClaim } from "./store.mjs";
 
 const keep = (reason) => ({ removed: false, reason });
 
-async function prProof({ loop, repo, base, gh }) {
+async function prProof({ loop, repo, base, gh, head }) {
   if (loop.pr === null || loop.pr === undefined)
     return keep("the loop has no pushed proof (unpushed)");
   let view;
@@ -31,7 +30,6 @@ async function prProof({ loop, repo, base, gh }) {
     return keep(`the pull request read failed: ${err?.message ?? err}`);
   }
   if (view?.state !== "MERGED") return keep(`pull request ${loop.pr} is not merged (unpushed)`);
-  const head = (await git(["rev-parse", "HEAD"], loop.workTree.path)).stdout;
   if (!(await isAncestor(head, view.headRefOid, repo))) {
     return keep("a local commit is not in the merged pull request (unpushed)");
   }
@@ -70,27 +68,21 @@ export async function cleanupLoop({ manifest, loop, runsRoot, gh = null }) {
     return keep("the work tree identity changed");
   }
 
-  let entries;
-  try {
-    entries = await readRegisteredWorkTrees(manifest.repo);
-  } catch (err) {
-    return keep(`the work tree list read failed: ${err.message}`);
-  }
-  const own = [];
-  for (const entry of entries) {
-    if ((await canonicalPath(entry.path)) === workTree.canonicalPath) own.push(entry);
-  }
-  if (own.length !== 1) return keep("the path is not the registered work tree of this batch");
-  if (own[0].locked) return keep("the work tree is locked by a live run");
+  const found = await findRegisteredWorkTrees(manifest.repo, workTree.canonicalPath);
+  if (found.reason !== null) return keep(found.reason);
+  if (found.own.length !== 1) return keep("the path is not the registered work tree of this batch");
+  if (found.own[0].locked) return keep("the work tree is locked by a live run");
 
-  const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
+  const reads = await readWorkTreeGitState(workTree.path);
+  const branch = reads.branch;
   if (branch.exitCode !== 0 || branch.stdout !== workTree.branch) {
     return keep("the recorded branch is not checked out");
   }
-  const status = await git(["status", "--porcelain"], workTree.path);
+  const status = reads.status;
   if (status.exitCode !== 0 || status.stdout !== "") {
     return keep("the work tree is not clean");
   }
+  const head = reads.head.stdout;
 
   const claim = await readClaim(runsRoot, manifest.repoKey, loop.issue);
   if (claim.exists) {
@@ -105,13 +97,12 @@ export async function cleanupLoop({ manifest, loop, runsRoot, gh = null }) {
   const remote = await fetchRemoteBranch(manifest.repo, workTree.branch);
   let pushed = false;
   if (remote !== null) {
-    const head = (await git(["rev-parse", "HEAD"], workTree.path)).stdout;
     const ahead = await commitsAhead(remote, workTree.branch, workTree.path);
     pushed = (await isAncestor(head, remote, manifest.repo)) && ahead === 0;
   }
   if (!pushed) {
     if (gh === null) return keep("no pushed proof (unpushed)");
-    const proof = await prProof({ loop, repo: manifest.repo, base: manifest.base, gh });
+    const proof = await prProof({ loop, repo: manifest.repo, base: manifest.base, gh, head });
     if (!proof.removed) return proof;
   }
 

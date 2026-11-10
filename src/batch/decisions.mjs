@@ -26,7 +26,7 @@ export const UNVERIFIED_STEPS_OPTIONS = [
   { key: "abandon", label: "Stop the loop as failed and keep its work tree", recommended: true },
   { key: "skip", label: "Stop the loop as skipped and keep its work tree" },
 ];
-export const RECOMMENDED_OPTION = "resume";
+const RECOMMENDED_OPTION = "resume";
 /** The failure reason of a loop that the owner abandons. */
 export const ABANDON_REASON = "owner-abandoned";
 /** The skip reason of a loop that the owner stops as skipped. */

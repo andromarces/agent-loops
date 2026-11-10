@@ -4,19 +4,16 @@
 import { isJsonObject } from "../lib/json.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { readFile } from "node:fs/promises";
-import { git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
+import {
+  commitsAhead,
+  git as gitRead,
+  identityEqual,
+  isAncestor,
+  pathIdentity,
+  readWorkTreeGitState,
+} from "./git.mjs";
 
 const asGit = (deps) => deps.git ?? gitRead;
-
-async function commitsAhead(from, to, cwd, git) {
-  const result = await git(["rev-list", "--count", `${from}..${to}`], cwd);
-  return result.exitCode === 0 && /^\d+$/.test(result.stdout) ? Number(result.stdout) : null;
-}
-
-async function ancestorOf(ancestor, descendant, cwd, git) {
-  const result = await git(["merge-base", "--is-ancestor", ancestor, descendant], cwd);
-  return result.exitCode === 0;
-}
 
 async function ghJson(gh, args, cwd, label) {
   let reply;
@@ -36,6 +33,20 @@ async function ghJson(gh, args, cwd, label) {
 }
 
 const owner = (reason) => ({ status: "needs-owner", reason, pr: null, requireCi: null });
+
+// The success of a merged pull request, or null when no merged head matches the local branch.
+async function mergedOutcome(merged, workTree, git) {
+  for (const pull of merged) {
+    const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, {
+      runner: git,
+    });
+    if (ahead === null) return owner("the local commit count could not be read");
+    if (ahead === 0) {
+      return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
+    }
+  }
+  return null;
+}
 
 /**
  * The work-tree heads that this loop's own transcript recorded for a worker or reviewer turn.
@@ -152,9 +163,8 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
   }
   let state;
   try {
-    const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
-    const head = await git(["rev-parse", "HEAD"], workTree.path);
-    const status = await git(["status", "--porcelain"], workTree.path);
+    const reads = await readWorkTreeGitState(workTree.path, { runner: git });
+    const { branch, head, status } = reads;
     if (branch.exitCode !== 0 || head.exitCode !== 0 || status.exitCode !== 0) {
       throw new Error(branch.stderr || head.stderr || status.stderr || "a Git read failed");
     }
@@ -253,12 +263,8 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
 
   if (loop.kind === "task") {
     if (merged.length > 0) {
-      for (const pull of merged) {
-        const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, git);
-        if (ahead === null) return owner("the local commit count could not be read");
-        if (ahead === 0)
-          return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
-      }
+      const succeeded = await mergedOutcome(merged, workTree, git);
+      if (succeeded !== null) return succeeded;
       return owner("the merged pull request head lacks a local commit");
     }
   }
@@ -267,12 +273,8 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
     if (merged.length === 0) {
       return owner("the issue is closed and no pull request of this branch is merged");
     }
-    for (const pull of merged) {
-      const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, git);
-      if (ahead === null) return owner("the local commit count could not be read");
-      if (ahead === 0)
-        return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
-    }
+    const succeeded = await mergedOutcome(merged, workTree, git);
+    if (succeeded !== null) return succeeded;
     return owner("the merged pull request head lacks a local commit");
   }
 
@@ -300,8 +302,10 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
   }
 
   if (remoteHead !== null && remoteHead !== state.head) {
-    const ahead = await commitsAhead(remoteHead, state.head, workTree.path, git);
-    const remoteIsAncestor = await ancestorOf(remoteHead, state.head, workTree.path, git);
+    const ahead = await commitsAhead(remoteHead, state.head, workTree.path, { runner: git });
+    const remoteIsAncestor = await isAncestor(remoteHead, state.head, workTree.path, {
+      runner: git,
+    });
     if (ahead === null) return owner("the local commit count could not be read");
     if (ahead > 0 && remoteIsAncestor) {
       return { status: "resume", reason: null, pr: null, requireCi: null };

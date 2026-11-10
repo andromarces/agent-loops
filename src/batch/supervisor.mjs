@@ -1,5 +1,5 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
-// one headless child per issue, prints progress on stderr, and returns one summary for stdout.
+// one headless child per item, prints progress on stderr, and returns one summary for stdout.
 import { readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -40,6 +40,7 @@ import {
   identityEqual,
   pathIdentity,
   planPrWorkTree,
+  readWorkTreeGitState,
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, loopReportFromRead, readLoopReport } from "./report.mjs";
@@ -49,7 +50,6 @@ import {
   acquireClaim,
   batchPaths,
   createBatchStore,
-  listBatches,
   readClaim,
   readLoop,
   readManifest,
@@ -63,6 +63,11 @@ import {
 // checkpoint and is re-checked on the poll (adr/0110-release-batch-slots-on-owner-decisions.md
 // decision 5).
 const TERMINAL = new Set(["succeeded", "skipped", "failed"]);
+const PR_BRANCH_REFUSALS = new Set([
+  "pr-head-moved",
+  "pr-branch-diverged",
+  "pr-branch-checked-out",
+]);
 const INTERRUPT_WAIT_MS = 30_000;
 /** The wait between two re-checks of a blocked issue (adr/0110-release-batch-slots-on-owner-decisions.md decision 5). */
 export const POLL_INTERVAL_MS = 15_000;
@@ -104,11 +109,7 @@ function defaultSleep(ms, signal) {
  * Waits one poll interval on the monotonic clock. An abort ends the wait at once without an error,
  * so the caller keeps its own cancel identity. Tests inject `now` and `sleep`.
  */
-export async function pollWait(
-  ms,
-  signal,
-  { now = () => performance.now(), sleep = defaultSleep } = {},
-) {
+async function pollWait(ms, signal, { now = () => performance.now(), sleep = defaultSleep } = {}) {
   const deadline = now() + ms;
   while (!signal?.aborted) {
     const remaining = deadline - now();
@@ -363,7 +364,7 @@ async function ownerStillLive(loop) {
  * Reads the frozen head, branch, and fork flag of every pull request item before the manifest is
  * written. A read that fails freezes no head, so eligibility later reports it unverified.
  */
-export async function freezePullRequestItems(items, { gh, repo }) {
+async function freezePullRequestItems(items, { gh, repo }) {
   return mapInBatches(items, READ_BATCH_SIZE, async (item) => {
     if (item.kind !== "pr") return item;
     try {
@@ -398,7 +399,7 @@ export async function freezePullRequestItems(items, { gh, repo }) {
 }
 
 /** The task text of one item. An explicit per-item task replaces the template for that item. */
-export function taskTextFor({ item, loop, prepared, title, branch }) {
+function taskTextFor({ item, loop, prepared, title, branch }) {
   if (typeof item.task === "string" && item.task.trim() !== "") return item.task;
   if (item.kind === "task") {
     const base = item.text ?? loop.text ?? "";
@@ -687,6 +688,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         if (firstOpen !== -1) await pending.get(startIndex + firstOpen);
       }
       for (let offset = 0; offset < limit; offset += 1) {
+        if (outcome !== "abort" && interrupted) break;
         const item = batch[offset];
         const eligibility = await pending.get(startIndex + offset);
         if (!eligibility.ok) {
@@ -702,9 +704,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
               number: item.number,
             });
           } catch (err) {
-            if (
-              !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
-            ) {
+            if (!PR_BRANCH_REFUSALS.has(err?.code)) {
               throw err;
             }
             skipped.push(
@@ -779,9 +779,9 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
   const clock = { now: deps.now ?? (() => performance.now()), sleep: deps.sleep ?? defaultSleep };
 
-  // A loop end reads its transcript once and stores the report in the same checkpoint write as the
-  // status change. The report adds no store write. A caller that already read the transcript passes
-  // the read result in `transcript`, so the end adds no second read.
+  // A loop end reads its transcript once for the report and stores the report in the same checkpoint
+  // write as the status change. The report adds no store write. A caller that already read the
+  // transcript passes the read result in `transcript`, so the end adds no second read.
   const changeLoop = async (issue, patch, { transcript } = {}) => {
     let nextPatch = patch;
     if (patch?.status !== undefined && loopEnded(patch.status) && patch.report === undefined) {
@@ -846,14 +846,13 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if ((await canonicalPath(workTree.path)) !== workTree.canonicalPath) {
       return "the recorded work tree identity changed";
     }
+    const reads = await readWorkTreeGitState(workTree.path, { runner: gitRead });
     if (workTree.detached === true) {
-      const head = await gitRead(["rev-parse", "HEAD"], workTree.path);
-      return head.exitCode === 0 && head.stdout === workTree.head
+      return reads.head.exitCode === 0 && reads.head.stdout === workTree.head
         ? null
         : "the recorded head is not checked out";
     }
-    const branch = await gitRead(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
-    return branch.exitCode === 0 && branch.stdout === workTree.branch
+    return reads.branch.exitCode === 0 && reads.branch.stdout === workTree.branch
       ? null
       : "the recorded branch is not checked out";
   };
@@ -1134,9 +1133,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
             number: item.number,
           });
         } catch (err) {
-          if (
-            !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
-          ) {
+          if (!PR_BRANCH_REFUSALS.has(err?.code)) {
             throw err;
           }
           await changeLoop(issue, {
@@ -1231,7 +1228,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
                 });
         }
       } catch (err) {
-        if (["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)) {
+        if (PR_BRANCH_REFUSALS.has(err?.code)) {
           await changeLoop(issue, {
             status: "skipped",
             skipReason: err.code,
@@ -2096,9 +2093,4 @@ export async function readBatchStatus({ runsRoot, id }) {
     },
     loops,
   };
-}
-
-/** The local batches, newest first, for `batch status` with no id. */
-export async function listBatchStatus({ runsRoot }) {
-  return listBatches(runsRoot);
 }
