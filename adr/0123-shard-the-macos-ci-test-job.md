@@ -53,6 +53,7 @@ Andro Marces
 ## Links
 
 - [Issue #1767](https://github.com/andromarces/agent-loops/issues/1767)
+- [PR #1809](https://github.com/andromarces/agent-loops/pull/1809)
 - [ADR 0079: Shard the Windows CI test job behind a fan-in required context](0079-shard-the-windows-ci-test-job.md)
 - [CI workflow](../.github/workflows/ci.yml)
 - [ADR Index](README.md)
