@@ -217,20 +217,27 @@ function childDouble({
   return { spawn, calls, pending };
 }
 
-// Waits for call `index` of `child` and its transcript write. A wait past 10 s fails with the
-// launch number.
+// Waits 10 s for call `index` of `child` and its transcript write on one deadline. A timeout
+// names the launch.
 async function waitForLaunch(child, index = 0) {
+  const deadline = performance.now() + 10_000;
+  const timeout = () => new Error(`child launch ${index} was not ready within 10000 ms.`);
+  let call;
   try {
-    const call = await pollUntil(() => child.calls[index], 10_000);
-    await call.written;
-    return call;
+    call = await pollUntil(() => child.calls[index], deadline - performance.now());
   } catch {
-    throw new Error(`child launch ${index} was not ready within 10000 ms.`);
+    throw timeout();
   }
+  try {
+    await within(call.written, Math.max(0, deadline - performance.now()), `launch ${index}`);
+  } catch {
+    throw timeout();
+  }
+  return call;
 }
 
-// A freed slot can launch the next issue before the finished loop's state is written, so wait
-// for the status rather than for a later child's call.
+// A freed slot can launch the next issue before the finished loop's state is written. Wait for
+// the status, not a later child's call.
 async function waitForStatus(runsRoot, batchId, issue, status) {
   return pollUntil(async () => {
     const loop = await readLoop(runsRoot, batchId, issue);
@@ -1923,6 +1930,7 @@ test("an abort during a poll wait exits 130", async () => {
   };
   const child = childDouble();
   const controller = new AbortController();
+  let polling = false;
   try {
     const run = runBatch({
       prepared,
@@ -1935,13 +1943,15 @@ test("an abort during a poll wait exits 130", async () => {
         installSignal: false,
         signal: controller.signal,
         pollIntervalMs: 60_000,
-        sleep: (ms, signal) =>
-          new Promise((resolve) => {
+        sleep: (ms, signal) => {
+          polling = true;
+          return new Promise((resolve) => {
             signal?.addEventListener("abort", resolve, { once: true });
-          }),
+          });
+        },
       },
     });
-    await waitForStatus(runsRoot, prepared.id, 1, "waiting");
+    await pollUntil(() => (polling ? true : undefined), 10_000);
     controller.abort();
     const { exitCode, summary } = await run;
     expect(exitCode).toBe(130);
