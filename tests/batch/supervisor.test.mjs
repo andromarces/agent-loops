@@ -503,6 +503,118 @@ describe("bounded batch reads", () => {
     expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
   });
 
+  // Usefulness: an interrupt during the second preflight keeps the refused and aborted entries.
+  test("an interrupt during the second preflight keeps both entries", async () => {
+    const prepared = await preparedFor(await batchRepo(), [1, 2, 3, 4]);
+    const abort = new AbortController();
+    const gh = (args, cwd, options = {}) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        const number = Number(args[2]);
+        if (number === 2) {
+          setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
+          return replyOnAbort({ status: 0, stdout: JSON.stringify({ number }), stderr: "" })(
+            args,
+            cwd,
+            options,
+          );
+        }
+        return { status: 0, stdout: JSON.stringify({ number }), stderr: "" };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: join(prepared.workTreeRoot, "runs"),
+      gh,
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        signal: abort.signal,
+        ghTimeoutMs: 60_000,
+      },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(summary.loops).toHaveLength(2);
+    expect(summary.loops[0]).toMatchObject({ issue: 1, skipReason: "is-pull-request" });
+    expect(summary.loops[1]).toMatchObject({ issue: 2, skipReason: "eligibility-unverified" });
+  });
+
+  // Usefulness: an interrupt during the first preflight keeps only its aborted entry.
+  test("an interrupt during the first preflight keeps only its entry", async () => {
+    const prepared = await preparedFor(await batchRepo(), [1, 2]);
+    const abort = new AbortController();
+    const gh = (args, cwd, options = {}) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        const number = Number(args[2]);
+        if (number === 1) {
+          setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
+          return replyOnAbort({ status: 0, stdout: JSON.stringify({ number }), stderr: "" })(
+            args,
+            cwd,
+            options,
+          );
+        }
+        return { status: 0, stdout: JSON.stringify({ number }), stderr: "" };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: join(prepared.workTreeRoot, "runs"),
+      gh,
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        signal: abort.signal,
+        ghTimeoutMs: 60_000,
+      },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(summary.loops).toHaveLength(1);
+    expect(summary.loops[0]).toMatchObject({ issue: 1, skipReason: "eligibility-unverified" });
+  });
+
+  // Usefulness: an interrupt in a later preflight batch keeps the earlier entries in order.
+  test("an interrupt in a later preflight batch keeps earlier entries", async () => {
+    const prepared = await preparedFor(await batchRepo(), [1, 2, 3, 4, 5, 6]);
+    const abort = new AbortController();
+    const gh = (args, cwd, options = {}) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        const number = Number(args[2]);
+        if (number === 5) {
+          setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
+          return replyOnAbort({ status: 0, stdout: JSON.stringify({ number }), stderr: "" })(
+            args,
+            cwd,
+            options,
+          );
+        }
+        return { status: 0, stdout: JSON.stringify({ number }), stderr: "" };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: join(prepared.workTreeRoot, "runs"),
+      gh,
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        signal: abort.signal,
+        ghTimeoutMs: 60_000,
+      },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(summary.loops.map((loop) => loop.issue)).toEqual([1, 2, 3, 4, 5]);
+    expect(summary.loops.slice(0, 4).every((loop) => loop.skipReason === "is-pull-request")).toBe(
+      true,
+    );
+    expect(summary.loops[4]).toMatchObject({ issue: 5, skipReason: "eligibility-unverified" });
+  });
+
   // Usefulness: a fetch failure removes the SIGINT and abort listeners before it rejects.
   test("a preflight throw removes its listeners", async () => {
     const signal = new AbortController().signal;

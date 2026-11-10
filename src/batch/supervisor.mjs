@@ -644,48 +644,82 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     const items = [];
     const skipped = [];
     const startPlanTree = deps.planPrWorkTree ?? planPrWorkTree;
-    const preflight = interrupted
-      ? []
-      : await mapInBatches(frozenItems, READ_BATCH_SIZE, (item) =>
-          preflightItemEligibility({
-            item,
-            gh,
-            repo: prepared.repo,
-            batchId: id,
-          }),
-        );
-    for (let index = 0; index < preflight.length; index += 1) {
+    // Preflight one bounded batch at a time. On abort, keep results through the first open read.
+    for (let startIndex = 0; startIndex < frozenItems.length; startIndex += READ_BATCH_SIZE) {
       if (interrupted) break;
-      const item = frozenItems[index];
-      const eligibility = preflight[index];
-      if (!eligibility.ok) {
-        skipped.push(skippedLoop(paths, id, item, prepared.maxSteps, eligibility));
-        continue;
+      const batch = frozenItems.slice(startIndex, startIndex + READ_BATCH_SIZE);
+      const pending = new Map();
+      const settled = new Set();
+      for (let offset = 0; offset < batch.length; offset += 1) {
+        const index = startIndex + offset;
+        const read = preflightItemEligibility({
+          item: frozenItems[index],
+          gh,
+          repo: prepared.repo,
+          batchId: id,
+        }).then((value) => {
+          settled.add(index);
+          return value;
+        });
+        pending.set(index, read);
       }
-      if (item.kind === "pr") {
-        try {
-          await startPlanTree({
-            repo: prepared.repo,
-            branch: item.headRefName ?? `pr-${item.number}`,
-            head: item.head,
-            number: item.number,
-          });
-        } catch (err) {
-          if (
-            !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
-          ) {
-            throw err;
+      let onAbort;
+      const stopped = new Promise((resolve) => {
+        onAbort = () => resolve("abort");
+        if (controller.signal.aborted) resolve("abort");
+        else controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const outcome = await Promise.race([
+        Promise.allSettled(pending.values()).then(() => "settled"),
+        stopped,
+      ]);
+      controller.signal.removeEventListener("abort", onAbort);
+      let limit = batch.length;
+      if (outcome === "abort") {
+        let firstOpen = -1;
+        for (let offset = 0; offset < batch.length; offset += 1) {
+          if (!settled.has(startIndex + offset)) {
+            firstOpen = offset;
+            break;
           }
-          skipped.push(
-            skippedLoop(paths, id, item, prepared.maxSteps, {
-              reason: err.code,
-              evidence: err.message,
-            }),
-          );
+        }
+        limit = firstOpen === -1 ? batch.length : firstOpen + 1;
+        if (firstOpen !== -1) await pending.get(startIndex + firstOpen);
+      }
+      for (let offset = 0; offset < limit; offset += 1) {
+        const item = batch[offset];
+        const eligibility = await pending.get(startIndex + offset);
+        if (!eligibility.ok) {
+          skipped.push(skippedLoop(paths, id, item, prepared.maxSteps, eligibility));
           continue;
         }
+        if (item.kind === "pr") {
+          try {
+            await startPlanTree({
+              repo: prepared.repo,
+              branch: item.headRefName ?? `pr-${item.number}`,
+              head: item.head,
+              number: item.number,
+            });
+          } catch (err) {
+            if (
+              !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
+            ) {
+              throw err;
+            }
+            skipped.push(
+              skippedLoop(paths, id, item, prepared.maxSteps, {
+                reason: err.code,
+                evidence: err.message,
+              }),
+            );
+            continue;
+          }
+        }
+        items.push(item);
+        if (outcome !== "abort" && interrupted) break;
       }
-      items.push(item);
+      if (outcome === "abort" || interrupted) break;
     }
     if (interrupted) {
       progress(`batch ${id}: interrupted before any state write`);
