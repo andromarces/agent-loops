@@ -12,7 +12,7 @@ const BASE_SUMMARY_KEYS = ["changed", "verified", "deferred", "notDone", "open"]
 const FINISH_EXIT_CODES = new Set([0, 4]);
 
 /** The report of a loop that ran no attempt and wrote no transcript. */
-export function emptyLoopReport() {
+function emptyLoopReport() {
   return {
     state: "no-attempt",
     summary: null,

@@ -71,7 +71,7 @@ const INTERRUPT_WAIT_MS = 30_000;
 /** The wait between two re-checks of a blocked issue (adr/0110-release-batch-slots-on-owner-decisions.md decision 5). */
 export const POLL_INTERVAL_MS = 15_000;
 /** The bound on one poll read of the wait state. */
-export const POLL_READ_TIMEOUT_MS = 60_000;
+const POLL_READ_TIMEOUT_MS = 60_000;
 
 function defaultSleep(ms, signal) {
   return new Promise((resolve) => {
@@ -90,11 +90,7 @@ function defaultSleep(ms, signal) {
  * Waits one poll interval on the monotonic clock. An abort ends the wait at once without an error,
  * so the caller keeps its own cancel identity. Tests inject `now` and `sleep`.
  */
-export async function pollWait(
-  ms,
-  signal,
-  { now = () => performance.now(), sleep = defaultSleep } = {},
-) {
+async function pollWait(ms, signal, { now = () => performance.now(), sleep = defaultSleep } = {}) {
   const deadline = now() + ms;
   while (!signal?.aborted) {
     const remaining = deadline - now();
@@ -349,7 +345,7 @@ async function ownerStillLive(loop) {
  * Reads the frozen head, branch, and fork flag of every pull request item before the manifest is
  * written. A read that fails freezes no head, so eligibility later reports it unverified.
  */
-export async function freezePullRequestItems(items, { gh, repo }) {
+async function freezePullRequestItems(items, { gh, repo }) {
   const frozen = [];
   for (const item of items) {
     if (item.kind !== "pr") {
@@ -391,7 +387,7 @@ export async function freezePullRequestItems(items, { gh, repo }) {
 }
 
 /** The task text of one item. An explicit per-item task replaces the template for that item. */
-export function taskTextFor({ item, loop, prepared, title, branch }) {
+function taskTextFor({ item, loop, prepared, title, branch }) {
   if (typeof item.task === "string" && item.task.trim() !== "") return item.task;
   if (item.kind === "task") {
     const base = item.text ?? loop.text ?? "";
