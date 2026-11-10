@@ -481,8 +481,8 @@ describe("bounded batch reads", () => {
     expect(getEventListeners(signal, "abort")).toHaveLength(0);
   });
 
-  // Usefulness: a throw with a live child stops and drains it before the listeners are removed.
-  test("a throw with a live child drains it first", async () => {
+  // Usefulness: a throw with a live child rejects at once and keeps its listeners for a later abort.
+  test("a throw with a live child keeps its listeners", async () => {
     const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
     const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
     await runBatch({
@@ -527,7 +527,7 @@ describe("bounded batch reads", () => {
         },
       };
     };
-    const signal = new AbortController().signal;
+    const abort = new AbortController();
     const before = process.listenerCount("SIGINT");
     const run = runBatch({
       prepared: { ...two, resume: true },
@@ -537,17 +537,24 @@ describe("bounded batch reads", () => {
         ...fakeGitDeps,
         notifier: noNotify,
         spawn,
-        signal,
+        signal: abort.signal,
         reconcileLoop: async () => {
           throw new Error("the git fetch failed");
         },
       },
     });
     await expect(run).rejects.toThrow("the git fetch failed");
+    expect(stops).toEqual([]);
+    expect((await readLoop(runsRoot, two.id, 1)).status).toBe("running");
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    abort.abort(new Error("stop the child now"));
     expect(stops).toContain("SIGINT");
-    expect((await readLoop(runsRoot, two.id, 1)).status).toBe("interrupted");
-    expect(process.listenerCount("SIGINT")).toBe(before);
-    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+    let loop = await readLoop(runsRoot, two.id, 1);
+    for (let attempt = 0; attempt < 100 && loop?.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      loop = await readLoop(runsRoot, two.id, 1);
+    }
+    expect(loop.status).toBe("interrupted");
   });
 });
 
