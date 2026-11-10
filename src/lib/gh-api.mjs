@@ -104,6 +104,45 @@ export function ghApiFailure(
   return tagRetry(err, { transient, transport });
 }
 
+// Cap of a `gh pr list` read. A reply of this size holds too many PRs to name one, so it is ambiguous.
+export const PR_LIST_LIMIT = 100;
+
+/** True for the fields every `gh pr list` reader needs: a positive number, a head, and a fork flag. */
+export function isPrListEntry(entry) {
+  return (
+    isJsonObject(entry) &&
+    Number.isSafeInteger(entry.number) &&
+    entry.number > 0 &&
+    typeof entry.headRefOid === "string" &&
+    typeof entry.isCrossRepository === "boolean"
+  );
+}
+
+/**
+ * Reads and validates a `gh pr list` reply through `read`. Returns `{ list }`, or `{ failure }`
+ * with the reason text that both readers report.
+ * @param {(argv: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} read
+ * @param {string[]} argv
+ * @param {(entry: unknown) => boolean} isEntry
+ * @returns {Promise<{ list: object[] } | { failure: string }>}
+ */
+export async function readPrList(read, argv, isEntry) {
+  const reply = await read(argv);
+  if (!reply || reply.status !== 0) {
+    return {
+      failure: `gh pr list failed: ${ghFailureText({
+        status: reply?.status ?? "unknown",
+        stderr: reply?.stderr ?? "",
+      })}`,
+    };
+  }
+  const list = JSON.parse(reply.stdout);
+  if (!Array.isArray(list) || list.length >= PR_LIST_LIMIT || !list.every(isEntry)) {
+    return { failure: "the gh pr list reply is not a list that names one PR" };
+  }
+  return { list };
+}
+
 // The words that the network stack of `gh` writes for a transport failure, which carries no server
 // reply and so no HTTP status (#1312).
 const TRANSPORT_FAILURES = [
@@ -152,23 +191,11 @@ export function isTransportFailure({ stdout, stderr }) {
  *   stdout that is not JSON throws a raw `SyntaxError`
  */
 export async function ghApi(gh, args, cwd) {
-  const { status, stdout, stderr, transient, include, terminal, bodyClass, replyStatus } = await gh(
-    ["api", ...args],
-    cwd,
-  );
-  if (status !== 0) {
-    throw ghApiFailure(args[0], {
-      status,
-      stdout,
-      stderr,
-      transient,
-      include,
-      terminal,
-      bodyClass,
-      replyStatus,
-    });
+  const result = await gh(["api", ...args], cwd);
+  if (result.status !== 0) {
+    throw ghApiFailure(args[0], result);
   }
-  const text = stdout.trim();
+  const text = result.stdout.trim();
   return text === "" ? null : JSON.parse(text);
 }
 
@@ -250,7 +277,7 @@ const TOKEN_NAMES = ["GH_TOKEN", "GITHUB_TOKEN"];
  */
 function defaultHost(reply) {
   const hosts = reply?.hosts;
-  if (typeof hosts !== "object" || hosts === null || Array.isArray(hosts)) {
+  if (!isJsonObject(hosts)) {
     return null;
   }
   const configured = [];

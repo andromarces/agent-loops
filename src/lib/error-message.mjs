@@ -80,6 +80,18 @@ export function firstErrorLine(text) {
   return text.split("\n")[0];
 }
 
+/** Flattens `text` to one line with single spaces. */
+export function oneLine(text) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The OS error code of `err` when it has that shape, else an empty string. */
+export function errorCode(err) {
+  return typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "";
+}
+
 /** The first line of `readableErrorText(err)`, for a log line or a reason. */
 export function errorLine(err) {
   return firstErrorLine(readableErrorText(err));

@@ -1,17 +1,5 @@
-import { carryInheritedTmpdirEntries, failedInheritedTmpdirEntries } from "./tmpdir-entries.mjs";
-import { carryPackageStoreEntries, failedPackageStoreEntries } from "./package-store-entries.mjs";
 import { entryCarrier } from "./entry-report.mjs";
-import { carryLockfileChanged, failedLockfileChanged } from "./lockfile-change.mjs";
-import {
-  carryMainWorkTreeChanged,
-  carryMainWorkTreeChangedInTurn,
-  carryMainWorkTreeFastForward,
-  failedMainWorkTreeChanged,
-  failedMainWorkTreeChangedInTurn,
-  failedMainWorkTreeFastForward,
-} from "./main-work-tree-change.mjs";
-import { carrySharedGitChanged, failedSharedGitChanged } from "./shared-git.mjs";
-import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
+import { readProp } from "./error-message.mjs";
 
 // The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
 // and the fatal-path events. A consumer of `TURN_EVIDENCE_FIELDS` picks up a new field with no change.
@@ -42,34 +30,44 @@ import { carryTestRun, failedTestRun } from "./test-cmd.mjs";
 //   and the turn history keeps its fixed shape.
 // Each entry also names the type and the value property of the fatal-path event of its field.
 const localSourceCarrier = entryCarrier("localSourceChangedInTurn");
+const sharedGitCarrier = entryCarrier("sharedGitChanged");
+const mainWorkTreeCarrier = entryCarrier("mainWorkTreeChanged");
+const mainWorkTreeInTurnCarrier = entryCarrier("mainWorkTreeChangedInTurn");
+const mainWorkTreeFastForwardCarrier = entryCarrier("mainWorkTreeFastForward");
+const lockfileCarrier = entryCarrier("lockfileChanged");
+const inheritedTmpdirCarrier = entryCarrier("inheritedTmpdirEntries");
+const packageStoreCarrier = entryCarrier("packageStoreEntries");
+const testRunCarrier = entryCarrier("testRun");
+// A canceled test command sets the result directly, which `carry` never recorded.
+const failedTestRun = (err) => testRunCarrier.failed(err) ?? readProp(err, "testRun");
 const TURN_EVIDENCE = [
   {
     field: "sharedGitChanged",
     type: "shared-git",
     key: "items",
-    carry: carrySharedGitChanged,
-    failed: failedSharedGitChanged,
+    carry: sharedGitCarrier.carry,
+    failed: sharedGitCarrier.failed,
   },
   {
     field: "mainWorkTreeChanged",
     type: "main-work-tree",
     key: "paths",
-    carry: carryMainWorkTreeChanged,
-    failed: failedMainWorkTreeChanged,
+    carry: mainWorkTreeCarrier.carry,
+    failed: mainWorkTreeCarrier.failed,
   },
   {
     field: "mainWorkTreeChangedInTurn",
     type: "main-work-tree-in-turn",
     key: "paths",
-    carry: carryMainWorkTreeChangedInTurn,
-    failed: failedMainWorkTreeChangedInTurn,
+    carry: mainWorkTreeInTurnCarrier.carry,
+    failed: mainWorkTreeInTurnCarrier.failed,
   },
   {
     field: "mainWorkTreeFastForward",
     type: "main-work-tree-fast-forward",
     key: "heads",
-    carry: carryMainWorkTreeFastForward,
-    failed: failedMainWorkTreeFastForward,
+    carry: mainWorkTreeFastForwardCarrier.carry,
+    failed: mainWorkTreeFastForwardCarrier.failed,
   },
   {
     field: "localSourceChangedInTurn",
@@ -82,29 +80,29 @@ const TURN_EVIDENCE = [
     field: "lockfileChanged",
     type: "lockfile",
     key: "paths",
-    carry: carryLockfileChanged,
-    failed: failedLockfileChanged,
+    carry: lockfileCarrier.carry,
+    failed: lockfileCarrier.failed,
   },
   {
     field: "inheritedTmpdirEntries",
     type: "inherited-tmpdir",
     key: "entries",
-    carry: carryInheritedTmpdirEntries,
-    failed: failedInheritedTmpdirEntries,
+    carry: inheritedTmpdirCarrier.carry,
+    failed: inheritedTmpdirCarrier.failed,
   },
   {
     field: "packageStoreEntries",
     type: "package-store",
     key: "entries",
-    carry: carryPackageStoreEntries,
-    failed: failedPackageStoreEntries,
+    carry: packageStoreCarrier.carry,
+    failed: packageStoreCarrier.failed,
   },
   {
     field: "testRun",
     type: "test-run",
     key: "testRun",
     emitFirst: true,
-    carry: carryTestRun,
+    carry: testRunCarrier.carry,
     failed: failedTestRun,
   },
 ];

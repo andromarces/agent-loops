@@ -6,7 +6,7 @@
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
 import { evaluateContext, contextLabel, evaluatedState } from "./commit-entries.mjs";
-import { readableErrorText } from "./error-message.mjs";
+import { oneLine, readableErrorText } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import {
   boundedCall,
@@ -467,13 +467,6 @@ export function requiredResolutionRefusal(
     return `no required checks were found for PR ${pr}${sources}`;
   }
   return null;
-}
-
-/** One line of text for a prompt line or a report field. */
-function oneLine(text) {
-  return String(text ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 /**

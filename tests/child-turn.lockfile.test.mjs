@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
-import { failedLockfileChanged } from "../src/lib/lockfile-change.mjs";
+import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
@@ -38,7 +38,7 @@ test("a canceled worker turn carries the lockfile change", async () => {
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedLockfileChanged(error)).toEqual(["pnpm-lock.yaml"]);
+  expect(failedTurnEvidence(error).lockfileChanged).toEqual(["pnpm-lock.yaml"]);
 });
 
 // Usefulness: verifies the same for a failed turn that ends as a cancel because the signal aborted
@@ -52,7 +52,7 @@ test("a worker turn that fails after a cancel still carries the lockfile change"
     throw new Error("adapter failed");
   }, controller.signal).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedLockfileChanged(error)).toEqual(["pnpm-lock.yaml"]);
+  expect(failedTurnEvidence(error).lockfileChanged).toEqual(["pnpm-lock.yaml"]);
 });
 
 // Usefulness: verifies a fatal error that cannot take a property still carries the field.
@@ -63,7 +63,7 @@ test("a frozen fatal error still carries the lockfile change", async () => {
     throw fatal;
   }).catch((err) => err);
   expect(error).toBe(fatal);
-  expect(failedLockfileChanged(error)).toEqual(["pnpm-lock.yaml"]);
+  expect(failedTurnEvidence(error).lockfileChanged).toEqual(["pnpm-lock.yaml"]);
 });
 
 // Usefulness: verifies a canceled turn that changed no lockfile carries no field.
@@ -72,5 +72,5 @@ test("a canceled worker turn that changed no lockfile carries no field", async (
     throw new ExecError("canceled", { isCanceled: true });
   }).catch((err) => err);
   expect(error).toMatchObject({ isCanceled: true });
-  expect(failedLockfileChanged(error)).toBeUndefined();
+  expect(failedTurnEvidence(error).lockfileChanged).toBeUndefined();
 });

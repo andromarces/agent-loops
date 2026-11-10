@@ -1,7 +1,7 @@
 import { open, opendir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { errorLine } from "./error-message.mjs";
-import { entryCarrier, reportedEntryNames } from "./entry-report.mjs";
+import { reportedEntryNames } from "./entry-report.mjs";
 import { tryParseJson } from "./json.mjs";
 import { logDebug, logWarn } from "./log.mjs";
 import { withTimeBound } from "./time-bound.mjs";
@@ -181,14 +181,3 @@ export async function changedInPackageStore(before, options) {
   for (const name of before.entries.keys()) if (!after.entries.has(name)) names.add(name);
   return reportedEntryNames(names);
 }
-
-const carrier = entryCarrier("packageStoreEntries");
-
-/**
- * Carries the list on a fatal error as `err.packageStoreEntries`. A frozen error or a throwing
- * setter keeps the original error, and the list stays readable through `failedPackageStoreEntries`.
- */
-export const carryPackageStoreEntries = carrier.carry;
-
-/** Returns the list a fatal error carries, or `undefined` when it carries none. */
-export const failedPackageStoreEntries = carrier.failed;

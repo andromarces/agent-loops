@@ -10,6 +10,7 @@ import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
 import { withGitIdentityReads } from "../lib/git-read.mjs";
+import { isSha256Hex } from "../lib/hash.mjs";
 import { refreshLocalFile } from "../lib/local-file-changes.mjs";
 import { normalizeLocalPath } from "../lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
@@ -271,7 +272,7 @@ async function refreshLocal(args, { signal } = {}) {
         hashes !== null && typeof hashes === "object" && !Array.isArray(hashes)
           ? hashes[rel]
           : undefined;
-      if (typeof expected !== "string" || !/^[0-9a-f]{64}$/.test(expected)) {
+      if (!isSha256Hex(expected)) {
         throw new RoleError(
           `refresh-local --path ${JSON.stringify(rel)} is refused: the run holds no stored hash for it, so it cannot prove the copy unchanged.`,
         );

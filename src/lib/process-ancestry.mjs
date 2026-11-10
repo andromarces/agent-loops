@@ -174,11 +174,11 @@ export async function nearestHarness({
   }
   const byPid = new Map();
   for (const entry of await readProcesses({ signal })) {
-    byPid.set(String(entry.pid), entry);
+    byPid.set(entry.pid, entry);
   }
 
   const seen = new Set();
-  let pid = String(startPid);
+  let pid = Number(startPid);
   while (pid && !seen.has(pid)) {
     seen.add(pid);
     const entry = byPid.get(pid);
@@ -192,8 +192,8 @@ export async function nearestHarness({
     if (entry.ppid === undefined || entry.ppid === null) {
       return null;
     }
-    pid = String(entry.ppid);
-    if (pid === "0" || pid === "1") {
+    pid = entry.ppid;
+    if (pid === 0 || pid === 1) {
       return null;
     }
   }

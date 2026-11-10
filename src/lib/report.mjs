@@ -16,6 +16,7 @@ const REPORT_LABELS = [
 export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 
 const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
+const LABEL_OR_VERDICT = [...REPORT_LABEL_NAMES, "Verdict"].join("|");
 
 // A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
 // Only the six report labels gain this form, so a bold lead with another name stays text (issue
@@ -106,7 +107,7 @@ function normalizeReportLabels(text, boldLabels = true) {
 // The Verdict label is excluded: a malformed verdict already maps to `unknown`
 // and never carries report text.
 const DECORATED_LABEL_LINE = new RegExp(
-  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
+  `^(?!(?:${LABEL_NAMES}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${LABEL_NAMES})[*_\`]{0,2}\\s*:`,
   "i",
 );
 
@@ -204,18 +205,12 @@ const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])
 // every lead-in rule missed another list shape (issue #449), so the rule is the widest
 // one. It holds every label the strict match, DECORATED_LABEL_LINE, or LIST_LINE reads, and it
 // also holds a mid-sentence mention such as `the conclusion: none`. That mention fails closed.
-const LABEL_MENTION = new RegExp(
-  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
-  "i",
-);
+const LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]{0,2}\\s*:`, "i");
 
 // A label or `Verdict` mention that bars a prose line from introducing a folded list (issue #898).
 // It differs from LABEL_MENTION in one way: any run of emphasis or code marks may follow the name,
 // not at most two. A mark before the name needs no rule, because the match has no lead-in condition.
-const HEADING_LABEL_MENTION = new RegExp(
-  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]*\\s*:`,
-  "i",
-);
+const HEADING_LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]*\\s*:`, "i");
 
 /**
  * True when the response holds a closing block attempt: any report label name or `Verdict`
@@ -604,7 +599,7 @@ const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\
 const orderedSubitem = (marker) => new RegExp(`^ {${marker.length}}\\d+\\. (?=\\S)`);
 
 const LABEL_WORD_THEN_SEPARATOR = new RegExp(
-  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})\\s*[^\\p{L}\\p{N}\\s]`,
+  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?(?:${LABEL_OR_VERDICT})\\s*[^\\p{L}\\p{N}\\s]`,
   "iu",
 );
 
