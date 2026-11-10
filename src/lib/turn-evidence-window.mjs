@@ -16,7 +16,7 @@ import {
   readMainWorkTree,
 } from "./main-work-tree-change.mjs";
 import { startMainWorkTreeWatch } from "./main-work-tree-watch.mjs";
-import { diffSharedGit, readSharedGit } from "./shared-git.mjs";
+import { diffSharedGit, differing, readSharedGit } from "./shared-git.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 /**
@@ -31,8 +31,8 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  * @property {object | null} lockfilesBefore
  * @property {object | null} mainBefore
  * @property {object | null} mainWatch
- * @property {number | null} mainWatchDeadlineMs
- * @property {number | null} mainReadDeadlineMs
+ * @property {number | undefined} mainWatchDeadlineMs
+ * @property {number | undefined} mainReadDeadlineMs
  * @property {object | null} localSourcesBefore
  * @property {string[] | null} localSourcePaths
  * @property {string[] | null} lockfilePaths
@@ -56,10 +56,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
  */
 async function readBeforeTurn(state) {
   if (state.isWorker) {
-    const mainRead =
-      state.mainReadDeadlineMs === null
-        ? readMainWorkTree(state.cwd)
-        : readMainWorkTree(state.cwd, { deadlineMs: state.mainReadDeadlineMs });
+    const mainRead = readMainWorkTree(state.cwd, { deadlineMs: state.mainReadDeadlineMs });
     const [copiedSources, shared, lockfiles, main, tmpdir] = await Promise.all([
       readCopiedSources(state, { signal: state.signal }),
       readShared(state),
@@ -80,9 +77,7 @@ async function readBeforeTurn(state) {
     // The watch starts before the child call, so an edit that the turn restores still leaves a path.
     state.mainWatch = main
       ? await startMainWorkTreeWatch(main.root, {
-          ...(state.mainWatchDeadlineMs === null
-            ? {}
-            : { drainDeadlineMs: state.mainWatchDeadlineMs }),
+          drainDeadlineMs: state.mainWatchDeadlineMs,
           signal: state.signal,
         })
       : null;
@@ -240,10 +235,7 @@ async function readLocalSourceChangedInTurn(state) {
       // No turn signal: a cancel during the turn keeps the evidence, and the read changes no outcome.
       const after = await readCopiedSources(state);
       if (after !== null) {
-        const changed = new Set([...Object.keys(state.localSourcesBefore), ...Object.keys(after)]);
-        state.localSourcePaths = reportedEntryNames(
-          [...changed].filter((path) => state.localSourcesBefore[path] !== after[path]),
-        );
+        state.localSourcePaths = reportedEntryNames(differing(state.localSourcesBefore, after));
         if (state.localSourcePaths.length > 0) {
           logWarn(
             `${state.isWorker ? "worker" : "reviewer"}: a copied local source changed in the turn: ${state.localSourcePaths.join(", ")}`,
@@ -346,8 +338,8 @@ export function createTurnEvidence({
   isWorker,
   localFilesCopied,
   sharedGitReadBoundMs,
-  mainWatchDeadlineMs = null,
-  mainReadDeadlineMs = null,
+  mainWatchDeadlineMs,
+  mainReadDeadlineMs,
   // The literal system temporary directories to read beside the inherited one. A test names them
   // so the churn of the host's `/tmp` stays out of the report.
   tmpdirLiteralRoots = literalTmpdirRoots(),
@@ -364,8 +356,8 @@ export function createTurnEvidence({
     mainBefore: null,
     // The turn-window watch of the main work tree, stopped on every outcome.
     mainWatch: null,
-    mainWatchDeadlineMs,
-    mainReadDeadlineMs,
+    mainWatchDeadlineMs: mainWatchDeadlineMs ?? undefined,
+    mainReadDeadlineMs: mainReadDeadlineMs ?? undefined,
     // The pre-turn source hashes, and the post-turn paths, kept once read.
     localSourcesBefore: null,
     localSourcePaths: null,

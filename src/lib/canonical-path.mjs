@@ -25,3 +25,6 @@ export function isInside(parent, child) {
 export function samePath(left, right) {
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
+
+/** The `dev:ino` identity string of a `bigint` stat. */
+export const fileIdentity = (info) => `${info.dev}:${info.ino}`;

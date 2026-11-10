@@ -1,7 +1,7 @@
 import { lstat, readdir, readFile, readlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
-import { entryCarrier } from "./entry-report.mjs";
+import { errorCode } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { gitRead, gitReadError, readCommonDir, SnapshotError } from "./git-read.mjs";
 import { withTimeBound } from "./time-bound.mjs";
@@ -207,8 +207,7 @@ function hashConfigState({ hooksPath, remotes, sharedKeys }) {
 // A Node file system error message carries the path, and a hook path or a symlink target can carry
 // a secret, so a hook failure names the operation and the error code only and keeps no `cause`.
 function hookFailure(operation, err) {
-  const code =
-    typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "unknown";
+  const code = errorCode(err) || "unknown";
   return new SnapshotError(`${operation} failed (${code})`);
 }
 
@@ -283,31 +282,22 @@ export function diffSharedGit(before, after) {
   if (before.hooksPath !== after.hooksPath) changed.push(HOOKS_PATH_ITEM);
   for (const name of differing(before.hooks, after.hooks)) changed.push(`hooks/${name}`);
   for (const name of differing(before.remotes, after.remotes)) changed.push(`remote.${name}`);
-  for (const id of differingEntries(before.sharedKeys, after.sharedKeys)) {
+  for (const id of differing(before.sharedKeys, after.sharedKeys, (entry) => entry?.digest)) {
     changed.push((after.sharedKeys[id] ?? before.sharedKeys[id]).name);
   }
   return changed.sort();
 }
 
-const carrier = entryCarrier("sharedGitChanged");
-
 /**
- * Carries the item names on a fatal error as `err.sharedGitChanged`. A frozen error or a throwing
- * setter keeps the original error, and the names stay readable through `failedSharedGitChanged`.
+ * The keys that differ between two objects, compared by `value` on each side. The keys keep their
+ * first-seen order.
+ * @param {Record<string, unknown>} before
+ * @param {Record<string, unknown>} after
+ * @param {(entry: unknown) => unknown} [value]
+ * @returns {string[]}
  */
-export const carrySharedGitChanged = carrier.carry;
-
-/** Returns the item names a fatal error carries, or `undefined` when it carries none. */
-export const failedSharedGitChanged = carrier.failed;
-
-function differing(before, after) {
+export function differing(before, after, value = (entry) => entry) {
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
-    (name) => before[name] !== after[name],
-  );
-}
-
-function differingEntries(before, after) {
-  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
-    (id) => before[id]?.digest !== after[id]?.digest,
+    (name) => value(before[name]) !== value(after[name]),
   );
 }

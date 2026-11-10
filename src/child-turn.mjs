@@ -174,8 +174,8 @@ export async function runChild(options) {
     // A test uses onMainWatch, mainWatchDeadlineMs, and mainReadDeadlineMs to bound the watch and
     // the main work tree read, and tmpdirLiteralRoots to keep the host's `/tmp` out of the report.
     onMainWatch,
-    mainWatchDeadlineMs = null,
-    mainReadDeadlineMs = null,
+    mainWatchDeadlineMs,
+    mainReadDeadlineMs,
     tmpdirLiteralRoots,
     gh,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,

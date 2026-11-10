@@ -1,5 +1,6 @@
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileIdentity } from "./canonical-path.mjs";
 import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 import { stateRoot } from "./runstate.mjs";
@@ -25,7 +26,7 @@ const registryDir = () => join(stateRoot(), "turn-tmpdirs");
 export async function registerTurnTmpdir(name, stat) {
   try {
     await mkdir(registryDir(), { recursive: true, mode: 0o700 });
-    await writeFile(join(registryDir(), name), `${stat.dev}:${stat.ino}`);
+    await writeFile(join(registryDir(), name), fileIdentity(stat));
   } catch (err) {
     logWarn(
       `turn temporary directory not registered, a concurrent report can list it: ${name}: ${errorLine(err)}`,
@@ -53,7 +54,7 @@ export async function isRegisteredTurnTmpdir(parent, name) {
     const recorded = (await readFile(file, "utf8")).trim();
     if (!IDENTITY.test(recorded)) return false;
     const entry = await lstat(join(parent, name), { bigint: true });
-    return entry.isDirectory() && recorded === `${entry.dev}:${entry.ino}`;
+    return entry.isDirectory() && recorded === fileIdentity(entry);
   } catch {
     return false;
   }

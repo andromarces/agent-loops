@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import { chmod, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
-import { sha256 } from "./hash.mjs";
+import { isSha256Hex, sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
 import {
   hasBlockedAncestor,
@@ -14,7 +14,7 @@ import {
   READ_BATCH_SIZE,
   sameFile,
 } from "./local-files.mjs";
-import { locateWorkTrees, readWorkTree } from "./work-tree-layout.mjs";
+import { locateWorkTrees, signalBoundReadWorkTree } from "./work-tree-layout.mjs";
 
 const MISSING = Symbol("missing");
 const NOT_COMPARABLE = Symbol("not comparable");
@@ -145,9 +145,7 @@ async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf, { locat
   } else {
     let found = located;
     if (found === undefined) {
-      found = await locateWorkTrees(cwd, (dir, args, options) =>
-        readWorkTree(dir, args, { signal, ...options }),
-      );
+      found = await locateWorkTrees(cwd, signalBoundReadWorkTree(signal));
     }
     if (found === null) {
       return {};
@@ -174,9 +172,7 @@ async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf, { locat
  */
 export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...hooks } = {}) {
   // The result is sorted by path, or empty when there is no main work tree.
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    readWorkTree(dir, args, { signal, ...options }),
-  );
+  const located = await locateWorkTrees(cwd, signalBoundReadWorkTree(signal));
   if (located === null) {
     return [];
   }
@@ -207,7 +203,7 @@ function changedSide(rel, source, copy, hashes) {
     return "unknown";
   }
   const init = hashes[rel];
-  if (typeof init !== "string" || !/^[0-9a-f]{64}$/.test(init)) {
+  if (typeof init !== "string" || !isSha256Hex(init)) {
     return "unknown";
   }
   const sourceChanged = source === MISSING || source === NOT_COMPARABLE || source !== init;
@@ -268,9 +264,7 @@ export async function refreshLocalFile(
   if (!isPlainRelativeName(rel)) {
     throw refuse("the path must stay inside the work tree");
   }
-  const located = await locateWorkTrees(cwd, (dir, args, options) =>
-    readWorkTree(dir, args, { signal, ...options }),
-  );
+  const located = await locateWorkTrees(cwd, signalBoundReadWorkTree(signal));
   if (located === null) {
     throw refuse("there is no main work tree to refresh from");
   }

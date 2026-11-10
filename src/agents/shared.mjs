@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 import { execFailureCause } from "../lib/exec.mjs";
+import { oneLine } from "../lib/error-message.mjs";
 import { hasClosingBlockAttempt } from "../lib/report.mjs";
 
 // A model id has no whitespace or control character, so a sentence or a blank is not one.
@@ -218,9 +219,7 @@ export function asSessionId(value) {
  * result never exceeds the limit. A limit below the ellipsis length keeps a prefix of the ellipsis.
  */
 export function boundedDetail(text, limit) {
-  const flat = String(text ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const flat = oneLine(text);
   if (flat.length <= limit) {
     return flat;
   }
