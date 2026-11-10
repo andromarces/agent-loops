@@ -807,6 +807,52 @@ test("approve consolidates only the successful audits and records the failure", 
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(1);
 });
 
+// Usefulness: a repeated approval stores no new state, so a second approve keeps the first
+// approvedAt value.
+test("a repeated approval keeps the stored approval time", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, {
+    reviewerTwo: new Error("failed"),
+    consolidation: { status: "pending", error: null, findings: [] },
+  });
+  const gh = fakeGh();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const first = fakeTurns({ consolidations: [new Error("no model")] });
+    const approved = await runAudit({
+      prepared: { ...prepared, mode: "approve" },
+      runsRoot,
+      gh: gh.gh,
+      deps: { ...depsWith(prepared.workTree), runTurn: first.runTurn },
+    });
+    expect(approved.exitCode).toBe(1);
+    expect((await readAudit(runsRoot, prepared.id)).approvedAt).toBe("2026-01-01T00:00:00.000Z");
+
+    vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
+    const second = fakeTurns({
+      consolidations: [
+        fenced({ findings: [{ title: "Kept", body: "Body", evidence: "", existingIssue: null }] }),
+      ],
+    });
+    const again = await runAudit({
+      prepared: { ...prepared, mode: "approve" },
+      runsRoot,
+      gh: gh.gh,
+      deps: { ...depsWith(prepared.workTree), runTurn: second.runTurn },
+    });
+
+    expect(again.exitCode).toBe(0);
+    expect(again.summary.approvedPartial).toBe(true);
+    expect(second.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(0);
+    expect(second.calls.filter((call) => call.roleName === "worker")).toHaveLength(1);
+    expect((await readAudit(runsRoot, prepared.id)).approvedAt).toBe("2026-01-01T00:00:00.000Z");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 // Usefulness: an issue that already covers a finding is linked, by the worker's number and by an
 // exact title, and no duplicate issue is created.
 test("an existing issue is linked and no duplicate is created", async () => {

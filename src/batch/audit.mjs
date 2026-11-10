@@ -1036,7 +1036,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
 
     if (mode === "approve") {
       const failed = failedIndexes(state);
-      if (failed.length > 0) {
+      if (failed.length > 0 && !approvalMatches(state)) {
         state = {
           ...state,
           approvedPartial: true,
