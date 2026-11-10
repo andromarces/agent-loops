@@ -1,5 +1,5 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
-// one headless child per issue, prints progress on stderr, and returns one summary for stdout.
+// one headless child per item, prints progress on stderr, and returns one summary for stdout.
 import { readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -730,8 +730,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
   const clock = { now: deps.now ?? (() => performance.now()), sleep: deps.sleep ?? defaultSleep };
 
-  // A loop end reads its transcript once and stores the report in the same checkpoint write as the
-  // status change. The report adds no store write.
+  // A loop end reads its transcript once for the report and stores the report in the same checkpoint
+  // write as the status change. The report adds no store write.
   const changeLoop = async (issue, patch) => {
     let nextPatch = patch;
     if (patch?.status !== undefined && loopEnded(patch.status) && patch.report === undefined) {

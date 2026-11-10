@@ -92,9 +92,7 @@ export function validateInitFlags(args, agents = {}) {
 /**
  * Later calls read configuration from the state file and reject any change.
  * `extend` passes `maxSteps` in `allowed`, because raising it is that operation's
- * purpose. `set-model` passes `roleModel`, `declare-pr` passes `pr`, and `abort` passes
- * `reviewerSandbox`. Abort runs no reviewer turn, so a damaged sandbox field must not
- * block the route to a terminal lifecycle.
+ * purpose. `set-model` passes `roleModel`, and `declare-pr` passes `pr`.
  */
 export function rejectInitFlagChanges(args, state, allowed = []) {
   // The command is compared by digest, so the refusal never prints a stored value.

@@ -1,5 +1,5 @@
 // Local batch stores (ADR 0106 decisions 7 and 8): one atomic claim file per repository and
-// issue, and one checkpoint per batch and loop. Nothing here writes to GitHub, and every write
+// item, and one checkpoint per batch and loop. Nothing here writes to GitHub, and every write
 // is skipped when the stored value does not change.
 import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
