@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { readReport, summarizeReport } from "../../scripts/test-duration.mjs";
+import { formatSummary, readReport, summarizeReport } from "../../scripts/test-duration.mjs";
 
 /** Builds one Vitest JSON file result with its assertions. */
 function fileResult(name, startTime, endTime, assertions = []) {
@@ -14,17 +14,11 @@ function assertion(fullName, duration) {
   return { fullName, duration, status: "passed" };
 }
 
-// Usefulness: verifies total wall time spans the first file start to the last file end.
-test("summarizeReport reports total wall time across files", () => {
-  const report = {
-    startTime: 1000,
-    testResults: [
-      fileResult("tests/a.test.mjs", 1000, 3000),
-      fileResult("tests/b.test.mjs", 1500, 5000),
-    ],
-  };
+// Usefulness: verifies the printed total is the measured elapsed time passed by the runner.
+test("formatSummary prints the measured elapsed total", () => {
+  const summary = summarizeReport({ testResults: [] });
 
-  expect(summarizeReport(report).totalMs).toBe(4000);
+  expect(formatSummary(summary, 4000)).toContain("Total wall time: 4.0 s");
 });
 
 // Usefulness: verifies file durations come from file timings, sorted longest first.

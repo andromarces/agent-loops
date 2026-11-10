@@ -3,6 +3,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 const SLOWEST = 20;
@@ -34,14 +35,9 @@ function slowest(entries, limit) {
     .slice(0, limit);
 }
 
-/** Ranks files and tests by duration and measures wall time from report start to last end. */
+/** Ranks files and tests by duration, longest first. */
 export function summarizeReport(report, limit = SLOWEST) {
   const files = report.testResults ?? [];
-  const starts = files.map((file) => Number(file.startTime)).filter(Number.isFinite);
-  const ends = files.map((file) => Number(file.endTime)).filter(Number.isFinite);
-  const reportStart = Number(report.startTime);
-  if (Number.isFinite(reportStart)) starts.push(reportStart);
-
   const slowestFiles = slowest(
     files.map((file) => ({
       name: displayName(file.name),
@@ -59,10 +55,7 @@ export function summarizeReport(report, limit = SLOWEST) {
     limit,
   );
 
-  const totalMs =
-    starts.length > 0 && ends.length > 0 ? Math.max(...ends) - Math.min(...starts) : 0;
-
-  return { totalMs, slowestFiles, slowestTests };
+  return { slowestFiles, slowestTests };
 }
 
 function formatDuration(ms) {
@@ -77,10 +70,10 @@ function formatList(title, entries) {
   return [title, ...lines].join("\n");
 }
 
-/** Renders the summary as one text block for stdout. */
-export function formatSummary(summary) {
+/** Renders the summary and measured total as one text block for stdout. */
+export function formatSummary(summary, totalMs) {
   return [
-    `Total wall time: ${formatDuration(summary.totalMs)}`,
+    `Total wall time: ${formatDuration(totalMs)}`,
     formatList("Slowest test files:", summary.slowestFiles),
     formatList("Slowest tests:", summary.slowestTests),
   ].join("\n\n");
@@ -94,15 +87,17 @@ function vpBinPath() {
 function main() {
   const reportPath = join(tmpdir(), `agent-loops-test-duration-${process.pid}.json`);
   try {
+    const started = performance.now();
     const run = spawnSync(
       process.execPath,
       [vpBinPath(), "test", "run", "--reporter=json", `--outputFile=${reportPath}`],
       { stdio: "inherit" },
     );
+    const elapsedMs = performance.now() - started;
     if (run.error) throw run.error;
 
     const report = readReport(reportPath);
-    process.stdout.write(`${formatSummary(summarizeReport(report))}\n`);
+    process.stdout.write(`${formatSummary(summarizeReport(report), elapsedMs)}\n`);
     if (run.status !== 0 || report.success === false) process.exitCode = 1;
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
