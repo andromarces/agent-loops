@@ -3467,6 +3467,93 @@ describe("batch decisions and waits", () => {
     expect(result.summary.loops[0].report.state).toBe("read");
   });
 
+  // Usefulness: every read error stores the shared unreadable reason in the loop report.
+  test("a read error stores the shared unreadable reason", async () => {
+    const cases = [
+      ["ENOENT", "the transcript is missing"],
+      ["EACCES", "the transcript is unreadable"],
+      ["EISDIR", "the transcript is unreadable"],
+      ["EIO", "the transcript is unreadable"],
+    ];
+    for (let index = 0; index < cases.length; index += 1) {
+      const prepared = prep([701 + index]);
+      const runsRoot = runsFor(prepared);
+      const result = await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+          readTranscript: async () => {
+            const error = new Error(`${cases[index][0]}: synthetic read failure`);
+            error.code = cases[index][0];
+            throw error;
+          },
+        },
+      });
+      expect(result.summary.loops[0].report.transcriptRead).toMatchObject({
+        ok: false,
+        reason: cases[index][1],
+      });
+    }
+  });
+
+  // Usefulness: a read error on an attempted loop refuses with the origin missing text.
+  test("a read error on an attempted loop keeps the missing refusal", async () => {
+    const cases = ["ENOENT", "EACCES", "EISDIR", "EIO"];
+    for (let index = 0; index < cases.length; index += 1) {
+      const issue = 711 + index;
+      const prepared = prep([issue]);
+      const runsRoot = runsFor(prepared);
+      await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh({ closed: new Set([issue]) }),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+        },
+      });
+      const transcript = batchPaths(runsRoot).transcript(prepared.id, issue);
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "interrupted",
+        reason: "interrupted",
+        skipReason: null,
+        attempts: 1,
+        transcript,
+        pid: null,
+        startTime: null,
+      }));
+      await runBatch({
+        prepared: { ...prepared, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+          readTranscript: async () => {
+            const error = new Error(`${cases[index]}: synthetic read failure`);
+            error.code = cases[index];
+            throw error;
+          },
+        },
+      });
+      const loop = await readLoop(runsRoot, prepared.id, issue);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "unverified-steps" });
+      const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+      expect(decision?.ok).toBe(true);
+      expect(decision.decision.evidence).toBe("the transcript is missing");
+    }
+  });
+
   // Usefulness: a recorded live child holds its only slot until the process dies.
   test("a recorded live child holds its slot until it dies", async () => {
     const prepared = prep([213, 214], { loops: 1 });

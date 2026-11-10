@@ -1390,7 +1390,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         ok: false,
         missing: err?.code === "ENOENT",
         reason:
-          err?.code === "ENOENT" ? "the transcript is missing" : (err?.message ?? String(err)),
+          err?.code === "ENOENT" ? "the transcript is missing" : "the transcript is unreadable",
       };
     }
     try {
