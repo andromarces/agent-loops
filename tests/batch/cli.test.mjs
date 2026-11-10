@@ -34,6 +34,16 @@ test("a refused start exits 2", async () => {
   expect(out).toBe("");
 });
 
+// Usefulness: a missing flag value keeps usage and exit 2 for batch and audit starts.
+test("a missing flag value exits 2 for batch and audit starts", async () => {
+  const batch = await runQuiet(["start", "--repo"]);
+  expect(batch.code).toBe(2);
+  expect(batch.err.flat().join("\n")).toContain("Missing value for --repo.");
+  const audit = await runQuiet(["audit", "start", "--repo"]);
+  expect(audit.code).toBe(2);
+  expect(audit.err.flat().join("\n")).toContain("Missing value for --repo.");
+});
+
 // Usefulness: a status read of an unknown batch is a usage refusal, not a crash.
 test("status of an unknown batch exits 2", async () => {
   const { code } = await runQuiet(["status", "--batch", "no-such-batch"]);

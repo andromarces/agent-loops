@@ -118,7 +118,7 @@ export function parseBatchArgs(argv) {
   walkFlags(
     argv,
     0,
-    (flag, read) => {
+    (flag, read, inline) => {
       const readPath = (name) => resolve(read(name));
       if (Object.hasOwn(ROLE_FLAGS, flag)) {
         options[ROLE_FLAGS[flag]] = read(flag);
@@ -138,6 +138,7 @@ export function parseBatchArgs(argv) {
           options.itemsFile = readPath(flag);
           break;
         case "--require-specification":
+          if (inline !== null) throw usage("--require-specification does not take a value.");
           options.requireSpecification = true;
           break;
         case "--from-audit":
@@ -189,6 +190,7 @@ export function parseBatchArgs(argv) {
           break;
         }
         case "--reviewer-workspace-write":
+          if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
           setReviewerSandbox(options, "workspace-write", true);
           break;
         default:
@@ -401,8 +403,9 @@ async function workTreeEntries(repo) {
 /**
  * Refuses a work-tree root that is not a writable directory, naming the `noun` that writes it.
  * A missing path is checked at its nearest existing ancestor.
+ * `rootError` selects the batch rethrow or the audit usage refusal at a filesystem root.
  */
-export async function assertWritableDirectory(path, noun) {
+export async function assertWritableDirectory(path, noun, { rootError = "usage" } = {}) {
   const refusal = `The work-tree root is not a directory the ${noun} can write.`;
   let current = path;
   for (;;) {
@@ -412,10 +415,13 @@ export async function assertWritableDirectory(path, noun) {
       await access(current, constants.W_OK);
       return;
     } catch (err) {
-      if (err?.usage) throw err;
+      if (err?.usage && rootError !== "throw") throw err;
       if (err?.code !== "ENOENT") throw usage(refusal);
       const parent = dirname(current);
-      if (parent === current) throw usage(refusal);
+      if (parent === current) {
+        if (rootError === "throw") throw err;
+        throw usage(refusal);
+      }
       current = parent;
     }
   }
@@ -439,6 +445,7 @@ export async function prepareRepository({
   gitRun,
   noun,
   defaultRoot,
+  rootError = "usage",
 }) {
   const first = entries[0];
   if (first === undefined || first.bare) throw usage("--repo must name a Git main work tree.");
@@ -468,7 +475,7 @@ export async function prepareRepository({
 
   const rootCanonical = await canonicalWritePath(options.workTreeRoot ?? defaultRoot);
   await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
-  await assertWritableDirectory(rootCanonical, noun);
+  await assertWritableDirectory(rootCanonical, noun, { rootError });
 
   return { base, revision, workTreeRoot: rootCanonical, repoKey: repoKey(repo) };
 }
@@ -489,6 +496,7 @@ export async function prepareBatch(options, { gitRun = git } = {}) {
     readText: gitRun,
     gitRun,
     noun: "batch",
+    rootError: "throw",
     defaultRoot: join(dirname(repo), `${basename(repo)}-batch-${options.id ?? "preview"}`),
   });
   return {

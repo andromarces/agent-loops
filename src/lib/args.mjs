@@ -6,29 +6,29 @@ import { readableErrorText, readProp } from "./error-message.mjs";
 import { normalizeAgent } from "./agent-kinds.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "./gate-refusal.mjs";
 
-function missingValue(flag) {
-  return new Error(`Missing value for ${flag}.`);
-}
+const defaultError = (message) => new Error(message);
 
 /**
  * Reads the value that follows `flag`. A value that starts with `-` is refused,
  * except a lone `-` where `allowDash` is set (stdin for `--task-file`).
+ * `error` builds the missing-value refusal.
  */
-function readArgValue(argv, flag, index, allowDash = false) {
+function readArgValue(argv, flag, index, allowDash = false, error = defaultError) {
   const value = argv[index];
   if (!value || (value.startsWith("-") && !(allowDash && value === "-"))) {
-    throw missingValue(flag);
+    throw error(`Missing value for ${flag}.`);
   }
   return value;
 }
 
 /**
- * Returns the value of an inline `--flag=value`. Throws the shared missing-value
- * error when the value is empty, so every CLI parser reports the same message.
+ * Returns the value of an inline `--flag=value`. Throws a missing-value refusal
+ * when the value is empty, so every CLI parser reports the same message.
+ * `error` builds the refusal.
  */
-function readInlineValue(inline, flag) {
+function readInlineValue(inline, flag, error = defaultError) {
   if (inline.value === "") {
-    throw missingValue(flag);
+    throw error(`Missing value for ${flag}.`);
   }
   return inline.value;
 }
@@ -352,7 +352,7 @@ export const STOP_FLAG_WALK = Symbol("stop flag walk");
  * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean | symbol} onFlag
  * @param {{ error?: (message: string) => Error }} [options]
  */
-export function walkFlags(argv, start, onFlag, { error = (message) => new Error(message) } = {}) {
+export function walkFlags(argv, start, onFlag, { error = defaultError } = {}) {
   for (let i = start; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
@@ -360,10 +360,10 @@ export function walkFlags(argv, start, onFlag, { error = (message) => new Error(
     let inlineUsed = false;
     const readInline = (flag, allowDash) => {
       if (!inline) {
-        return readArgValue(argv, flag, ++i, allowDash);
+        return readArgValue(argv, flag, ++i, allowDash, error);
       }
       inlineUsed = true;
-      return readInlineValue(inline, flag);
+      return readInlineValue(inline, flag, error);
     };
 
     const consumed = onFlag(arg, readInline, inline);

@@ -90,7 +90,7 @@ export function parseAuditArgs(argv) {
   walkFlags(
     argv,
     0,
-    (flag, read) => {
+    (flag, read, inline) => {
       switch (flag) {
         case "--repo":
           options.repo = resolve(read(flag));
@@ -157,6 +157,7 @@ export function parseAuditArgs(argv) {
           break;
         }
         case "--reviewer-workspace-write":
+          if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
           setSandbox(options, "workspace-write", true, sandboxAlias);
           sandboxAlias = true;
           break;
