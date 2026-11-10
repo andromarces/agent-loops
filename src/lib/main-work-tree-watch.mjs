@@ -7,27 +7,29 @@ import { execBounded } from "./exec.mjs";
 import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 
-// Milliseconds that one ignore read waits before the watch reports no path (10_000).
+// Milliseconds that one ignore read waits before the watch reports no path.
 const IGNORE_READ_BOUND_MS = 10_000;
-// Milliseconds that the end-of-turn drain runs before the watch reports no path (1000).
+// Milliseconds that the end-of-turn drain runs before the watch reports no path.
 export const DRAIN_DEADLINE_MS = 1_000;
-// Milliseconds that the macOS watch `ready` promise gets before the watch reports no path (1000).
+// Milliseconds that the macOS watch `ready` promise gets before the watch reports no path.
 const ARM_DEADLINE_MS = 1_000;
-// Keys that one event-grown structure keeps before the watch gives up the field (500).
+// Keys that one event-grown structure keeps before the watch gives up the field.
 const MAX_KEYS = 500;
-// Reads in flight that one turn keeps before the watch gives up the field (500).
+// Reads in flight that one turn keeps before the watch gives up the field.
 const MAX_READS = 500;
-// Event paths that one `git check-ignore` call reads (200).
+// Event paths that one `git check-ignore` call reads.
 const IGNORE_BATCH_SIZE = 200;
-// Candidate paths that one file check reads at a time (32).
+// Candidate paths that one file check reads at a time.
 const FILE_BATCH_SIZE = 32;
-// Milliseconds before the window start within which a modification time still counts as a write
-// (2000). Two seconds covers a coarse file system clock and a small skew, and reports a write that
+// Milliseconds before the window start within which a modification time still counts as a write.
+// Two seconds covers a coarse file system clock and a small skew, and reports a write that
 // it cannot separate from the window.
 const MTIME_MARGIN_MS = 2_000;
-// Milliseconds after the window start within which a change time still counts as a read (2.5). The
-// saved Windows probe put a pre-window change time at most 2.100 ms after the start. It put a
-// timestamp-preserving restore at least 2.896 ms after the start.
+// Milliseconds after the window start within which a change time still counts as a read. A change
+// time is a write only when it is strictly later than the start plus this guard. The saved Windows
+// probe put a pre-window change time at most 2.100 ms after the start. It put a
+// timestamp-preserving restore at least 2.896 ms after the start. The guard sits between them, and an
+// in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.5;
 
 /**
@@ -120,10 +122,6 @@ export async function startMainWorkTreeWatch(
   // system clock. The performance clock's wall time can sit a per-process millisecond or more away
   // from it on Windows, so the start comes from the system clock.
   const windowStart = Date.now();
-  // A change time is a write only when it is strictly later than the start plus this guard. The
-  // saved Windows probe put a pre-window change time at most 2.100 ms after the start. It put a
-  // timestamp-preserving restore at least 2.896 ms after the start. The guard sits between them. An
-  // in-window restore inside the guard is not reported.
   const changeTimeAfterStart = windowStart + CHANGE_TIME_GUARD_MS;
   let failed = false;
   let watcherClosed = false;

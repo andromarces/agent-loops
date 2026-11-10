@@ -138,9 +138,11 @@ export async function commitEntries(gh, slug, sha, cwd, strict = false) {
   return { runs, statuses };
 }
 
-// The commit GitHub evaluates: the test merge commit when it carries a check
-// run or a commit status, the head commit otherwise. The same selection yields
-// the result GitHub shows for the pull request.
+/**
+ * The commit GitHub evaluates: the test merge commit when it carries a check
+ * run or a commit status, the head commit otherwise. The same selection yields
+ * the result GitHub shows for the pull request.
+ */
 export async function evaluatedState(gh, slug, info, cwd, strict = false) {
   const head = info.headRefOid;
   const merge = info.potentialMergeCommit?.oid ?? null;
@@ -178,12 +180,14 @@ function compareTime(a, b) {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
-// The most recent entry: the later of the first present timestamp in `fields`,
-// then the larger numeric id when times tie. Null when a group of several entries
-// holds an entry with a non-numeric id or a missing or unparseable timestamp.
-// The order is then unknown, and the caller must not pass the group. A single
-// entry needs no order and is returned as is. GitHub evaluates the latest run for
-// a name. An earlier failing run that a later run replaces does not fail the gate.
+/**
+ * The most recent entry: the later of the first present timestamp in `fields`,
+ * then the larger numeric id when times tie. Null when a group of several entries
+ * holds an entry with a non-numeric id or a missing or unparseable timestamp.
+ * The order is then unknown, and the caller must not pass the group. A single
+ * entry needs no order and is returned as is. GitHub evaluates the latest run for
+ * a name. An earlier failing run that a later run replaces does not fail the gate.
+ */
 export function latestBy(entries, fields) {
   if (entries.length === 1) {
     return entries[0];
@@ -225,11 +229,13 @@ const runFailed = (run) =>
 
 const statusFailed = (status) => status.state === "error" || status.state === "failure";
 
-// Null when the required context passes, or `{ kind, reason }` where `kind` is
-// `missing`, `pending`, or `failing` and `reason` names the condition. An
-// app-qualified context is satisfied only by a check run from that app. An
-// unqualified context is satisfied by a check run or a commit status with the
-// name. Both types must pass when both carry an unqualified name.
+/**
+ * Null when the required context passes, or `{ kind, reason }` where `kind` is
+ * `missing`, `pending`, or `failing` and `reason` names the condition. An
+ * app-qualified context is satisfied only by a check run from that app. An
+ * unqualified context is satisfied by a check run or a commit status with the
+ * name. Both types must pass when both carry an unqualified name.
+ */
 export function evaluateContext({ name, appId }, commit, runs, statuses) {
   const label = contextLabel(`"${name}"`, appId);
   const { runs: matchingRuns, statuses: matchingStatuses } = matchingEntries(

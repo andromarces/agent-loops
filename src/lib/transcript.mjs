@@ -57,7 +57,6 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
   // The digest of the transcript file that this run wrote last. A session record binds to it.
   let transcriptDigest = null;
 
-  // A transcript write supersedes the session record of the file, so it removes the record.
   const transcriptText = () => {
     const bounded = boundedWarnings(transcriptData.warnings);
     const base = {
@@ -77,6 +76,8 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
       : base;
     return JSON.stringify(data, null, 2);
   };
+
+  // A transcript write supersedes the session record of the file, so it removes the record.
   const writeTranscript = async () => {
     if (!options.transcript) return;
     try {

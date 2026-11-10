@@ -6,11 +6,11 @@ const DISPATCH_ACTIONS = new Set(["run_worker", "run_reviewer"]);
 
 /**
  * Counts the charged steps of a loop transcript, whose segments split at each `continued` event.
- * Each segment contributes its highest `result` event's `stepsUsed`; a trailing dispatch action
- * with no later result adds one, because the runtime charges a step before the child starts. The
+ * Each segment contributes its highest `result` event's `stepsUsed`. A trailing dispatch action with
+ * no later result adds one, because the runtime charges a step before the child starts. The
  * checkpoint count is a cross-check, and the larger value wins.
  * @param {string} text the transcript JSON
- * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
+ * @returns {{ ok: true, steps: number, segments: number } | { ok: false, reason: string }}
  */
 export function countSteps(text, { checkpointSteps = 0 } = {}) {
   let data;

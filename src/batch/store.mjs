@@ -1,5 +1,5 @@
 // Local batch stores (ADR 0106 decisions 7 and 8): one atomic claim file per repository and
-// issue, and one checkpoint per batch and loop. Nothing here writes to GitHub, and every write
+// item, and one checkpoint per batch and loop. Nothing here writes to GitHub, and every write
 // is skipped when the stored value does not change.
 import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -73,16 +73,17 @@ export async function readStoreText(file) {
   }
 }
 
-function parseObject(text, file) {
+/** Reads a JSON object from text, refusing invalid JSON or a non-object with a message that names `noun`. */
+export function parseObject(text, file, noun = "Batch") {
   if (text === null) return null;
   let value;
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error(`Batch record is not valid JSON: ${file}`);
+    throw new Error(`${noun} record is not valid JSON: ${file}`);
   }
   if (!isJsonObject(value)) {
-    throw new Error(`Batch record is not a JSON object: ${file}`);
+    throw new Error(`${noun} record is not a JSON object: ${file}`);
   }
   return value;
 }
@@ -311,9 +312,4 @@ export async function releaseClaim(runsRoot, repoKey, issue, { batchId }) {
   }
   if (!isJsonObject(record) || record.batchId !== batchId) return false;
   return removeClaimText(file, text);
-}
-
-/** Removes a claim of this batch regardless of liveness, for a documented terminal outcome. */
-export async function dropClaim(runsRoot, repoKey, issue, { batchId }) {
-  return releaseClaim(runsRoot, repoKey, issue, { batchId });
 }
