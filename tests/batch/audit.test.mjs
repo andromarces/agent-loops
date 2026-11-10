@@ -584,24 +584,46 @@ test("two reviewers run before one consolidation and create one issue per findin
   }
 });
 
-// Usefulness: a failed issue creation logs one error line, so the operator can see the failure
-// without reading the paused state file.
+// Usefulness: a failed issue creation logs one error line, so the failure stays visible.
 test("a failed issue creation logs one error line", async () => {
-  const prepared = await preparedAudit();
+  const base = await mkdtemp(join(tmpdir(), "audit-log-"));
+  roots.push(base);
+  const workTreePath = join(base, "revision");
+  await mkdir(workTreePath, { recursive: true });
+  const revision = "1111111111111111111111111111111111111111";
+  const identity = await pathIdentity(workTreePath);
+  const prepared = {
+    id: "20260101-000000-test",
+    repo: "o/r",
+    repoKey: "abc123abc123",
+    base: "main",
+    revision,
+    workTreeRoot: join(base, "root"),
+    reviewers: [
+      { kind: "claude", model: null, effort: null },
+      { kind: "agy", model: null, effort: null },
+    ],
+    worker: { kind: "codex", model: null, effort: null },
+    timeout: null,
+    reviewerSandbox: null,
+    setupCmd: null,
+    setupTimeout: 600,
+    mode: "resume",
+    workTree: {
+      path: workTreePath,
+      canonicalPath: workTreePath,
+      dev: String(identity.dev),
+      ino: String(identity.ino),
+      revision,
+    },
+  };
   const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared);
   const gh = fakeGh();
   const failingGh = async (args) =>
     args[0] === "issue" && args[1] === "create"
       ? { status: 1, stdout: "", stderr: "creation refused" }
       : gh.gh(args);
-  const turns = fakeTurns({
-    reviewers: { claude: fenced({ findings: [] }), agy: fenced({ findings: [] }) },
-    consolidations: [
-      fenced({
-        findings: [{ title: "Creation fails", body: "Body", evidence: "", existingIssue: null }],
-      }),
-    ],
-  });
   const errors = [];
   const spy = vi.spyOn(console, "error").mockImplementation((line) => errors.push(String(line)));
   try {
@@ -609,7 +631,7 @@ test("a failed issue creation logs one error line", async () => {
       prepared,
       runsRoot,
       gh: failingGh,
-      deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+      deps: { readCheckout: async () => ({ head: revision, clean: true }) },
     });
     expect(summary.pauseReason).toBe("issue-create-failed");
     const failures = errors.filter((line) => line.includes("issue creation failed"));

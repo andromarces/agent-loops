@@ -570,8 +570,7 @@ test.each([
   }
 });
 
-// Usefulness: the numbered uninstall prompt marks an installed harness `[installed]`, so the
-// user never reads `[detected]` on an uninstall.
+// Usefulness: uninstall marks `[installed]`, so no `[detected]` label appears.
 test("CLI uninstall labels an installed harness in the numbered prompt", async () => {
   const home = await makeHome();
   process.env.AGENT_LOOP_HOME = home;
