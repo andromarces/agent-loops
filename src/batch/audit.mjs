@@ -362,7 +362,13 @@ export async function prepareAudit(options, { gitRun = git } = {}) {
     options.workTreeRoot ??
     join(dirname(repo), `${basename(repo)}-audit-${options.id ?? "preview"}`);
   const rootCanonical = await canonicalWritePath(workTreeRoot);
-  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
+  // The audit runner returns an object. The refusal reads a string and falls back on failure.
+  await refuseWorkTreeRootInGitWorkTree(rootCanonical, {
+    gitRun: async (args, cwd) => {
+      const result = await gitRun(args, cwd);
+      return result.exitCode === 0 && !result.timedOut ? result.stdout : "";
+    },
+  });
   await assertWritableDirectory(rootCanonical);
 
   const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
