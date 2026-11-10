@@ -431,14 +431,47 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
   };
 
-  // The run controller exists here, so every read before the loop slots sees the run signal.
+  // The run controller and interruption state exist here, so preflight reads see the run signal.
   const controller = new AbortController();
+  const active = new Map();
+  const children = new Map();
+  const slots = new Set();
+  const waiting = new Set();
+  const pendingDecisions = new Set();
+
+  const forward = (signal) => {
+    for (const child of children.values()) {
+      if (signal === "SIGKILL") child.hardKill?.();
+      else child.kill?.("SIGINT");
+    }
+  };
+  const interrupt = (reason) => {
+    if (interrupted) return;
+    interrupted = true;
+    progress("interrupted: stopping new launches and forwarding SIGINT");
+    controller.abort(reason);
+    forward("SIGINT");
+  };
+  const onSigInt = () => {
+    if (!interrupted) {
+      interrupt();
+      for (const [issue, child] of children) {
+        const timer = setTimeout(() => {
+          if (children.has(issue)) child.hardKill?.();
+        }, INTERRUPT_WAIT_MS);
+        timer.unref?.();
+      }
+    } else if (!hard) {
+      hard = true;
+      progress("second interrupt: ending the child trees now");
+      forward("SIGKILL");
+    }
+  };
+  const installSignal = deps.installSignal !== false;
+  if (installSignal) process.on("SIGINT", onSigInt);
   if (deps.signal) {
-    if (deps.signal.aborted) controller.abort(deps.signal.reason);
-    else
-      deps.signal.addEventListener("abort", () => controller.abort(deps.signal.reason), {
-        once: true,
-      });
+    if (deps.signal.aborted) interrupt(deps.signal.reason);
+    else deps.signal.addEventListener("abort", () => interrupt(deps.signal.reason), { once: true });
   }
   gh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, controller.signal);
 
@@ -575,6 +608,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const skipped = [];
     const startPlanTree = deps.planPrWorkTree ?? planPrWorkTree;
     for (const item of frozenItems) {
+      if (interrupted) break;
       const eligibility = await preflightItemEligibility({
         item,
         gh,
@@ -609,6 +643,17 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         }
       }
       items.push(item);
+    }
+    if (interrupted) {
+      progress(`batch ${id}: interrupted before any state write`);
+      return {
+        exitCode: 130,
+        summary: {
+          batchId: id,
+          status: "interrupted",
+          loops: skipped.map((loop) => loopEntry(loop)),
+        },
+      };
     }
     if (items.length === 0) {
       progress(`batch ${id}: every item was refused before any state write`);
@@ -654,49 +699,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     progress(`batch ${id} started (${items.length} item(s), ${prepared.loops} loop(s))`);
   }
 
-  const active = new Map();
-  const children = new Map();
-  const slots = new Set();
-  const waiting = new Set();
-  const pendingDecisions = new Set();
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
   const clock = { now: deps.now ?? (() => performance.now()), sleep: deps.sleep ?? defaultSleep };
-
-  const forward = (signal) => {
-    for (const child of children.values()) {
-      if (signal === "SIGKILL") child.hardKill?.();
-      else child.kill?.("SIGINT");
-    }
-  };
-  const onSigInt = () => {
-    if (!interrupted) {
-      interrupted = true;
-      progress("interrupted: stopping new launches and forwarding SIGINT");
-      controller.abort();
-      forward("SIGINT");
-      for (const [issue, child] of children) {
-        const timer = setTimeout(() => {
-          if (children.has(issue)) child.hardKill?.();
-        }, INTERRUPT_WAIT_MS);
-        timer.unref?.();
-      }
-    } else if (!hard) {
-      hard = true;
-      progress("second interrupt: ending the child trees now");
-      forward("SIGKILL");
-    }
-  };
-  const installSignal = deps.installSignal !== false;
-  if (installSignal) process.on("SIGINT", onSigInt);
-  if (deps.signal) {
-    deps.signal.addEventListener("abort", () => {
-      if (!interrupted) {
-        interrupted = true;
-        controller.abort(deps.signal.reason);
-        forward("SIGINT");
-      }
-    });
-  }
 
   // A loop end reads its transcript once and stores the report in the same checkpoint write as the
   // status change. The report adds no store write.

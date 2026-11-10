@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   bodyClassOf,
+  boundedRunner,
   ghApiFailure,
   ghReadError,
   isCleanServerError,
@@ -115,5 +116,25 @@ describe("ghApiFailure", () => {
         stderr: CONNECTION_RESET,
       }).transient,
     ).toBeFalsy();
+  });
+});
+
+describe("boundedRunner", () => {
+  // Usefulness: a reply that ends after the caller aborts never reaches the caller as data.
+  it("throws on a reply that ends after the caller abort, keeping the reason", async () => {
+    const reason = new Error("the caller stopped");
+    const controller = new AbortController();
+    const gh = (args, cwd, options) =>
+      new Promise((resolve) => {
+        options.signal.addEventListener(
+          "abort",
+          () => resolve({ status: 0, stdout: "", stderr: "" }),
+          { once: true },
+        );
+      });
+    const call = boundedRunner(gh, 60_000, controller.signal);
+    const pending = call(["pr", "view", "1"], ".");
+    controller.abort(reason);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError", cause: reason });
   });
 });

@@ -345,77 +345,78 @@ test("a real spawn failure fails the loop with its code and no started line", as
   }
 });
 
-// Usefulness: a gh read that never returns ends at the bound, so the batch cannot hang.
-test("a gh read that never returns ends at the bound", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
-  const gh = (args, cwd, options = {}) =>
-    new Promise((resolve) => {
-      const end = () => resolve({ status: null, stdout: "", stderr: "", timedOut: true });
-      if (options.signal?.aborted) end();
-      else options.signal?.addEventListener("abort", end, { once: true });
-    });
-  let guardTimer;
-  const guard = new Promise((resolve) => {
-    guardTimer = setTimeout(() => resolve("hung"), 3000);
+describe("bounded batch reads", () => {
+  let prepared;
+  beforeAll(async () => {
+    prepared = await preparedFor(await batchRepo(), [1]);
   });
-  try {
-    const result = await Promise.race([
-      runBatch({
-        prepared,
-        runsRoot: join(prepared.workTreeRoot, "runs"),
-        gh,
-        deps: { notifier: noNotify, installSignal: false, ghTimeoutMs: 20 },
-      }),
-      guard,
-    ]);
-    expect(result).not.toBe("hung");
-    expect(result.summary.loops[0].skipReason).toBe("eligibility-unverified");
-    expect(result.summary.loops[0].reason).toContain("timed out after 20ms");
-  } finally {
-    clearTimeout(guardTimer);
-  }
-});
 
-// Usefulness: a gh read ends on the run abort, so an abort does not wait on a hung read.
-test("a gh read ends on the run abort", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
-  const abort = new AbortController();
-  const gh = (args, cwd, options = {}) =>
-    new Promise((resolve, reject) => {
-      const end = () =>
-        reject(Object.assign(new Error("the read was aborted"), { name: "AbortError" }));
-      if (options.signal?.aborted) end();
-      else options.signal?.addEventListener("abort", end, { once: true });
+  const runsRootFor = (name) => join(prepared.workTreeRoot, `runs-${name}`);
+  const replyOnAbort =
+    (reply) =>
+    (args, cwd, options = {}) =>
+      new Promise((resolve) => {
+        const end = () => resolve(reply);
+        if (options.signal?.aborted) end();
+        else options.signal?.addEventListener("abort", end, { once: true });
+      });
+
+  // Usefulness: a gh read that never returns ends at the bound, so the batch cannot hang.
+  test("a gh read that never returns ends at the bound", async () => {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("bound"),
+      gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
+      deps: { notifier: noNotify, installSignal: false, ghTimeoutMs: 20 },
     });
-  const abortTimer = setTimeout(() => abort.abort(), 10);
-  let guardTimer;
-  const guard = new Promise((resolve) => {
-    guardTimer = setTimeout(() => resolve("hung"), 3000);
+    expect(exitCode).toBe(0);
+    expect(summary.loops[0].skipReason).toBe("eligibility-unverified");
+    expect(summary.loops[0].reason).toContain("timed out after 20ms");
   });
-  try {
-    const result = await Promise.race([
-      runBatch({
-        prepared,
-        runsRoot: join(prepared.workTreeRoot, "runs"),
-        gh,
-        deps: {
-          notifier: noNotify,
-          installSignal: false,
-          signal: abort.signal,
-          ghTimeoutMs: 60_000,
-        },
-      }),
-      guard,
-    ]);
-    expect(result).not.toBe("hung");
-    expect(result.summary.loops[0].skipReason).toBe("eligibility-unverified");
-    expect(result.summary.loops[0].reason).toContain("the read was aborted");
-  } finally {
-    clearTimeout(guardTimer);
-    clearTimeout(abortTimer);
-  }
+
+  // Usefulness: an already-aborted run signal ends the batch interrupted with exit 130.
+  test("an already-aborted run signal ends the batch interrupted", async () => {
+    const abort = new AbortController();
+    abort.abort(new Error("stopped before preflight"));
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("aborted-before"),
+      gh: replyOnAbort({ status: 0, stdout: JSON.stringify({ number: 1 }), stderr: "" }),
+      deps: { notifier: noNotify, installSignal: false, signal: abort.signal },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+  });
+
+  // Usefulness: an abort during a hung preflight read ends interrupted with exit 130.
+  test("an abort during a hung preflight read ends interrupted", async () => {
+    const abort = new AbortController();
+    let started = false;
+    const gh = (args, cwd, options = {}) => {
+      if (!started) {
+        started = true;
+        setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
+      }
+      return replyOnAbort({ status: 0, stdout: JSON.stringify({ number: 1 }), stderr: "" })(
+        args,
+        cwd,
+        options,
+      );
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("aborted-during"),
+      gh,
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        signal: abort.signal,
+        ghTimeoutMs: 60_000,
+      },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+  });
 });
 
 // Usefulness: three issues get three work trees, three branches, and one child each.
