@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092, 0097, and 0098 are unused. No ADR uses them, and no number is renumbered, so existing links hold.
+Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092, 0097, and 0098 are unused. Numbers 0102, 0103, and 0111 to 0113 are also unused. No ADR uses them, and no number is renumbered, so existing links hold.
 
 - 0001 — [Hybrid orchestrator with deterministic runtime](0001-hybrid-orchestrator-runtime.md) — superseded — Replaces the fixed worker-first review loop with an LLM orchestrator that selects actions executed by a deterministic runtime. Superseded by ADR 0019, which restates it.
 - 0002 — [Harness-neutral orchestrator instructions with thin entry points](0002-harness-neutral-orchestrator-instructions.md) — accepted — One instruction file defines the interactive orchestrator role and thin harness entry points.

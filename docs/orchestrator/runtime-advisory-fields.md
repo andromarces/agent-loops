@@ -1,4 +1,4 @@
-# Runtime advisory fields of a reviewer envelope
+# Runtime advisory fields of a reviewer or worker envelope
 
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a reviewer or worker envelope carries `inheritedTmpdirEntries`, or a reviewer envelope carries `packageStoreEntries`.
 
@@ -14,7 +14,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   only until the removal ends: a directory that the removal refused or failed on, such as a
   replacement of the turn directory, is listed. Every other entry of the one post-turn read is
   listed, an `al-` name too. The runtime reads the directories once after the last child call of the
-  dispatch, with no re-read and no wait. The field creates no `open` item by itself, and it never
+  dispatch and before the closing-block repair, with no re-read and no wait. An entry that the
+  repair creates stays unseen. The field creates no `open` item by itself, and it never
   refuses a finish.
   - On macOS the usual inherited directory is under `/var/folders` when `TMPDIR` is set. The
     report follows `os.tmpdir()`, the inherited directory, whatever path it names, and it also
