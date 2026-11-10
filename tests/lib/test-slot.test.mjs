@@ -41,6 +41,26 @@ vi.mock("node:os", async (importOriginal) => {
   return { ...real, availableParallelism: () => hostCpus.count ?? real.availableParallelism() };
 });
 
+// A command whose run the test ends: the gate records its start and end, and the test resolves it.
+const gate = vi.hoisted(() => ({ order: [], pending: new Map() }));
+vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execBounded: (command, args = [], options) => {
+      if (command !== "gate-command") return real.execBounded(command, args, options);
+      const id = args[0];
+      gate.order.push(`s${id}`);
+      return new Promise((resolve) => {
+        gate.pending.set(id, () => {
+          gate.order.push(`e${id}`);
+          resolve({ exitCode: 0, stdout: "", stderr: "" });
+        });
+      });
+    },
+  };
+});
+
 import { parseTestSlotArgs, runTestSlot } from "../../src/lib/test-slot-cli.mjs";
 import { holdTestSlot } from "../../src/lib/test-slot.mjs";
 
@@ -63,6 +83,8 @@ afterEach(async () => {
   slowLock.ms = 0;
   slowLock.failTableRelease = false;
   slowLock.failSlotLock = false;
+  gate.order.length = 0;
+  gate.pending.clear();
   vi.restoreAllMocks();
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) {
@@ -158,27 +180,38 @@ const waitForFile = (path, ms = 10_000) =>
     interval: 50,
   });
 
-// Usefulness: acceptance (#847) — with one slot, two concurrent wrappers run their
-// commands one after the other, which is the whole point of the slot.
-// In process: both callers are holdTestSlot, so the serialization starts no command.
+// Usefulness: acceptance (#847) — with one slot, two concurrent wrappers run their commands one after the other, which is the slot's point.
+// In process: a gated command double keeps each command live until the test ends it.
 test("with --slots 1, two concurrent wrappers run their commands one after the other", async () => {
   const ctx = await setup();
-  const first = await holdInProcess(ctx, { slots: 1 });
-  expect(first).not.toBeNull();
-
+  const run = (id) => runInProcess(ctx, ["--slots", "1", "--wait", "60", "--", "gate-command", id]);
   const logs = [];
   for (const name of ["log", "error"]) {
     vi.spyOn(console, name).mockImplementation((line) => logs.push(String(line)));
   }
-  const waiting = holdInProcess(ctx, { slots: 1 });
-  await vi.waitFor(() => expect(logs.join("\n")).toMatch(/waiting for a test slot/));
-  // The second caller holds no slot while the first holds the only one.
-  expect(existsSync(join(ctx.root, "slot-1.lock"))).toBe(false);
 
-  await first.release();
-  const second = await waiting;
-  expect(second).not.toBeNull();
-  await second.release();
+  const first = run("first");
+  await vi.waitFor(() => expect(gate.pending.has("first")).toBe(true), { timeout: 10_000 });
+  const second = run("second");
+  // The second wrapper either starts its command or logs that it waits for the slot.
+  await vi.waitFor(
+    () =>
+      expect(gate.pending.has("second") || /waiting for a test slot/.test(logs.join("\n"))).toBe(
+        true,
+      ),
+    { timeout: 10_000 },
+  );
+  // The second command does not start while the first command holds the only slot.
+  expect(gate.order).toEqual(["sfirst"]);
+
+  gate.pending.get("first")();
+  await vi.waitFor(() => expect(gate.pending.has("second")).toBe(true), { timeout: 10_000 });
+  expect(gate.order).toEqual(["sfirst", "efirst", "ssecond"]);
+
+  gate.pending.get("second")();
+  await expect(first).resolves.toBe(0);
+  await expect(second).resolves.toBe(0);
+  expect(gate.order).toEqual(["sfirst", "efirst", "ssecond", "esecond"]);
 }, 60_000);
 
 // Usefulness: acceptance (#847) — a slot left by a process that no longer exists is
@@ -442,8 +475,7 @@ test("an argument vector needs -- and a non-empty executable", () => {
   expect(usageRefusal(() => parseTestSlotArgs(["--", "", "x"], {})).usage).toBe(true);
 });
 
-// Usefulness: maintainer decision (#847) — `--wait 0` is one attempt: a free slot is taken now,
-// and a held one gives up at once.
+// Usefulness: #847 — `--wait 0` is one attempt: a free slot runs the command, a held one exits 75 at once without a run.
 // In process: the held slot is the whole outcome, so no command process starts.
 test("--wait 0 takes a free slot and gives up on a held one", async () => {
   const ctx = await setup();
@@ -513,8 +545,7 @@ test("a failed slot claim and a failed acquisition-lock release are both reporte
   expect(existsSync(join(ctx.cwd, "mark"))).toBe(false);
 }, 30_000);
 
-// Usefulness: issue #921 (option 2) — with `--if-held` and all slots free, the caller runs at once
-// without a slot, so another caller takes it.
+// Usefulness: #921 — with all slots free, `--if-held` runs the command at once and takes no slot, so a plain wrapper for the only slot starts.
 // In process: the returned slot entry is the whole outcome, so no command process starts.
 test("--if-held runs at once while all slots are free and leaves the slot to others", async () => {
   const ctx = await setup();
@@ -525,16 +556,14 @@ test("--if-held runs at once while all slots are free and leaves the slot to oth
   await other.release();
 }, 30_000);
 
-// Usefulness: issue #921 (option 2) — a held slot makes `--if-held` wait, so a targeted run under
-// load gives up at the bound.
+// Usefulness: #921 — a held slot makes the command wait as a slot holder, so a targeted run under load exits 75 at the bound.
 test("--if-held waits while a slot is held and gives up at the bound", async () => {
   const ctx = await setup();
   await holdSlot(ctx.root, liveOwner());
   expect(await holdInProcess(ctx, { ifHeld: true, waitSeconds: 0.05 })).toBeNull();
 }, 30_000);
 
-// Usefulness: issue #921 (option 2) — any held slot counts, not only a full table: with one of two
-// slots held, the caller takes the free slot, so a plain caller at once finds no slot.
+// Usefulness: #921 — any held slot counts, so one of two held runs the command in the free slot and makes the plain wrapper exit 75.
 test("--if-held runs as a slot holder when one of two slots is held", async () => {
   const ctx = await setup();
   await holdSlot(ctx.root, liveOwner());

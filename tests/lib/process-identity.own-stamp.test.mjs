@@ -15,8 +15,7 @@ vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
 
 const { ownStartTime, ownerAlive } = await import("../../src/lib/process-identity.mjs");
 
-// Usefulness: verifies repeated lock checks of this process reuse the memoized own stamp, so only
-// one `ps` starts per process.
+// Usefulness: verifies repeated lock checks of this process reuse the memoized own stamp, so only one `ps` starts per process.
 test.skipIf(process.platform !== "darwin")(
   "a lock of this process starts no start-time query per check",
   async () => {
