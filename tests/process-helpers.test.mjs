@@ -43,6 +43,7 @@ test("deadPid is a valid pid that no OS assigns and the production liveness chec
   expect(pidAlive(pid)).toBe(false);
 });
 
+// Process: the shim runs as a child script, so its heartbeat, ceiling, and exit code are read here.
 // Usefulness: the shim readiness reader must never accept a partial heartbeat, and its wait must
 // end at its own deadline.
 test("createPsShim.ready accepts only a complete newline-terminated heartbeat", async () => {

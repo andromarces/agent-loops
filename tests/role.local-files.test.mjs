@@ -117,6 +117,7 @@ afterEach(async () => {
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 
+// Real Git: the copy's own reads must match what Git reports for the linked work tree.
 const linkedWithEnv = () => createLinkedWithEnv(SECRET, repos);
 
 // Usefulness: verifies acceptance 1 — an init on a linked work tree copies the

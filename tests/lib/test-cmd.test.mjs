@@ -23,6 +23,7 @@ afterEach(async () => {
   }
 });
 
+// Process: every case reads the exit code, output, or timeout of a real child.
 async function repo() {
   const dir = await createTempRepo();
   dirs.push(dir);
