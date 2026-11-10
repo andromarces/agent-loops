@@ -10,6 +10,7 @@ import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";
 
+// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
 let repo;
 let temp;
 beforeEach(async () => {

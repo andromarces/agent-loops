@@ -37,6 +37,7 @@ async function reviewerTurn(repo, act, { signal } = {}) {
 
 // Usefulness: verifies acceptance #920 — the reviewer prompt names the runtime scratch folder, and
 // the runtime removes it after an ok turn, so cleanup does not depend on a delete the reviewer may be refused.
+// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
 test("an ok reviewer turn gets a scratch folder that the runtime removes afterward", async () => {
   const repo = await createTempRepo();
   try {

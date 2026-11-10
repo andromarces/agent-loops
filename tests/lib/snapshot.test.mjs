@@ -65,6 +65,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+// Real Git: the snapshot and work tree checks read a repository that only Git creates.
 // Usefulness: verifies assertGitWorkTree passes inside a git repository and rejects a non-git directory.
 test("assertGitWorkTree validates git directory", async () => {
   const repo = await createTempRepo();

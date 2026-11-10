@@ -57,6 +57,7 @@ test("createPsShim.ready accepts only a complete newline-terminated heartbeat", 
   }
 });
 
+// Process: the case runs the shim as a child script, so its ceiling end and exit code are read here.
 // Usefulness: the shim must end by itself at its wall-clock ceiling, so a failed test cannot leave
 // it running, and the helper must tell an early end from a run to the ceiling without a signal.
 // The test owns the child handle and ends it through that handle if the shim does not exit.
