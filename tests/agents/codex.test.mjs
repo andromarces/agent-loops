@@ -3,11 +3,17 @@ import { runCodex } from "../../src/agents/codex.mjs";
 import { ExecError, exec } from "../../src/lib/exec.mjs";
 import { parseReportBlock, parseVerdict } from "../../src/lib/report.mjs";
 
-// Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.
-vi.mock("../../src/lib/exec.mjs", async (importActual) => ({
-  ...(await importActual()),
-  exec: vi.fn(),
-}));
+// `exec` is replaced by the cases. The turn directory removal is answered in this process, so no
+// `turn-tmpdir-remove.mjs` child starts per turn.
+vi.mock("../../src/lib/exec.mjs", async (importActual) => {
+  const actual = await importActual();
+  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal.mjs");
+  return {
+    ...actual,
+    exec: vi.fn(),
+    execBounded: turnTmpdirRemovalDouble(actual.execBounded),
+  };
+});
 
 // Usefulness: verifies codex adapter sends exec, --json, and adds -c sandbox_mode="read-only" when readOnly is true on initial turn.
 test("codex sends correct argv for initial turn with readOnly", async () => {
