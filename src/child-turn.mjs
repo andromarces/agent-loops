@@ -461,10 +461,11 @@ export async function runChild(options) {
     // snapshot, whatever the turn returned. It is ignored, so neither snapshot lists it, and the
     // removal can neither read as a mutation nor hide one (issue #920).
     const scratchDir = isReviewer ? await createReviewerScratch(cwd, { signal }) : null;
-    await evidence.beforeTurn();
-    if (evidence.mainWatch && onMainWatch) onMainWatch(evidence.mainWatch);
     let response;
     try {
+      // The baseline read runs inside this `try`, so a cancel it raises still removes the folder.
+      await evidence.beforeTurn();
+      if (evidence.mainWatch && onMainWatch) onMainWatch(evidence.mainWatch);
       response = readOnly
         ? await withMutationCheck(
             cwd,

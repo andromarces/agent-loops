@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterAll, expect, test } from "vite-plus/test";
+import { afterAll, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { parseBatchArgs, prepareBatch } from "../../src/batch/args.mjs";
 import { removePath } from "../fs-helpers.mjs";
@@ -38,6 +38,17 @@ function args(overrides = {}) {
   return { ...options, ...overrides };
 }
 
+/** Runs `parse`, then returns the stderr lines it logged. */
+function warningsFrom(parse) {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    parse();
+    return spy.mock.calls.map((call) => String(call[0]));
+  } finally {
+    spy.mockRestore();
+  }
+}
+
 // Usefulness: a missing --loops is the owner decision that keeps the count required.
 test("missing --loops is a usage error", () => {
   expect(() =>
@@ -69,18 +80,41 @@ test("missing --max-steps is a usage error", () => {
   ).toThrow("Missing required --max-steps.");
 });
 
-// Usefulness: an unknown model is refused before any state write.
-test("an unknown model is a usage error", () => {
-  expect(() => parseBatchArgs([...BASE, "--worker-model", "nope"])).toThrow(
-    "Unsupported worker model: nope",
-  );
+// Usefulness: every newly accepted model and effort value parses with no warning.
+test("the newly accepted model and effort values parse with no warning", () => {
+  const cases = [
+    ["claude", "--worker-model", "fable"],
+    ["claude", "--worker-effort", "xhigh"],
+    ["copilot", "--worker-model", "auto"],
+    ["copilot", "--worker-effort", "none"],
+    ["copilot", "--worker-effort", "minimal"],
+    ["copilot", "--worker-effort", "xhigh"],
+    ["copilot", "--worker-effort", "max"],
+    ["agy", "--worker-effort", "xhigh"],
+    ["agy", "--worker-effort", "max"],
+  ];
+  for (const [worker, flag, value] of cases) {
+    const warnings = warningsFrom(() =>
+      parseBatchArgs([...BASE.map((v) => (v === "claude" ? worker : v)), flag, value]),
+    );
+    expect(warnings).toEqual([]);
+  }
 });
 
-// Usefulness: an unknown effort is refused before any state write.
-test("an unknown effort is a usage error", () => {
-  expect(() =>
+// Usefulness: an unknown model is accepted with one warning, and the CLI decides the value.
+test("an unknown model logs one warning", () => {
+  const warnings = warningsFrom(() => parseBatchArgs([...BASE, "--worker-model", "nope"]));
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("Unknown worker model: nope");
+});
+
+// Usefulness: an unknown effort is accepted with one warning, and the CLI decides the value.
+test("an unknown effort logs one warning", () => {
+  const warnings = warningsFrom(() =>
     parseBatchArgs([...BASE, "--worker-model", "claude-sonnet-5-5", "--worker-effort", "extreme"]),
-  ).toThrow("Unsupported worker effort: extreme");
+  );
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("Unknown worker effort: extreme");
 });
 
 // Usefulness: two sandbox flags that disagree are a conflict, never a silent last value.
@@ -269,22 +303,17 @@ test("a work-tree root under a linked alias of the work tree is refused", async 
   }
 });
 
-// Usefulness: a model and effort are validated after an agent alias maps to its kind.
-test("an alias still validates the model and effort", () => {
-  expect(() =>
-    parseBatchArgs([
-      ...BASE.map((v) => (v === "agy" ? "antigravity" : v)),
-      "--reviewer-effort",
-      "hgh",
-    ]),
-  ).toThrow("Unsupported reviewer effort: hgh");
-  expect(() =>
-    parseBatchArgs([
-      ...BASE.map((v) => (v === "agy" ? "antigravity" : v)),
-      "--reviewer-model",
-      "nope",
-    ]),
-  ).toThrow("Unsupported reviewer model: nope");
+// Usefulness: a model and effort warning resolves the agent alias to its kind.
+test("an alias still warns on the model and effort", () => {
+  const aliasBase = BASE.map((v) => (v === "agy" ? "antigravity" : v));
+  const effortWarnings = warningsFrom(() =>
+    parseBatchArgs([...aliasBase, "--reviewer-effort", "hgh"]),
+  );
+  expect(effortWarnings).toEqual([expect.stringContaining("Unknown reviewer effort: hgh")]);
+  const modelWarnings = warningsFrom(() =>
+    parseBatchArgs([...aliasBase, "--reviewer-model", "nope"]),
+  );
+  expect(modelWarnings).toEqual([expect.stringContaining("Unknown reviewer model: nope")]);
 });
 
 // Usefulness: a work-tree root inside any repository, not only the target, is refused.

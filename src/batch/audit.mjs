@@ -30,8 +30,8 @@ import { escapeLineSeparators } from "../prompts/escape.mjs";
 import { reviewerPrompt } from "../prompts/reviewer.mjs";
 import {
   canonicalWritePath,
+  logRoleOptionWarnings,
   refuseWorkTreeRootInGitWorkTree,
-  roleOptionRefusalFor,
 } from "./args.mjs";
 import {
   git,
@@ -79,7 +79,8 @@ function positiveInt(flag, value) {
 
 /**
  * Parses `agent-loop batch audit start` arguments. Throws an error with `usage: true` for a missing
- * or invalid value. Performs no filesystem read and writes nothing.
+ * or invalid value. An unknown model or effort logs one warning. Performs no filesystem read and
+ * writes nothing.
  * @param {string[]} argv arguments after `batch audit start`
  */
 export function parseAuditArgs(argv) {
@@ -214,6 +215,7 @@ export function parseAuditArgs(argv) {
     if (seen.has(key)) throw usage(`Duplicate reviewer settings: ${reviewer.kind}.`);
     seen.add(key);
   }
+  const logged = new Set();
   for (const reviewer of options.reviewers) {
     if (!supportedAgents.has(reviewer.kind)) {
       throw usage(`Unsupported reviewer: ${reviewer.kind}`);
@@ -225,13 +227,7 @@ export function parseAuditArgs(argv) {
       reviewer.effort,
     );
     if (openCode) throw usage(openCode);
-    const roleRefusal = roleOptionRefusalFor(
-      "reviewer",
-      reviewer.kind,
-      reviewer.model,
-      reviewer.effort,
-    );
-    if (roleRefusal) throw usage(roleRefusal);
+    logRoleOptionWarnings("reviewer", reviewer.kind, reviewer.model, reviewer.effort, logged);
   }
   if (!supportedAgents.has(options.worker)) {
     throw usage(`Unsupported worker: ${options.worker}`);
@@ -243,13 +239,13 @@ export function parseAuditArgs(argv) {
     options.workerEffort,
   );
   if (workerOpenCode) throw usage(workerOpenCode);
-  const workerRefusal = roleOptionRefusalFor(
+  logRoleOptionWarnings(
     "worker",
     options.worker,
     options.workerModel,
     options.workerEffort,
+    logged,
   );
-  if (workerRefusal) throw usage(workerRefusal);
   if (
     options.reviewerSandbox !== null &&
     !options.reviewers.every((reviewer) => normalizeAgent(reviewer.kind) === "codex")
@@ -362,7 +358,13 @@ export async function prepareAudit(options, { gitRun = git } = {}) {
     options.workTreeRoot ??
     join(dirname(repo), `${basename(repo)}-audit-${options.id ?? "preview"}`);
   const rootCanonical = await canonicalWritePath(workTreeRoot);
-  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
+  // The audit runner returns an object. The refusal reads a string and falls back on failure.
+  await refuseWorkTreeRootInGitWorkTree(rootCanonical, {
+    gitRun: async (args, cwd) => {
+      const result = await gitRun(args, cwd);
+      return result.exitCode === 0 && !result.timedOut ? result.stdout : "";
+    },
+  });
   await assertWritableDirectory(rootCanonical);
 
   const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
@@ -1036,7 +1038,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
 
     if (mode === "approve") {
       const failed = failedIndexes(state);
-      if (failed.length > 0) {
+      if (failed.length > 0 && !approvalMatches(state)) {
         state = {
           ...state,
           approvedPartial: true,
