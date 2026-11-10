@@ -645,81 +645,40 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     const items = [];
     const skipped = [];
     const startPlanTree = deps.planPrWorkTree ?? planPrWorkTree;
-    // Preflight one bounded batch at a time. On abort, keep results through the first open read.
-    for (let startIndex = 0; startIndex < frozenItems.length; startIndex += READ_BATCH_SIZE) {
+    for (const item of frozenItems) {
       if (interrupted) break;
-      const batch = frozenItems.slice(startIndex, startIndex + READ_BATCH_SIZE);
-      const pending = new Map();
-      const settled = new Set();
-      for (let offset = 0; offset < batch.length; offset += 1) {
-        const index = startIndex + offset;
-        const read = preflightItemEligibility({
-          item: frozenItems[index],
-          gh,
-          repo: prepared.repo,
-          batchId: id,
-        }).then((value) => {
-          settled.add(index);
-          return value;
-        });
-        pending.set(index, read);
-      }
-      let onAbort;
-      const stopped = new Promise((resolve) => {
-        onAbort = () => resolve("abort");
-        if (controller.signal.aborted) resolve("abort");
-        else controller.signal.addEventListener("abort", onAbort, { once: true });
+      const eligibility = await preflightItemEligibility({
+        item,
+        gh,
+        repo: prepared.repo,
+        batchId: id,
       });
-      const outcome = await Promise.race([
-        Promise.allSettled(pending.values()).then(() => "settled"),
-        stopped,
-      ]);
-      controller.signal.removeEventListener("abort", onAbort);
-      let limit = batch.length;
-      if (outcome === "abort") {
-        let firstOpen = -1;
-        for (let offset = 0; offset < batch.length; offset += 1) {
-          if (!settled.has(startIndex + offset)) {
-            firstOpen = offset;
-            break;
-          }
-        }
-        limit = firstOpen === -1 ? batch.length : firstOpen + 1;
-        if (firstOpen !== -1) await pending.get(startIndex + firstOpen);
+      if (!eligibility.ok) {
+        skipped.push(skippedLoop(paths, id, item, prepared.maxSteps, eligibility));
+        continue;
       }
-      for (let offset = 0; offset < limit; offset += 1) {
-        if (outcome !== "abort" && interrupted) break;
-        const item = batch[offset];
-        const eligibility = await pending.get(startIndex + offset);
-        if (!eligibility.ok) {
-          skipped.push(skippedLoop(paths, id, item, prepared.maxSteps, eligibility));
+      if (item.kind === "pr") {
+        try {
+          await startPlanTree({
+            repo: prepared.repo,
+            branch: item.headRefName ?? `pr-${item.number}`,
+            head: item.head,
+            number: item.number,
+          });
+        } catch (err) {
+          if (!PR_BRANCH_REFUSALS.has(err?.code)) {
+            throw err;
+          }
+          skipped.push(
+            skippedLoop(paths, id, item, prepared.maxSteps, {
+              reason: err.code,
+              evidence: err.message,
+            }),
+          );
           continue;
         }
-        if (item.kind === "pr") {
-          try {
-            await startPlanTree({
-              repo: prepared.repo,
-              branch: item.headRefName ?? `pr-${item.number}`,
-              head: item.head,
-              number: item.number,
-            });
-          } catch (err) {
-            if (!PR_BRANCH_REFUSALS.has(err?.code)) {
-              throw err;
-            }
-            skipped.push(
-              skippedLoop(paths, id, item, prepared.maxSteps, {
-                reason: err.code,
-                evidence: err.message,
-              }),
-            );
-            continue;
-          }
-        }
-        items.push(item);
-        if (outcome !== "abort" && interrupted) break;
       }
-      if (outcome === "abort" || interrupted) break;
+      items.push(item);
     }
     if (interrupted) {
       progress(`batch ${id}: interrupted before any state write`);

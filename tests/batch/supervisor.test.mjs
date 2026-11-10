@@ -476,7 +476,19 @@ describe("bounded batch reads", () => {
 
   // Usefulness: an interrupt during the second preflight keeps the refused and aborted entries.
   test("an interrupt during the second preflight keeps both entries", async () => {
-    const prepared = await preparedFor(await batchRepo(), [1, 2, 3, 4]);
+    const four = {
+      ...prepared,
+      id: newBatchId(),
+      issues: [1, 2, 3, 4],
+      items: [1, 2, 3, 4].map((number) => ({
+        kind: "issue",
+        number,
+        key: number,
+        mode: "work-first",
+        task: null,
+      })),
+      loops: 4,
+    };
     const abort = new AbortController();
     const gh = (args, cwd, options = {}) => {
       if (args[0] === "pr" && args[1] === "view") {
@@ -494,8 +506,8 @@ describe("bounded batch reads", () => {
       throw new Error(`unexpected gh ${args.join(" ")}`);
     };
     const { exitCode, summary } = await runBatch({
-      prepared,
-      runsRoot: join(prepared.workTreeRoot, "runs"),
+      prepared: four,
+      runsRoot: runsRootFor("interrupt-second"),
       gh,
       deps: {
         notifier: noNotify,
@@ -511,64 +523,76 @@ describe("bounded batch reads", () => {
     expect(summary.loops[1]).toMatchObject({ issue: 2, skipReason: "eligibility-unverified" });
   });
 
-  // Usefulness: an interrupt during the first preflight keeps only its aborted entry.
-  test("an interrupt during the first preflight keeps only its entry", async () => {
-    const prepared = await preparedFor(await batchRepo(), [1, 2]);
-    const abort = new AbortController();
-    const gh = (args, cwd, options = {}) => {
-      if (args[0] === "pr" && args[1] === "view") {
-        const number = Number(args[2]);
-        if (number === 1) {
-          setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
-          return replyOnAbort({ status: 0, stdout: JSON.stringify({ number }), stderr: "" })(
-            args,
-            cwd,
-            options,
-          );
-        }
-        return { status: 0, stdout: JSON.stringify({ number }), stderr: "" };
-      }
-      throw new Error(`unexpected gh ${args.join(" ")}`);
+  // Usefulness: out-of-order freeze replies keep the input item order.
+  test("out-of-order freeze replies keep the item order", async () => {
+    const prItems = [1, 2, 3].map((number) => ({
+      kind: "pr",
+      number,
+      key: `pr-${number}`,
+      mode: "review-first",
+      task: null,
+      head: null,
+    }));
+    const three = {
+      ...prepared,
+      id: newBatchId(),
+      issues: prItems.map((item) => item.key),
+      items: prItems,
+      loops: 3,
     };
-    const { exitCode, summary } = await runBatch({
-      prepared,
-      runsRoot: join(prepared.workTreeRoot, "runs"),
+    const gh = (args) =>
+      new Promise((resolve) => {
+        const number = Number(args[2]);
+        setTimeout(
+          () =>
+            resolve({
+              status: 0,
+              stdout: JSON.stringify({ state: "OPEN", headRefName: `branch-${number}` }),
+              stderr: "",
+            }),
+          (4 - number) * 20,
+        );
+      });
+    const { summary } = await runBatch({
+      prepared: three,
+      runsRoot: runsRootFor("freeze-order"),
       gh,
-      deps: {
-        notifier: noNotify,
-        installSignal: false,
-        signal: abort.signal,
-        ghTimeoutMs: 60_000,
-      },
+      deps: { notifier: noNotify, installSignal: false },
     });
-    expect(exitCode).toBe(130);
-    expect(summary.status).toBe("interrupted");
-    expect(summary.loops).toHaveLength(1);
-    expect(summary.loops[0]).toMatchObject({ issue: 1, skipReason: "eligibility-unverified" });
+    expect(summary.loops.map((loop) => loop.number)).toEqual([1, 2, 3]);
   });
 
-  // Usefulness: an interrupt in a later preflight batch keeps the earlier entries in order.
-  test("an interrupt in a later preflight batch keeps earlier entries", async () => {
-    const prepared = await preparedFor(await batchRepo(), [1, 2, 3, 4, 5, 6]);
+  // Usefulness: a cancel during freeze returns the origin/main interrupted result.
+  test("a cancel during freeze returns the interrupted result", async () => {
+    const prItems = [1, 2, 3].map((number) => ({
+      kind: "pr",
+      number,
+      key: `pr-${number}`,
+      mode: "review-first",
+      task: null,
+      head: null,
+    }));
+    const three = {
+      ...prepared,
+      id: newBatchId(),
+      issues: prItems.map((item) => item.key),
+      items: prItems,
+      loops: 3,
+    };
     const abort = new AbortController();
+    let started = 0;
     const gh = (args, cwd, options = {}) => {
-      if (args[0] === "pr" && args[1] === "view") {
-        const number = Number(args[2]);
-        if (number === 5) {
-          setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
-          return replyOnAbort({ status: 0, stdout: JSON.stringify({ number }), stderr: "" })(
-            args,
-            cwd,
-            options,
-          );
-        }
-        return { status: 0, stdout: JSON.stringify({ number }), stderr: "" };
-      }
-      throw new Error(`unexpected gh ${args.join(" ")}`);
+      started += 1;
+      if (started === 1) setTimeout(() => abort.abort(new Error("stopped in freeze")), 10);
+      return replyOnAbort({
+        status: 0,
+        stdout: JSON.stringify({ state: "OPEN", headRefName: "branch" }),
+        stderr: "",
+      })(args, cwd, options);
     };
     const { exitCode, summary } = await runBatch({
-      prepared,
-      runsRoot: join(prepared.workTreeRoot, "runs"),
+      prepared: three,
+      runsRoot: runsRootFor("freeze-cancel"),
       gh,
       deps: {
         notifier: noNotify,
@@ -579,11 +603,7 @@ describe("bounded batch reads", () => {
     });
     expect(exitCode).toBe(130);
     expect(summary.status).toBe("interrupted");
-    expect(summary.loops.map((loop) => loop.issue)).toEqual([1, 2, 3, 4, 5]);
-    expect(summary.loops.slice(0, 4).every((loop) => loop.skipReason === "is-pull-request")).toBe(
-      true,
-    );
-    expect(summary.loops[4]).toMatchObject({ issue: 5, skipReason: "eligibility-unverified" });
+    expect(summary.loops).toEqual([]);
   });
 
   // Usefulness: a fetch failure removes the SIGINT and abort listeners before it rejects.
