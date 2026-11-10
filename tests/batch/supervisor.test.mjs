@@ -3265,6 +3265,208 @@ describe("batch decisions and waits", () => {
     expect(result.summary.loops).toHaveLength(2);
   });
 
+  // Usefulness: a child result during a wait read keeps needs-owner and its stored answer.
+  test("a child result during a wait read keeps needs-owner", async () => {
+    const prepared = prep([401, 402]);
+    const runsRoot = runsFor(prepared);
+    const first = childDouble({ hold: true });
+    const second = childDouble();
+    const controller = new AbortController();
+    let triggered = false;
+    let waitReads = 0;
+    const gh = async (args) => {
+      if (args[0] === "issue" && args[1] === "view") {
+        if (args.includes("state,blockedBy,body")) {
+          const issue = Number(args[2]);
+          const blocked = issue === 402 ? [{ number: 9, state: "OPEN" }] : [];
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: blocked }, body: BODY }),
+            stderr: "",
+          };
+        }
+        if (args.includes("state,blockedBy")) {
+          waitReads += 1;
+          if (!triggered) {
+            triggered = true;
+            await first.calls[0].written;
+            const transcript = first.calls[0].transcript;
+            const data = JSON.parse(await readFile(transcript, "utf8"));
+            await writeFile(transcript, JSON.stringify({ ...data, exitCode: 130 }));
+            for (const pending of first.pending) pending.resolve({ exitCode: 4 });
+            for (let attempt = 0; attempt < 100; attempt += 1) {
+              const loop = await readLoop(runsRoot, prepared.id, 401);
+              if (loop?.status === "needs-owner" && typeof loop.decision === "string") break;
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+            }),
+            stderr: "",
+          };
+        }
+        if (args.includes("title")) {
+          return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+        }
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: (options) =>
+          first.calls.length === 0 ? first.spawn(options) : second.spawn(options),
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 200 && first.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(first.calls).toHaveLength(1);
+      let loop = null;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        loop = await readLoop(runsRoot, prepared.id, 401);
+        if (loop?.status === "needs-owner" && typeof loop.decision === "string") break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(loop?.status).toBe("needs-owner");
+      for (let attempt = 0; attempt < 200 && waitReads < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitReads).toBeGreaterThanOrEqual(2);
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (let attempt = 0; attempt < 200 && second.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(second.calls).toHaveLength(1);
+    } finally {
+      controller.abort();
+      for (const pending of first.pending) pending.resolve({ exitCode: 130 });
+      await run;
+    }
+  });
+
+  // Usefulness: every malformed transcript refusal matches the origin text on an attempted loop.
+  test("malformed transcripts keep the origin refusal text", async () => {
+    const cases = [
+      ["missing", null, "the transcript is missing"],
+      ["empty", "", "the transcript is missing"],
+      ["invalid", "{", "the transcript is missing"],
+      ["null", "null", "the transcript is missing"],
+      ["non-object", "[]", "the transcript holds no event list"],
+      ["no-events", "{}", "the transcript holds no event list"],
+    ];
+    const issues = cases.map((_, index) => 501 + index);
+    const prepared = prep(issues);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set(issues) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (let index = 0; index < cases.length; index += 1) {
+      const issue = issues[index];
+      const transcript = batchPaths(runsRoot).transcript(prepared.id, issue);
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "interrupted",
+        reason: "interrupted",
+        skipReason: null,
+        attempts: 1,
+        transcript,
+        pid: null,
+        startTime: null,
+      }));
+      const content = cases[index][1];
+      if (content === null) await removePath(transcript);
+      else await writeFile(transcript, content);
+    }
+    await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (let index = 0; index < cases.length; index += 1) {
+      const loop = await readLoop(runsRoot, prepared.id, issues[index]);
+      expect(loop.status).toBe("needs-owner");
+      const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+      expect(decision?.ok).toBe(true);
+      expect(decision.decision.evidence).toBe(cases[index][2]);
+    }
+  });
+
+  // Usefulness: a normal child completion reads its transcript once for steps and report.
+  test("a normal loop end reads its transcript once", async () => {
+    const prepared = prep([601]);
+    const runsRoot = runsFor(prepared);
+    let reads = 0;
+    const child = childDouble();
+    const result = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        readTranscript: async () => {
+          reads += 1;
+          const transcript = child.calls[0].transcript;
+          const text = await readFile(transcript, "utf8");
+          await removePath(transcript);
+          return text;
+        },
+      },
+    });
+    expect(reads).toBe(1);
+    expect(result.summary.loops[0].status).toBe("succeeded");
+    expect(result.summary.loops[0].report.state).toBe("read");
+  });
+
   // Usefulness: a recorded live child holds its only slot until the process dies.
   test("a recorded live child holds its slot until it dies", async () => {
     const prepared = prep([213, 214], { loops: 1 });

@@ -107,7 +107,8 @@ export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } 
 /**
  * Reads the recorded exit code of a parsed transcript. `ok` is false for a malformed record, which
  * proves nothing about the last attempt. `proven` is true when the run ended with its `gate` event,
- * or when a nonzero exit carries an error text.
+ * or when a nonzero exit carries an error text. The default `exitCode: 1` of a transcript written
+ * before the first turn is never read as a finished run.
  * @returns {{ ok: true, exitCode: number | null, proven: boolean } | { ok: false, reason: string }}
  */
 export function transcriptExitFromData(data) {
@@ -126,7 +127,9 @@ export function transcriptExitFromData(data) {
 
 /**
  * Reads the recorded exit code of a transcript. `ok` is false for a missing or malformed record,
- * which proves nothing about the last attempt.
+ * which proves nothing about the last attempt. `proven` is true when the run ended with its `gate`
+ * event, or when a nonzero exit carries an error text. The default `exitCode: 1` of a transcript
+ * written before the first turn is never read as a finished run.
  * @returns {Promise<{ ok: true, exitCode: number | null, proven: boolean } | { ok: false, reason: string }>}
  */
 export async function readTranscriptExit(file) {

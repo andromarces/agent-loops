@@ -42,7 +42,7 @@ import {
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, loopReportFromRead, readLoopReport } from "./report.mjs";
-import { readStepsUsed, stepsUsedFromData, transcriptExitFromData } from "./steps.mjs";
+import { stepsUsedFromData, transcriptExitFromData } from "./steps.mjs";
 import { mapInBatches } from "../lib/batches.mjs";
 import {
   acquireClaim,
@@ -73,6 +73,17 @@ const READ_BATCH_SIZE = 4;
 /** The value a store read returns for `value`, so an absent undefined key stays absent. */
 function storedValue(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+/** The step count from one transcript read, with the refusal text of a direct read. */
+function stepsFromRead(read, { checkpointSteps = 0, attempts = 0 } = {}) {
+  if (read.ok) return stepsUsedFromData(read.data, { checkpointSteps, attempts });
+  if (read.missing === true && attempts === 0) return { ok: true, steps: checkpointSteps };
+  return {
+    ok: false,
+    reason:
+      read.invalid === true ? "the transcript is not valid JSON" : "the transcript is missing",
+  };
 }
 
 function defaultSleep(ms, signal) {
@@ -1304,7 +1315,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   const finishChild = async (issue, exitCode, { interrupted: wasInterrupted }) => {
     let loop = await readLoop(runsRoot, id, issue);
-    const steps = await readStepsUsed(loop.transcript, {
+    const transcript = await readTranscript(loop.transcript);
+    const steps = stepsFromRead(transcript, {
       checkpointSteps: loop.stepsUsed,
       attempts: loop.attempts,
     });
@@ -1313,12 +1325,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const common = { stepsUsed, remainingSteps, pid: null, startTime: null };
 
     if (wasInterrupted || exitCode === 130) {
-      await changeLoop(issue, { ...common, status: "interrupted", reason: "interrupted" });
+      await changeLoop(
+        issue,
+        { ...common, status: "interrupted", reason: "interrupted" },
+        { transcript },
+      );
       progress(`issue ${issue}: interrupted`);
       return;
     }
     if (exitCode === 0) {
-      await changeLoop(issue, { ...common, status: "succeeded" });
+      await changeLoop(issue, { ...common, status: "succeeded" }, { transcript });
       loop = loops.get(issue);
       const cleanup = await cleanupWorkTree({
         manifest,
@@ -1334,7 +1350,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return;
     }
     if (exitCode === 4) {
-      const transcript = await readTranscript(loop.transcript);
       let declaredPr = loop.pr;
       try {
         declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
@@ -1350,11 +1365,15 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
     }
-    await changeLoop(issue, {
-      ...common,
-      status: "failed",
-      reason: `exit-${exitCode ?? "unknown"}`,
-    });
+    await changeLoop(
+      issue,
+      {
+        ...common,
+        status: "failed",
+        reason: `exit-${exitCode ?? "unknown"}`,
+      },
+      { transcript },
+    );
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
     logError(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
     progress(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
@@ -1377,7 +1396,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     try {
       return { ok: true, data: JSON.parse(text) };
     } catch {
-      return { ok: false, reason: "the transcript is not valid JSON" };
+      return { ok: false, invalid: true, reason: "the transcript is not valid JSON" };
     }
   };
 
@@ -1456,13 +1475,14 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   };
 
   /**
-   * Continues one loop from its transcript. It reads the transcript once, then the steps, the
-   * exhaustion check, the GitHub reconciliation, and the launch with --continue-from.
+   * Continues one loop from its transcript. It reads the transcript once. It then reads the steps,
+   * applies the exhaustion check, reconciles GitHub, and launches with --continue-from and the
+   * recorded pull request.
    */
   const continueLoop = async (issue, initial) => {
     let loop = initial;
     const transcript = await readTranscript(loop.transcript);
-    if (!transcript.ok && loop.attempts > 0) {
+    if ((!transcript.ok || transcript.data === null) && loop.attempts > 0) {
       await markNeedsOwner(issue, "unverified-steps", {
         evidence: "the transcript is missing",
       });
@@ -1486,14 +1506,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const recordedExit = transcript.ok
       ? transcriptExitFromData(transcript.data)
       : { ok: false, reason: transcript.reason };
-    const steps = !transcript.ok
-      ? transcript.missing && loop.attempts === 0
-        ? { ok: true, steps: loop.stepsUsed }
-        : { ok: false, reason: transcript.reason }
-      : stepsUsedFromData(transcript.data, {
-          checkpointSteps: loop.stepsUsed,
-          attempts: loop.attempts,
-        });
+    const steps = stepsFromRead(transcript, {
+      checkpointSteps: loop.stepsUsed,
+      attempts: loop.attempts,
+    });
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
     if (recordedExit.ok && recordedExit.proven && recordedExit.exitCode === 0) {
@@ -1708,9 +1724,15 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       }
     }
   };
+  // A cached snapshot is stale once another write replaced the in-memory loop.
+  const newestRead = async (issue, reads) => {
+    const cached = reads?.get(issue);
+    if (cached !== undefined && cached === loops.get(issue)) return cached;
+    return await readLoop(runsRoot, id, issue);
+  };
   const refreshPendingDecisions = async (reads = null) => {
     for (const issue of pendingDecisions) {
-      const current = reads?.has(issue) ? reads.get(issue) : await readLoop(runsRoot, id, issue);
+      const current = await newestRead(issue, reads);
       if (current === null) continue;
       loops.set(issue, current);
       if (current.status !== "needs-owner") {
@@ -1748,7 +1770,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   const refreshHeld = async (reads = null) => {
     for (const issue of slots) {
       if (active.has(issue)) continue;
-      const current = reads?.has(issue) ? reads.get(issue) : await readLoop(runsRoot, id, issue);
+      const current = await newestRead(issue, reads);
       if (current === null || !isLive(current)) {
         slots.delete(issue);
         continue;
