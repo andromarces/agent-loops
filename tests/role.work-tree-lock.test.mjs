@@ -23,6 +23,7 @@ import { SUMMARY } from "./run-fixtures.mjs";
 
 afterEach(cleanup);
 
+// Real Git: the lock guards a linked work tree, which only a real repository provides.
 const git = (cwd, args) => execa("git", args, { cwd, reject: false });
 
 async function linked() {

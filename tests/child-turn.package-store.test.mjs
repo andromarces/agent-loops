@@ -30,6 +30,7 @@ const record = async (text) => {
   await writeFile(modulesFile(), text);
 };
 const recordStore = (dir) => record(JSON.stringify({ storeDir: dir }, null, 2));
+// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
 beforeEach(async () => {
   repo = await createTempRepo();
   store = await mkdtemp(join(tmpdir(), "package-store-"));

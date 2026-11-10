@@ -32,10 +32,30 @@ import { removePath } from "../fs-helpers.mjs";
 const roots = [];
 const repos = [];
 let removeRepo;
+let sharedRevision;
+let sharedWorkTree;
+
+// Creates the detached checkout of `revision` under `base` and records its identity.
+async function auditWorkTree(base, revision) {
+  const workTreePath = join(base, "revision");
+  await git(["worktree", "add", "--detach", workTreePath, revision], removeRepo);
+  const identity = await pathIdentity(workTreePath);
+  return {
+    path: workTreePath,
+    canonicalPath: workTreePath,
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    revision,
+  };
+}
 
 beforeAll(async () => {
   removeRepo = await createTempRepo();
   repos.push(removeRepo);
+  sharedRevision = (await git(["rev-parse", "HEAD"], removeRepo)).stdout;
+  const base = await mkdtemp(join(tmpdir(), "audit-shared-"));
+  roots.push(base);
+  sharedWorkTree = await auditWorkTree(base, sharedRevision);
 }, 60_000);
 
 afterAll(async () => {
@@ -98,28 +118,18 @@ function fakeTurns({ reviewers = {}, consolidations = [] } = {}) {
   return { runTurn, calls };
 }
 
-async function preparedAudit(overrides = {}) {
+// One clean repository and checkout serve the cases that never change them. A case that writes
+// into the checkout asks for its own, so the shared state stays immutable across cases.
+async function preparedAudit({ ownWorkTree = false, ...overrides } = {}) {
   const base = await mkdtemp(join(tmpdir(), "audit-it-"));
   roots.push(base);
-  const repo = await createTempRepo();
-  repos.push(repo);
-  const revision = (await git(["rev-parse", "HEAD"], repo)).stdout;
-  const workTreePath = join(base, "revision");
-  await git(["worktree", "add", "--detach", workTreePath, revision], repo);
-  const identity = await pathIdentity(workTreePath);
-  const workTree = {
-    path: workTreePath,
-    canonicalPath: workTreePath,
-    dev: String(identity.dev),
-    ino: String(identity.ino),
-    revision,
-  };
+  const workTree = ownWorkTree ? await auditWorkTree(base, sharedRevision) : sharedWorkTree;
   return {
     id: "20260101-000000-test",
-    repo,
+    repo: removeRepo,
     repoKey: "abc123abc123",
     base: "main",
-    revision,
+    revision: sharedRevision,
     workTreeRoot: join(base, "root"),
     reviewers: [
       { kind: "claude", model: null, effort: null },
@@ -177,7 +187,7 @@ test("an audit reviewer receives the reviewer prompt and codex defaults to no sa
 // Usefulness: a reviewer that changes the audit checkout fails that audit and stops for the
 // owner, leaving the file as found and launching no later reviewer or create (ADR 0019).
 test("a reviewer that changes the checkout stops for the owner and leaves the file", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const gh = fakeGh();
   const turns = fakeTurns({
@@ -282,7 +292,7 @@ async function pausedAudit(
 // Usefulness: a resume that finds a moved HEAD stops for the owner, leaves the checkout as
 // found, and discards the saved findings so the old result cannot feed creation.
 test("a resume stops for the owner when the checkout moved", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   await pausedAudit(prepared);
   await git(
@@ -344,7 +354,7 @@ test("a resume stops for the owner when the checkout moved", async () => {
 // Usefulness: the owner's approval does not feed a saved result from a changed checkout; drift
 // discards the approval, and a later approval after the owner restores the checkout proceeds.
 test("approve does not feed a saved result from a changed checkout", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   await pausedAudit(prepared, {
     reviewerTwo: new Error("failed"),
@@ -432,7 +442,7 @@ test("a snapshot failure stops the audit before the next reviewer", async () => 
 // Usefulness: setup that changes the audit checkout is a drift, so the run stops for the owner,
 // launches no reviewer, and leaves the setup's file as found (ADR 0109).
 test("setup that changes the checkout stops for the owner and launches no reviewer", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   await mkdir(prepared.workTreeRoot, { recursive: true });
   const setupScript = join(prepared.workTreeRoot, "setup.cjs");
   await writeFile(setupScript, "require('node:fs').writeFileSync('init.txt','changed');\n");
