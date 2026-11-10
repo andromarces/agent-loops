@@ -95,6 +95,7 @@ function main() {
     );
     const elapsedMs = performance.now() - started;
     if (run.error) throw run.error;
+    if (run.signal) throw new Error(`Test run ended by signal ${run.signal}`);
 
     const report = readReport(reportPath);
     process.stdout.write(`${formatSummary(summarizeReport(report), elapsedMs)}\n`);
