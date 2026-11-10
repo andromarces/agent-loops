@@ -499,7 +499,7 @@ test.each([
 test("reviewer prompt requires each blocker stated inside the Blockers line", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain(
-    'State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above", because the reader sees only the block.',
+    'State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above". The reader sees only the block.',
   );
   expect(prompt.indexOf("State each blocker")).toBeGreaterThan(prompt.indexOf("Deferred:"));
   expect(prompt.split("Blockers:")).toHaveLength(2);
@@ -721,7 +721,7 @@ test("reviewer prompt tells the reviewer to leave the runtime scratch folder to 
     scratchDir: "/work/.agent-loop/rev/ab12cd34",
   });
   expect(prompt).toContain(
-    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder. Name in Notes any entry that you cannot remove. Do not delete the scratch folder, because the runtime removes it.",
+    "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder. Name in Notes any entry that you cannot remove. Do not delete the scratch folder. The runtime removes it.",
   );
   expect(prompt).toContain(
     "Before the closing block, remove every temporary file or directory that this turn created outside the repository",
@@ -799,7 +799,7 @@ test.each([
 // its turn created, because a shared cache can hold entries from before the turn.
 test("reviewer prompt bars the deletion of an entry that the turn cannot show it created", () => {
   expect(reviewerPrompt({ prompt: "check the fix" })).toContain(
-    "Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.",
+    "Never delete an entry that you cannot show this turn created. A shared directory can hold entries that existed before this turn.",
   );
 });
 

@@ -199,7 +199,7 @@ const slotCommandForms = (options) =>
 export function testSlotRule(options) {
   const forms = slotCommandForms(options);
   if (forms === null) {
-    return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks, because this run cannot render a test slot command for its paths. ${NO_LOAD_GENERATORS}`;
+    return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks. This run cannot render a test slot command for its paths. ${NO_LOAD_GENERATORS}`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
   return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as an argument vector after --: ${commands}. Two or more arguments after -- form an argument vector that runs without a shell, so no shell quoting applies. From Git Bash on Windows, use this argument-vector form as the default. On Windows, the vector must start with a real executable such as node, not a .cmd or .bat shim. One argument after -- keeps the shell-string form. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and pass the targeted command as the same vector. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
@@ -241,7 +241,7 @@ export function hookTestSlotRule(options) {
   const forms = cliCommandForms(HOOK_TEST_COMMAND, options);
   if (forms === null) {
     // known-limit: a path that cannot be quoted leaves a direct push, which keeps the origin/main behavior.
-    return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` directly, because this run cannot render a test slot command for its paths.`;
+    return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` directly. This run cannot render a test slot command for its paths.`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
   return `A \`pre-push\` or \`pre-commit\` hook under \`core.hooksPath\` or \`.git/hooks\` that starts a test command runs outside the test slot. Run that \`git push\` or \`git commit\` through the plain test slot wrapper, so it holds a slot. Pass that \`git\` command for the shell that your shell tool runs as one quoted argument: ${commands}.`;
@@ -287,7 +287,7 @@ const probeLink = (place) =>
 
 const probeCopyText = {
   "work tree": (place) =>
-    `When a probe copies the repository, for example to run old source, ${probeLink(place)}, and run no ${NO_DEPENDENCY_INSTALL} there. A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`, and every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}, because pnpm installs from its dependency check by default.`,
+    `When a probe copies the repository, for example to run old source, ${probeLink(place)}, and run no ${NO_DEPENDENCY_INSTALL} there. A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`, and every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}. pnpm installs from its dependency check by default.`,
   repository: (place) =>
     `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: ${probeLink(place)}, before a tool runs there. When the copy cannot link it, ${PROBE_UNRESOLVED} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
 };

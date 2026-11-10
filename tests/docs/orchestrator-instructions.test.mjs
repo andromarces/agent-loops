@@ -86,7 +86,7 @@ const SHARED_PARENT_RULES = [
   // never a branch of its own. So `on main` and `origin/main` fail.
   (text) => expectNoNamedBranchTarget(text),
   (text) => expectRule(text, /PR number/i, /head commit/i),
-  (text) => expectRule(text, /headless/i, /task/i, /PR number/i),
+  (text) => expectRule(text, /run supplies the PR number/i, /head commit comes from that PR/i),
   (text) => expectRule(text, COMPARE_BEFORE_FINISH),
   (text) => expectRule(text, RESOLVE_PR_HEAD),
   (text) => expectRule(text, REQUIRE_CLEAN_TRUE),
@@ -919,7 +919,7 @@ const REFUSED_CWD_BLOCKS = {
     text: [
       "Map the report fields into the finish summary:",
       "- Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.",
-      "- A reviewer accept can leave a criterion unverified, because the reviewer turn cannot run its check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.",
+      "- A reviewer accept can leave a criterion unverified. The reviewer turn cannot run that check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.",
       "- Reviewer Notes that no later turn addressed go into notes. A refused cleanup of a tool cache in its default location is not a finding. A cache entry that existed before the turn is not a finding either. Do not carry either into open. Output under a path that the reviewer chose, such as its temporary directory or the scratch folder, stays turn output. A refused cleanup of that output still goes into open.",
       "- Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.",
       "- In review-only mode, Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode. open holds unresolved in-scope findings.",
@@ -927,7 +927,6 @@ const REFUSED_CWD_BLOCKS = {
       `- ${REFUSED_CWD_RULE[1]}`,
       `- ${REFUSED_CWD_RULE[2]}`,
       "- A headless run cannot act on a refused `--cwd`: the runtime snapshots its `--cwd` before and after every orchestrator turn. A work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.",
-      "`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.",
     ].join(" "),
   },
 };
@@ -1209,16 +1208,14 @@ test("the headless runs reference states the allowed keys of the dispatch and ab
   expectRule(headless, /any other key is refused/i, /names each unknown key/i);
 });
 
-// Usefulness: verifies the interactive instructions and the headless prompt state the same
-// held-session rule (#671). Neither parent ends a live holder of a Claude session that
-// `--resume-interrupted` refused on.
-test("interactive instructions and headless prompt share the held-session rule", async () => {
+// Usefulness: verifies the held-session rule stays in the interactive instructions and out of the headless prompt.
+test("the interactive instructions keep the held-session rule out of the headless prompt", async () => {
   const rule =
     "`dispatch --resume-interrupted` exits 1 and names the process when a live process still holds the Claude session of the role. Do not end that process. The maintainer ends it or waits for it.";
   const instructions = (await readInstructions()).replace(/\s+/g, " ");
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   expect(instructions).toContain(rule);
-  expect(prompt).toContain(rule);
+  expect(prompt).not.toContain(rule);
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the

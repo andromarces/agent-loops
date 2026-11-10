@@ -26,42 +26,14 @@ contact goes in `Checks` as unverified and in `Deferred`.
 
 The required-check rule applies only when the task names a pull request. Every
 reviewer turn then reads `gh pr checks <pr> --required` for the reviewed
-head. The command reads status only and changes nothing. Every
-rule below belongs to that one condition:
-
-- When the task names a pull request, read the required checks for the reviewed
-  head with `gh pr checks <pr> --required`. The command reads status only. It
-  changes nothing. The rules below it apply only then.
-  - A failing required check is a blocker.
-  - Exit code 8 means a check is pending. The pending check goes in `Checks`, not
-    into the blockers.
-  - Exit code 1 covers a failing check, a repository with no required check, and
-    a read error. A blocker is reported only when the output lists a failing
-    required check. Any other exit 1 is unresolved and goes in `Checks`.
-  - The command omits a check that has not started, so a read pass covers only
-    the listed checks.
-  - The read reflects the PR head on GitHub. When that head differs from the
-    local reviewed head, the mismatch goes in `Checks`.
-  - When `gh` cannot read the checks, for example the shell has no `gh` or no network, the
-    status is unresolved and goes in `Checks`. A pass is reported only when the
-    read shows one.
-
-The `--require-ci` finish gate stays the enforcement point.
+head. The command reads status only and changes nothing. The `--require-ci`
+finish gate stays the enforcement point.
 
 ## The runtime supplies the required-check status
 
 A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
 knows the pull request before the first turn. The runtime reads the
-required-check status for that PR head and supplies it to every reviewer prompt. The two lines below apply only under the pull request condition:
-
-- This run read the required checks for PR <pr> before this turn: <summary>. That
-  status is advisory evidence for this turn, in place of the read above: report
-  it, and treat it as a report rather than a verdict. The `--require-ci` finish
-  gate re-reads GitHub and enforces the condition.
-- Your own read is the fallback. Read the required checks yourself when the
-  supplied status is unresolved, or when the reviewed head is not the head the
-  supplied status names. Report any difference between your read and the supplied
-  status in `Checks`.
+required-check status for that PR head and supplies it to every reviewer prompt.
 
 That status is advisory evidence, in place of the reviewer reading the checks:
 the reviewer reports it, keeps its own read as the fallback. It reads the checks
