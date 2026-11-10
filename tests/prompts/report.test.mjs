@@ -13,7 +13,7 @@ test("an unquotable path leaves only the required CI checks", () => {
   expect(rule).not.toContain("test-slot");
   expect(rule).not.toContain("--if-held");
   expect(rule).toContain("Run a targeted test file directly.");
-  expect(rule).toMatch(/rely on the required CI checks/);
+  expect(rule).toMatch(/rely on the required CI checks/i);
 });
 
 // Usefulness: verifies the rule bounds a direct targeted run and sends a broader run through the
@@ -21,12 +21,12 @@ test("an unquotable path leaves only the required CI checks", () => {
 // whole-directory run outside the machine-wide test slot (issue #872).
 test("the rule bounds a direct targeted run and sends a broader run through the wrapper", () => {
   const withWrapper = testSlotRule();
-  expect(withWrapper).toMatch(/targeted run[^.]*at most 10 test files/);
+  expect(withWrapper).toMatch(/targeted run[\s\S]*?at most 10 test files/);
   expect(withWrapper).toMatch(/never a whole directory/);
   expect(withWrapper).toMatch(/broader run[^.]*through the test slot wrapper, as a full suite/);
   const withoutWrapper = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
   expect(withoutWrapper).toMatch(/at most 10 test files/);
-  expect(withoutWrapper).toMatch(/broader run[^.]*rely on the required CI checks/);
+  expect(withoutWrapper).toMatch(/broader run[\s\S]*?rely on the required CI checks/i);
 });
 
 // Usefulness: verifies requirement "a targeted run goes through the slot only while a slot is held"
@@ -50,7 +50,7 @@ test("the rule lets a targeted run add the tests of direct importers inside the 
   const forms = [testSlotRule(), testSlotRule({ execPath: '/opt/no"de', platform: "linux" })];
   for (const rule of forms) {
     expect(rule).toMatch(
-      /targeted run[^.]*mirror[^.]*changed source files[^.]*then[^.]*direct importers[^.]*at most 10 test files in total/,
+      /targeted run[\s\S]*?mirror[\s\S]*?changed source files[\s\S]*?[Tt]hen[\s\S]*?direct importers[\s\S]*?at most 10 test files in total/,
     );
     expect(rule).toMatch(/never a whole directory/);
   }
@@ -63,7 +63,7 @@ test("the rule lets a targeted run add the tests that import a changed source fi
   const forms = [testSlotRule(), testSlotRule({ execPath: '/opt/no"de', platform: "linux" })];
   for (const rule of forms) {
     expect(rule).toMatch(
-      /targeted run[^.]*mirror[^.]*changed source files[^.]*then[^.]*import a changed source file directly[^.]*then[^.]*direct importers[^.]*at most 10 test files in total/,
+      /targeted run[\s\S]*?mirror[\s\S]*?changed source files[\s\S]*?[Tt]hen[\s\S]*?import a changed source file directly[\s\S]*?[Tt]hen[\s\S]*?direct importers[\s\S]*?at most 10 test files in total/,
     );
     expect(rule).toMatch(/never a whole directory/);
   }
@@ -76,7 +76,7 @@ test("the rule lets a targeted run add the tests that name a changed non-module 
   const forms = [testSlotRule(), testSlotRule({ execPath: '/opt/no"de', platform: "linux" })];
   for (const rule of forms) {
     expect(rule).toMatch(
-      /targeted run[^.]*then[^.]*name the path or file name of a changed file that is not an importable module[^.]*at most 10 test files in total/,
+      /targeted run[\s\S]*?[Tt]hen[\s\S]*?name the path or file name of a changed file that is not an importable module[\s\S]*?at most 10 test files in total/,
     );
     expect(rule).toMatch(/never a whole directory/);
   }

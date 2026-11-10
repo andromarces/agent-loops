@@ -178,6 +178,16 @@ const NO_LOAD_GENERATORS =
 const TARGETED_RUN_BOUND =
   "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, then the test files that name the path or file name of a changed file that is not an importable module, for example a script, a config file, or a template, at most 10 test files in total, never a whole directory.";
 
+// The same bound for a run that cannot render a wrapper command, split to the sentence limit.
+const TARGETED_RUN_BOUND_FALLBACK = `
+  - A targeted run covers the test files that mirror the changed source files first.
+  - Then come the test files that import a changed source file directly.
+  - Then come the test files of the direct importers of a changed source file.
+  - Last come the test files that name the path or file name of a changed file that is not an importable module.
+  - A script, a config file, and a template are examples.
+  - A targeted run covers at most 10 test files in total, and never a whole directory.
+`;
+
 // The wrapper command of a full suite. Both slot rules branch on whether it can be quoted, so the
 // direct fallback of ADR 0044 covers the red run too (ADR 0096).
 const slotCommandForms = (options) =>
@@ -199,7 +209,9 @@ const slotCommandForms = (options) =>
 export function testSlotRule(options) {
   const forms = slotCommandForms(options);
   if (forms === null) {
-    return `Run a targeted test file directly. ${TARGETED_RUN_BOUND} Do not run a broader run or a full test suite in this run: rely on the required CI checks. This run cannot render a test slot command for its paths. ${NO_LOAD_GENERATORS}`;
+    return `Run a targeted test file directly.${TARGETED_RUN_BOUND_FALLBACK}
+  - Do not run a broader run or a full test suite in this run. Rely on the required CI checks. This run cannot render a test slot command for its paths.
+  - ${NO_LOAD_GENERATORS}`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
   return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as an argument vector after --: ${commands}. Two or more arguments after -- form an argument vector that runs without a shell, so no shell quoting applies. From Git Bash on Windows, use this argument-vector form as the default. On Windows, the vector must start with a real executable such as node, not a .cmd or .bat shim. One argument after -- keeps the shell-string form. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and pass the targeted command as the same vector. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
@@ -260,7 +272,7 @@ export function initTaskBlock(task) {
  * temporary path lies outside of, and `literalExample` optionally extends the bar on a literal path.
  */
 export const tempPathRule = (place, literalExample = "") =>
-  `Build a temporary path outside the ${place} from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory${literalExample}. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.`;
+  `Build a temporary path outside the ${place} from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory${literalExample}. The runtime can remove the directory that those variables name after this turn, but not a path outside it. When none is set, use the temporary directory that the platform reports.`;
 
 /**
  * The temporary-file removal rule of the worker and reviewer prompts. `place` names the tree that
@@ -287,7 +299,8 @@ const probeLink = (place) =>
 
 const probeCopyText = {
   "work tree": (place) =>
-    `When a probe copies the repository, for example to run old source, ${probeLink(place)}, and run no ${NO_DEPENDENCY_INSTALL} there. A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`, and every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}. pnpm installs from its dependency check by default.`,
+    `When a probe copies the repository, for example to run old source, link the ${PROBE_DEPENDENCY[place]} of the work tree into the copy. Use a junction on Windows or a symlink elsewhere. Run no ${NO_DEPENDENCY_INSTALL} there.
+  - A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`. Every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}. pnpm installs from its dependency check by default.`,
   repository: (place) =>
     `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: ${probeLink(place)}, before a tool runs there. When the copy cannot link it, ${PROBE_UNRESOLVED} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
 };

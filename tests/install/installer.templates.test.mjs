@@ -81,7 +81,7 @@ test("the Codex and Antigravity skills continue a capped read and name the refer
       .find((file) => file.path.endsWith("SKILL.md"))
       .content.replace(/\s+/g, " ");
     expect(skill, harness).toMatch(
-      /expected to fit in one read, but when a read is capped, read again with an offset until the end of the file/,
+      /expected to fit in one read\. When a read is capped, read again with an offset until the end of the file/,
     );
     expect(skill, harness).toContain("names reference files to read when their conditions hold");
   }

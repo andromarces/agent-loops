@@ -143,7 +143,7 @@ const scratchPlacement = (scratchDir) =>
 const ignoredPathRemoval = (scratchDir) =>
   scratchDir === null
     ? "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. Name in Notes any entry that you cannot remove."
-    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder. Name in Notes any entry that you cannot remove. Do not delete the scratch folder. The runtime removes it.";
+    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. The scratch folder is the one exception. Name in Notes any entry that you cannot remove. Do not delete the scratch folder. The runtime removes it.";
 
 // A tool writes its own cache to a default location whatever the scratch folder is, and the removal
 // rules above read that cache as turn output. A Codex reviewer then runs a delete that automatic

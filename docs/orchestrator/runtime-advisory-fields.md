@@ -3,25 +3,27 @@
 Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a reviewer or worker envelope carries `inheritedTmpdirEntries`, or a reviewer envelope carries `packageStoreEntries`.
 
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory or in a literal system temporary directory during the turn, such as
-  a probe directory that a turn created there. A worker envelope carries it only for a literal
+  inherited temporary directory or a literal system temporary directory during the turn. One
+  example is a probe directory that a turn created there. A worker envelope carries it only for a literal
   system temporary directory. A worker turn can write in the inherited directory. When
-  that directory is itself a literal root, a new entry there is reported too. The
-  field names the entries, redacted like the test command output, and never their content, at most 20. It is a diagnostic: the directories are shared with other processes, the runtime cannot
+  that directory is itself a literal root, a new entry there is reported too.
+- The field names the entries, redacted like the test command output, and never their content, at most 20.
+  It is a diagnostic. The directories are shared with other processes. The runtime cannot
   attribute an entry to the turn, and it does not delete one.
-  Only the turn directories that this process created, matched by exact name, are left out, and
-  only until the removal ends: a directory that the removal refused or failed on, such as a
-  replacement of the turn directory, is listed. Every other entry of the one post-turn read is
-  listed, an `al-` name too. The runtime reads the directories once after the last child call of the
-  dispatch, with no re-read and no wait. The field creates no `open` item by itself, and it never
-  refuses a finish.
+- Only the turn directories that this process created, matched by exact name, are left out.
+  A turn directory is left out only until the removal ends. A directory that the removal refused
+  or failed on, such as a replacement of the turn directory, is listed. Every other entry of the
+  one post-turn read is listed, an `al-` name too. The runtime reads the directories once after the
+  last child call of the dispatch, with no re-read and no wait. The field creates no `open` item by
+  itself, and it never refuses a finish.
   - On macOS the usual inherited directory is under `/var/folders` when `TMPDIR` is set. The
     report follows `os.tmpdir()`, the inherited directory, whatever path it names, and it also
     reads the literal system temporary directories that differ from it. The literal roots are
     `/tmp` and `/private/tmp` on POSIX, and there are none on Windows, where a Git Bash `/tmp`
-    resolves to the inherited directory. A literal root that resolves to the inherited directory
-    while the inherited directory is read too is left out of the extra read, so one write gives one
-    name; a root that holds the inherited directory, as with `TMPDIR=/tmp/<sub>`, is read. When the
+    resolves to the inherited directory.
+  - A literal root that resolves to the inherited directory while that directory is read too is
+    left out of the extra read. One write gives one name. A root that holds
+    the inherited directory, as with `TMPDIR=/tmp/<sub>`, is read. When the
     inherited directory is itself a literal root, a worker turn reads it as a literal root and
     reports a new entry there.
   - An entry of a literal system temporary directory carries the prefix `literal-tmp/`, for example
