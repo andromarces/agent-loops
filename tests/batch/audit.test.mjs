@@ -1516,6 +1516,48 @@ test("a blank focus file is refused and a file supplies the focus text", async (
   expect(prepared.focus).toBe("Check outdated direct dependencies");
 });
 
+// Usefulness: the default runner returns an object, so prepareAudit must read its stdout to refuse (issue #1758).
+test("prepareAudit refuses a work-tree root inside a Git work tree through the rev-parse answer", async () => {
+  const top = await mkdtemp(join(tmpdir(), "audit-git-top-"));
+  roots.push(top);
+  const repo = await mkdtemp(join(tmpdir(), "audit-git-repo-"));
+  roots.push(repo);
+  const workTreeRoot = join(top, "nested");
+  await mkdir(workTreeRoot);
+  const gitRun = async (args) => {
+    const result = { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+    if (args[0] === "worktree") return { ...result, stdout: `worktree ${repo}\0` };
+    if (args[0] === "rev-parse" && args[1] === "--show-toplevel") {
+      return { ...result, stdout: top };
+    }
+    if (args[0] === "rev-parse") return { ...result, stdout: "abc123" };
+    throw new Error(`Unexpected git call: ${args.join(" ")}`);
+  };
+
+  await expect(
+    prepareAudit(
+      {
+        id: "20260101-000000-test",
+        repo,
+        reviewers: [
+          { kind: "claude", model: null, effort: null },
+          { kind: "agy", model: null, effort: null },
+        ],
+        worker: "codex",
+        workerModel: null,
+        workerEffort: null,
+        base: "main",
+        workTreeRoot,
+        setupCmd: null,
+        setupTimeout: 600,
+        timeout: null,
+        reviewerSandbox: null,
+      },
+      { gitRun },
+    ),
+  ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
+});
+
 // Usefulness: the audit freezes one revision and refuses a base that has no remote ref, so no
 // reviewer can audit a moving branch.
 test("prepare resolves the frozen revision and refuses a missing base", async () => {
