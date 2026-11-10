@@ -52,18 +52,21 @@ Subcommands:
                                 except --help, which prints plain usage; logs on stderr.
   agent-loop install            Install harness entry points and parent guards at user
                                 scope. Interactive, or --harness <list> --yes.
+                                Accepts -y, --dry-run, and --verbose.
   agent-loop uninstall          Remove the installed entry points and guards. Restores
                                 files that install changed.
-  agent-loop test-slot          Run one command, quoted as one argument, through the
-                                platform shell only while fewer than N machine-wide test
-                                slots are held by live owners. --slots <n> (env
-                                AGENT_LOOP_TEST_SLOTS, default 1) and --wait <seconds>
-                                (env AGENT_LOOP_TEST_SLOT_WAIT, default 1800); a flag wins
-                                over its env. --if-held runs
-                                the command directly while no slot is held. Exits with the
-                                command's code, 75 when no slot was won within the wait,
-                                64 on a usage error, 130 or 143 on SIGINT or SIGTERM.
-                                See agent-loop test-slot --help.
+                                Accepts -y, --dry-run, and --verbose.
+  agent-loop test-slot          Run one command while fewer than N machine-wide test
+                                slots are held by live owners. One quoted argument runs
+                                through the platform shell, and two or more arguments
+                                after -- (-- <executable> <arg> [<arg>...]) run without
+                                a shell. --slots <n> (env AGENT_LOOP_TEST_SLOTS, default
+                                1) and --wait <seconds> (env AGENT_LOOP_TEST_SLOT_WAIT,
+                                default 1800), where a flag wins over its env. --if-held
+                                runs the command directly while no slot is held. It
+                                exits with the command's code, 75 on a wait timeout, 64
+                                on a usage error, or 130 or 143 on a signal. See
+                                agent-loop test-slot --help.
   agent-loop batch start        Run one foreground batch: one headless loop per selected
                                 item, each in its own work tree, at most --loops at once.
                                 Requires --repo <main work tree> and exactly one selection:
@@ -95,9 +98,9 @@ Subcommands:
   agent-loop batch resume       Continue an interrupted batch with the remaining step
                                 budget. Requires --batch <id>. A live owner is never
                                 restarted. A pending decision stays pending until answered.
-                                Exits 0 when every issue succeeded or was skipped, 1 when a
-                                loop failed or the batch waits on an owner decision or
-                                merge, 2 for a refused setting, and 130 on SIGINT.
+                                Exits 0 when every item succeeded or was skipped. It exits
+                                1 on a failed loop or an owner decision or merge, 2 for a
+                                refused setting, and 130 on SIGINT.
   agent-loop batch answer       Answer one pending decision with one listed option.
                                 Requires --batch <id>, --decision <id>, and --option <key>.
                                 An unknown, answered, or foreign decision exits 2 and
@@ -208,6 +211,7 @@ Role flags:
 
                                 ${wrapHelp(`So is use with --no-copy-local-files. The refusal happens before any state is written. Every copy rule applies. The init envelope lists the copied files in localFiles.`)}
   --reason <text>               abort only: the reason recorded on the run. Required for abort.
+  --verbose                     Enable debug-level lifecycle logging.
   --prompt-file <path>          Prompt source. Default is stdin.
   --transcript <file>           Append invocation and result events (JSON lines).
   --resume-interrupted          Explicitly continue after an uncertain previous turn.
