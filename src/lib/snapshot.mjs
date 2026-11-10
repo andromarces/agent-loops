@@ -4,7 +4,13 @@ import { lstat, open, readlink } from "node:fs/promises";
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { GIT_READ_TIMEOUT_MS, gitRead, readTopLevel, SnapshotError } from "./git-read.mjs";
+import {
+  GIT_READ_TIMEOUT_MS,
+  gitRead,
+  hasTopLevel,
+  readTopLevel,
+  SnapshotError,
+} from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
 import { logDebug, logError } from "./log.mjs";
 import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
@@ -138,11 +144,18 @@ export async function sha256File(path, { signal } = {}) {
 
 const gitIn = (cwd, args, bound) => gitRead(cwd, args, { ...bound, allowExit: [0] });
 
-/** The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`. */
+/**
+ * The Git work tree root that `snapshot` covers for `cwd`. `bound` takes `signal` and `timeoutMs`.
+ * A cached root is confirmed with a live work-tree probe, so a work tree that vanished still refuses.
+ */
 export async function workTreeRoot(cwd, bound) {
+  const cached = hasTopLevel(cwd);
   const rootResult = await readTopLevel(cwd, bound);
   if (rootResult.exitCode !== 0) {
     throw new SnapshotError(`--cwd must be inside a Git work tree: ${cwd}`);
+  }
+  if (cached) {
+    await assertGitWorkTree(cwd, { timeoutMs: bound?.timeoutMs, signal: bound?.signal });
   }
   return rootResult.stdout;
 }
