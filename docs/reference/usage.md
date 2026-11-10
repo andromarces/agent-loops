@@ -383,7 +383,7 @@ agent-loop test-slot --if-held -- "pnpm exec vp test run tests/foo.test.mjs"
 
 ## Batch runs
 
-`agent-loop batch start` owns one batch of independent issues for its whole life. It runs in the foreground and prints progress on stderr. It returns one JSON summary on stdout when every selected issue is terminal, when an owner decision is pending, or when the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
+`agent-loop batch start` owns one batch of issue, pull request, and task items for its whole life. It runs in the foreground and prints progress on stderr. It returns one JSON summary on stdout when every selected issue is terminal, when an owner decision is pending, or when the batch is interrupted. There is no daemon and no detached supervisor. [ADR 0106](https://github.com/andromarces/agent-loops/blob/main/adr/0106-foreground-batch-scheduling.md) is the design.
 
 ### Commands and settings
 
