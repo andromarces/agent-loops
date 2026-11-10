@@ -216,7 +216,7 @@ export function parseBatchArgs(argv) {
     throw usage("--items-file cannot be combined with --issue.");
   }
   if (options.fromAudit === null && options.issues.length === 0 && options.itemsFile === null) {
-    throw usage("Missing required --issue or --from-audit.");
+    throw usage("Missing required --issue, --from-audit, or --items-file.");
   }
   if (options.itemsFile !== null) {
     let raw;

@@ -122,3 +122,15 @@ test("the batch help names item kinds and the mixed-request path", () => {
   expect(help).toContain("issue, pr, or task");
   expect(help).toContain("mixed request");
 });
+
+// Usefulness: help names the install, uninstall, test-slot, and role flags that their parsers accept (#1783).
+test("help names the supported install, uninstall, test-slot, and role flags", () => {
+  const help = render(printHelp);
+  const installBlock = help.slice(
+    help.indexOf("agent-loop install"),
+    help.indexOf("agent-loop test-slot"),
+  );
+  expect(installBlock.match(/-y, --dry-run, and --verbose/g)).toHaveLength(2);
+  expect(help).toContain("-- <executable> [<arg>...]");
+  expect(sectionFlags(help, "Role flags")).toContain("--verbose");
+});
