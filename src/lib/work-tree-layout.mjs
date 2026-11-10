@@ -2,8 +2,8 @@
 // and the main work tree (ADR 0018, ADR 0073). It also holds the canonical-path match.
 // The local-file copy, its comparison, and the work tree lock share it.
 import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
-import { canonicalPath } from "./canonical-path.mjs";
+import { resolve } from "node:path";
+import { canonicalPath, isInside } from "./canonical-path.mjs";
 import {
   gitRead,
   gitReadError,
@@ -48,11 +48,6 @@ export async function readWorkTrees(root, read, { signal } = {}) {
   return parseWorkTreeList(result.stdout);
 }
 
-const isInsideByText = (parent, child) => {
-  const rel = relative(parent, child);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-};
-
 /**
  * Returns `{ main }`, `{ main: null }`, or `{ refused }` with a control-character path name
  * (decision 10, ADR 0018).
@@ -79,7 +74,7 @@ async function findMainWorkTree(root, entries, read) {
   if (hasControlCharacter(main)) {
     return { refused: "the main work tree path" };
   }
-  return { main: isInsideByText(commonReal, main) ? null : main };
+  return { main: isInside(commonReal, main) ? null : main };
 }
 
 /**

@@ -1529,6 +1529,14 @@ test("audit arguments require two reviewers and one worker", () => {
   ).toThrow("Duplicate reviewer settings: claude.");
 });
 
+// Usefulness: an inline value on the sandbox alias is refused before the sandbox conflict.
+test("an inline value on the sandbox alias wins over a conflict", () => {
+  const base = ["--repo", ".", "--reviewer", "codex", "--reviewer", "codex", "--worker", "codex"];
+  expect(() =>
+    parseAuditArgs([...base, "--reviewer-sandbox", "read-only", "--reviewer-workspace-write=true"]),
+  ).toThrow("--reviewer-workspace-write does not take a value.");
+});
+
 // Usefulness: the operator focus is one text source, and a blank text cannot become a reviewer
 // goal, so the refusal happens before a store, work tree, or child exists (issue #1750).
 test("focus flags are mutually exclusive and refuse blank text", () => {
