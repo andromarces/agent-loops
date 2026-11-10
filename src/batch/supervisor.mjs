@@ -413,19 +413,26 @@ export function taskTextFor({ item, loop, prepared, title, branch }) {
  * event; a quiet interval writes nothing.
  */
 export async function runBatch(options) {
-  const cleanup = { current: () => {} };
+  const run = { stopListening: () => {}, drainChildren: async () => {} };
   try {
-    return await runBatchWithListeners(options, cleanup);
+    return await runBatchWithListeners(options, run);
+  } catch (err) {
+    try {
+      await run.drainChildren();
+    } catch {
+      // A shutdown failure never replaces the run error.
+    }
+    throw err;
   } finally {
-    cleanup.current();
+    run.stopListening();
   }
 }
 
 /**
- * The run itself. `cleanup.current` holds the listener removal once the run installs its
- * listeners, so the caller removes them on every return and every throw.
+ * The run itself. `run.stopListening` and `run.drainChildren` are set once the run installs its
+ * listeners. The caller cleans up on every return and drains a throw with live children.
  */
-async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, cleanup) {
+async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run) {
   const paths = batchPaths(runsRoot);
   const id = prepared.id;
   let manifest;
@@ -465,20 +472,33 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, clea
     controller.abort(reason);
     forward("SIGINT");
   };
+  const armHardKill = () => {
+    for (const [issue, child] of children) {
+      const timer = setTimeout(() => {
+        if (children.has(issue)) child.hardKill?.();
+      }, INTERRUPT_WAIT_MS);
+      timer.unref?.();
+    }
+  };
   const onSigInt = () => {
     if (!interrupted) {
       interrupt();
-      for (const [issue, child] of children) {
-        const timer = setTimeout(() => {
-          if (children.has(issue)) child.hardKill?.();
-        }, INTERRUPT_WAIT_MS);
-        timer.unref?.();
-      }
+      armHardKill();
     } else if (!hard) {
       hard = true;
       progress("second interrupt: ending the child trees now");
       forward("SIGKILL");
     }
+  };
+  const drainChildren = async () => {
+    if (children.size === 0) return;
+    interrupt();
+    armHardKill();
+    const waits = [...active.values()];
+    for (const child of children.values()) {
+      if (typeof child.done?.then === "function") waits.push(child.done);
+    }
+    await Promise.allSettled(waits);
   };
   const onExternalAbort = () => interrupt(deps.signal.reason);
   const installSignal = deps.installSignal !== false;
@@ -486,7 +506,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, clea
     if (installSignal) process.removeListener("SIGINT", onSigInt);
     if (deps.signal) deps.signal.removeEventListener("abort", onExternalAbort);
   };
-  cleanup.current = stopListening;
+  run.stopListening = stopListening;
+  run.drainChildren = drainChildren;
   if (installSignal) process.on("SIGINT", onSigInt);
   if (deps.signal) {
     if (deps.signal.aborted) interrupt(deps.signal.reason);

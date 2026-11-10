@@ -480,6 +480,75 @@ describe("bounded batch reads", () => {
     expect(process.listenerCount("SIGINT")).toBe(before);
     expect(getEventListeners(signal, "abort")).toHaveLength(0);
   });
+
+  // Usefulness: a throw with a live child stops and drains it before the listeners are removed.
+  test("a throw with a live child drains it first", async () => {
+    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    await runBatch({
+      prepared: two,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const recorded = {
+      path: join(prepared.workTreeRoot, "issue-2"),
+      canonicalPath: join(prepared.workTreeRoot, "issue-2"),
+      dev: "1",
+      ino: "1",
+      branch: `batch/${two.id}/2`,
+    };
+    for (const issue of [1, 2]) {
+      await removePath(batchPaths(runsRoot).transcript(two.id, issue));
+      await updateLoop(runsRoot, two.id, issue, (loop) => ({
+        ...loop,
+        status: "queued",
+        attempts: 0,
+        pid: null,
+        startTime: null,
+        workTree: issue === 2 ? recorded : null,
+        cleanup: null,
+      }));
+    }
+    const child = childDouble({ hold: true });
+    const stops = [];
+    const spawn = async (options) => {
+      const started = await child.spawn(options);
+      return {
+        ...started,
+        kill: (signal) => {
+          stops.push(signal);
+          started.kill(signal);
+        },
+      };
+    };
+    const signal = new AbortController().signal;
+    const before = process.listenerCount("SIGINT");
+    const run = runBatch({
+      prepared: { ...two, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        signal,
+        reconcileLoop: async () => {
+          throw new Error("the git fetch failed");
+        },
+      },
+    });
+    await expect(run).rejects.toThrow("the git fetch failed");
+    expect(stops).toContain("SIGINT");
+    expect((await readLoop(runsRoot, two.id, 1)).status).toBe("interrupted");
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+  });
 });
 
 // Usefulness: three issues get three work trees, three branches, and one child each.
