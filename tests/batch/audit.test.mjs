@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { execa } from "execa";
@@ -36,6 +45,17 @@ afterAll(async () => {
 
 function fenced(value) {
   return `Reasoning before the document.\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
+}
+
+/** Runs `parse`, then returns the stderr lines it logged. */
+function warningsFrom(parse) {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    parse();
+    return spy.mock.calls.map((call) => String(call[0]));
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 function fakeGh({ issues = [] } = {}) {
@@ -807,6 +827,58 @@ test("approve consolidates only the successful audits and records the failure", 
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(1);
 });
 
+// Usefulness: a repeated approval stores nothing, so the second approve leaves the audit file bytes and mtime unchanged.
+test("a repeated approval writes nothing to the audit file", async () => {
+  const prepared = await preparedAudit();
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared, {
+    reviewerTwo: new Error("failed"),
+    settings: {
+      reviewers: prepared.reviewers,
+      worker: prepared.worker,
+      timeout: null,
+      reviewerSandbox: null,
+      setupCmd: "failing setup",
+      setupTimeout: 600,
+    },
+  });
+  const gh = fakeGh();
+  const failingSetup = async () => ({ exitCode: 1, isCanceled: false });
+  const file = auditPaths(runsRoot).file(prepared.id);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const first = await runAudit({
+      prepared: { ...prepared, mode: "approve" },
+      runsRoot,
+      gh: gh.gh,
+      deps: { ...depsWith(prepared.workTree), execBounded: failingSetup },
+    });
+    expect(first.exitCode).toBe(1);
+    expect(first.summary.pauseReason).toBe("setup-failed");
+    expect(first.summary.approvedPartial).toBe(true);
+    const before = await readFile(file, "utf8");
+    const old = 1_700_000_000;
+    await utimes(file, old, old);
+    const pinned = (await stat(file)).mtimeMs;
+
+    vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
+    const second = await runAudit({
+      prepared: { ...prepared, mode: "approve" },
+      runsRoot,
+      gh: gh.gh,
+      deps: { ...depsWith(prepared.workTree), execBounded: failingSetup },
+    });
+
+    expect(second.exitCode).toBe(1);
+    expect(second.summary.pauseReason).toBe("setup-failed");
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect((await stat(file)).mtimeMs).toBe(pinned);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 // Usefulness: an issue that already covers a finding is linked, by the worker's number and by an
 // exact title, and no duplicate issue is created.
 test("an existing issue is linked and no duplicate is created", async () => {
@@ -1365,9 +1437,9 @@ test("audit arguments require two reviewers and one worker", () => {
   expect(() =>
     parseAuditArgs(["--repo", ".", "--reviewer", "claude", "--reviewer", "agy"]),
   ).toThrow("Missing required --worker.");
-  expect(() => parseAuditArgs([...base, "--reviewer-model", "x"])).toThrow(
-    "Unsupported reviewer model: x",
-  );
+  expect(warningsFrom(() => parseAuditArgs([...base, "--reviewer-model", "x"]))).toEqual([
+    expect.stringContaining("Unknown reviewer model: x"),
+  ]);
   expect(() => parseAuditArgs(["--repo", ".", "--reviewer-model", "x"])).toThrow(
     "--reviewer-model requires a preceding --reviewer.",
   );
@@ -1442,6 +1514,48 @@ test("a blank focus file is refused and a file supplies the focus text", async (
 
   const prepared = await prepareAudit({ ...options, focusFile: full });
   expect(prepared.focus).toBe("Check outdated direct dependencies");
+});
+
+// Usefulness: the default runner returns an object, so prepareAudit must read its stdout to refuse (issue #1758).
+test("prepareAudit refuses a work-tree root inside a Git work tree through the rev-parse answer", async () => {
+  const top = await mkdtemp(join(tmpdir(), "audit-git-top-"));
+  roots.push(top);
+  const repo = await mkdtemp(join(tmpdir(), "audit-git-repo-"));
+  roots.push(repo);
+  const workTreeRoot = join(top, "nested");
+  await mkdir(workTreeRoot);
+  const gitRun = async (args) => {
+    const result = { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+    if (args[0] === "worktree") return { ...result, stdout: `worktree ${repo}\0` };
+    if (args[0] === "rev-parse" && args[1] === "--show-toplevel") {
+      return { ...result, stdout: top };
+    }
+    if (args[0] === "rev-parse") return { ...result, stdout: "abc123" };
+    throw new Error(`Unexpected git call: ${args.join(" ")}`);
+  };
+
+  await expect(
+    prepareAudit(
+      {
+        id: "20260101-000000-test",
+        repo,
+        reviewers: [
+          { kind: "claude", model: null, effort: null },
+          { kind: "agy", model: null, effort: null },
+        ],
+        worker: "codex",
+        workerModel: null,
+        workerEffort: null,
+        base: "main",
+        workTreeRoot,
+        setupCmd: null,
+        setupTimeout: 600,
+        timeout: null,
+        reviewerSandbox: null,
+      },
+      { gitRun },
+    ),
+  ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
 });
 
 // Usefulness: the audit freezes one revision and refuses a base that has no remote ref, so no
