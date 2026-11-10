@@ -112,9 +112,9 @@ const laterTurnTmpdirRule =
 export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
     // A later turn can commit and push a fix with no preamble yet. So it repeats the push,
-    // hook-output, report, staging, temporary-path, and closing-block rules. It repeats the closing
-    // block because a worker drifts from it as the conversation grows (issue #1118). The rules also
-    // name the `Conclusion:` line as its first line (issue #1179).
+    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path, and closing-block
+    // rules. It repeats the closing block because a worker drifts from it as the conversation grows
+    // (issue #1118). The rules also name the `Conclusion:` line as its first line (issue #1179).
     return escapeLineSeparators(`${prompt}
 
 ${namedPushRule}

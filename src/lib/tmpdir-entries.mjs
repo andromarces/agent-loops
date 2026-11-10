@@ -53,15 +53,10 @@ async function readRootNames(dir) {
 
 /**
  * Reads the entry names directly in the inherited temporary directory and in each literal root of
- * `literalRoots`, or null, after a warning, when the inherited directory cannot be read. A literal
- * root that does not resolve, that resolves to the inherited directory while that directory is read
- * too, or that repeats a root already read is left out. A root that holds the inherited directory is
- * read, so a write directly in it is still seen (issue #1713). A failed literal read adds no entry
- * for that root. `includeInherited` is false for a worker turn, which reports only the literal roots;
- * the snapshot then holds no inherited names, and a root equal to the inherited directory is read as
- * a literal root because the two writes cannot be told apart. The inherited temporary directory is
- * `os.tmpdir()` of this process, and `inherited-tmpdir.mjs` reads the `AGENT_LOOP_INHERITED_TMPDIR`
- * list.
+ * `literalRoots`. It returns null, after a warning, when the inherited directory cannot be read.
+ * A literal root that does not resolve or that repeats a root already read is left out. A root that
+ * resolves to the inherited directory while that directory is read too is left out as well. A failed
+ * literal read adds no entry for that root.
  * @param {{ literalRoots?: string[], includeInherited?: boolean }} [options]
  * @returns {Promise<TmpdirSnapshot | null>}
  */
@@ -69,6 +64,8 @@ export async function snapshotInheritedTmpdir({
   literalRoots = literalTmpdirRoots(),
   includeInherited = true,
 } = {}) {
+  // `includeInherited` is false for a worker turn, which reports only the literal roots.
+  // The snapshot then holds no inherited names.
   let inherited = null;
   if (includeInherited) {
     try {
@@ -78,8 +75,13 @@ export async function snapshotInheritedTmpdir({
       return null;
     }
   }
+  // The inherited temporary directory is `os.tmpdir()` of this process.
+  // `inherited-tmpdir.mjs` reads the `AGENT_LOOP_INHERITED_TMPDIR` list.
   const inheritedDir = (await resolvedPath(tmpdir())) ?? tmpdir();
   const literal = new Map();
+  // A root that holds the inherited directory is read, so a write directly in it is still seen
+  // (issue #1713). When `includeInherited` is false, a root equal to the inherited directory is read
+  // as a literal root because the two writes cannot be told apart.
   for (const root of literalRoots) {
     const resolved = await resolvedPath(root);
     if (resolved === null || (includeInherited && resolved === inheritedDir)) continue;

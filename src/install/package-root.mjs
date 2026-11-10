@@ -310,7 +310,7 @@ const EPHEMERAL = { kind: "ephemeral" };
 
 /**
  * `{ kind: "unreadable", folder }` when a check fails closed on a folder it cannot read, `EPHEMERAL`
- * for any other refusal, else `null`. `folder` is the first folder that a check could not read.
+ * for any other refusal, else `null`. `folder` is the first folder that a check cannot read.
  * Access failure and cost were verified on Windows 11 on 2026-10-25 (#709).
  */
 function packageRootRefusal(packageRoot, platform, tempRoots) {

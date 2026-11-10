@@ -77,7 +77,7 @@ export function hasStructuralMinimum(body) {
 /**
  * Reads every open pull request and the issues its body or commit messages close. Throws when a
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
- * commit read reached the API's 250-commit page; the caller then stops launching.
+ * commit read reached the API's 250-commit page. The caller then stops launching.
  * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null }>}
  */
 export async function readOpenPrClosures({ gh, repo }) {
