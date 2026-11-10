@@ -25,6 +25,7 @@ afterEach(() => {
 const SECRET = "REFRESH-CONTENT-MUST-NOT-APPEAR";
 const CONTENT = `KEY=${SECRET}\n`;
 
+// Real Git: the linked work tree and its ignored files exist only in a real repository.
 /** A linked work tree whose main checkout holds ignored files, then an initialized run. */
 async function linkedRun(files = { ".env": CONTENT }, ignore = [".env"]) {
   await setup();

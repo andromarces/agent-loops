@@ -90,6 +90,7 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
+// Real Git: the shared state read must match what Git reports for a linked work tree.
 // A repository and a linked work tree of it, so the shared state sits in the common directory.
 async function createRepoWithLinkedWorkTree() {
   const repo = await createTempRepo();

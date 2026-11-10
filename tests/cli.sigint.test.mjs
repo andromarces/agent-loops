@@ -65,6 +65,7 @@ test("an exception before the run loop removes the SIGINT listener", async () =>
 // Usefulness: acceptance (#669) — a second real SIGINT ends a run whose cancel does not finish
 // (a child that ignores SIGTERM) with exit 130, leaves no child alive, and writes the transcript
 // that the run holds. Windows has no signals, so the case cannot run there.
+// Process: the signal must reach a separate CLI, so its exit code and transcript are read here.
 test.skipIf(process.platform === "win32")(
   "a second real SIGINT kills a SIGTERM-resistant child tree, writes the transcript, and exits 130",
   async () => {

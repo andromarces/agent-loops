@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { canonicalPath } from "../lib/canonical-path.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/gh-api.mjs";
 import { declaredPrFromTranscript } from "../lib/gate.mjs";
 import { endSubprocessTree, killTreeOnExit } from "../lib/exec-tree.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
@@ -411,7 +412,25 @@ export function taskTextFor({ item, loop, prepared, title, branch }) {
  * Starts or resumes one batch. Returns `{ exitCode, summary }`. Every state write is a checkpoint
  * event; a quiet interval writes nothing.
  */
-export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
+export async function runBatch(options) {
+  const run = { stopListening: () => {}, hasLiveChildren: () => false };
+  let keepListeners = false;
+  try {
+    return await runBatchWithListeners(options, run);
+  } catch (err) {
+    // A live child keeps its listeners so a later interrupt still reaches it.
+    keepListeners = run.hasLiveChildren();
+    throw err;
+  } finally {
+    if (!keepListeners) run.stopListening();
+  }
+}
+
+/**
+ * The run itself. `run.stopListening` and `run.hasLiveChildren` are set once the run installs its
+ * listeners. The caller keeps both listeners while a live child remains.
+ */
+async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run) {
   const paths = batchPaths(runsRoot);
   const id = prepared.id;
   let manifest;
@@ -429,6 +448,57 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       logWarn(`the notification failed: ${err?.message ?? err}`);
     }
   };
+
+  // The run controller and interruption state exist here, so preflight reads see the run signal.
+  const controller = new AbortController();
+  const active = new Map();
+  const children = new Map();
+  const slots = new Set();
+  const waiting = new Set();
+  const pendingDecisions = new Set();
+
+  const forward = (signal) => {
+    for (const child of children.values()) {
+      if (signal === "SIGKILL") child.hardKill?.();
+      else child.kill?.("SIGINT");
+    }
+  };
+  const interrupt = (reason) => {
+    if (interrupted) return;
+    interrupted = true;
+    progress("interrupted: stopping new launches and forwarding SIGINT");
+    controller.abort(reason);
+    forward("SIGINT");
+  };
+  const onSigInt = () => {
+    if (!interrupted) {
+      interrupt();
+      for (const [issue, child] of children) {
+        const timer = setTimeout(() => {
+          if (children.has(issue)) child.hardKill?.();
+        }, INTERRUPT_WAIT_MS);
+        timer.unref?.();
+      }
+    } else if (!hard) {
+      hard = true;
+      progress("second interrupt: ending the child trees now");
+      forward("SIGKILL");
+    }
+  };
+  const onExternalAbort = () => interrupt(deps.signal.reason);
+  const installSignal = deps.installSignal !== false;
+  const stopListening = () => {
+    if (installSignal) process.removeListener("SIGINT", onSigInt);
+    if (deps.signal) deps.signal.removeEventListener("abort", onExternalAbort);
+  };
+  run.hasLiveChildren = () => children.size > 0;
+  run.stopListening = stopListening;
+  if (installSignal) process.on("SIGINT", onSigInt);
+  if (deps.signal) {
+    if (deps.signal.aborted) interrupt(deps.signal.reason);
+    else deps.signal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  gh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, controller.signal);
 
   // Every path that ends the batch uses this finalization.
   // A resume after an answer reports the same status, summary, exit code, and one completion
@@ -563,6 +633,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     const skipped = [];
     const startPlanTree = deps.planPrWorkTree ?? planPrWorkTree;
     for (const item of frozenItems) {
+      if (interrupted) break;
       const eligibility = await preflightItemEligibility({
         item,
         gh,
@@ -597,6 +668,17 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
         }
       }
       items.push(item);
+    }
+    if (interrupted) {
+      progress(`batch ${id}: interrupted before any state write`);
+      return {
+        exitCode: 130,
+        summary: {
+          batchId: id,
+          status: "interrupted",
+          loops: skipped.map((loop) => loopEntry(loop)),
+        },
+      };
     }
     if (items.length === 0) {
       progress(`batch ${id}: every item was refused before any state write`);
@@ -642,58 +724,8 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     progress(`batch ${id} started (${items.length} item(s), ${prepared.loops} loop(s))`);
   }
 
-  const controller = new AbortController();
-  if (deps.signal) {
-    if (deps.signal.aborted) controller.abort(deps.signal.reason);
-    else
-      deps.signal.addEventListener("abort", () => controller.abort(deps.signal.reason), {
-        once: true,
-      });
-  }
-
-  const active = new Map();
-  const children = new Map();
-  const slots = new Set();
-  const waiting = new Set();
-  const pendingDecisions = new Set();
   const pollIntervalMs = deps.pollIntervalMs ?? POLL_INTERVAL_MS;
   const clock = { now: deps.now ?? (() => performance.now()), sleep: deps.sleep ?? defaultSleep };
-
-  const forward = (signal) => {
-    for (const child of children.values()) {
-      if (signal === "SIGKILL") child.hardKill?.();
-      else child.kill?.("SIGINT");
-    }
-  };
-  const onSigInt = () => {
-    if (!interrupted) {
-      interrupted = true;
-      progress("interrupted: stopping new launches and forwarding SIGINT");
-      controller.abort();
-      forward("SIGINT");
-      for (const [issue, child] of children) {
-        const timer = setTimeout(() => {
-          if (children.has(issue)) child.hardKill?.();
-        }, INTERRUPT_WAIT_MS);
-        timer.unref?.();
-      }
-    } else if (!hard) {
-      hard = true;
-      progress("second interrupt: ending the child trees now");
-      forward("SIGKILL");
-    }
-  };
-  const installSignal = deps.installSignal !== false;
-  if (installSignal) process.on("SIGINT", onSigInt);
-  if (deps.signal) {
-    deps.signal.addEventListener("abort", () => {
-      if (!interrupted) {
-        interrupted = true;
-        controller.abort(deps.signal.reason);
-        forward("SIGINT");
-      }
-    });
-  }
 
   // A loop end reads its transcript once for the report and stores the report in the same checkpoint
   // write as the status change. The report adds no store write.
@@ -1817,7 +1849,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   // A resume runs its recovered loops one at a time; this drains any that the pass left live.
   while (active.size > 0 && !hard) await Promise.race(active.values());
 
-  if (installSignal) process.removeListener("SIGINT", onSigInt);
   return finalizeBatch();
 }
 
