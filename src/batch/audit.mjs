@@ -22,7 +22,7 @@ import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { writeFileAtomic } from "../lib/atomic-write.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
-import { logError, logWarn } from "../lib/log.mjs";
+import { logError, logInfo, logWarn } from "../lib/log.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { isFatalTurnError, withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
@@ -1398,6 +1398,7 @@ async function createIssues({ state, runsRoot, gh, signal }) {
     const identity = randomUUID();
     state = { ...state, pendingCreate: { identity, title: finding.title } };
     await writeState(runsRoot, state);
+    logInfo(`audit ${state.id}: creating issue ${JSON.stringify(finding.title)}`);
     let reply;
     try {
       reply = await gh(
@@ -1412,15 +1413,19 @@ async function createIssues({ state, runsRoot, gh, signal }) {
         state.repo,
       );
     } catch (err) {
+      logError(`audit ${state.id}: issue creation failed: ${err.message}`);
       throw new Pause("issue-create-failed", `the issue creation failed: ${err.message}`);
     }
     if (reply?.status !== 0) {
+      logError(`audit ${state.id}: issue creation failed: gh exited ${reply?.status ?? "unknown"}`);
       throw new Pause("issue-create-failed", "the issue creation failed");
     }
     const number = issueNumberFromUrl(reply.stdout);
     if (number === null) {
+      logError(`audit ${state.id}: issue creation failed: the reply held no issue number`);
       throw new Pause("issue-create-failed", "the created issue returned no number");
     }
+    logInfo(`audit ${state.id}: created issue #${number}`);
     const entry = {
       identity,
       title: finding.title,

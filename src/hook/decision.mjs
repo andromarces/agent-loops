@@ -10,6 +10,7 @@
 // Antigravity command hooks, each of which supplies its own input mapping and
 // deny shape. Fail-open by design: the guard is optional defense for the
 // prompt-only parent rule, so unknown records never block a tool call.
+import { text } from "node:stream/consumers";
 import { tryParseJson } from "../lib/json.mjs";
 import { TERMINAL_LIFECYCLES, readStatesForSession } from "../lib/runstate.mjs";
 
@@ -36,11 +37,7 @@ export async function decideParentGuard(sessionId, { lookup = readStatesForSessi
 }
 
 async function readHookInput() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return tryParseJson(Buffer.concat(chunks).toString("utf8"));
+  return tryParseJson(await text(process.stdin));
 }
 
 /**
@@ -85,21 +82,11 @@ export async function hookDecision(
  * session id, unparseable input, a tool the harness does not guard, and a lookup error print
  * nothing. The normal permission flow stays intact.
  * @param {(reason: string) => object} formatDeny builds the harness's deny payload
- * @param {{
- *   readSessionId?: (input: unknown) => string | null,
- *   isGuarded?: (input: unknown) => boolean,
- * }} [options] maps the harness input; defaults to the Claude/Codex/Copilot
- *   `session_id` field and every tool
+ * @param {object} [options] maps the harness input, as `hookDecision` accepts
  */
-export async function runParentGuard(
-  formatDeny,
-  {
-    readSessionId = (input) => (typeof input?.session_id === "string" ? input.session_id : null),
-    isGuarded = () => true,
-  } = {},
-) {
+export async function runParentGuard(formatDeny, options = {}) {
   const input = await readHookInput();
-  const payload = await hookDecision(input, formatDeny, { readSessionId, isGuarded });
+  const payload = await hookDecision(input, formatDeny, options);
   if (payload) {
     console.log(JSON.stringify(payload));
   }

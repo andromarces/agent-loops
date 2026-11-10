@@ -235,10 +235,15 @@ async function loadContinuation({ options, roles, events, agents, signal, review
     return { earlierGate, earlierPr, reviewerSandbox };
   } catch (err) {
     console.error(`
-${redactedText(readProp(err, "message") ?? err)}`);
+${redactedErrorMessage(err)}`);
     process.exitCode = readProp(err, "isCanceled") ? 130 : 1;
     return null;
   }
+}
+
+/** The redacted message of a thrown value, or the value itself when it has no message. */
+function redactedErrorMessage(err) {
+  return redactedText(readProp(err, "message") ?? err);
 }
 
 /**
@@ -337,7 +342,7 @@ export async function main(
       assertTask(options.task);
     }
   } catch (err) {
-    console.error(`\n${redactedText(readProp(err, "message") ?? err)}`);
+    console.error(`\n${redactedErrorMessage(err)}`);
     process.exitCode = 1;
     return;
   }
@@ -395,8 +400,7 @@ export async function main(
     // An empty error text gets a fallback so a failed run never records or prints a blank error.
     const finish = async ({ exitCode, error, failed }) => {
       const errorText = failed
-        ? redactedText(readProp(error, "message") ?? error) ||
-          redactedText("Run failed with an empty error message.")
+        ? redactedErrorMessage(error) || redactedText("Run failed with an empty error message.")
         : null;
       transcriptData.exitCode = exitCode;
       transcriptData.error = errorText;

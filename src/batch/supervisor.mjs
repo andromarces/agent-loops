@@ -1204,7 +1204,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
           await changeLoop(issue, { status: "failed", reason: "setup-failed" });
           await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
           logError(`issue ${issue}: failed (setup-failed)`);
-          progress(`issue ${issue}: failed (setup-failed)`);
           return;
         }
         await changeLoop(issue, { setupDone: true });
@@ -1331,7 +1330,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     });
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
     logError(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
-    progress(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
   };
 
   const readTranscript = async (file) => {

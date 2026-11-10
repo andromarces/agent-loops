@@ -135,7 +135,7 @@ export async function runCopilot(state, prompt, options = {}) {
     // turn under it: a failed first turn that ran a tool leaves such a session (issue #641), and
     // one that fails before the prompt is recorded does not, so keeping its id would skip the role
     // preamble for nothing.
-    const rawId = failedResult?.sessionId ?? failedResult?.session_id;
+    const rawId = resultSessionId(failedResult);
     const reportedId = asSessionId(rawId);
     keepFailedSessionId(state, reportedId);
     if (rawId == null) {
@@ -151,7 +151,7 @@ export async function runCopilot(state, prompt, options = {}) {
   const resultEvent = findResultEvent(events);
   setMainLoopUsage(state, objectUsage(resultEvent));
 
-  const rawReturnedId = resultEvent?.sessionId ?? resultEvent?.session_id;
+  const rawReturnedId = resultSessionId(resultEvent);
   const returnedId = asSessionId(rawReturnedId);
   // Set before the checks below, so a turn that fails them records unresolved when its output is
   // not the session the role keeps.
@@ -198,6 +198,11 @@ function findResultEvent(events) {
   return events.findLast((event) => event?.type === "result");
 }
 
+/** The session id that a Copilot event reports under either spelling. */
+function resultSessionId(result) {
+  return result?.sessionId ?? result?.session_id;
+}
+
 function readAssistantMessage(event) {
   const content = event?.data?.content;
   return typeof content === "string" ? content : "";
@@ -239,6 +244,6 @@ function streamSession(events) {
     }
   }
   const result = findResultEvent(events);
-  const resultId = asSessionId(result?.sessionId ?? result?.session_id);
+  const resultId = asSessionId(resultSessionId(result));
   return ids.size === 1 && resultId && ids.has(resultId) ? resultId : undefined;
 }

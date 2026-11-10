@@ -169,16 +169,36 @@ export function failedWithLine(err, line) {
 }
 
 /**
+ * True when `err` is missing, is not an object, timed out, was canceled, or ended on a signal.
+ * A marker must not record a turn that failed for such a reason.
+ * @param {unknown} err the error `exec` threw
+ */
+export function failedForAnotherReason(err) {
+  return (
+    !err ||
+    typeof err !== "object" ||
+    Boolean(err.timedOut) ||
+    Boolean(err.isCanceled) ||
+    Boolean(err.isTerminated)
+  );
+}
+
+/**
  * Marks a failed turn as a provider capacity failure, so a parent can retry it without reading the
  * error text. A turn that timed out, was canceled, or ended on a signal fails for another reason,
  * so it is never marked. The caller names the terminal event that decides (issue #1017).
  * @param {unknown} err the error `exec` threw
  */
 export function markCapacityFailure(err) {
-  if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
+  if (failedForAnotherReason(err)) {
     return;
   }
   err.transient = "capacity";
+}
+
+/** Returns the byte count of `text`, or 0 for a missing value, for a size line that carries no content. */
+export function byteLength(text) {
+  return Buffer.byteLength(text ?? "");
 }
 
 export function isNonEmptyString(value) {

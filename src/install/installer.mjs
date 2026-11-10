@@ -228,8 +228,8 @@ async function applyWrite(plan, { dryRun, dirs, write }) {
     return;
   }
   await ensureDir(dirname(plan.path), dirs);
-  const mode = (await fileMode(plan.path)) ?? undefined;
   if (plan.backup) {
+    const mode = (await fileMode(plan.path)) ?? undefined;
     await write(plan.backup.path, plan.backup.content, { mode });
   }
   try {

@@ -44,6 +44,17 @@ const matchingPushNote =
 const hookOutputRule =
   "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`. Keep the full output of a commit or push hook, or at least its failing and summary lines. Report the hook result in Checks.";
 
+// The PR rules that every turn repeats, in the order that the first turn prints them.
+const prTurnRules = [
+  namedPushRule,
+  matchingPushNote,
+  hookOutputRule,
+  prBodyRule,
+  closingIssuesRule,
+  commitLinkRule,
+  stageOnlyNeededPathsRule,
+];
+
 // The pnpm dependency check also defaults to install in the run work tree.
 // A worker command there can run the project lifecycle scripts (issue #1385).
 const pnpmRunRule =
@@ -117,19 +128,7 @@ export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions
     // (issue #1179).
     return escapeLineSeparators(`${prompt}
 
-${namedPushRule}
-
-${matchingPushNote}
-
-${hookOutputRule}
-
-${prBodyRule}
-
-${closingIssuesRule}
-
-${commitLinkRule}
-
-${stageOnlyNeededPathsRule}
+${prTurnRules.join("\n\n")}
 
 ${laterTurnTmpdirRule}
 
@@ -160,13 +159,7 @@ Your role:
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
   request.
-- ${namedPushRule}
-- ${matchingPushNote}
-- ${hookOutputRule}
-- ${prBodyRule}
-- ${closingIssuesRule}
-- ${commitLinkRule}
-- ${stageOnlyNeededPathsRule}
+- ${prTurnRules.join("\n- ")}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push, because every later turn of

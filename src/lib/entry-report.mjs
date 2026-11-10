@@ -1,7 +1,7 @@
 import { redactAndClean } from "./redact.mjs";
 
 // Names that one report lists at most.
-const MAX_ENTRIES = 20;
+export const MAX_ENTRIES = 20;
 
 /**
  * Sorts `names`, keeps the first 20, redacts each like the test command output (ADR 0017), because
