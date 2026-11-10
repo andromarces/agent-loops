@@ -617,6 +617,50 @@ export function boundedCall(gh, timeoutMs, signal = null) {
   return call;
 }
 
+/**
+ * A runner for one long command, such as a batch run. Every call ends when its bound expires or
+ * a signal aborts. A caller bound wins over the default, and a caller signal joins the run signal.
+ * A reply that ends after an abort throws and reaches the caller as no data. The first abort
+ * source decides between a cancel and a timeout.
+ * @param {Function} gh
+ * @param {number} timeoutMs
+ * @param {AbortSignal | null} [signal]
+ */
+export function boundedRunner(gh, timeoutMs, signal = null) {
+  return async (args, cwd, options = {}) => {
+    const bound = options.timeoutMs ?? timeoutMs;
+    const deadline = AbortSignal.timeout(bound);
+    const signals = [options.signal, signal, deadline].filter(Boolean);
+    const combined = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    let canceled = false;
+    let cancelReason;
+    combined.addEventListener(
+      "abort",
+      () => {
+        if (deadline.aborted) return;
+        canceled = true;
+        cancelReason = combined.reason;
+      },
+      { once: true },
+    );
+    if (deadline.aborted) throw readTimeout(bound);
+    if (combined.aborted) {
+      canceled = true;
+      cancelReason = combined.reason;
+    }
+    if (canceled) throw canceledCall(cancelReason);
+    const reply = await gh(args, cwd, { ...options, timeoutMs: bound, signal: combined });
+    if (canceled) throw canceledCall(cancelReason);
+    if (reply?.timedOut || deadline.aborted) throw readTimeout(bound);
+    return reply;
+  };
+}
+
+/** The error of a call that ended after a caller signal aborted, with that reason as `cause`. */
+function canceledCall(reason) {
+  return Object.assign(new Error("the call was canceled"), { name: "AbortError", cause: reason });
+}
+
 // The first failure of a group, in sequential order, carried past the wait for
 // the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
 // had already fired when the failure was captured. A failure captured before the

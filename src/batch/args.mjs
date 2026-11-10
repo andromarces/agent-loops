@@ -1,10 +1,8 @@
 // Argument parsing and pre-write validation for `agent-loop batch` (ADR 0106).
 // The runtime validates explicit values only: it reads no request and prompts for nothing.
-import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { access, constants, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { supportedAgents } from "../agents/index.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import {
@@ -19,9 +17,9 @@ import { canonicalPath, isInside } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { logWarn } from "../lib/log.mjs";
+import { gitOrThrow } from "./git.mjs";
 import { normalizeItems } from "./items.mjs";
 
-const runFile = promisify(execFile);
 const ROLE_FLAGS = roleFlags(ROLE_KINDS);
 const PLACEHOLDERS = new Set(["issue", "title", "branch", "repo"]);
 const MAX_LOOPS = 64;
@@ -358,7 +356,7 @@ export async function nearestExistingDirectory(path) {
 }
 
 /** Refuses a runs root that lies inside any Git work tree (ADR 0106 decision 8). */
-export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = git } = {}) {
+export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = gitOrThrow } = {}) {
   const candidate = await canonicalWritePath(runsRoot);
   const top = await gitWorkTreeTop(candidate, gitRun);
   if (top !== null && isInside(top, candidate)) {
@@ -391,7 +389,7 @@ async function gitWorkTreeTop(candidate, gitRun) {
 }
 
 /** Refuses a work-tree root inside any Git work tree, not only the target repository. */
-export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = git } = {}) {
+export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = gitOrThrow } = {}) {
   const candidate = await canonicalWritePath(workTreeRoot);
   const top = await gitWorkTreeTop(candidate, gitRun);
   if (top !== null && isInside(top, candidate)) {
@@ -399,14 +397,9 @@ export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = g
   }
 }
 
-async function git(args, cwd) {
-  const { stdout } = await runFile("git", args, { cwd, encoding: "utf8" });
-  return stdout;
-}
-
 async function workTreeEntries(repo) {
   try {
-    const stdout = await git(["worktree", "list", "--porcelain", "-z"], repo);
+    const stdout = await gitOrThrow(["worktree", "list", "--porcelain", "-z"], repo);
     return parseWorkTreeList(stdout);
   } catch (err) {
     throw usage(`--repo is not a Git work tree: ${err.message}`);
@@ -499,7 +492,7 @@ export async function prepareRepository({
  * @param {object} options parsed options
  * @param {{ gitRun?: (args: string[], cwd: string) => Promise<string> }} [deps]
  */
-export async function prepareBatch(options, { gitRun = git } = {}) {
+export async function prepareBatch(options, { gitRun = gitOrThrow } = {}) {
   const repo = await canonicalPath(options.repo);
   const entries = await workTreeEntries(repo);
   const prepared = await prepareRepository({
