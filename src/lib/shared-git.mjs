@@ -3,7 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { entryCarrier } from "./entry-report.mjs";
 import { sha256 } from "./hash.mjs";
-import { gitRead, gitReadError, SnapshotError, stripLf } from "./git-read.mjs";
+import { gitRead, gitReadError, readCommonDir, SnapshotError } from "./git-read.mjs";
 import { withTimeBound } from "./time-bound.mjs";
 
 // Item name of the hooks path setting in a shared Git state diff.
@@ -114,13 +114,13 @@ async function readWithin(cwd, bound) {
   // Both processes end before the read rejects, so none outlives a stopped read.
   const [commonResult, listResult] = await mapInBatches(
     [
-      ["rev-parse", "--git-common-dir"],
-      ["config", "-z", "--list", "--show-scope"],
+      () => readCommonDir(cwd, { read: (_dir, args, options) => read(args, options) }),
+      () => read(["config", "-z", "--list", "--show-scope"]),
     ],
     2,
-    (args) => read(args),
+    (start) => start(),
   );
-  const commonDir = stripLf(commonResult.stdout);
+  const commonDir = commonResult.stdout;
   const commonPath = isAbsolute(commonDir) ? commonDir : join(cwd, commonDir);
   const state = readConfigState(listResult.stdout);
   // The main work tree's own worktree config lives in the common directory. Git reads it only when

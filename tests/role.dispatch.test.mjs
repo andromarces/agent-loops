@@ -12,14 +12,21 @@ import { afterEach, expect, vi } from "vite-plus/test";
 // `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
 // The converted cases assert no Git result.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
+// Counts the top-level and common-directory reads of one init dispatch.
+const gitReads = vi.hoisted(() => ({ topLevel: 0, commonDir: 0 }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
-    execa: (command, args, options) =>
-      gitDouble.answer
+    execa: (command, args, options) => {
+      if (command === "git") {
+        if (args[0] === "rev-parse" && args[1] === "--show-toplevel") gitReads.topLevel++;
+        if (args[0] === "rev-parse" && args[1] === "--git-common-dir") gitReads.commonDir++;
+      }
+      return gitDouble.answer
         ? gitDouble.answer(command, args, options)
-        : real.execa(command, args, options),
+        : real.execa(command, args, options);
+    },
   };
 });
 
@@ -72,6 +79,8 @@ async function createDotGitDir() {
 
 afterEach(async () => {
   gitDouble.answer = null;
+  gitReads.topLevel = 0;
+  gitReads.commonDir = 0;
   await cleanup();
 });
 
@@ -824,6 +833,22 @@ test("resume-interrupted exits 130 when the process-table read is canceled", asy
   expect(result.payload).toEqual({ status: "error", error: "Interrupted by SIGINT" });
   expect(worker.recorded.length).toBe(recordedBefore);
   expect((await readState(paths.stateFile)).stepsUsed).toBe(state.stepsUsed);
+});
+
+// Usefulness: asserts one init dispatch runs 3 top-level reads and 2 common-directory reads, below origin/main's 7 and 5.
+test("one init dispatch holds the work tree identity read counts", async () => {
+  const repo = await newRunRepo();
+  const worker = recordingAdapter([]);
+  gitReads.topLevel = 0;
+  gitReads.commonDir = 0;
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(gitReads).toEqual({ topLevel: 3, commonDir: 2 });
 });
 
 // A `gh` double for the gate's reads of PR 42 whose required check `ci (macos-latest)`

@@ -9,6 +9,7 @@ import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
+import { withGitIdentityReads } from "../lib/git-read.mjs";
 import { refreshLocalFile } from "../lib/local-file-changes.mjs";
 import { normalizeLocalPath } from "../lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
@@ -480,7 +481,7 @@ export async function executeRoleCommand(args, deps = {}) {
         `${args.operation} is refused for a child role; only the parent session runs it.`,
       );
     }
-    return await operation.run(args, deps);
+    return await withGitIdentityReads(() => operation.run(args, deps));
   } catch (err) {
     return errorResult(err);
   }
