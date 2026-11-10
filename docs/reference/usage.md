@@ -405,7 +405,7 @@ agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 
 `--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused. The task template accepts `{issue}`, `{title}`, `{branch}`, and `{repo}`; an unknown placeholder or a template without `{issue}` when an issue item uses it is a usage error. The default issue template names the issue, the branch push, and the closing pull request. A pull request item uses a review-oriented default template, and a task item delivers its own text plus the push and pull-request instructions.
 
-`--max-steps` is required. A model outside the supported set for its agent, an effort outside that agent's set, a duplicate or conflicting sandbox flag, and a runs root inside any Git work tree are also refused. `--timeout 0` passes no timeout to each headless child.
+`--max-steps` is required. A duplicate or conflicting sandbox flag and a runs root inside any Git work tree are also refused. An unknown model or effort value logs one warning. `--timeout 0` passes no timeout to each headless child.
 
 Every refusal happens before a claim, work tree, checkpoint, or child exists, and exits 2.
 
