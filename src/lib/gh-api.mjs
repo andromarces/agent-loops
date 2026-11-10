@@ -620,7 +620,8 @@ export function boundedCall(gh, timeoutMs, signal = null) {
 /**
  * A runner for one long command, such as a batch run. Every call ends when its bound expires or
  * a signal aborts. A caller bound wins over the default, and a caller signal joins the run signal.
- * A reply that ends after an abort throws and reaches the caller as no data.
+ * A reply that ends after an abort throws and reaches the caller as no data. The first abort
+ * source decides between a cancel and a timeout.
  * @param {Function} gh
  * @param {number} timeoutMs
  * @param {AbortSignal | null} [signal]
@@ -631,11 +632,26 @@ export function boundedRunner(gh, timeoutMs, signal = null) {
     const deadline = AbortSignal.timeout(bound);
     const signals = [options.signal, signal, deadline].filter(Boolean);
     const combined = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    let canceled = false;
+    let cancelReason;
+    combined.addEventListener(
+      "abort",
+      () => {
+        if (deadline.aborted) return;
+        canceled = true;
+        cancelReason = combined.reason;
+      },
+      { once: true },
+    );
     if (deadline.aborted) throw readTimeout(bound);
-    if (combined.aborted) throw canceledCall(combined.reason);
+    if (combined.aborted) {
+      canceled = true;
+      cancelReason = combined.reason;
+    }
+    if (canceled) throw canceledCall(cancelReason);
     const reply = await gh(args, cwd, { ...options, timeoutMs: bound, signal: combined });
+    if (canceled) throw canceledCall(cancelReason);
     if (reply?.timedOut || deadline.aborted) throw readTimeout(bound);
-    if (combined.aborted) throw canceledCall(combined.reason);
     return reply;
   };
 }

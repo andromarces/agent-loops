@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -374,6 +375,21 @@ describe("bounded batch reads", () => {
     expect(summary.loops[0].reason).toContain("timed out after 20ms");
   });
 
+  // Usefulness: a refused preflight removes its SIGINT and abort listeners.
+  test("a refused preflight removes its listeners", async () => {
+    const signal = new AbortController().signal;
+    const before = process.listenerCount("SIGINT");
+    const { exitCode } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("listeners-refused"),
+      gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
+      deps: { notifier: noNotify, ghTimeoutMs: 20, signal },
+    });
+    expect(exitCode).toBe(0);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+  });
+
   // Usefulness: an already-aborted run signal ends the batch interrupted with exit 130.
   test("an already-aborted run signal ends the batch interrupted", async () => {
     const abort = new AbortController();
@@ -391,6 +407,7 @@ describe("bounded batch reads", () => {
   // Usefulness: an abort during a hung preflight read ends interrupted with exit 130.
   test("an abort during a hung preflight read ends interrupted", async () => {
     const abort = new AbortController();
+    const before = process.listenerCount("SIGINT");
     let started = false;
     const gh = (args, cwd, options = {}) => {
       if (!started) {
@@ -407,15 +424,12 @@ describe("bounded batch reads", () => {
       prepared,
       runsRoot: runsRootFor("aborted-during"),
       gh,
-      deps: {
-        notifier: noNotify,
-        installSignal: false,
-        signal: abort.signal,
-        ghTimeoutMs: 60_000,
-      },
+      deps: { notifier: noNotify, signal: abort.signal, ghTimeoutMs: 60_000 },
     });
     expect(exitCode).toBe(130);
     expect(summary.status).toBe("interrupted");
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
   });
 });
 

@@ -498,6 +498,7 @@ describe("bounded audit reads", () => {
 
   const isolated = (name) => ({ ...prepared, workTreeRoot: join(prepared.workTreeRoot, name) });
   const runsRootOf = (scoped) => join(scoped.workTreeRoot, "runs");
+  const frozenCheckout = async () => ({ head: prepared.revision, clean: true });
   const replyOnAbort =
     (reply) =>
     (args, cwd, options = {}) =>
@@ -515,7 +516,7 @@ describe("bounded audit reads", () => {
       prepared: { ...scoped, mode: "resume" },
       runsRoot: runsRootOf(scoped),
       gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
-      deps: { ...depsWith(scoped.workTree), ghTimeoutMs: 20 },
+      deps: { ...depsWith(scoped.workTree), ghTimeoutMs: 20, readCheckout: frozenCheckout },
     });
     expect(result.exitCode).toBe(1);
     expect(result.summary.pauseReason).toBe("issue-read-failed");
@@ -541,7 +542,7 @@ describe("bounded audit reads", () => {
       runsRoot: runsRootOf(scoped),
       gh,
       signal: abort.signal,
-      deps: { ...depsWith(scoped.workTree) },
+      deps: { ...depsWith(scoped.workTree), readCheckout: frozenCheckout },
     });
     expect(result.exitCode).toBe(130);
     expect(result.summary.status).toBe("interrupted");

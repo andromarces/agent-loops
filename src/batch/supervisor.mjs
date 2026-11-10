@@ -467,11 +467,16 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       forward("SIGKILL");
     }
   };
+  const onExternalAbort = () => interrupt(deps.signal.reason);
   const installSignal = deps.installSignal !== false;
+  const stopListening = () => {
+    if (installSignal) process.removeListener("SIGINT", onSigInt);
+    if (deps.signal) deps.signal.removeEventListener("abort", onExternalAbort);
+  };
   if (installSignal) process.on("SIGINT", onSigInt);
   if (deps.signal) {
     if (deps.signal.aborted) interrupt(deps.signal.reason);
-    else deps.signal.addEventListener("abort", () => interrupt(deps.signal.reason), { once: true });
+    else deps.signal.addEventListener("abort", onExternalAbort, { once: true });
   }
   gh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, controller.signal);
 
@@ -531,7 +536,10 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   if (prepared.resume) {
     manifest = await readManifest(runsRoot, id);
-    if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
+    if (manifest === null) {
+      stopListening();
+      throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
+    }
     start = false;
     const itemsByKey = new Map((manifest.items ?? []).map((item) => [item.key, item]));
     for (const issue of manifest.issues) {
@@ -546,6 +554,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
     });
     if (!pending) {
+      stopListening();
       return finalizeBatch();
     }
     const actionable = [];
@@ -586,6 +595,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
             }))
           ).manifest;
         }
+        stopListening();
         return finalizeBatch();
       }
     }
@@ -646,6 +656,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if (interrupted) {
       progress(`batch ${id}: interrupted before any state write`);
+      stopListening();
       return {
         exitCode: 130,
         summary: {
@@ -657,6 +668,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if (items.length === 0) {
       progress(`batch ${id}: every item was refused before any state write`);
+      stopListening();
       return {
         exitCode: 0,
         summary: {
@@ -1824,7 +1836,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   // A resume runs its recovered loops one at a time; this drains any that the pass left live.
   while (active.size > 0 && !hard) await Promise.race(active.values());
 
-  if (installSignal) process.removeListener("SIGINT", onSigInt);
+  stopListening();
   return finalizeBatch();
 }
 

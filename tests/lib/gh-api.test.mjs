@@ -137,4 +137,28 @@ describe("boundedRunner", () => {
     controller.abort(reason);
     await expect(pending).rejects.toMatchObject({ name: "AbortError", cause: reason });
   });
+
+  // Usefulness: a cancel that fired before the deadline keeps its reason after a late reply.
+  it("keeps a cancel that fired before the deadline", async () => {
+    const reason = new Error("stopped before the deadline");
+    const controller = new AbortController();
+    const gh = () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: 0, stdout: "", stderr: "" }), 60),
+      );
+    const call = boundedRunner(gh, 30, controller.signal);
+    const pending = call(["pr", "view", "1"], ".");
+    setTimeout(() => controller.abort(reason), 5);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError", cause: reason });
+  });
+
+  // Usefulness: a deadline that fires first still reports the read timeout.
+  it("reports a timeout when the deadline fires first", async () => {
+    const gh = () =>
+      new Promise((resolve) =>
+        setTimeout(() => resolve({ status: 0, stdout: "", stderr: "" }), 60),
+      );
+    const call = boundedRunner(gh, 20);
+    await expect(call(["pr", "view", "1"], ".")).rejects.toMatchObject({ timedOut: true });
+  });
 });
