@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { execa } from "execa";
-import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import {
   auditPaths,
   parseAuditArgs,
@@ -508,6 +508,65 @@ test("an approval bound to another revision is discarded", async () => {
   expect(summary.pauseReason).toBe("audit-failed");
   expect(summary.approvedPartial).toBe(false);
   expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
+});
+
+describe("bounded audit reads", () => {
+  let prepared;
+  beforeAll(async () => {
+    prepared = await preparedAudit();
+  });
+
+  const isolated = (name) => ({ ...prepared, workTreeRoot: join(prepared.workTreeRoot, name) });
+  const runsRootOf = (scoped) => join(scoped.workTreeRoot, "runs");
+  const frozenCheckout = async () => ({ head: prepared.revision, clean: true });
+  const replyOnAbort =
+    (reply) =>
+    (args, cwd, options = {}) =>
+      new Promise((resolve) => {
+        const end = () => resolve(reply);
+        if (options.signal?.aborted) end();
+        else options.signal?.addEventListener("abort", end, { once: true });
+      });
+
+  // Usefulness: the audit issue read ends at the bound instead of hanging the run.
+  test("an audit issue read that never returns ends at the bound", async () => {
+    const scoped = isolated("bound");
+    await pausedAudit(scoped, { existingIssues: null });
+    const result = await runAudit({
+      prepared: { ...scoped, mode: "resume" },
+      runsRoot: runsRootOf(scoped),
+      gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
+      deps: { ...depsWith(scoped.workTree), ghTimeoutMs: 20, readCheckout: frozenCheckout },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.summary.pauseReason).toBe("issue-read-failed");
+  });
+
+  // Usefulness: a create that reports success after the run abort ends the audit interrupted.
+  test("an audit create that ends after the run abort fails closed", async () => {
+    const scoped = isolated("cancel");
+    await pausedAudit(scoped);
+    const abort = new AbortController();
+    const gh = (args, cwd, options = {}) => {
+      const reply = { status: 0, stdout: "https://github.com/o/r/issues/7\n", stderr: "" };
+      if (args[0] !== "issue" || args[1] !== "create") return Promise.resolve(reply);
+      abort.abort(new Error("stopped in the create"));
+      return options.signal?.aborted
+        ? Promise.resolve(reply)
+        : new Promise((resolve) => {
+            options.signal.addEventListener("abort", () => resolve(reply), { once: true });
+          });
+    };
+    const result = await runAudit({
+      prepared: { ...scoped, mode: "resume" },
+      runsRoot: runsRootOf(scoped),
+      gh,
+      signal: abort.signal,
+      deps: { ...depsWith(scoped.workTree), readCheckout: frozenCheckout },
+    });
+    expect(result.exitCode).toBe(130);
+    expect(result.summary.status).toBe("interrupted");
+  });
 });
 
 // Usefulness: a repeated worker flag with a different value is refused, not silently overwritten.
