@@ -5,6 +5,12 @@ import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on, so no test here
 // starts a `git` process.
+//
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -27,11 +33,12 @@ import {
   dispatchReviewer,
   finishCall,
   initPrRun,
+  initRun,
+  newCleanRunRepo,
   readRepoState,
   recordingAdapter,
   repos,
   setup,
-  startRun as startRunWith,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
@@ -77,7 +84,10 @@ const declareArgv = (pr, ...flags) => [
 ];
 
 /** Starts a run with the given init options; `gh` answers the start read of a declared PR. */
-const startRun = (options) => startRunWith({ gh: prGateGh("1".repeat(40)), ...options });
+async function startRun(options = {}) {
+  const repo = await newCleanRunRepo(gitDouble);
+  return { repo, agents: await initRun(repo, { gh: prGateGh("1".repeat(40)), ...options }) };
+}
 
 const declare = (repo, pr, ...flags) =>
   executeRoleCommand(withRepo(declareArgv(pr, ...flags), repo), {

@@ -6,16 +6,40 @@ import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
+  initRun,
+  newCleanRunRepo,
   readRepoState,
   recordingAdapter,
   reviewerTurn,
-  startRun,
   stdinPrompt,
   withRepo,
 } from "./role-helpers.mjs";
 
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const startRun = async (options = {}) => {
+  const repo = await newCleanRunRepo(gitDouble);
+  return { repo, agents: await initRun(repo, options) };
+};
+
 afterEach(cleanup);
 afterEach(() => {
+  gitDouble.answer = null;
   vi.unstubAllEnvs();
 });
 
