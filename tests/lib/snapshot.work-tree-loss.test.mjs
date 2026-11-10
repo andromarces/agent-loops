@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
+import { withGitIdentityReads } from "../../src/lib/git-read.mjs";
 import { snapshot, withMutationCheck } from "../../src/lib/snapshot.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
@@ -102,16 +103,17 @@ test("a snapshot refuses a linked work tree whose gitdir was removed", async () 
   }
 });
 
-// Usefulness: verifies a root that changes between two snapshots is read again. A subdirectory
-// that becomes its own work tree is covered from its new root, so a root is never carried over (#760).
+// Usefulness: verifies a fresh root read sees a root that changed between two snapshots, when a subdirectory becomes its own work tree (#760).
 test("a snapshot covers the new root after the cwd becomes its own work tree", async () => {
   const repo = await createRepo();
   try {
-    const first = await snapshot(join(repo, "sub"), {});
-    expect(first.workTree.map((entry) => entry.path)).toContain("sub/a.txt");
-    await execa("git", ["init"], { cwd: join(repo, "sub") });
-    const second = await snapshot(join(repo, "sub"), {});
-    expect(second.workTree.map((entry) => entry.path)).toEqual(["a.txt"]);
+    await withGitIdentityReads(async () => {
+      const first = await snapshot(join(repo, "sub"), {});
+      expect(first.workTree.map((entry) => entry.path)).toContain("sub/a.txt");
+      await execa("git", ["init"], { cwd: join(repo, "sub") });
+      const second = await snapshot(join(repo, "sub"), {});
+      expect(second.workTree.map((entry) => entry.path)).toEqual(["a.txt"]);
+    });
   } finally {
     await removePath(repo);
   }

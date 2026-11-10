@@ -347,12 +347,18 @@ export const STOP_FLAG_WALK = Symbol("stop flag walk");
  * A flag whose handler read no value is boolean, so an inline value on it is an error rather than a
  * silently dropped argument.
  * `error` builds each refusal, so a parser keeps its own error type.
+ * `allowInlineOnStop` lets a stopping flag ignore its inline value.
  * @param {string[]} argv
  * @param {number} start index of the first flag
  * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean | symbol} onFlag
- * @param {{ error?: (message: string) => Error }} [options]
+ * @param {{ error?: (message: string) => Error, allowInlineOnStop?: boolean }} [options]
  */
-export function walkFlags(argv, start, onFlag, { error = defaultError } = {}) {
+export function walkFlags(
+  argv,
+  start,
+  onFlag,
+  { error = defaultError, allowInlineOnStop = false } = {},
+) {
   for (let i = start; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
@@ -370,7 +376,7 @@ export function walkFlags(argv, start, onFlag, { error = defaultError } = {}) {
     if (!consumed) {
       throw error(`Unknown argument: ${raw}`);
     }
-    if (inline && !inlineUsed) {
+    if (inline && !inlineUsed && !(allowInlineOnStop && consumed === STOP_FLAG_WALK)) {
       throw error(`${arg} does not take a value.`);
     }
     if (consumed === STOP_FLAG_WALK) {

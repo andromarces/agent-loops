@@ -7,7 +7,14 @@ import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { supportedAgents } from "../agents/index.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
-import { DEFAULT_TIMEOUT, initRefusal, ROLE_KINDS, roleFlags, walkFlags } from "../lib/args.mjs";
+import {
+  DEFAULT_TIMEOUT,
+  initRefusal,
+  ROLE_KINDS,
+  roleFlags,
+  STOP_FLAG_WALK,
+  walkFlags,
+} from "../lib/args.mjs";
 import { canonicalPath, isInside } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
@@ -115,10 +122,15 @@ export function parseBatchArgs(argv) {
     options[`${role}Effort`] = null;
   }
 
+  let help = false;
   walkFlags(
     argv,
     0,
     (flag, read, inline) => {
+      if (flag === "--help" || flag === "-h") {
+        help = true;
+        return STOP_FLAG_WALK;
+      }
       const readPath = (name) => resolve(read(name));
       if (Object.hasOwn(ROLE_FLAGS, flag)) {
         options[ROLE_FLAGS[flag]] = read(flag);
@@ -198,8 +210,9 @@ export function parseBatchArgs(argv) {
       }
       return true;
     },
-    { error: usage },
+    { error: usage, allowInlineOnStop: true },
   );
+  if (help) return { help: true };
 
   if (options.repo === null) throw usage("Missing required --repo.");
   if (options.fromAudit !== null && options.issues.length > 0) {
@@ -212,7 +225,7 @@ export function parseBatchArgs(argv) {
     throw usage("--items-file cannot be combined with --issue.");
   }
   if (options.fromAudit === null && options.issues.length === 0 && options.itemsFile === null) {
-    throw usage("Missing required --issue or --from-audit.");
+    throw usage("Missing required --issue, --from-audit, or --items-file.");
   }
   if (options.itemsFile !== null) {
     let raw;

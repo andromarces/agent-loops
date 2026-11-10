@@ -73,7 +73,7 @@ Audit settings: --base, --work-tree-root, --setup-cmd, --setup-timeout, --timeou
 --worker-model and --worker-effort, and --focus <text> or --focus-file <path>. The two
 focus flags are mutually exclusive, and an empty focus is refused.
 
-Exit codes: 0 every issue succeeded or was skipped, or the audit created its issue set. 1 a
+Exit codes: 0 every item succeeded or was skipped, or the audit created its issue set. 1 a
 loop failed, the batch waits on an owner decision or merge, the queue paused, or an audit
 paused. 2 a refused setting or a refusal before any state write. 130 SIGINT.
 `.trim();
@@ -240,6 +240,10 @@ async function runAuditMain(argv, runsRoot) {
   }
   if (command === "start") {
     const options = parseAuditArgs(argv.slice(1));
+    if (options.help) {
+      console.log(AUDIT_USAGE);
+      return 0;
+    }
     const id = newAuditId();
     const prepared = await prepareAudit({ ...options, id });
     prepared.mode = "start";
@@ -302,6 +306,10 @@ export async function runBatchMain(argv) {
     }
     if (command === "start") {
       const options = parseBatchArgs(argv.slice(1));
+      if (options.help) {
+        console.log(BATCH_USAGE);
+        return 0;
+      }
       if (options.fromAudit !== null) {
         options.issues = await readFrozenIssueSet({
           runsRoot,

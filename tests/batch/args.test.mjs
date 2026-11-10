@@ -169,7 +169,7 @@ test("an effort without a model is a usage error", () => {
 test("an empty selection is a usage error", () => {
   expect(() =>
     parseBatchArgs(BASE.filter((value, i) => value !== "--issue" && BASE[i - 1] !== "--issue")),
-  ).toThrow("Missing required --issue or --from-audit.");
+  ).toThrow("Missing required --issue, --from-audit, or --items-file.");
 });
 
 // Usefulness: a duplicate issue would launch one issue twice in one batch.

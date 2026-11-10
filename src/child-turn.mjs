@@ -4,6 +4,7 @@ import { mapInBatches } from "./lib/batches.mjs";
 import { errorLine, firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { readRequiredChecks } from "./lib/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
+import { clearGitIdentityReads } from "./lib/git-read.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import {
@@ -52,6 +53,8 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
     emit("error");
     throw err;
   } finally {
+    // The child turn ended, so the identity reads that follow start fresh.
+    clearGitIdentityReads();
     // An orchestrator turn has no result to carry the flag (ADR 0035), so it keeps none. A child
     // turn leaves it for `runChild`, which reads it and clears it.
     if (roleName === "orchestrator") delete state.shellDenied;

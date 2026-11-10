@@ -8,8 +8,8 @@ import {
   gitRead,
   gitReadError,
   parseWorkTreeList,
+  readCommonDir,
   readTopLevel,
-  stripLf,
   WORK_TREE_READ_TIMEOUT_MS,
 } from "./git-read.mjs";
 import { logInfo } from "./log.mjs";
@@ -65,7 +65,7 @@ async function findMainWorkTree(root, entries, read) {
   if (first === undefined || first.bare || !(await lstatOrNull(first.path))?.isDirectory()) {
     return { main: null };
   }
-  const common = stripLf((await read(root, ["rev-parse", "--git-common-dir"])).stdout);
+  const common = (await readCommonDir(root, { read })).stdout;
   const commonReal = await realpath(resolve(root, common));
   const main = await realpath(first.path);
   if (hasControlCharacter(common) || hasControlCharacter(commonReal)) {

@@ -1,10 +1,37 @@
 import { tmpdir } from "node:os";
-import { beforeEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
 import { createBodyBarrier } from "./body-barrier.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
+
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// The converted cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newDoubleRepo = async () => {
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  return repo;
+};
+
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // Tests that spy on console.error and read process.exitCode run through the barrier. A body that
 // passes its timeout under load keeps running, and its late cleanup would clear the spy calls and
@@ -360,7 +387,7 @@ spyTest("the other modes and a mode-free run still take the PR flags", async () 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   // One repo serves every run, and no run here changes it. Creating a repo spawns six `git`
   // processes, which is most of the cost of a run on Windows.
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
 
   try {
     for (const flags of [["--mode", "work-first"], ["--mode", "review-first"], []]) {
@@ -415,7 +442,7 @@ spyTest("--mode takes the interactive mode values", async () => {
   const origExitCode = process.exitCode;
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   // One repo serves every run: see the PR flags test above.
-  const repo = await createTempRepo();
+  const repo = await newDoubleRepo();
 
   try {
     for (const mode of ["work-first", "review-first", "review-only"]) {
@@ -469,7 +496,7 @@ spyTest("a repeated --mode takes the last value", async () => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
   try {
-    const refused = await createTempRepo();
+    const refused = await newDoubleRepo();
     try {
       await main([
         ...BASE,
@@ -491,7 +518,7 @@ spyTest("a repeated --mode takes the last value", async () => {
       await removePath(refused);
     }
 
-    const accepted = await createTempRepo();
+    const accepted = await newDoubleRepo();
     let orchestratorCalls = 0;
     const agents = {
       codex: {

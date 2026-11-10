@@ -1,10 +1,10 @@
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { executeRoleCommand } from "../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
   INIT_OVERRIDES,
-  newRunRepo,
+  newCleanRunRepo,
   recordingAdapter,
   REPORT,
   reviewerTurn,
@@ -12,7 +12,29 @@ import {
   withRepo,
 } from "./role-helpers.mjs";
 
-afterEach(cleanup);
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/shared-git.mjs`), `readMainWorkTree` (`src/lib/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
+const newRunRepo = () => newCleanRunRepo(gitDouble);
+
+afterEach(async () => {
+  gitDouble.answer = null;
+  await cleanup();
+});
 
 const SECRET_RULE =
   "Never read, print, or quote `.env`, `.dev.vars`, or another ignored secret file. Check a configuration value by name and presence only. Keep a content search to tracked files, for example `git grep`, or `rg` without `--no-ignore` and `-u`.";

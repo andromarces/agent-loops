@@ -1,5 +1,6 @@
 // One bounded `git` read, its error, the shared line-feed strip, and the work tree list parser, for
 // every module.
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execBounded } from "./exec.mjs";
 
 // Milliseconds that one snapshot `git` read waits before it ends the child.
@@ -26,17 +27,67 @@ export class SnapshotError extends Error {
  */
 export const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
 
+// The settled identity reads of one command, keyed by read kind and the exact `cwd` string.
+const identityReads = new AsyncLocalStorage();
+
+/**
+ * Runs `fn` with one identity-read memo. A settled successful read is reused until the next clear,
+ * and a failed read is never kept.
+ */
+export function withGitIdentityReads(fn) {
+  return identityReads.run(new Map(), fn);
+}
+
+/** Clears the identity reads of the current command, so the reads after a turn start fresh. */
+export function clearGitIdentityReads() {
+  identityReads.getStore()?.clear();
+}
+
+async function identityRead(kind, cwd, read, args, options, { fresh = false } = {}) {
+  const store = identityReads.getStore();
+  const key = `${kind}\0${cwd}`;
+  if (store !== undefined && !fresh) {
+    const stored = store.get(key);
+    if (stored !== undefined) return stored;
+  }
+  const result = await read(cwd, args, options);
+  const settled = { ...result, stdout: stripLf(result.stdout) };
+  // Only a settled success is reused. Each caller keeps its own signal, timeout, and error class.
+  if (store !== undefined) {
+    if (settled.exitCode === 0) {
+      store.set(key, settled);
+    } else {
+      store.delete(key);
+    }
+  }
+  return settled;
+}
+
 /**
  * Reads the work tree top level of `cwd` and removes the one line feed that Git prints. A path that
  * ends in a carriage return or a space stays whole. Returns the read result. `read` is the
- * `gitRead`-shaped function to call.
+ * `gitRead`-shaped function to call. `fresh` reads again, so a root that changed during a turn is seen.
  */
-export async function readTopLevel(cwd, { read = gitRead, ...options } = {}) {
-  const result = await read(cwd, ["rev-parse", "--show-toplevel"], {
+export async function readTopLevel(cwd, { read = gitRead, fresh = false, ...options } = {}) {
+  return identityRead(
+    "top",
+    cwd,
+    read,
+    ["rev-parse", "--show-toplevel"],
+    { ...options, stripFinalNewline: false },
+    { fresh },
+  );
+}
+
+/**
+ * Reads the common Git directory of `cwd` and removes the one line feed that Git prints. Returns the
+ * read result. `read` is the `gitRead`-shaped function to call.
+ */
+export async function readCommonDir(cwd, { read = gitRead, ...options } = {}) {
+  return identityRead("common", cwd, read, ["rev-parse", "--git-common-dir"], {
     ...options,
     stripFinalNewline: false,
   });
-  return { ...result, stdout: stripLf(result.stdout) };
 }
 
 /**

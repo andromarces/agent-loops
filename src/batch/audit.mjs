@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { defaultAgents, supportedAgents } from "../agents/index.mjs";
 import { invoke } from "../child-turn.mjs";
-import { DEFAULT_TIMEOUT, openCodeOptionsError, walkFlags } from "../lib/args.mjs";
+import { DEFAULT_TIMEOUT, openCodeOptionsError, STOP_FLAG_WALK, walkFlags } from "../lib/args.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { writeFileAtomic } from "../lib/atomic-write.mjs";
 import { canonicalPath, isInside, samePath } from "../lib/canonical-path.mjs";
@@ -87,10 +87,15 @@ export function parseAuditArgs(argv) {
     return value;
   };
 
+  let help = false;
   walkFlags(
     argv,
     0,
     (flag, read, inline) => {
+      if (flag === "--help" || flag === "-h") {
+        help = true;
+        return STOP_FLAG_WALK;
+      }
       switch (flag) {
         case "--repo":
           options.repo = resolve(read(flag));
@@ -166,8 +171,9 @@ export function parseAuditArgs(argv) {
       }
       return true;
     },
-    { error: usage },
+    { error: usage, allowInlineOnStop: true },
   );
+  if (help) return { help: true };
 
   if (options.repo === null) throw usage("Missing required --repo.");
   if (options.focus !== null && options.focusFile !== null) {

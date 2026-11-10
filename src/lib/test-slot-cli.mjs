@@ -13,7 +13,7 @@ const TEST_SLOT_HELP = `
 Usage:
 
   agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] [--] "<command>"
-  agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] -- <executable> [<argument>...]
+  agent-loop test-slot [--if-held] [--slots <n>] [--wait <seconds>] -- <executable> <argument> [<argument>...]
 
 Runs a command only while this process holds one of the machine-wide test slots.
 A wrapper starts only while fewer than its own <n> slots are held by live
