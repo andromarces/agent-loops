@@ -138,6 +138,7 @@ test("a second SIGINT logs the placeholder when the final write error is unreada
   }
 });
 
+// Process: the force kill must reach a real child tree, which a call in this process cannot model.
 // Usefulness: acceptance (#669) — the second SIGINT force-kills a live child that ignores SIGTERM,
 // runs the final write before the exit, and ends with exit 130, so no child outlives the run. A
 // failed final write still ends the process.

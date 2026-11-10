@@ -21,6 +21,7 @@ import { DEFAULT_TIMEOUT, openCodeOptionsError } from "../lib/args.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { writeFileAtomic } from "../lib/atomic-write.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/gh-api.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { logError, logWarn } from "../lib/log.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
@@ -1010,6 +1011,7 @@ async function writeState(runsRoot, state) {
 export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {} }) {
   const paths = auditPaths(runsRoot);
   const mode = prepared.mode ?? "start";
+  const callGh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, signal);
   const release = await tryStateLock(paths.lock(prepared.id), { label: "Audit", noun: "audit" });
   if (release === null) {
     const state = await readAudit(runsRoot, prepared.id);
@@ -1235,13 +1237,13 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     }
 
     if (state.existingIssues === null) {
-      const issues = await readIssueList({ gh, repo: prepared.repo });
+      const issues = await readIssueList({ gh: callGh, repo: prepared.repo });
       state = { ...state, existingIssues: issues };
       await writeState(runsRoot, state);
     }
 
     if (state.pendingCreate !== null) {
-      state = await reconcilePendingCreate({ state, gh });
+      state = await reconcilePendingCreate({ state, gh: callGh });
       await writeState(runsRoot, state);
     }
 
@@ -1306,7 +1308,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       await writeState(runsRoot, state);
     }
 
-    state = await createIssues({ state, runsRoot, gh, signal });
+    state = await createIssues({ state, runsRoot, gh: callGh, signal });
     progress(
       `audit ${state.id}: created ${state.issues.length} issue(s), ${state.issues.filter((issue) => issue.existing).length} linked`,
     );

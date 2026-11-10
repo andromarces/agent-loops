@@ -35,6 +35,7 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+// Process: a grandchild that holds the pipe open exists only in a real process tree.
 const runChild = (lines, options = {}, placement = "detached") =>
   exec(process.execPath, [join(dir, "child.cjs"), String(lines), pidFile, placement], options);
 

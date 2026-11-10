@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -414,6 +415,218 @@ test("a real spawn failure fails the loop with its code and no started line", as
     spy.mockRestore();
     await cleanupRepo(repo);
   }
+});
+
+describe("bounded batch reads", () => {
+  let prepared;
+  beforeAll(async () => {
+    prepared = await preparedFor(await batchRepo(), [1]);
+  });
+
+  const runsRootFor = (name) => join(prepared.workTreeRoot, `runs-${name}`);
+  const replyOnAbort =
+    (reply) =>
+    (args, cwd, options = {}) =>
+      new Promise((resolve) => {
+        const end = () => resolve(reply);
+        if (options.signal?.aborted) end();
+        else options.signal?.addEventListener("abort", end, { once: true });
+      });
+
+  // Usefulness: a gh read that never returns ends at the bound, so the batch cannot hang.
+  test("a gh read that never returns ends at the bound", async () => {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("bound"),
+      gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
+      deps: { notifier: noNotify, installSignal: false, ghTimeoutMs: 20 },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.loops[0].skipReason).toBe("eligibility-unverified");
+    expect(summary.loops[0].reason).toContain("timed out after 20ms");
+  });
+
+  // Usefulness: a refused preflight removes its SIGINT and abort listeners.
+  test("a refused preflight removes its listeners", async () => {
+    const signal = new AbortController().signal;
+    const before = process.listenerCount("SIGINT");
+    const { exitCode } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("listeners-refused"),
+      gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
+      deps: { notifier: noNotify, ghTimeoutMs: 20, signal },
+    });
+    expect(exitCode).toBe(0);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+  });
+
+  // Usefulness: an already-aborted run signal ends the batch interrupted with exit 130.
+  test("an already-aborted run signal ends the batch interrupted", async () => {
+    const abort = new AbortController();
+    abort.abort(new Error("stopped before preflight"));
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("aborted-before"),
+      gh: replyOnAbort({ status: 0, stdout: JSON.stringify({ number: 1 }), stderr: "" }),
+      deps: { notifier: noNotify, installSignal: false, signal: abort.signal },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+  });
+
+  // Usefulness: an abort during a hung preflight read ends interrupted with exit 130.
+  test("an abort during a hung preflight read ends interrupted", async () => {
+    const abort = new AbortController();
+    const before = process.listenerCount("SIGINT");
+    let started = false;
+    const gh = (args, cwd, options = {}) => {
+      if (!started) {
+        started = true;
+        setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
+      }
+      return replyOnAbort({ status: 0, stdout: JSON.stringify({ number: 1 }), stderr: "" })(
+        args,
+        cwd,
+        options,
+      );
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot: runsRootFor("aborted-during"),
+      gh,
+      deps: { notifier: noNotify, signal: abort.signal, ghTimeoutMs: 60_000 },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
+  });
+
+  // Usefulness: a fetch failure removes the SIGINT and abort listeners before it rejects.
+  test("a preflight throw removes its listeners", async () => {
+    const signal = new AbortController().signal;
+    const before = process.listenerCount("SIGINT");
+    const head = "a".repeat(40);
+    const item = {
+      kind: "pr",
+      number: 7,
+      key: "pr-7",
+      mode: "review-first",
+      task: null,
+      head,
+      headRefName: "pr-7",
+      foreign: false,
+    };
+    const gh = async (args) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: "OPEN",
+            headRefOid: head,
+            headRefName: "pr-7",
+            isCrossRepository: false,
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    await expect(
+      runBatch({
+        prepared,
+        runsRoot: runsRootFor("fetch-throw"),
+        gh,
+        deps: {
+          notifier: noNotify,
+          signal,
+          freezeItems: async () => [item],
+          planPrWorkTree: async () => {
+            throw new Error("the git fetch failed");
+          },
+        },
+      }),
+    ).rejects.toThrow("the git fetch failed");
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+  });
+
+  // Usefulness: a throw with a live child rejects at once and keeps its listeners for a later abort.
+  test("a throw with a live child keeps its listeners", async () => {
+    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    await runBatch({
+      prepared: two,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const recorded = {
+      path: join(prepared.workTreeRoot, "issue-2"),
+      canonicalPath: join(prepared.workTreeRoot, "issue-2"),
+      dev: "1",
+      ino: "1",
+      branch: `batch/${two.id}/2`,
+    };
+    for (const issue of [1, 2]) {
+      await removePath(batchPaths(runsRoot).transcript(two.id, issue));
+      await updateLoop(runsRoot, two.id, issue, (loop) => ({
+        ...loop,
+        status: "queued",
+        attempts: 0,
+        pid: null,
+        startTime: null,
+        workTree: issue === 2 ? recorded : null,
+        cleanup: null,
+      }));
+    }
+    const child = childDouble({ hold: true });
+    const stops = [];
+    const spawn = async (options) => {
+      const started = await child.spawn(options);
+      return {
+        ...started,
+        kill: (signal) => {
+          stops.push(signal);
+          started.kill(signal);
+        },
+      };
+    };
+    const abort = new AbortController();
+    const before = process.listenerCount("SIGINT");
+    const run = runBatch({
+      prepared: { ...two, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        signal: abort.signal,
+        reconcileLoop: async () => {
+          throw new Error("the git fetch failed");
+        },
+      },
+    });
+    await expect(run).rejects.toThrow("the git fetch failed");
+    expect(stops).toEqual([]);
+    expect((await readLoop(runsRoot, two.id, 1)).status).toBe("running");
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    abort.abort(new Error("stop the child now"));
+    expect(stops).toContain("SIGINT");
+    let loop = await readLoop(runsRoot, two.id, 1);
+    for (let attempt = 0; attempt < 100 && loop?.status === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      loop = await readLoop(runsRoot, two.id, 1);
+    }
+    expect(loop.status).toBe("interrupted");
+  });
 });
 
 // Usefulness: three issues get three work trees, three branches, and one child each.
