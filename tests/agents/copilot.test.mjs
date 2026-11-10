@@ -10,13 +10,15 @@ import { runChild } from "../../src/child-turn.mjs";
 import { cleanRepoGit } from "../git-helpers.mjs";
 
 // `exec` is replaced. The work tree read after a worker turn runs `git` through `execBounded`,
-// which answers a clean repository so the tests start no process and the read succeeds.
+// which answers a clean repository so the tests start no process and the read succeeds. The turn
+// directory removal is answered in this process, so no `turn-tmpdir-remove.mjs` child starts.
 vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
   const actual = await importOriginal();
+  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal.mjs");
   return {
     ...actual,
     exec: vi.fn(),
-    execBounded: vi.fn(async (command, args, options) =>
+    execBounded: turnTmpdirRemovalDouble((command, args, options) =>
       command === "git"
         ? cleanRepoGit(command, args, { ...options, cwd: tmpdir() })
         : actual.execBounded(command, args, options),

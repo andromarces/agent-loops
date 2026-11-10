@@ -2,55 +2,41 @@
 // more read-only reviewer turns on one frozen revision, one consolidation turn after every requested
 // audit succeeds, and one runtime-owned issue write per consolidated finding. No child creates,
 // edits, comments on, or labels an issue.
-import {
-  access,
-  constants,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  rmdir,
-  stat,
-  unlink,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rmdir, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { defaultAgents, supportedAgents } from "../agents/index.mjs";
 import { invoke } from "../child-turn.mjs";
-import { DEFAULT_TIMEOUT, openCodeOptionsError } from "../lib/args.mjs";
+import { DEFAULT_TIMEOUT, openCodeOptionsError, STOP_FLAG_WALK, walkFlags } from "../lib/args.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { writeFileAtomic } from "../lib/atomic-write.mjs";
-import { canonicalPath } from "../lib/canonical-path.mjs";
-import { sha256 } from "../lib/hash.mjs";
+import { canonicalPath, isInside, samePath } from "../lib/canonical-path.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/gh-api.mjs";
 import { logError, logWarn } from "../lib/log.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { isFatalTurnError, withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import { escapeLineSeparators } from "../prompts/escape.mjs";
 import { reviewerPrompt } from "../prompts/reviewer.mjs";
+import { logRoleOptionWarnings, positiveInt, prepareRepository, usage } from "./args.mjs";
 import {
-  canonicalWritePath,
-  logRoleOptionWarnings,
-  refuseWorkTreeRootInGitWorkTree,
-} from "./args.mjs";
-import {
+  findRegisteredWorkTrees,
   git,
   gitOrThrow,
   identityEqual,
-  isInside,
   pathIdentity,
   readRegisteredWorkTrees,
+  readWorkTreeGitState,
   removeWorkTree,
 } from "./git.mjs";
-import { progress, runSetup } from "./supervisor.mjs";
+import { parseObject, readStoreText } from "./store.mjs";
+import { newBatchId, progress, runSetup } from "./supervisor.mjs";
 
 const MAX_REVIEWERS = 16;
 const ISSUE_PAGE_LIMIT = 1000;
 const DEFAULT_SETUP_TIMEOUT = 600;
 const MAX_TITLE_LENGTH = 256;
 const MAX_FINDINGS = 100;
-
-const usage = (message) => Object.assign(new Error(message), { usage: true });
 
 /** A pause that names its reason code, so the checkpoint keeps a short value and a detail. */
 class Pause extends Error {
@@ -67,14 +53,6 @@ class NeedsOwner extends Error {
     this.pauseReason = reason;
     this.needsOwner = true;
   }
-}
-
-function positiveInt(flag, value) {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number < 1) {
-    throw usage(`${flag} must be a positive integer.`);
-  }
-  return number;
 }
 
 /**
@@ -110,98 +88,93 @@ export function parseAuditArgs(argv) {
     return value;
   };
 
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i];
-    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
-    const flag = eq === -1 ? raw : raw.slice(0, eq);
-    const inline = eq === -1 ? null : raw.slice(eq + 1);
-    if (flag === "--help" || flag === "-h") {
-      return { help: true };
-    }
-    const read = (name) => {
-      if (inline !== null) {
-        if (inline === "") throw usage(`Missing value for ${name}.`);
-        return inline;
+  let help = false;
+  walkFlags(
+    argv,
+    0,
+    (flag, read, inline) => {
+      if (flag === "--help" || flag === "-h") {
+        help = true;
+        return STOP_FLAG_WALK;
       }
-      const value = argv[++i];
-      if (!value || value.startsWith("-")) throw usage(`Missing value for ${name}.`);
-      return value;
-    };
-
-    switch (flag) {
-      case "--repo":
-        options.repo = resolve(read(flag));
-        break;
-      case "--reviewer":
-        if (options.reviewers.length >= MAX_REVIEWERS) {
-          throw usage(`--reviewer accepts at most ${MAX_REVIEWERS} entries.`);
+      switch (flag) {
+        case "--repo":
+          options.repo = resolve(read(flag));
+          break;
+        case "--reviewer":
+          if (options.reviewers.length >= MAX_REVIEWERS) {
+            throw usage(`--reviewer accepts at most ${MAX_REVIEWERS} entries.`);
+          }
+          current = { kind: read(flag), model: null, effort: null };
+          options.reviewers.push(current);
+          break;
+        case "--reviewer-model":
+          if (current === null) throw usage("--reviewer-model requires a preceding --reviewer.");
+          current.model = read(flag);
+          break;
+        case "--reviewer-effort":
+          if (current === null) throw usage("--reviewer-effort requires a preceding --reviewer.");
+          current.effort = read(flag);
+          break;
+        case "--worker":
+          options.worker = setScalar("worker", flag, read(flag));
+          break;
+        case "--worker-model":
+          options.workerModel = setScalar("worker-model", flag, read(flag));
+          break;
+        case "--worker-effort":
+          options.workerEffort = setScalar("worker-effort", flag, read(flag));
+          break;
+        case "--base":
+          options.base = read(flag);
+          break;
+        case "--focus":
+          options.focus = setScalar("focus", flag, read(flag));
+          break;
+        case "--focus-file":
+          options.focusFile = setScalar("focus-file", flag, read(flag));
+          break;
+        case "--work-tree-root":
+          options.workTreeRoot = resolve(read(flag));
+          break;
+        case "--setup-cmd":
+          options.setupCmd = read(flag);
+          break;
+        case "--setup-timeout":
+          options.setupTimeout = positiveInt(flag, read(flag));
+          break;
+        case "--timeout": {
+          const seconds = Number(read(flag));
+          if (!Number.isSafeInteger(seconds) || seconds < 0) {
+            throw usage("--timeout must be a non-negative integer.");
+          }
+          options.timeout = seconds === 0 ? null : seconds;
+          break;
         }
-        current = { kind: read(flag), model: null, effort: null };
-        options.reviewers.push(current);
-        break;
-      case "--reviewer-model":
-        if (current === null) throw usage("--reviewer-model requires a preceding --reviewer.");
-        current.model = read(flag);
-        break;
-      case "--reviewer-effort":
-        if (current === null) throw usage("--reviewer-effort requires a preceding --reviewer.");
-        current.effort = read(flag);
-        break;
-      case "--worker":
-        options.worker = setScalar("worker", flag, read(flag));
-        break;
-      case "--worker-model":
-        options.workerModel = setScalar("worker-model", flag, read(flag));
-        break;
-      case "--worker-effort":
-        options.workerEffort = setScalar("worker-effort", flag, read(flag));
-        break;
-      case "--base":
-        options.base = read(flag);
-        break;
-      case "--focus":
-        options.focus = setScalar("focus", flag, read(flag));
-        break;
-      case "--focus-file":
-        options.focusFile = setScalar("focus-file", flag, read(flag));
-        break;
-      case "--work-tree-root":
-        options.workTreeRoot = resolve(read(flag));
-        break;
-      case "--setup-cmd":
-        options.setupCmd = read(flag);
-        break;
-      case "--setup-timeout":
-        options.setupTimeout = positiveInt(flag, read(flag));
-        break;
-      case "--timeout": {
-        const seconds = Number(read(flag));
-        if (!Number.isSafeInteger(seconds) || seconds < 0) {
-          throw usage("--timeout must be a non-negative integer.");
+        case "--reviewer-sandbox": {
+          const value = read(flag);
+          if (!["read-only", "workspace-write"].includes(value)) {
+            throw usage(
+              `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
+            );
+          }
+          setSandbox(options, value, false, sandboxAlias);
+          sandboxAlias = false;
+          break;
         }
-        options.timeout = seconds === 0 ? null : seconds;
-        break;
+        case "--reviewer-workspace-write":
+          if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
+          setSandbox(options, "workspace-write", true, sandboxAlias);
+          sandboxAlias = true;
+          break;
+        default:
+          return false;
       }
-      case "--reviewer-sandbox": {
-        const value = read(flag);
-        if (!["read-only", "workspace-write"].includes(value)) {
-          throw usage(
-            `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
-          );
-        }
-        setSandbox(options, value, false, sandboxAlias);
-        sandboxAlias = false;
-        break;
-      }
-      case "--reviewer-workspace-write":
-        if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
-        setSandbox(options, "workspace-write", true, sandboxAlias);
-        sandboxAlias = true;
-        break;
-      default:
-        throw usage(`Unknown argument: ${raw}`);
-    }
-  }
+      return true;
+    },
+    { error: usage, allowInlineOnStop: true },
+  );
+  if (help) return { help: true };
 
   if (options.repo === null) throw usage("Missing required --repo.");
   if (options.focus !== null && options.focusFile !== null) {
@@ -269,30 +242,6 @@ function setSandbox(options, value, viaAlias, aliasSeen) {
   options.reviewerSandbox = value;
 }
 
-async function assertWritableDirectory(path) {
-  let current = path;
-  for (;;) {
-    try {
-      const found = await stat(current);
-      if (!found.isDirectory()) {
-        throw usage("The work-tree root is not a directory the audit can write.");
-      }
-      await access(current, constants.W_OK);
-      return;
-    } catch (err) {
-      if (err?.code !== "ENOENT") {
-        if (err?.usage) throw err;
-        throw usage("The work-tree root is not a directory the audit can write.");
-      }
-      const parent = dirname(current);
-      if (parent === current) {
-        throw usage("The work-tree root is not a directory the audit can write.");
-      }
-      current = parent;
-    }
-  }
-}
-
 /**
  * Resolves the reviewer focus from `--focus` or `--focus-file`. Returns null when none is supplied.
  * Throws a usage error for a read failure or a blank focus, before any state write.
@@ -331,53 +280,34 @@ export async function prepareAudit(options, { gitRun = git } = {}) {
   const listed = await gitRun(["worktree", "list", "--porcelain", "-z"], repo);
   if (listed.exitCode !== 0) throw usage(`--repo is not a Git work tree: ${listed.stderr}`);
   const entries = parseWorkTreeList(listed.stdout);
-  const first = entries[0];
-  if (first === undefined || first.bare) {
-    throw usage("--repo must name a Git main work tree.");
-  }
-  const main = await canonicalPath(first.path);
-  if (main !== repo) throw usage(`--repo must name the main work tree (${main}).`);
-
-  let base = options.base ?? null;
-  if (base === null) {
-    const remote = await gitRun(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo);
-    if (remote.exitCode === 0 && remote.stdout !== "") {
-      base = remote.stdout.startsWith("origin/")
-        ? remote.stdout.slice("origin/".length)
-        : remote.stdout;
-    } else {
-      base = "main";
+  // The audit runner returns an object. The shared reader reads a string and throws on failure.
+  const readText = async (args, cwd) => {
+    const result = await gitRun(args, cwd);
+    if (result.exitCode !== 0 || result.stdout === "") {
+      throw new Error(result.stderr || `exit ${result.exitCode}`);
     }
-  }
-  const revision = await gitRun(
-    ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`],
+    return String(result.stdout).trim();
+  };
+  const rootRunner = async (args, cwd) => {
+    const result = await gitRun(args, cwd);
+    return result.exitCode === 0 && !result.timedOut ? result.stdout : "";
+  };
+  const prepared = await prepareRepository({
+    options,
     repo,
-  );
-  if (revision.exitCode !== 0 || revision.stdout === "") {
-    throw usage(`--base ${base} has no refs/remotes/origin/${base}.`);
-  }
-
-  const workTreeRoot =
-    options.workTreeRoot ??
-    join(dirname(repo), `${basename(repo)}-audit-${options.id ?? "preview"}`);
-  const rootCanonical = await canonicalWritePath(workTreeRoot);
-  // The audit runner returns an object. The refusal reads a string and falls back on failure.
-  await refuseWorkTreeRootInGitWorkTree(rootCanonical, {
-    gitRun: async (args, cwd) => {
-      const result = await gitRun(args, cwd);
-      return result.exitCode === 0 && !result.timedOut ? result.stdout : "";
-    },
+    entries,
+    readText,
+    gitRun: rootRunner,
+    noun: "audit",
+    defaultRoot: join(dirname(repo), `${basename(repo)}-audit-${options.id ?? "preview"}`),
   });
-  await assertWritableDirectory(rootCanonical);
-
-  const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
   return {
     ...options,
     repo,
-    base,
-    revision: revision.stdout,
-    workTreeRoot: rootCanonical,
-    repoKey,
+    base: prepared.base,
+    revision: prepared.revision,
+    workTreeRoot: prepared.workTreeRoot,
+    repoKey: prepared.repoKey,
     focus,
     reviewers: options.reviewers.map((reviewer) => ({
       kind: normalizeAgent(reviewer.kind) ?? reviewer.kind,
@@ -393,11 +323,7 @@ export async function prepareAudit(options, { gitRun = git } = {}) {
 }
 
 /** Generates an audit id that is safe as a directory and a file name. */
-export function newAuditId(now = new Date()) {
-  const iso = now.toISOString();
-  const stamp = `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}-${iso.slice(11, 13)}${iso.slice(14, 16)}${iso.slice(17, 19)}`;
-  return `${stamp}-${randomUUID().slice(0, 8)}`;
-}
+export const newAuditId = newBatchId;
 
 /** The paths of the audit store under one runs root. */
 export function auditPaths(runsRoot) {
@@ -409,40 +335,17 @@ export function auditPaths(runsRoot) {
   };
 }
 
-async function readText(file) {
-  try {
-    return await readFile(file, "utf8");
-  } catch (err) {
-    if (err?.code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-function parseAudit(text, file) {
-  if (text === null) return null;
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error(`Audit record is not valid JSON: ${file}`);
-  }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Audit record is not a JSON object: ${file}`);
-  }
-  return value;
-}
-
 /** Reads one audit record, or null when it is missing. */
 export async function readAudit(runsRoot, id) {
   const file = auditPaths(runsRoot).file(id);
-  return parseAudit(await readText(file), file);
+  return parseObject(await readStoreText(file), file, "Audit");
 }
 
 /** Writes an audit record only when its stored text changes. Returns true on a write. */
 export async function writeAudit(runsRoot, state) {
   const file = auditPaths(runsRoot).file(state.id);
   const text = `${JSON.stringify(state, null, 2)}\n`;
-  const current = await readText(file);
+  const current = await readStoreText(file);
   if (current === text) return false;
   await mkdir(dirname(file), { recursive: true });
   await writeFileAtomic(file, text);
@@ -631,10 +534,9 @@ async function createAuditWorkTree({ repo, revision, workTree }) {
  * fails closed instead of treating an unreadable checkout as clean.
  */
 async function readAuditCheckout(workTree) {
-  const head = await git(["rev-parse", "HEAD"], workTree);
-  const status = await git(["status", "--porcelain"], workTree);
-  if (head.exitCode !== 0 || status.exitCode !== 0) return null;
-  return { head: head.stdout, clean: status.stdout === "" };
+  const state = await readWorkTreeGitState(workTree);
+  if (state.head.exitCode !== 0 || state.status.exitCode !== 0) return null;
+  return { head: state.head.stdout, clean: state.status.stdout === "" };
 }
 
 function checkoutIsFrozen(checkout, revision) {
@@ -1010,6 +912,7 @@ async function writeState(runsRoot, state) {
 export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {} }) {
   const paths = auditPaths(runsRoot);
   const mode = prepared.mode ?? "start";
+  const callGh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, signal);
   const release = await tryStateLock(paths.lock(prepared.id), { label: "Audit", noun: "audit" });
   if (release === null) {
     const state = await readAudit(runsRoot, prepared.id);
@@ -1081,7 +984,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     const readCheckout = deps.readCheckout ?? readAuditCheckout;
 
     const ensureFrozenCheckout = async () => {
-      let checkout = await readCheckout(state.workTree.path);
+      const checkout = await readCheckout(state.workTree.path);
       if (!checkoutIsFrozen(checkout, state.revision)) {
         state = {
           ...discardSavedFindings(state),
@@ -1235,13 +1138,13 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     }
 
     if (state.existingIssues === null) {
-      const issues = await readIssueList({ gh, repo: prepared.repo });
+      const issues = await readIssueList({ gh: callGh, repo: prepared.repo });
       state = { ...state, existingIssues: issues };
       await writeState(runsRoot, state);
     }
 
     if (state.pendingCreate !== null) {
-      state = await reconcilePendingCreate({ state, gh });
+      state = await reconcilePendingCreate({ state, gh: callGh });
       await writeState(runsRoot, state);
     }
 
@@ -1306,7 +1209,7 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       await writeState(runsRoot, state);
     }
 
-    state = await createIssues({ state, runsRoot, gh, signal });
+    state = await createIssues({ state, runsRoot, gh: callGh, signal });
     progress(
       `audit ${state.id}: created ${state.issues.length} issue(s), ${state.issues.filter((issue) => issue.existing).length} linked`,
     );
@@ -1354,10 +1257,6 @@ function errorText(err) {
 }
 
 async function createIssues({ state, runsRoot, gh, signal }) {
-  if (state.pendingCreate !== null) {
-    state = await reconcilePendingCreate({ state, gh });
-    await writeState(runsRoot, state);
-  }
   const frozen = state.consolidation.findings;
   const created = [...(state.created ?? [])];
   const issues = Array.isArray(state.issues) ? [...state.issues] : [];
@@ -1456,10 +1355,6 @@ function removalBlocker(state) {
   return null;
 }
 
-function samePath(left, right) {
-  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
-}
-
 // Git can report a registered path in another form than the recorded one, such as a resolved
 // /private/var path on macOS or a long temp path on Windows. The direct forms are compared, then
 // the canonical parent plus the folder name, because the leaf itself is missing.
@@ -1493,15 +1388,11 @@ async function auditWorkTreeBlocker(
   if (identity === null) {
     // A moved folder must not hide the registration that Git still holds, and a live lock keeps
     // both artifacts even when the folder is gone.
-    let entries;
-    try {
-      entries = await readRegistrations(state.repo);
-    } catch (err) {
-      return `the work tree list read failed: ${err.message}`;
-    }
+    const found = await findRegisteredWorkTrees(state.repo, null, { readRegistrations });
+    if (found.reason !== null) return found.reason;
     const recorded = [workTree.path, workTree.canonicalPath];
     const own = [];
-    for (const entry of entries) {
+    for (const entry of found.entries) {
       if (await sameRecordedWorkTree(entry.path, recorded)) own.push(entry);
     }
     if (own.some((entry) => entry.locked)) return "the work tree is locked by a live run";
@@ -1516,25 +1407,18 @@ async function auditWorkTreeBlocker(
   if (!isInside(root, canonical)) return "the path is outside the audit work tree root";
   if (canonical === (await canonicalPath(state.repo))) return "the main work tree is never removed";
 
-  let entries;
-  try {
-    entries = await readRegistrations(state.repo);
-  } catch (err) {
-    return `the work tree list read failed: ${err.message}`;
-  }
-  const own = [];
-  for (const entry of entries) {
-    if ((await canonicalPath(entry.path)) === canonical) own.push(entry);
-  }
+  const found = await findRegisteredWorkTrees(state.repo, canonical, { readRegistrations });
+  if (found.reason !== null) return found.reason;
+  const own = found.own;
   if (own.length !== 1) return "the path is not the registered audit work tree";
   if (own[0].locked) return "the work tree is locked by a live run";
 
-  const head = await runGit(["rev-parse", "HEAD"], workTree.path);
-  if (head.exitCode !== 0 || head.stdout !== state.revision) {
+  const reads = await readWorkTreeGitState(workTree.path, { runner: runGit });
+  if (reads.head.exitCode !== 0 || reads.head.stdout !== state.revision) {
     return "the recorded revision is not checked out";
   }
-  const status = await runGit(["status", "--porcelain"], workTree.path);
-  if (status.exitCode !== 0 || status.stdout !== "") return "the work tree is not clean";
+  if (reads.status.exitCode !== 0 || reads.status.stdout !== "")
+    return "the work tree is not clean";
   return null;
 }
 

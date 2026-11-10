@@ -12,11 +12,18 @@ import {
   runTurn,
 } from "./codex-tmpdir-helpers.mjs";
 
-// Only `exec` is replaced: the turn directory removal runs its helper through `execBounded`.
-vi.mock("../../src/lib/exec.mjs", async (importActual) => ({
-  ...(await importActual()),
-  exec: vi.fn(),
-}));
+// `exec` is replaced by the cases. The turn directory removal is answered in this process, so no
+// `turn-tmpdir-remove.mjs` child starts per turn. A removal still deletes only the recorded
+// directory, so a link that replaces it loses nothing.
+vi.mock("../../src/lib/exec.mjs", async (importActual) => {
+  const actual = await importActual();
+  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal.mjs");
+  return {
+    ...actual,
+    exec: vi.fn(),
+    execBounded: turnTmpdirRemovalDouble(actual.execBounded),
+  };
+});
 
 // Usefulness: verifies acceptance #955 — a Codex turn leaves no new entry in the inherited
 // temporary directory, because the CLI gets a private per-turn one that the runtime removes.

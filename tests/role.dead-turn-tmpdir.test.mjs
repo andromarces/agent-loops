@@ -183,6 +183,7 @@ async function killedDispatch({
     `import { main } from ${JSON.stringify(pathToFileURL(ROLE).href)};`,
     "await main(process.argv.slice(1));",
   ].join("\n");
+  // Process: each dispatch runs as its own CLI, so a crash mid-turn leaves the directory behind.
   const child = spawn(
     process.execPath,
     [

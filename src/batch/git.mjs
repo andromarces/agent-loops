@@ -1,7 +1,7 @@
 // Git and work-tree operations of one batch loop. Every call is a bounded Git process, and a
 // work tree is created from `origin/<base>` on a deterministic branch.
 import { lstat as lstatRaw, mkdir, readdir, rmdir, stat, unlink } from "node:fs/promises";
-import { dirname, relative, resolve, sep, isAbsolute } from "node:path";
+import { dirname, resolve } from "node:path";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { execBounded } from "../lib/exec.mjs";
@@ -35,6 +35,31 @@ export async function gitOrThrow(args, cwd, { signal = null } = {}) {
 /** The registered work trees of the repository at `repo`. */
 export async function readRegisteredWorkTrees(repo) {
   return parseWorkTreeList(await gitOrThrow(["worktree", "list", "--porcelain", "-z"], repo));
+}
+
+/**
+ * The registered work trees and the entries whose canonical path is `canonical`, read with
+ * `readRegistrations`. A failed read returns `reason` with the shared refusal text.
+ */
+export async function findRegisteredWorkTrees(
+  repo,
+  canonical,
+  { readRegistrations = readRegisteredWorkTrees } = {},
+) {
+  let entries;
+  try {
+    entries = await readRegistrations(repo);
+  } catch (err) {
+    return { entries: null, own: null, reason: `the work tree list read failed: ${err.message}` };
+  }
+  if (canonical === null || canonical === undefined) {
+    return { entries, own: null, reason: null };
+  }
+  const own = [];
+  for (const entry of entries) {
+    if ((await canonicalPath(entry.path)) === canonical) own.push(entry);
+  }
+  return { entries, own, reason: null };
 }
 
 /**
@@ -160,12 +185,12 @@ export async function createPrWorkTree({ repo, workTree, branch, head, number })
   };
 }
 
-/** The checked-out branch, head commit, and porcelain status of a work tree. */
-export async function readWorkTreeState(workTree) {
-  const branch = await gitOrThrow(["rev-parse", "--abbrev-ref", "HEAD"], workTree);
-  const head = await gitOrThrow(["rev-parse", "HEAD"], workTree);
-  const status = await gitOrThrow(["status", "--porcelain"], workTree);
-  return { branch, head, clean: status === "" };
+/** The branch, head commit, and porcelain status reads of a work tree, each with its exit code. */
+export async function readWorkTreeGitState(workTree, { runner = git } = {}) {
+  const branch = await runner(["rev-parse", "--abbrev-ref", "HEAD"], workTree);
+  const head = await runner(["rev-parse", "HEAD"], workTree);
+  const status = await runner(["status", "--porcelain"], workTree);
+  return { branch, head, status };
 }
 
 /** Fetches one branch from `origin` and returns its remote head, or null when it does not exist. */
@@ -179,32 +204,18 @@ export async function fetchRemoteBranch(repo, branch) {
   return head.exitCode === 0 ? head.stdout : null;
 }
 
-/** Reads the remote head of `branch` without a fetch. */
-export async function readRemoteBranch(repo, branch) {
-  const head = await git(
-    ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`],
-    repo,
-  );
-  return head.exitCode === 0 ? head.stdout : null;
-}
-
 /** True when `ancestor` is reachable from `descendant`. */
-export async function isAncestor(ancestor, descendant, cwd) {
+export async function isAncestor(ancestor, descendant, cwd, { runner = git } = {}) {
   if (!ancestor || !descendant) return false;
-  const result = await git(["merge-base", "--is-ancestor", ancestor, descendant], cwd);
+  const result = await runner(["merge-base", "--is-ancestor", ancestor, descendant], cwd);
   return result.exitCode === 0;
 }
 
 /** The number of commits that `to` holds and `from` lacks. */
-export async function commitsAhead(from, to, cwd) {
-  const result = await git(["rev-list", "--count", `${from}..${to}`], cwd);
-  return result.exitCode === 0 ? Number(result.stdout) : null;
+export async function commitsAhead(from, to, cwd, { runner = git } = {}) {
+  const result = await runner(["rev-list", "--count", `${from}..${to}`], cwd);
+  return result.exitCode === 0 && /^\d+$/.test(result.stdout) ? Number(result.stdout) : null;
 }
-
-export const isInside = (parent, child) => {
-  const rel = relative(parent, child);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-};
 
 /**
  * Removes a linked work tree with `git worktree remove --force`. A directory that Git leaves

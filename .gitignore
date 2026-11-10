@@ -1,6 +1,14 @@
 # Tool-local artifacts
 .vite-hooks/_/
 
+# Agent tool configuration
+.claude/
+.codex/
+.agents/
+.codegraph/
+.mcp.json
+opencode.jsonc
+
 # Local environment and secrets
 .env
 .envrc
@@ -8,6 +16,7 @@
 # Dependency and test output
 node_modules/
 coverage/
+*.tgz
 
 # OS-generated files
 .DS_Store
