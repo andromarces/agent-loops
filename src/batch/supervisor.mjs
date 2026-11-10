@@ -39,6 +39,7 @@ import {
   identityEqual,
   pathIdentity,
   planPrWorkTree,
+  readWorkTreeGitState,
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, readLoopReport } from "./report.mjs";
@@ -47,7 +48,6 @@ import {
   acquireClaim,
   batchPaths,
   createBatchStore,
-  listBatches,
   readClaim,
   readLoop,
   readManifest,
@@ -61,6 +61,11 @@ import {
 // checkpoint and is re-checked on the poll (adr/0110-release-batch-slots-on-owner-decisions.md
 // decision 5).
 const TERMINAL = new Set(["succeeded", "skipped", "failed"]);
+const PR_BRANCH_REFUSALS = new Set([
+  "pr-head-moved",
+  "pr-branch-diverged",
+  "pr-branch-checked-out",
+]);
 const INTERRUPT_WAIT_MS = 30_000;
 /** The wait between two re-checks of a blocked issue (adr/0110-release-batch-slots-on-owner-decisions.md decision 5). */
 export const POLL_INTERVAL_MS = 15_000;
@@ -582,9 +587,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
             number: item.number,
           });
         } catch (err) {
-          if (
-            !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
-          ) {
+          if (!PR_BRANCH_REFUSALS.has(err?.code)) {
             throw err;
           }
           skipped.push(
@@ -749,14 +752,13 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     if ((await canonicalPath(workTree.path)) !== workTree.canonicalPath) {
       return "the recorded work tree identity changed";
     }
+    const reads = await readWorkTreeGitState(workTree.path, { runner: gitRead });
     if (workTree.detached === true) {
-      const head = await gitRead(["rev-parse", "HEAD"], workTree.path);
-      return head.exitCode === 0 && head.stdout === workTree.head
+      return reads.head.exitCode === 0 && reads.head.stdout === workTree.head
         ? null
         : "the recorded head is not checked out";
     }
-    const branch = await gitRead(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
-    return branch.exitCode === 0 && branch.stdout === workTree.branch
+    return reads.branch.exitCode === 0 && reads.branch.stdout === workTree.branch
       ? null
       : "the recorded branch is not checked out";
   };
@@ -1029,9 +1031,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
             number: item.number,
           });
         } catch (err) {
-          if (
-            !["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)
-          ) {
+          if (!PR_BRANCH_REFUSALS.has(err?.code)) {
             throw err;
           }
           await changeLoop(issue, {
@@ -1126,7 +1126,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
                 });
         }
       } catch (err) {
-        if (["pr-head-moved", "pr-branch-diverged", "pr-branch-checked-out"].includes(err?.code)) {
+        if (PR_BRANCH_REFUSALS.has(err?.code)) {
           await changeLoop(issue, {
             status: "skipped",
             skipReason: err.code,
@@ -1929,9 +1929,4 @@ export async function readBatchStatus({ runsRoot, id }) {
     },
     loops,
   };
-}
-
-/** The local batches, newest first, for `batch status` with no id. */
-export async function listBatchStatus({ runsRoot }) {
-  return listBatches(runsRoot);
 }

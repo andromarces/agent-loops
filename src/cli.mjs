@@ -35,6 +35,7 @@ import {
 } from "./lib/continuation.mjs";
 import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
+import { samePath } from "./lib/canonical-path.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
 import { runHarnessCheckCommand } from "./harness-check.mjs";
@@ -175,7 +176,7 @@ function assertTask(task) {
 // Compares the write targets, so a file symlink and its target count as one file (#658).
 async function sameFile(a, b) {
   const [left, right] = await Promise.all([resolveWriteTarget(a), resolveWriteTarget(b)]);
-  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+  return samePath(left, right);
 }
 
 function formatSummary(summary) {

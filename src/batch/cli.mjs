@@ -5,7 +5,7 @@
 import { setLogsToStderr, logError } from "../lib/log.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
-import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree } from "./args.mjs";
+import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree, usage } from "./args.mjs";
 import {
   listAuditStatus,
   newAuditId,
@@ -19,8 +19,8 @@ import {
 } from "./audit.mjs";
 import { runGh } from "../lib/gh-api.mjs";
 import { answerDecision } from "./decisions.mjs";
-import { listBatchStatus, newBatchId, readBatchStatus, runBatch } from "./supervisor.mjs";
-import { readManifest } from "./store.mjs";
+import { newBatchId, readBatchStatus, runBatch } from "./supervisor.mjs";
+import { listBatches, readManifest } from "./store.mjs";
 
 const BATCH_USAGE = `
 Usage:
@@ -119,12 +119,12 @@ function readIdFlag(argv, name) {
     const flag = eq === -1 ? raw : raw.slice(0, eq);
     if (flag === name) {
       const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
-      if (!value) throw Object.assign(new Error(`Missing value for ${name}.`), { usage: true });
+      if (!value) throw usage(`Missing value for ${name}.`);
       id = value;
       continue;
     }
     if (flag === "--help" || flag === "-h") return { help: true, id };
-    throw Object.assign(new Error(`Unknown argument: ${raw}`), { usage: true });
+    throw usage(`Unknown argument: ${raw}`);
   }
   return { help: false, id };
 }
@@ -141,10 +141,10 @@ function readAnswerArgs(argv) {
     }
     const key = { "--batch": "batch", "--decision": "decision", "--option": "option" }[flag];
     if (key === undefined) {
-      throw Object.assign(new Error(`Unknown argument: ${raw}`), { usage: true });
+      throw usage(`Unknown argument: ${raw}`);
     }
     const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
-    if (!value) throw Object.assign(new Error(`Missing value for ${flag}.`), { usage: true });
+    if (!value) throw usage(`Missing value for ${flag}.`);
     values[key] = value;
   }
   return values;
@@ -253,11 +253,11 @@ async function runAuditMain(argv, runsRoot) {
       return 0;
     }
     if (id === null) {
-      throw Object.assign(new Error("Missing required --audit."), { usage: true });
+      throw usage("Missing required --audit.");
     }
     const state = await readAudit(runsRoot, id);
     if (state === null) {
-      throw Object.assign(new Error(`No audit ${id}.`), { usage: true });
+      throw usage(`No audit ${id}.`);
     }
     await refuseRunsRootInGitWorkTree(runsRoot);
     return runAuditCommand({ prepared: preparedFromAudit(state, command), runsRoot });
@@ -269,18 +269,18 @@ async function runAuditMain(argv, runsRoot) {
       return 0;
     }
     if (id === null) {
-      throw Object.assign(new Error("Missing required --audit."), { usage: true });
+      throw usage("Missing required --audit.");
     }
     const state = await readAudit(runsRoot, id);
     if (state === null) {
-      throw Object.assign(new Error(`No audit ${id}.`), { usage: true });
+      throw usage(`No audit ${id}.`);
     }
     await refuseRunsRootInGitWorkTree(runsRoot);
     const { exitCode, summary } = await removeAudit({ runsRoot, id });
     console.log(JSON.stringify(summary, null, 2));
     return exitCode;
   }
-  throw Object.assign(new Error(`Unknown audit command: ${command}`), { usage: true });
+  throw usage(`Unknown audit command: ${command}`);
 }
 
 /**
@@ -327,7 +327,7 @@ export async function runBatchMain(argv) {
         return 0;
       }
       if (id === null) {
-        console.log(JSON.stringify(await listBatchStatus({ runsRoot }), null, 2));
+        console.log(JSON.stringify(await listBatches(runsRoot), null, 2));
         return 0;
       }
       console.log(JSON.stringify(await readBatchStatus({ runsRoot, id }), null, 2));
@@ -339,15 +339,12 @@ export async function runBatchMain(argv) {
         console.log(BATCH_USAGE);
         return 0;
       }
-      if (values.batch === null)
-        throw Object.assign(new Error("Missing required --batch."), {
-          usage: true,
-        });
+      if (values.batch === null) throw usage("Missing required --batch.");
       if (values.decision === null) {
-        throw Object.assign(new Error("Missing required --decision."), { usage: true });
+        throw usage("Missing required --decision.");
       }
       if (values.option === null) {
-        throw Object.assign(new Error("Missing required --option."), { usage: true });
+        throw usage("Missing required --option.");
       }
       const result = await answerDecision({
         runsRoot,
@@ -380,11 +377,11 @@ export async function runBatchMain(argv) {
         return 0;
       }
       if (id === null) {
-        throw Object.assign(new Error("Missing required --batch."), { usage: true });
+        throw usage("Missing required --batch.");
       }
       const manifest = await readManifest(runsRoot, id);
       if (manifest === null) {
-        throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
+        throw usage(`No batch ${id}.`);
       }
       const prepared = await preparedForResume(manifest);
       prepared.resume = true;
@@ -393,7 +390,7 @@ export async function runBatchMain(argv) {
       console.log(JSON.stringify(summary, null, 2));
       return exitCode;
     }
-    throw Object.assign(new Error(`Unknown batch command: ${command}`), { usage: true });
+    throw usage(`Unknown batch command: ${command}`);
   } catch (err) {
     if (err?.usage) {
       logError(err.message);

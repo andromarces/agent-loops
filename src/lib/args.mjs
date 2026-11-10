@@ -340,16 +340,19 @@ export function initRefusal(
 export const STOP_FLAG_WALK = Symbol("stop flag walk");
 
 /**
- * Walks `argv[start..]` and hands each flag to `onFlag(arg, readInline, inline)`, which returns true
- * when it consumed `arg`, `STOP_FLAG_WALK` to consume it and end the walk, or false for an unknown
- * flag. `readInline(flag, allowDash)` reads the value of the flag, inline or from the next argument.
+ * Walks `argv[start..]` and hands each flag to `onFlag(arg, readInline, inline)`.
+ * The handler returns true when it consumed `arg`, `STOP_FLAG_WALK` to consume it and end the walk,
+ * or false for an unknown flag.
+ * `readInline(flag, allowDash)` reads the value of the flag, inline or from the next argument.
  * A flag whose handler read no value is boolean, so an inline value on it is an error rather than a
  * silently dropped argument.
+ * `error` builds each refusal, so a parser keeps its own error type.
  * @param {string[]} argv
  * @param {number} start index of the first flag
  * @param {(arg: string, readInline: (flag: string, allowDash?: boolean) => string, inline: object | null) => boolean | symbol} onFlag
+ * @param {{ error?: (message: string) => Error }} [options]
  */
-export function walkFlags(argv, start, onFlag) {
+export function walkFlags(argv, start, onFlag, { error = (message) => new Error(message) } = {}) {
   for (let i = start; i < argv.length; i++) {
     const raw = argv[i];
     const inline = splitInlineFlag(raw);
@@ -365,10 +368,10 @@ export function walkFlags(argv, start, onFlag) {
 
     const consumed = onFlag(arg, readInline, inline);
     if (!consumed) {
-      throw new Error(`Unknown argument: ${raw}`);
+      throw error(`Unknown argument: ${raw}`);
     }
     if (inline && !inlineUsed) {
-      throw new Error(`${arg} does not take a value.`);
+      throw error(`${arg} does not take a value.`);
     }
     if (consumed === STOP_FLAG_WALK) {
       return;
