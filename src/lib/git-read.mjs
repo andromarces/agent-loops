@@ -27,7 +27,7 @@ export class SnapshotError extends Error {
  */
 export const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
 
-// The identity reads of one command, keyed by read kind and the exact `cwd` string.
+// The settled identity reads of one command, keyed by read kind and the exact `cwd` string.
 const identityReads = new AsyncLocalStorage();
 
 /**
@@ -38,45 +38,45 @@ export function withGitIdentityReads(fn) {
   return identityReads.run(new Map(), fn);
 }
 
-/** True when the current command already resolved the top level of the exact `cwd` string. */
-export function hasTopLevel(cwd) {
-  return identityReads.getStore()?.has(`top\0${cwd}`) === true;
+/** Clears the identity reads of the current command, so the reads after a turn start fresh. */
+export function clearGitIdentityReads() {
+  identityReads.getStore()?.clear();
 }
 
-async function identityRead(kind, cwd, read, args, options) {
-  const fresh = async () => {
-    const result = await read(cwd, args, options);
-    return { ...result, stdout: stripLf(result.stdout) };
-  };
+async function identityRead(kind, cwd, read, args, options, { fresh = false } = {}) {
   const store = identityReads.getStore();
-  if (store === undefined) return fresh();
   const key = `${kind}\0${cwd}`;
-  try {
-    let pending = store.get(key);
-    if (pending === undefined) {
-      pending = fresh();
-      store.set(key, pending);
-    }
-    const result = await pending;
-    // A failed read is data for the caller, never a memoized answer.
-    if (result.exitCode !== 0) store.delete(key);
-    return result;
-  } catch (err) {
-    store.delete(key);
-    throw err;
+  if (store !== undefined && !fresh) {
+    const stored = store.get(key);
+    if (stored !== undefined) return stored;
   }
+  const result = await read(cwd, args, options);
+  const settled = { ...result, stdout: stripLf(result.stdout) };
+  // Only a settled success is reused. Each caller keeps its own signal, timeout, and error class.
+  if (store !== undefined) {
+    if (settled.exitCode === 0) {
+      store.set(key, settled);
+    } else {
+      store.delete(key);
+    }
+  }
+  return settled;
 }
 
 /**
  * Reads the work tree top level of `cwd` and removes the one line feed that Git prints. A path that
  * ends in a carriage return or a space stays whole. Returns the read result. `read` is the
- * `gitRead`-shaped function to call.
+ * `gitRead`-shaped function to call. `fresh` reads again, so a root that changed during a turn is seen.
  */
-export async function readTopLevel(cwd, { read = gitRead, ...options } = {}) {
-  return identityRead("top", cwd, read, ["rev-parse", "--show-toplevel"], {
-    ...options,
-    stripFinalNewline: false,
-  });
+export async function readTopLevel(cwd, { read = gitRead, fresh = false, ...options } = {}) {
+  return identityRead(
+    "top",
+    cwd,
+    read,
+    ["rev-parse", "--show-toplevel"],
+    { ...options, stripFinalNewline: false },
+    { fresh },
+  );
 }
 
 /**

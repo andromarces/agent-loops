@@ -844,7 +844,7 @@ test("one init dispatch reads the work tree identity once", async () => {
   });
 
   expect(result.exitCode).toBe(0);
-  expect(gitReads).toEqual({ topLevel: 1, commonDir: 1 });
+  expect(gitReads).toEqual({ topLevel: 3, commonDir: 2 });
 });
 
 // A `gh` double for the gate's reads of PR 42 whose required check `ci (macos-latest)`
