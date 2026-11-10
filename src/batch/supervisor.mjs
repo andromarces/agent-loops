@@ -412,7 +412,20 @@ export function taskTextFor({ item, loop, prepared, title, branch }) {
  * Starts or resumes one batch. Returns `{ exitCode, summary }`. Every state write is a checkpoint
  * event; a quiet interval writes nothing.
  */
-export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
+export async function runBatch(options) {
+  const cleanup = { current: () => {} };
+  try {
+    return await runBatchWithListeners(options, cleanup);
+  } finally {
+    cleanup.current();
+  }
+}
+
+/**
+ * The run itself. `cleanup.current` holds the listener removal once the run installs its
+ * listeners, so the caller removes them on every return and every throw.
+ */
+async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, cleanup) {
   const paths = batchPaths(runsRoot);
   const id = prepared.id;
   let manifest;
@@ -473,6 +486,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     if (installSignal) process.removeListener("SIGINT", onSigInt);
     if (deps.signal) deps.signal.removeEventListener("abort", onExternalAbort);
   };
+  cleanup.current = stopListening;
   if (installSignal) process.on("SIGINT", onSigInt);
   if (deps.signal) {
     if (deps.signal.aborted) interrupt(deps.signal.reason);
@@ -536,10 +550,7 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
 
   if (prepared.resume) {
     manifest = await readManifest(runsRoot, id);
-    if (manifest === null) {
-      stopListening();
-      throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
-    }
+    if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
     start = false;
     const itemsByKey = new Map((manifest.items ?? []).map((item) => [item.key, item]));
     for (const issue of manifest.issues) {
@@ -554,7 +565,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
       return !terminal(loop.status) || (loop.status === "succeeded" && loop.cleanup === null);
     });
     if (!pending) {
-      stopListening();
       return finalizeBatch();
     }
     const actionable = [];
@@ -595,7 +605,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
             }))
           ).manifest;
         }
-        stopListening();
         return finalizeBatch();
       }
     }
@@ -656,7 +665,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if (interrupted) {
       progress(`batch ${id}: interrupted before any state write`);
-      stopListening();
       return {
         exitCode: 130,
         summary: {
@@ -668,7 +676,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
     }
     if (items.length === 0) {
       progress(`batch ${id}: every item was refused before any state write`);
-      stopListening();
       return {
         exitCode: 0,
         summary: {
@@ -1836,7 +1843,6 @@ export async function runBatch({ prepared, runsRoot, gh, deps = {} }) {
   // A resume runs its recovered loops one at a time; this drains any that the pass left live.
   while (active.size > 0 && !hard) await Promise.race(active.values());
 
-  stopListening();
   return finalizeBatch();
 }
 

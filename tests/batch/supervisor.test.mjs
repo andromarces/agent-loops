@@ -431,6 +431,55 @@ describe("bounded batch reads", () => {
     expect(process.listenerCount("SIGINT")).toBe(before);
     expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
   });
+
+  // Usefulness: a fetch failure removes the SIGINT and abort listeners before it rejects.
+  test("a preflight throw removes its listeners", async () => {
+    const signal = new AbortController().signal;
+    const before = process.listenerCount("SIGINT");
+    const head = "a".repeat(40);
+    const item = {
+      kind: "pr",
+      number: 7,
+      key: "pr-7",
+      mode: "review-first",
+      task: null,
+      head,
+      headRefName: "pr-7",
+      foreign: false,
+    };
+    const gh = async (args) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: "OPEN",
+            headRefOid: head,
+            headRefName: "pr-7",
+            isCrossRepository: false,
+          }),
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    await expect(
+      runBatch({
+        prepared,
+        runsRoot: runsRootFor("fetch-throw"),
+        gh,
+        deps: {
+          notifier: noNotify,
+          signal,
+          freezeItems: async () => [item],
+          planPrWorkTree: async () => {
+            throw new Error("the git fetch failed");
+          },
+        },
+      }),
+    ).rejects.toThrow("the git fetch failed");
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+  });
 });
 
 // Usefulness: three issues get three work trees, three branches, and one child each.
