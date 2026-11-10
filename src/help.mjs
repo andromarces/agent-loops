@@ -58,15 +58,15 @@ Subcommands:
                                 Accepts -y, --dry-run, and --verbose.
   agent-loop test-slot          Run one command while fewer than N machine-wide test
                                 slots are held by live owners. One quoted argument runs
-                                through the platform shell, and an argument vector
-                                (-- <executable> [<arg>...]) runs without one. --slots
-                                <n> (env AGENT_LOOP_TEST_SLOTS, default 1) and --wait
-                                <seconds> (env AGENT_LOOP_TEST_SLOT_WAIT, default 1800),
-                                where a flag wins over its env. --if-held runs the
-                                command directly while no slot is held. It exits with
-                                the command's code, 75 on a wait timeout, 64 on a usage
-                                error, or 130 or 143 on a signal. See agent-loop
-                                test-slot --help.
+                                through the platform shell, and two or more arguments
+                                after -- (-- <executable> <arg> [<arg>...]) run without
+                                a shell. --slots <n> (env AGENT_LOOP_TEST_SLOTS, default
+                                1) and --wait <seconds> (env AGENT_LOOP_TEST_SLOT_WAIT,
+                                default 1800), where a flag wins over its env. --if-held
+                                runs the command directly while no slot is held. It
+                                exits with the command's code, 75 on a wait timeout, 64
+                                on a usage error, or 130 or 143 on a signal. See
+                                agent-loop test-slot --help.
   agent-loop batch start        Run one foreground batch: one headless loop per selected
                                 item, each in its own work tree, at most --loops at once.
                                 Requires --repo <main work tree> and exactly one selection:

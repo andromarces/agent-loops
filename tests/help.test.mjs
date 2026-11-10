@@ -131,6 +131,6 @@ test("help names the supported install, uninstall, test-slot, and role flags", (
     help.indexOf("agent-loop test-slot"),
   );
   expect(installBlock.match(/-y, --dry-run, and --verbose/g)).toHaveLength(2);
-  expect(help).toContain("-- <executable> [<arg>...]");
+  expect(help).toContain("-- <executable> <arg> [<arg>...]");
   expect(sectionFlags(help, "Role flags")).toContain("--verbose");
 });

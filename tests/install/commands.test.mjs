@@ -145,6 +145,14 @@ test("CLI install and uninstall --verbose log the lock, target writes, and manif
     expect(removed).toContain("debug: delete settings target");
     expect(removed).toContain("debug: delete file target");
     expect(removed).toContain("debug: remove install manifest");
+
+    lines.length = 0;
+    process.exitCode = 0;
+    await cliMain(["uninstall", "--harness", "claude", "--yes", "--verbose"]);
+    expect(process.exitCode).toBe(0);
+    const absent = lines.join("\n");
+    expect(absent).toContain("debug: taking the install manifest lock");
+    expect(absent).not.toContain("debug: remove install manifest");
   } finally {
     console.log = originalLog;
     console.error = originalError;

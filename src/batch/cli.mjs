@@ -239,11 +239,11 @@ async function runAuditMain(argv, runsRoot) {
     return 0;
   }
   if (command === "start") {
-    if (argv.slice(1).includes("--help") || argv.slice(1).includes("-h")) {
+    const options = parseAuditArgs(argv.slice(1));
+    if (options.help) {
       console.log(AUDIT_USAGE);
       return 0;
     }
-    const options = parseAuditArgs(argv.slice(1));
     const id = newAuditId();
     const prepared = await prepareAudit({ ...options, id });
     prepared.mode = "start";
@@ -305,11 +305,11 @@ export async function runBatchMain(argv) {
       return await runAuditMain(argv.slice(1), runsRoot);
     }
     if (command === "start") {
-      if (argv.slice(1).includes("--help") || argv.slice(1).includes("-h")) {
+      const options = parseBatchArgs(argv.slice(1));
+      if (options.help) {
         console.log(BATCH_USAGE);
         return 0;
       }
-      const options = parseBatchArgs(argv.slice(1));
       if (options.fromAudit !== null) {
         options.issues = await readFrozenIssueSet({
           runsRoot,

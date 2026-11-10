@@ -114,6 +114,9 @@ export function parseAuditArgs(argv) {
     const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
     const flag = eq === -1 ? raw : raw.slice(0, eq);
     const inline = eq === -1 ? null : raw.slice(eq + 1);
+    if (flag === "--help" || flag === "-h") {
+      return { help: true };
+    }
     const read = (name) => {
       if (inline !== null) {
         if (inline === "") throw usage(`Missing value for ${name}.`);
