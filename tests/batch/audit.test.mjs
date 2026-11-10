@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { execa } from "execa";
@@ -807,47 +816,53 @@ test("approve consolidates only the successful audits and records the failure", 
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(1);
 });
 
-// Usefulness: a repeated approval stores no new state, so a second approve keeps the first
-// approvedAt value.
-test("a repeated approval keeps the stored approval time", async () => {
+// Usefulness: a repeated approval stores nothing, so the second approve leaves the audit file bytes and mtime unchanged.
+test("a repeated approval writes nothing to the audit file", async () => {
   const prepared = await preparedAudit();
   const runsRoot = join(prepared.workTreeRoot, "runs");
   await pausedAudit(prepared, {
     reviewerTwo: new Error("failed"),
-    consolidation: { status: "pending", error: null, findings: [] },
+    settings: {
+      reviewers: prepared.reviewers,
+      worker: prepared.worker,
+      timeout: null,
+      reviewerSandbox: null,
+      setupCmd: "failing setup",
+      setupTimeout: 600,
+    },
   });
   const gh = fakeGh();
+  const failingSetup = async () => ({ exitCode: 1, isCanceled: false });
+  const file = auditPaths(runsRoot).file(prepared.id);
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const first = fakeTurns({ consolidations: [new Error("no model")] });
-    const approved = await runAudit({
+    const first = await runAudit({
       prepared: { ...prepared, mode: "approve" },
       runsRoot,
       gh: gh.gh,
-      deps: { ...depsWith(prepared.workTree), runTurn: first.runTurn },
+      deps: { ...depsWith(prepared.workTree), execBounded: failingSetup },
     });
-    expect(approved.exitCode).toBe(1);
-    expect((await readAudit(runsRoot, prepared.id)).approvedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(first.exitCode).toBe(1);
+    expect(first.summary.pauseReason).toBe("setup-failed");
+    expect(first.summary.approvedPartial).toBe(true);
+    const before = await readFile(file, "utf8");
+    const old = 1_700_000_000;
+    await utimes(file, old, old);
+    const pinned = (await stat(file)).mtimeMs;
 
     vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
-    const second = fakeTurns({
-      consolidations: [
-        fenced({ findings: [{ title: "Kept", body: "Body", evidence: "", existingIssue: null }] }),
-      ],
-    });
-    const again = await runAudit({
+    const second = await runAudit({
       prepared: { ...prepared, mode: "approve" },
       runsRoot,
       gh: gh.gh,
-      deps: { ...depsWith(prepared.workTree), runTurn: second.runTurn },
+      deps: { ...depsWith(prepared.workTree), execBounded: failingSetup },
     });
 
-    expect(again.exitCode).toBe(0);
-    expect(again.summary.approvedPartial).toBe(true);
-    expect(second.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(0);
-    expect(second.calls.filter((call) => call.roleName === "worker")).toHaveLength(1);
-    expect((await readAudit(runsRoot, prepared.id)).approvedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(second.exitCode).toBe(1);
+    expect(second.summary.pauseReason).toBe("setup-failed");
+    expect(await readFile(file, "utf8")).toBe(before);
+    expect((await stat(file)).mtimeMs).toBe(pinned);
   } finally {
     vi.useRealTimers();
   }
