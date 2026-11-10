@@ -832,7 +832,7 @@ test("resume-interrupted exits 130 when the process-table read is canceled", asy
 });
 
 // Usefulness: counts one init dispatch's identity reads, so a repeated top-level or common-directory read fails.
-test("one init dispatch reads the work tree identity once", async () => {
+test("one init dispatch holds the work tree identity read counts", async () => {
   const repo = await newRunRepo();
   const worker = recordingAdapter([]);
   gitReads.topLevel = 0;
