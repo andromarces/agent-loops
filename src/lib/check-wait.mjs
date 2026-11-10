@@ -599,7 +599,7 @@ function timeoutOf(context) {
 
 /**
  * The one place that adds `childExitUnconfirmed`.
- * Every envelope the wait returns passes through it, settled or timed out, and the catch below carries the flag on an error.
+ * Every envelope the wait returns passes through it, settled or timed out, and the catch above carries the flag on an error.
  */
 function seal(context, envelope) {
   return context.unconfirmed ? { ...envelope, childExitUnconfirmed: true } : envelope;

@@ -10,7 +10,7 @@ const DISPATCH_ACTIONS = new Set(["run_worker", "run_reviewer"]);
  * with no later result adds one, because the runtime charges a step before the child starts. The
  * checkpoint count is a cross-check, and the larger value wins.
  * @param {string} text the transcript JSON
- * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
+ * @returns {{ ok: true, steps: number, segments: number } | { ok: false, reason: string }}
  */
 export function countSteps(text, { checkpointSteps = 0 } = {}) {
   let data;

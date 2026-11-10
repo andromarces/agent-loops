@@ -51,9 +51,6 @@ async function readRootNames(dir) {
   }
 }
 
-// Reads `os.tmpdir()` of this process, which is the inherited temporary directory of a turn. The
-// `AGENT_LOOP_INHERITED_TMPDIR` list is read in `inherited-tmpdir.mjs`.
-
 /**
  * Reads the entry names directly in the inherited temporary directory and in each literal root of
  * `literalRoots`, or null, after a warning, when the inherited directory cannot be read. A literal
@@ -62,7 +59,9 @@ async function readRootNames(dir) {
  * read, so a write directly in it is still seen (issue #1713). A failed literal read adds no entry
  * for that root. `includeInherited` is false for a worker turn, which reports only the literal roots;
  * the snapshot then holds no inherited names, and a root equal to the inherited directory is read as
- * a literal root because the two writes cannot be told apart.
+ * a literal root because the two writes cannot be told apart. The inherited temporary directory is
+ * `os.tmpdir()` of this process, and `inherited-tmpdir.mjs` reads the `AGENT_LOOP_INHERITED_TMPDIR`
+ * list.
  * @param {{ literalRoots?: string[], includeInherited?: boolean }} [options]
  * @returns {Promise<TmpdirSnapshot | null>}
  */
