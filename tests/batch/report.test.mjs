@@ -363,6 +363,28 @@ test("a failed-turn test list keeps a non-negative overflow from a bad source co
   expect(report.failedTurnTest.changedPathsOverflow).toBe(2);
 });
 
+// Usefulness: a capped late-change list uses its source total to name the dropped entries.
+test("a failed-turn test late-change list uses the source total", () => {
+  const lateChangedPaths = Array.from({ length: 20 }, (_, index) => `late ${index}`);
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "test-run",
+          fatal: true,
+          testRun: { lateChangedPaths, lateChangedCount: 25 },
+        },
+        { type: "gate" },
+      ],
+      exitCode: 1,
+      error: "the turn failed",
+    },
+    { attempts: 1 },
+  );
+  expect(report.failedTurnTest.lateChangedPaths).toHaveLength(20);
+  expect(report.failedTurnTest.lateChangedPathsOverflow).toBe(5);
+});
+
 // Usefulness: a capped reviewer list names its dropped count, so a reader does not take it as full.
 test("a reviewer findings list of 21 or more keeps 20 entries and counts the rest", () => {
   const findings = Array.from({ length: 25 }, (_, index) => `finding ${index}`);

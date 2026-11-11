@@ -34,16 +34,24 @@ const notRun = new WeakSet();
 
 /**
  * Reports the paths that differ between the after-command snapshot and the reviewer baseline as
- * `testRun.lateChangedPaths`, at most 20 and redacted like `changedPaths`: a write by a process
- * that the command left behind, made between the two snapshots, which the baseline absorbs. The
- * field is `null` when a second cancel ended the after-command snapshot. A turn that takes no
- * baseline, for example a cancel before it, never calls this, and a command that never ran
- * reports none, so the field is absent. The report is advisory and never fails the turn.
+ * `testRun.lateChangedPaths`, at most 20 and redacted like `changedPaths`. It names a write by a
+ * process that the command left behind, made between the two snapshots, which the baseline
+ * absorbs. `lateChangedCount` names the total before the cap, or null when the path list is null.
+ * The field is `null` when a second cancel ended the after-command snapshot. A turn that takes no
+ * baseline never calls this, for example a cancel before it. A command that never ran reports none,
+ * so the field is absent, and the report is advisory and never fails the turn.
  */
 export function reportLateChangedPaths(testRun, baseline) {
   if (notRun.has(testRun)) return;
   const final = finalSnapshots.get(testRun);
-  testRun.lateChangedPaths = final ? boundedPaths(diffSnapshots(final, baseline)) : null;
+  if (!final) {
+    testRun.lateChangedPaths = null;
+    testRun.lateChangedCount = null;
+    return;
+  }
+  const changed = diffSnapshots(final, baseline);
+  testRun.lateChangedPaths = boundedPaths(changed);
+  testRun.lateChangedCount = changed.length;
 }
 // The error that a canceled run throws, which carries the advisory `canceled` result.
 function canceledError(testRun) {

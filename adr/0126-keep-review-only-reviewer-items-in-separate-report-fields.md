@@ -23,11 +23,12 @@ A `review-only` loop report merged the reviewer findings, blockers, notes, and d
 1. A `review-only` report keeps the reviewer verdict in `verdict`. The four reviewer item lists stay in `reviewerFindings`, `reviewerBlockers`, `reviewerNotes`, and `reviewerDeferred`.
 2. These names differ from every finish `summary` key: `changed`, `verified`, `deferred`, `notDone`, `open`, and `notes`.
 3. A reviewer value that is absent, blank, or `none` stays null.
-4. In `redactValue`, a capped array keeps its first 20 entries and reports its dropped count. A source total, such as `changedCount` beside `changedPaths`, replaces the local cap count. A missing or invalid total falls back to the local cap count. The count is never negative.
-5. A count sits beside its array as `<field>Overflow`, such as `reviewerFindingsOverflow`. An array of 20 entries or fewer reports `0`.
+4. In `redactValue`, a capped array keeps its first 20 entries and reports its dropped count.
+5. A count sits beside its array as `<field>Overflow`, such as `reviewerFindingsOverflow`. Overflow is the source total minus the kept entries when the source carries a total. Otherwise it is the count that the local cap dropped. The count is never negative.
 6. A nested array inside `failedTurnTest` gets the same count beside it, such as `commandOverflow`.
 7. `warnings` keeps its `warningsOverflow` field.
 8. Every copied value goes through `redactAndClean` or `redactValue` at the reporting boundary.
+9. The test-run producer records `lateChangedCount` before the 20-path cap, or null with a null `lateChangedPaths`.
 
 ## Consequences
 

@@ -198,7 +198,8 @@ test("a command that changes the work tree is reported and is not a mutation", a
 // The returned `armed` log spy raises the signal when the command snapshot is done and blocks until
 // the file exists, so the write lands after that snapshot and before the reviewer baseline on
 // every run. `end` stops the child by its own pid, which it wrote to a file.
-async function leftoverWriter(lateFile) {
+async function leftoverWriter(lateFiles) {
+  const files = Array.isArray(lateFiles) ? lateFiles : [lateFiles];
   const dir = await mkdtemp(join(tmpdir(), "late-write-"));
   const go = join(dir, "go");
   const pidFile = join(dir, "child.pid");
@@ -212,7 +213,7 @@ async function leftoverWriter(lateFile) {
 setTimeout(() => process.exit(0), 20000);
 setInterval(() => {
   if (fs.existsSync(${JSON.stringify(go)})) {
-    fs.writeFileSync(${JSON.stringify(lateFile)}, "x");
+    for (const file of ${JSON.stringify(files)}) fs.writeFileSync(file, "x");
     process.exit(0);
   }
 }, 5);`,
@@ -235,7 +236,8 @@ child.unref();`,
     realLog(...args);
     if (!String(args[0]).includes("test command finished")) return;
     writeFileSync(go, "");
-    for (let i = 0; i < 1000 && !existsSync(join(workTree, lateFile)); i++) sleep(10);
+    const allWritten = () => files.every((file) => existsSync(join(workTree, file)));
+    for (let i = 0; i < 1000 && !allWritten(); i++) sleep(10);
   });
   return {
     testCmd: `node "${spawnerFile}"`,
@@ -281,6 +283,22 @@ test("a write by a leftover command process is reported as late and does not hal
     expect(rev.recorded[0].prompt).toContain(
       'The work tree changed after the command finished and before this turn started: "late.txt".',
     );
+  } finally {
+    await writer.end();
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the total before the 20-path cap reaches the result, so a partial late list is visible.
+test("a late write list keeps 20 paths and reports the source total", async () => {
+  const repo = await createTempRepo();
+  const lateFiles = Array.from({ length: 25 }, (_, index) => `late-${index}.txt`);
+  const writer = await leftoverWriter(lateFiles);
+  writer.arm(repo);
+  try {
+    const { reviewed } = await reviewOnce(repo, { testCmd: writer.testCmd });
+    expect(reviewed.testRun.lateChangedPaths).toHaveLength(20);
+    expect(reviewed.testRun.lateChangedCount).toBe(25);
   } finally {
     await writer.end();
     await removePath(repo);

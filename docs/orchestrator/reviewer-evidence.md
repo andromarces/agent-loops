@@ -137,11 +137,13 @@ the flag is unchanged.
     `MutationError`. The reviewer prompt shows it. It is advisory. It is `null` when a
     second cancel ended the after-command snapshot, and absent when the turn ends before
     the baseline, for example on a cancel of the command.
+  - `lateChangedCount` names the total before the 20-path cap, or null when `lateChangedPaths` is null.
 - The result is advisory evidence with `advisory: true`. It is `testRun` in the
   prompt, in the dispatch envelope, and in `lastResult` in the state file. Its fields are `command`,
   `status`, `exitCode`, `timedOut`, `durationMs`, `summary`, `outputBytes`,
   `truncated`, `tail`, `workTreeChanged`, `changedPaths`, `changedCount`, and
-  `advisory`, plus `lateChangedPaths` once the reviewer baseline is taken. `status`
+  `advisory`. Once the reviewer baseline is taken, it also holds `lateChangedPaths` and
+  `lateChangedCount`. `status`
   is `pass`, `fail`, `timed-out`, `slot-timeout`, `error`, or `canceled`, and
   `exitCode` is `null` for `timed-out`, `slot-timeout`, and `error`.
   - A reviewer turn that ends

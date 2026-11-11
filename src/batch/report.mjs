@@ -52,7 +52,7 @@ function unreadReport(reason) {
 // A copied array keeps its first 20 entries. A count beside it names the rest.
 const MAX_LIST_ITEMS = 20;
 // A source list can name its own total under a different key.
-const LIST_TOTAL_KEYS = { changedPaths: "changedCount" };
+const LIST_TOTAL_KEYS = { changedPaths: "changedCount", lateChangedPaths: "lateChangedCount" };
 
 /**
  * Returns the dropped count of one array. A valid source total wins over the local cap count.
