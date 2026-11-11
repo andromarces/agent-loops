@@ -7,7 +7,7 @@ import {
   PENDING_ITEM,
   PASSED_ITEM,
   FAILED_ITEM,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 // Usefulness: verifies the timeout outcome: a check still pending when the bound
 // elapses returns `timedOut` with the last check states, so a parent learns that

@@ -1,6 +1,6 @@
 import { test } from "vite-plus/test";
 import { expectNoReplyToMalformedCalls } from "../../gh-doubles.mjs";
-import { fakeGh, routes } from "../ci-gate-helpers.mjs";
+import { fakeGh, routes } from "./ci-gate-helpers.mjs";
 
 // Usefulness: verifies the double routes on the argument elements, so a call
 // that merges the arguments into one element gets no reply and its error prints

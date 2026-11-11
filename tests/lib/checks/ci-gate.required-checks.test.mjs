@@ -22,7 +22,7 @@ import {
   run,
   stallingGh,
   withStatusPages,
-} from "../ci-gate-helpers.mjs";
+} from "./ci-gate-helpers.mjs";
 
 // A status-read stub over the gate's own fixtures: the read resolves the PR head,
 // the required contexts, and the check runs and statuses of the reviewed commit.

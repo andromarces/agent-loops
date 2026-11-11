@@ -2,7 +2,7 @@
 // deadline and canceled by the caller signal, so an aborted caller starts no read and a hung `gh` cannot stall them.
 import { expect, it, vi } from "vite-plus/test";
 import { checkCi, checkPrHead, readRequiredChecks } from "../../../src/lib/checks/ci-gate.mjs";
-import { fakeGh, HEAD, hungGh, MERGE, prInfo, REVIEWED, routes, run } from "../ci-gate-helpers.mjs";
+import { fakeGh, HEAD, hungGh, MERGE, prInfo, REVIEWED, routes, run } from "./ci-gate-helpers.mjs";
 
 const aborted = () => {
   const controller = new AbortController();

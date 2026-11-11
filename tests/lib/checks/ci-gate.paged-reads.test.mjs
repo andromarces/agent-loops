@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { checkRuns, commitStatuses } from "../../../src/lib/checks/commit-entries.mjs";
 import { ABSENT, UNKNOWN, requiredContexts } from "../../../src/lib/checks/ci-required-sources.mjs";
 import { failureOf, readOne } from "../../../src/lib/checks/gh-api.mjs";
-import { SLUG } from "../ci-gate-helpers.mjs";
+import { SLUG } from "./ci-gate-helpers.mjs";
 
 const SHA = "1111111111111111111111111111111111111111";
 const LINK = 'Link: <https://other.example/repos/x/y/check-runs?page=2>; rel="next"\r\n';

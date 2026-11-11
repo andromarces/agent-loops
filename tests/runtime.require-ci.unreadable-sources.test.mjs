@@ -17,7 +17,7 @@ import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { CLEAN_REPO_HEAD, cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
-import { hungGh } from "./lib/ci-gate-helpers.mjs";
+import { hungGh } from "./lib/checks/ci-gate-helpers.mjs";
 import { freePlanGh, prGateGh, unreachableGh } from "./gh-doubles.mjs";
 import { gateRoles, REVIEW_ACCEPT, SUMMARY } from "./run-fixtures.mjs";
 

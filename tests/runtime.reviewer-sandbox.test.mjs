@@ -28,7 +28,7 @@ import { SUMMARY } from "./run-fixtures.mjs";
 // `turn-tmpdir-remove.mjs` child starts per turn.
 vi.mock("../src/lib/exec.mjs", async (importOriginal) => {
   const actual = await importOriginal();
-  const { turnTmpdirRemovalDouble } = await import("./turn-tmpdir-removal.mjs");
+  const { turnTmpdirRemovalDouble } = await import("./turn-tmpdir-removal-helpers.mjs");
   return {
     ...actual,
     exec: vi.fn(),
