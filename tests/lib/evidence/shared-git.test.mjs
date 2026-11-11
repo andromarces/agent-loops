@@ -13,6 +13,12 @@ const fsFailure = vi.hoisted(() => ({
   stallReaddir: false,
   lstatDelayMs: 0,
   delayedLstat: Promise.resolve(),
+  openDelayMs: 0,
+  statDelayMs: 0,
+  delayedOpen: Promise.resolve(),
+  delayedStat: Promise.resolve(),
+  onStat: null,
+  handleCloses: 0,
   requests: [],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -46,7 +52,33 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       fsFailure.operation === "readlink"
         ? { isSymbolicLink: () => true }
         : failing("lstat")(...args),
-    open: failing("open"),
+    open: async (...args) => {
+      const request = failing("open")(...args);
+      if (!String(args[0]).includes("hook-")) return request;
+      if (fsFailure.openDelayMs > 0) {
+        fsFailure.delayedOpen = new Promise((resolve) =>
+          setTimeout(resolve, fsFailure.openDelayMs),
+        );
+        await fsFailure.delayedOpen;
+      }
+      const handle = await request;
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        fsFailure.handleCloses += 1;
+        return close();
+      };
+      if (fsFailure.statDelayMs > 0) {
+        const stat = handle.stat.bind(handle);
+        handle.stat = () => {
+          fsFailure.onStat?.();
+          fsFailure.delayedStat = new Promise((resolve) =>
+            setTimeout(resolve, fsFailure.statDelayMs),
+          );
+          return fsFailure.delayedStat.then(() => stat());
+        };
+      }
+      return handle;
+    },
     readlink: failing("readlink"),
   };
 });
@@ -86,6 +118,12 @@ afterEach(async () => {
   fsFailure.stallReaddir = false;
   fsFailure.lstatDelayMs = 0;
   fsFailure.delayedLstat = Promise.resolve();
+  fsFailure.openDelayMs = 0;
+  fsFailure.statDelayMs = 0;
+  fsFailure.delayedOpen = Promise.resolve();
+  fsFailure.delayedStat = Promise.resolve();
+  fsFailure.onStat = null;
+  fsFailure.handleCloses = 0;
   fsFailure.requests.length = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
@@ -719,9 +757,8 @@ test("every git process of the read has ended when the read rejects at its deadl
   });
 }, 20_000);
 
-// Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
-// that ends after the deadline must not be followed by an `open` or by the next hook. The dispatch
-// has reported its result, so a late file system request outlives the turn.
+// Usefulness: verifies "the read stops at the deadline" (issue #1224): a late hook `lstat` gets no
+// `open` and no next hook. The dispatch has reported its result, so a late request outlives the turn.
 test("no hook file system request starts after the deadline", async () => {
   const { repo, linked } = await createRepoWithLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
@@ -733,6 +770,49 @@ test("no hook file system request starts after the deadline", async () => {
   await fsFailure.delayedLstat;
   await new Promise((resolve) => setImmediate(resolve));
   expect(fsFailure.requests).toEqual(atDeadline);
+}, 20_000);
+
+// Usefulness: verifies "a canceled hook read closes a handle that open resolves after the cancel"
+// (issue #1858): a leaked handle outlives the turn.
+test("a cancel during open closes the handle that opens later", async () => {
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
+  await writeFile(join(repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
+  fsFailure.openDelayMs = 300;
+  const controller = new AbortController();
+  const read = readSharedGit(linked, { signal: controller.signal }).catch((err) => err);
+  await pollUntil(() => (fsFailure.requests.includes("open") ? true : undefined), 5_000);
+  controller.abort();
+  const failure = await read;
+  expect(failure).toMatchObject({ isCanceled: true });
+  await fsFailure.delayedOpen;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fsFailure.handleCloses).toBe(1);
+});
+
+// Usefulness: verifies "a stalled hook stat ends at the deadline and closes its handle" (issue
+// #1858): an unbounded stat blocks the deadline.
+test("a stalled hook stat ends at the deadline and closes its handle", async () => {
+  const { repo, linked } = await createRepoWithLinkedWorkTree();
+  await writeFile(join(repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
+  let startDeadline;
+  const statStarted = new Promise((resolve) => {
+    startDeadline = resolve;
+  });
+  let statAt = 0;
+  fsFailure.statDelayMs = 800;
+  fsFailure.onStat = () => {
+    statAt = Date.now();
+    startDeadline();
+  };
+  const read = readSharedGit(linked, { deadlineMs: 200, deadlineStart: statStarted }).catch(
+    (err) => err,
+  );
+  const failure = await read;
+  expect(failure.message).toMatch(/200 ms/);
+  expect(Date.now() - statAt).toBeLessThan(600);
+  await fsFailure.delayedStat;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(fsFailure.handleCloses).toBe(1);
 }, 20_000);
 
 // Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):

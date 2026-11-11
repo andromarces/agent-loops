@@ -230,14 +230,24 @@ function whileNotAborted(signal, request) {
 }
 
 // Hashes a regular hook file in chunks, so a large hook is never held whole (issue #1858). The
-// stream owns the opened handle and closes it on end, error, or abort. A cancel after the `lstat`
-// rejects with the read's canceled error, and a request already in flight is not interrupted.
+// stream owns the opened handle and closes it on end, error, or abort. A handle that resolves after
+// a cancel is closed too, and each file system request ends with the signal.
 async function hashHookFile(path, signal) {
-  const handle = await whileNotAborted(signal, () => open(path, "r"));
+  const opening = open(path, "r");
+  let handle;
+  try {
+    handle = await whileNotAborted(signal, () => opening);
+  } catch (err) {
+    // The open request cannot be stopped, so a handle that arrives after the cancel is closed here.
+    opening.then(
+      (late) => late.close().catch(() => {}),
+      () => {},
+    );
+    throw err;
+  }
   let stream;
   try {
-    if (signal?.aborted) throw canceled();
-    const { size } = await handle.stat();
+    const { size } = await whileNotAborted(signal, () => handle.stat());
     // Bound the read to the size of the opened file, as the whole-file read did.
     const range = size > 0 ? { start: 0, end: size - 1 } : {};
     stream = createReadStream(path, { fd: handle, signal, ...range });
