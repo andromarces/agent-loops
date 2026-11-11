@@ -897,21 +897,18 @@ test("parseVerdict yields unknown when both verdicts are named", () => {
   }
 });
 
-// Usefulness: verifies a verdict separated from the block by prose never counts, so a Verdict line
-// must sit inside the block or above it.
+// Usefulness: verifies prose between a Verdict line and the block keeps the verdict unknown.
 test("parseVerdict ignores a Verdict line outside the closing block", () => {
   expect(parseVerdict(`Verdict: accept\nEarlier narration.\n\n${REPORT}`)).toBe("unknown");
 });
 
-// Usefulness: verifies a lone Verdict line directly above Conclusion yields accept, so a
-// reviewer accept in that shape is not lost (issue #1793).
+// Usefulness: verifies a lone Verdict line above Conclusion yields its accept, so no accept is lost (issue #1793).
 test("parseVerdict reads a lone Verdict line directly above Conclusion", () => {
   expect(parseVerdict(`Verdict: accept\n\n${REPORT}`)).toBe("accept");
   expect(parseVerdict(`Verdict: reject\n${REPORT}`)).toBe("reject");
 });
 
-// Usefulness: verifies a fenced or repeated Verdict line above Conclusion still yields unknown,
-// the guards the issue #1793 change must keep.
+// Usefulness: verifies a fenced or repeated Verdict line above Conclusion still yields unknown (issue #1793).
 test("parseVerdict keeps a fenced or repeated Verdict line above Conclusion out", () => {
   expect(parseVerdict(["```", "Verdict: accept", "```", "", REPORT].join("\n"))).toBe("unknown");
   expect(parseVerdict(`Verdict: accept\n\nEarlier note.\n\nVerdict: reject\n\n${REPORT}`)).toBe(
@@ -919,8 +916,20 @@ test("parseVerdict keeps a fenced or repeated Verdict line above Conclusion out"
   );
 });
 
-// Usefulness: verifies a Verdict line inside the block governs when another one sits above it,
-// so the last line still wins (issue #1793).
+// Usefulness: verifies a fenced Verdict line directly above Conclusion stays out, so the fence guard holds (issue #1793).
+test("parseVerdict keeps a Verdict line inside a fence above Conclusion out", () => {
+  const fenced = [
+    "```",
+    "Verdict: accept",
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "```",
+  ];
+  expect(parseVerdict(fenced.join("\n"))).toBe("unknown");
+});
+
+// Usefulness: verifies a Verdict line inside the block beats one above it, so the last line wins (issue #1793).
 test("parseVerdict keeps the Verdict line inside the block over one above it", () => {
   expect(parseVerdict(`Verdict: accept\n\n${REPORT}\nVerdict: reject`)).toBe("reject");
   expect(parseVerdict(`Verdict: reject\n\n${REPORT}\nVerdict: accept`)).toBe("accept");

@@ -56,8 +56,7 @@ test("--require-accept refuses a finish until a reviewer accepts", async () => {
   }
 });
 
-// Usefulness: verifies a headless run with requireAccept accepts the first reviewer reply when its
-// lone Verdict line sits above Conclusion, so no extra review step is spent (issue #1793).
+// Usefulness: verifies a headless requireAccept run accepts a reviewer Verdict line directly above Conclusion (issue #1793).
 test("--require-accept accepts a reviewer Verdict line above the closing block", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();

@@ -427,8 +427,7 @@ test("--require-accept follows the latest reviewer verdict", async () => {
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
-// Usefulness: verifies --require-accept accepts a reviewer whose lone Verdict line sits directly
-// above Conclusion, so the finish is not refused (issue #1793).
+// Usefulness: verifies --require-accept accepts a reviewer Verdict line directly above Conclusion (issue #1793).
 test("--require-accept accepts a Verdict line above the closing block", async () => {
   await setup();
   const repo = await useCleanRepo();

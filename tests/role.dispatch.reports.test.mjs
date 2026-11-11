@@ -1023,8 +1023,7 @@ test("reviewer dispatch exposes a null report and the raw response when the bloc
   expect(result.payload.raw).toContain("looks fine");
 });
 
-// Usefulness: verifies a reviewer Verdict line directly above Conclusion reaches the dispatch
-// envelope as accept, so the parent sees the verdict (issue #1793).
+// Usefulness: verifies a Verdict line above Conclusion reaches the dispatch envelope as accept (issue #1793).
 test("reviewer dispatch reads a Verdict line directly above the closing block", async () => {
   const repo = await newCleanRepo();
   const verdictAbove = [
