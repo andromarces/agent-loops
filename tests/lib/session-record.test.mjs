@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { symlinkOrSkip } from "../fs-helpers.mjs";
 import {
-  isInside,
+  isInsideByIdentity,
   readSessionRecord,
   removeSessionRecord,
   sessionRecordPath,
@@ -61,22 +61,22 @@ test("a record for a role other than the orchestrator or reviewer is refused", a
 
 // Usefulness: verifies a path counts as inside a directory by file identity, so a symlink into the
 // directory counts and a sibling does not.
-test("isInside follows a symlink and rejects a sibling directory", async (ctx) => {
+test("isInsideByIdentity follows a symlink and rejects a sibling directory", async (ctx) => {
   const root = join(dir, "root");
   const sibling = join(dir, "sibling");
   await mkdir(join(root, "sub"), { recursive: true });
   await mkdir(sibling);
   await symlinkOrSkip(ctx, join(root, "sub"), join(dir, "link"));
-  expect(await isInside(root, join(root, "sub", "run.json"))).toBe(true);
-  expect(await isInside(root, join(dir, "link", "run.json"))).toBe(true);
-  expect(await isInside(root, join(sibling, "run.json"))).toBe(false);
-  expect(await isInside(root, join(root, "new", "deeper", "run.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(root, "sub", "run.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(dir, "link", "run.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(sibling, "run.json"))).toBe(false);
+  expect(await isInsideByIdentity(root, join(root, "new", "deeper", "run.json"))).toBe(true);
 });
 
 // Usefulness: verifies a path behind a junction in the directory counts as inside even when the
 // junction points outside, because Git for Windows follows the junction and lists the file as
 // untracked (issue #613). A junction that points from outside into the directory still counts.
-test("isInside counts a path behind a junction inside the directory, whatever its target", async (ctx) => {
+test("isInsideByIdentity counts a path behind a junction inside the directory, whatever its target", async (ctx) => {
   const root = join(dir, "root");
   const outside = join(dir, "outside");
   const target = join(root, "sub");
@@ -86,22 +86,22 @@ test("isInside counts a path behind a junction inside the directory, whatever it
   await symlinkOrSkip(ctx, target, join(dir, "jin"), "junction");
   // A junction exists on Windows only.
   if (process.platform !== "win32") ctx.skip();
-  expect(await isInside(root, join(root, "jn", "t.json"))).toBe(true);
-  expect(await isInside(root, join(dir, "jin", "t.json"))).toBe(true);
-  expect(await isInside(root, join(outside, "t.json"))).toBe(false);
+  expect(await isInsideByIdentity(root, join(root, "jn", "t.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(dir, "jin", "t.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(outside, "t.json"))).toBe(false);
 });
 
 // Usefulness: verifies a file symlink counts as inside when its target or its path as written is inside.
-test("isInside judges the target of a file symlink as well as the path as written", async (ctx) => {
+test("isInsideByIdentity judges the target of a file symlink as well as the path as written", async (ctx) => {
   const root = join(dir, "root");
   const outside = join(dir, "outside");
   await mkdir(root);
   await mkdir(outside);
   await symlinkOrSkip(ctx, join(root, "t.json"), join(outside, "to-inside.json"));
   await symlinkOrSkip(ctx, join(outside, "t.json"), join(root, "to-outside.json"));
-  expect(await isInside(root, join(outside, "to-inside.json"))).toBe(true);
-  expect(await isInside(root, join(root, "to-outside.json"))).toBe(true);
-  expect(await isInside(root, join(outside, "plain.json"))).toBe(false);
+  expect(await isInsideByIdentity(root, join(outside, "to-inside.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(root, "to-outside.json"))).toBe(true);
+  expect(await isInsideByIdentity(root, join(outside, "plain.json"))).toBe(false);
 });
 
 // Usefulness: verifies a link and its target share one session record path, so a read through the link finds the target's record.

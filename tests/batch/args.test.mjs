@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterAll, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
-import { parseBatchArgs, prepareBatch } from "../../src/batch/args.mjs";
+import {
+  assertWritableDirectory,
+  parseBatchArgs,
+  prepareBatch,
+  refuseRootInGitWorkTree,
+} from "../../src/batch/args.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { canonicalPath } from "../../src/lib/canonical-path.mjs";
@@ -339,5 +344,27 @@ test("a work-tree root inside another Git work tree is refused", async () => {
     ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
   } finally {
     await removePath(other);
+  }
+});
+
+// Usefulness: the merged refusal keeps the runs-root text, so a user reads which root is refused.
+test("the merged refusal names the runs root", async () => {
+  const { main } = await sharedBatchRepo();
+  await expect(refuseRootInGitWorkTree(join(main, "runs"), "runs root")).rejects.toThrow(
+    "The runs root must lie outside every Git work tree.",
+  );
+});
+
+// Usefulness: the merged ancestor walk still refuses an existing file as the work-tree root.
+test("a file as the work-tree root is refused", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "batch-root-file-"));
+  const file = join(dir, "root.txt");
+  await writeFile(file, "x");
+  try {
+    await expect(assertWritableDirectory(file, "batch")).rejects.toThrow(
+      "The work-tree root is not a directory the batch can write.",
+    );
+  } finally {
+    await removePath(dir);
   }
 });
