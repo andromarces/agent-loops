@@ -240,7 +240,8 @@ describe("batch decisions and waits", () => {
     }
   });
 
-  // Usefulness: a visible call makes its `pending` gate resolvable, so a delayed transcript write cannot hang the waiting case.
+  // Usefulness: a held child's gate is resolvable from `pending` as soon as its call is visible.
+  // So a case that waits for the call cannot hang on a gate that a delayed transcript write hides.
   test("a held child's gate is reachable before its transcript write", async () => {
     const prepared = prep([220]);
     const runsRoot = runsFor(prepared);
