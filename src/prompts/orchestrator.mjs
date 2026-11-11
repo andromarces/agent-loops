@@ -16,9 +16,10 @@ import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/checks/check-wait.mjs";
 
 // Shared rule source: docs/orchestrator-instructions.md and its reference sections in
-// docs/orchestrator/ state the role rules for interactive parents (#56); this headless prompt states the same rules in
-// JSON-action form, including the completion rule. Keep the two consistent when
+// docs/orchestrator/ state the role rules for interactive parents (#56). This headless prompt states
+// the same rules in JSON-action form, including the completion rule. Keep the two consistent when
 // either changes.
+//
 // The CLI capabilities `networkedReadOnly` and `waitsForChecks` live in `src/lib/agent-kinds.mjs`.
 // A Codex reviewer with no sandbox (ADR 0038) keeps shell network. Under either sandboxed mode, or
 // with no mode named, it stays in the gate class. A `copilot` orchestrator cannot wait and gets the
@@ -30,9 +31,9 @@ const isNetworkedReviewer = (reviewerKind, reviewerSandbox) =>
 /**
  * Reports which required-check read a headless run can perform. The two role
  * CLIs are chosen independently, so each is keyed on its own.
- * @returns {"wait" | "reviewer" | "gate" | null} null when the run takes no PR
- * gate, "wait" when the orchestrator reads the checks itself, "reviewer" when
- * only the reviewer CLI can read them, and "gate" when neither can.
+ * @returns {"wait" | "reviewer" | "gate" | null} `null` when the run takes no PR
+ * gate. `"wait"` when the orchestrator reads the checks itself. `"reviewer"` when
+ * only the reviewer CLI can read them. `"gate"` when neither can.
  */
 export function requiredCheckWait({
   requireCi,
@@ -71,8 +72,8 @@ const CEILING_WORD = SMALL_NUMBER_WORDS[CEILING_SECONDS] ?? String(CEILING_SECON
  * and its child-exit window always end before the turn `timeout` (seconds, null
  * when unbounded) does.
  *
- * A turn under twice the ceiling plus two seconds fits no positive bound. That is
- * 12 seconds at the five-second ceiling. The prompt then names no wait (#348).
+ * A turn under twice the ceiling plus two seconds fits no positive bound, which
+ * is 12 seconds at the five-second ceiling. The prompt then names no wait (#348).
  */
 export function headlessWaitSeconds(timeout) {
   if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
@@ -82,7 +83,7 @@ export function headlessWaitSeconds(timeout) {
 
 /**
  * The commands that run `role wait-checks` in the work tree `cwd`, one per shell
- * form, or null when a path cannot be quoted the same way in every shell
+ * form. They are null when a path cannot be quoted the same way in every shell
  * (`cliCommandForms`). `--cwd` carries the run's work tree, so the wait reads
  * that repository whatever directory the shell starts in (#348).
  * @returns {Array<{ shell: string, command: string }> | null}
@@ -103,8 +104,8 @@ export function waitChecksCommand({
 }
 
 /**
- * The `--require-ci` block: the runtime gate, then the two points where the run
- * waits for the required checks, and the shell status read that the role rule
+ * The `--require-ci` block holds the runtime gate. It also holds the two wait
+ * points for the required checks, and the shell status read that the role rule
  * excepts. Each statement names the role whose CLI performs the read, because
  * the orchestrator and reviewer CLIs are chosen independently.
  */
@@ -115,8 +116,8 @@ function prGateBlock(options) {
 
 // What a Codex sandbox (the orchestrator `read-only`, or a reviewer in a sandboxed mode) blocks is the
 // network of the shell commands that it runs. The
-// denial lines below say so, because a model-side tool or another channel outside the sandbox is
-// not blocked, and no line may read as an all-channel denial (ADR 0019). The run counts on no such
+// denial lines below say so. A model-side tool or another channel outside the sandbox is
+// not blocked, and no line can read as an all-channel denial (ADR 0019). The run counts on no such
 // channel, and only the --require-ci finish gate enforces anything.
 const SHELL_NETWORK = "from the shell commands that its sandbox runs";
 const SHELL_READ = "through a shell command that its sandbox runs";
@@ -128,8 +129,8 @@ const orchestratorNetworkLead = (kind) =>
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
 // it. Its limit is a permission refusal of `role wait-checks` without approval (#432 probe, #495),
-// not a network block. It gets the reviewer or gate rule and runs no check read itself, because the
-// only status read the role rule excepts is the bounded `role wait-checks` command (ADR 0013).
+// not a network block. It gets the reviewer or gate rule and runs no check read itself. The role
+// rule excepts only the bounded `role wait-checks` command as a status read (ADR 0013).
 const COPILOT_LIMIT =
   "whose read-only turn keeps shell network but refuses agent-loop role wait-checks without approval, so you cannot run the bounded wait, and the status-read exception does not apply to you";
 
@@ -226,7 +227,7 @@ function prGateLines({
   }
 
   // The runtime supplies the status for the declared PR, or for the gated PR when
-  // none is declared, and the reviewer's own read is only a fallback (#320, #350).
+  // none is declared. The reviewer's own read is only a fallback (#320, #350).
   const statusPr = pr ?? requireCi;
   const enforcesLine = `- The --require-ci finish gate is the only check read in this run that enforces anything. The runtime applies it outside every read-only turn.${ADVISORY_QUALIFIER}${PENDING_CHECK_RULE}`;
 
@@ -250,7 +251,7 @@ function prGateLines({
 }
 
 /**
- * The clause that keeps the gate claim and the supplied read consistent: the gate
+ * The clause keeps the gate claim and the supplied read consistent. The gate
  * line names the advisory read as the one read that does not enforce. The wording
  * is the same rule `docs/orchestrator-instructions.md` states, so the two paths do
  * not drift.
@@ -261,10 +262,10 @@ const ADVISORY_QUALIFIER =
 /**
  * The clause a gated run adds to the line that says no turn in the run can read
  * the checks through a shell command. The runtime reads the status outside every
- * sandboxed turn and supplies it to the reviewer prompt as advisory evidence in
- * place of the reviewer reading the checks; the reviewer keeps its own read as
- * the fallback, and the `--require-ci` finish gate enforces the condition
- * (#320). The wording is the same rule `docs/orchestrator-instructions.md`
+ * sandboxed turn. It supplies that status to the reviewer prompt as advisory
+ * evidence, in place of the reviewer reading the checks. The reviewer keeps its
+ * own read as the fallback, and the `--require-ci` finish gate enforces the
+ * condition (#320). The wording is the same rule `docs/orchestrator-instructions.md`
  * states, so the two paths do not drift.
  * @param {number} pr the declared PR, or the gated PR when none is declared
  * @returns {string}
@@ -274,28 +275,27 @@ function suppliedRead(pr) {
 }
 
 /**
- * The clause the gate line adds for a base branch that has no required check. The
- * gate verifies the PR head, the clean reviewed tree, and the merge state on such
- * a branch, and records the absence, so the finish says it verified no check
- * (#336). It states the condition the pass rests on, because only one exact reply
- * per source is an absence and a source this credential cannot read, or one that
- * returns a shape the gate cannot read, leaves the gate refusing. The parent
- * cannot read the base branch's configuration itself, so it is stated on every
- * gated run. It predicts no outcome: it names what the gate checks, not when the
- * absence holds.
+ * The clause the gate line adds for a base branch that has no required check.
+ * The gate verifies the PR head, the clean reviewed tree, and the merge state on
+ * such a branch. It records the absence, so the finish says it verified no check
+ * (#336). It states the condition the pass rests on. Only one exact reply per
+ * source is an absence. A source this credential cannot read, or one that
+ * returns a shape the gate cannot read, leaves the gate refusing.
  */
+// The parent cannot read the base branch's configuration itself, so the clause is stated on every
+// gated run. It predicts no outcome: it names what the gate checks, not when the absence holds.
 const NO_REQUIRED_CHECK_CLAUSE =
   " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source. A ruleset read of exactly one empty page is the class empty: a successful read that found no rule, which contributes no contexts, so the per-check pass runs on the other sources, and a classic-only repository still finishes, while a ruleset read of no page, several empty pages, or an empty page beside a page that holds rules is the class unknown and refuses.";
 
+// A PR that the runtime declared after a worker turn gets its read sentence from `declaredPrNote` (#1097).
 /**
  * The `--pr` declaration rule. It is one line on purpose: the prompt must not
  * predict which reasons a refusal names, because the runtime collects every
  * applicable condition. A per-case line either claims a sole reason, which is
- * wrong whenever a second condition applies, or describes a gate for another PR
- * that the runtime never reads (#302). The start sentence states the unreadable-source refusal of
+ * wrong whenever a second condition applies. The other form describes a gate for
+ * another PR that the runtime never reads (#302). The start sentence states the unreadable-source refusal of
  * the `--pr` start, its recovery, and the warn-and-proceed case (#1092). `startRead` is whether this
  * run made that read: a continuation that restored its PR made none, so it states nothing about one.
- * A PR that the runtime declared after a worker turn gets its read sentence from `declaredPrNote` (#1097).
  */
 function prDeclarationBlock(pr, startRead) {
   if (pr === null) return "";
@@ -402,8 +402,8 @@ const CONTINUED_LEAD =
 
 /**
  * The `--continue-from` line. A continued run resumes the earlier sessions, so
- * the orchestrator holds the earlier conversation and needs the two facts that
- * changed: the budget is new, and no reviewer accept carries over unless the
+ * the orchestrator holds the earlier conversation. It needs the two facts that
+ * changed. The budget is new, and no reviewer accept carries over unless the
  * runtime restored the earlier gate state (#393). Empty for a fresh run, so that prompt stays byte for byte as before (#362).
  */
 function continuedBlock(continued, gateRestored) {
@@ -416,7 +416,7 @@ function continuedBlock(continued, gateRestored) {
 
 /**
  * The `--mode` line. The headless loop names its mode with the same flag and the
- * same values as the interactive path, and review-only takes no PR flag and
+ * same values as the interactive path. Review-only takes no PR flag and
  * refuses a worker dispatch, so the prompt states the mode the run was started
  * with. One line per mode, naming the mode and the dispatch rule it carries.
  * Empty without `--mode`, so a run that named no mode keeps the prompt it had
@@ -425,8 +425,8 @@ function continuedBlock(continued, gateRestored) {
 function modeBlock(mode) {
   if (mode === null) return "";
   const rules = {
-    // The interactive path is a policy, so only the names carry across; the
-    // headless loop still picks its own action order.
+    // The interactive path is a policy, so only the names carry across.
+    // The headless loop still picks its own action order.
     "work-first": "the worker goes first, then the reviewer.",
     "review-first": "the reviewer goes first, then the worker if the findings call for it.",
     // The same mapping the interactive path states, and the summary rule below.
@@ -441,8 +441,7 @@ function modeBlock(mode) {
 // conversation in its place. The agy known-limit names that case, so each
 // follow-up carries the rule itself. The runtime mutation check reads only the
 // local work tree, so the rule is advisory (issue #422).
-// The shared action list opens a new sentence here, so its first letter is upper case.
-const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS[0].toUpperCase()}${REMOTE_WRITE_ACTIONS.slice(1)} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
+const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
 
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
 const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}
@@ -627,8 +626,9 @@ A finish with "unresolvedCompare": true is refused. The gate resolves that compa
 }
 
 /**
- * The line that follows a worker result in which the runtime refused to declare the PR that the
- * worker opened, because the required-check sources are unreadable (#1097). The runtime compares
+ * The line that follows a worker result in which the runtime refused to declare
+ * the PR that the worker opened. That refusal happens because the required-check
+ * sources are unreadable (#1097). The runtime compares
  * the head of that PR at finish instead (ADR 0052, #1111).
  */
 function undeclaredPrNote(pr) {
@@ -683,7 +683,7 @@ ${NEXT_ACTION_TAIL}
 /**
  * Prompt sent back to the orchestrator when the deterministic runtime refuses a
  * `finish`. The refusal is not a JSON error, so it carries the failed rule and
- * the action list that lets the orchestrator recover with a reviewer turn.
+ * the action list. That list lets the orchestrator recover with a reviewer turn.
  */
 export function refusalPrompt(reason) {
   return escapeLineSeparators(

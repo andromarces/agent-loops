@@ -113,7 +113,7 @@ function testRunLines(testRun) {
 // A reviewer turn never writes to a remote. The runtime mutation check reads only
 // the local work tree, so this rule is advisory and the runtime does not detect a
 // breach (issue #422).
-const remoteWriteRule = `Do not write to GitHub or any remote: ${REMOTE_WRITE_ACTIONS} A read-only query changes nothing, so it stays allowed.`;
+const remoteWriteRule = `Do not write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS} A read-only query changes nothing, so it stays allowed.`;
 
 // The file-change rule bars a change to the work tree and Git state only. Without this scope a
 // reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The

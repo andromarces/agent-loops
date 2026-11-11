@@ -456,7 +456,7 @@ A waiting issue keeps the foreground command live until its blockers close or th
 
 ### Notifications
 
-On macOS and Windows the batch sends a desktop notification for a new pending decision, a required owner merge, and batch completion. Linux and other platforms spawn nothing.
+On macOS and Windows the batch sends a desktop notification for four events. The events are a new pending decision, a required owner merge, a state where only owner merges remain, and batch completion. Linux and other platforms spawn nothing.
 
 The notifier passes the text as an argument on macOS and as environment values on Windows. The text never enters a script. The notifier bounds the text, the process time, and its own child. A failure logs a warning and never fails the batch.
 
@@ -478,7 +478,9 @@ A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `nee
 
 It also holds log, transcript, cleanup result, and report. A `review-only` report also holds the reviewer `verdict` (`accept`, `reject`, or `unknown`). It keeps the reviewer findings, blockers, notes, and deferred items in `reviewerFindings`, `reviewerBlockers`, `reviewerNotes`, and `reviewerDeferred`. A batch that names only `--issue` keeps the previous entry shape.
 
-The report holds the last attempt's finish summary, error, failed-turn test result, and delete-by-hand warnings. It also holds a `state`: `read`, `no-attempt`, `unread`, or `missing`. The transcript warning list and the report keep 20 warnings, and `warningsOverflow` names the rest. A capped array in the report keeps its first 20 entries, and a `<field>Overflow` count beside it names the rest. A `transcriptRead` value with `ok: false` means the transcript was unread. Every summary, error, test, and warning field is then null.
+The report holds the last attempt's finish summary, error, failed-turn test result, and delete-by-hand warnings. It also holds a `state`: `read`, `no-attempt`, `unread`, or `missing`. A `state: "read"` report with a null `summary` also holds `lastTurnItems`: the last child turn's role, `deferred`, `notes`, and `blockers`. An `unread`, `missing`, or `no-attempt` report omits the field. A last turn without a parsed report reads null items and a `reason`.
+
+The transcript warning list and the report keep 20 warnings, and `warningsOverflow` names the rest. A capped array in the report keeps its first 20 entries, and a `<field>Overflow` count beside it names the rest. A `transcriptRead` value with `ok: false` means the transcript was unread. Every summary, error, test, and warning field is then null.
 
 Exit codes:
 
