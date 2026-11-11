@@ -154,13 +154,18 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
 // Control characters other than newline and tab never help a reviewer and can
 // hide text in a terminal, so they are dropped.
 function stripControl(text) {
-  return [...text.replaceAll("\r\n", "\n")]
-    .filter((c) => c === "\n" || c === "\t" || c >= " ")
-    .join("");
+  return (
+    text
+      .replaceAll("\r\n", "\n")
+      // eslint-disable-next-line no-control-regex -- Drops the same control characters as before.
+      .replace(/[\u0000-\u0008\u000b-\u001f]/g, "")
+  );
 }
 
-// Redaction runs before and after the cleanup: a secret can hold a control character that the first
-// pass must match, and the cleanup can join the text around a removed character into a value.
+/**
+ * Redaction runs before and after the cleanup: a secret can hold a control character that the first
+ * pass must match, and the cleanup can join the text around a removed character into a value.
+ */
 export function redactAndClean(text) {
   return redactEnvSecrets(stripControl(redactEnvSecrets(text)));
 }

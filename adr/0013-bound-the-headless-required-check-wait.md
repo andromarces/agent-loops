@@ -76,7 +76,7 @@ run on exit 1 before the turn returns an action (issue #348, deferred from #329)
 9. The prompt keeps the ADR 0010 child-exit rule. `"childExitUnconfirmed": true`
    means the `gh` child was not observed to exit, so the orchestrator settles that
    process before another wait and does not wait again when it cannot.
-10. `docs/orchestrator-instructions.md` ("Headless loop waits") and the
+10. `docs/orchestrator/waiting-for-checks.md` ("Waiting for required checks") and the
     reference docs state the same rule. A test pins the identical exception sentence in the instructions, the prompt, and the reference docs.
 
 ## Consequences
@@ -148,7 +148,7 @@ Andro Marces
   - Source: The `timeout` input from `src/runtime.mjs`
   - Test: `tests/prompts/orchestrator*.test.mjs`
   - Test: `tests/runtime*.test.mjs`
-  - Documented in [Headless loop waits](../docs/orchestrator/waiting-for-checks.md#headless-loop-waits)
+  - Documented in [Waiting for required checks](../docs/orchestrator/waiting-for-checks.md#waiting-for-required-checks)
   - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
   - Documented in [Denial probe (issue #432)](../docs/reference/reviewer-safety.md#denial-probe-issue-432)
 - [PR #382](https://github.com/andromarces/agent-loops/pull/382)

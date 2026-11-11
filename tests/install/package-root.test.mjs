@@ -41,6 +41,7 @@ test("hooks installed under a pnpm 12 global layout survive an upgrade", async (
   // The path the pnpm bin shim calls.
   const installed = join(before.hashLink, "node_modules", "@andromarces", "agent-loops");
 
+  // Process: the installed entry point starts as its own CLI, so its output and exit code are read here.
   await runInstalled(
     join(installed, "src", "cli.mjs"),
     ["install", "--harness", "claude", "--yes"],

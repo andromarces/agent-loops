@@ -7,27 +7,29 @@ import { execBounded } from "./exec.mjs";
 import { errorLine } from "./error-message.mjs";
 import { logWarn } from "./log.mjs";
 
-// Milliseconds that one ignore read waits before the watch reports no path (10_000).
+// Milliseconds that one ignore read waits before the watch reports no path.
 const IGNORE_READ_BOUND_MS = 10_000;
-// Milliseconds that the end-of-turn drain runs before the watch reports no path (1000).
+// Milliseconds that the end-of-turn drain runs before the watch reports no path.
 export const DRAIN_DEADLINE_MS = 1_000;
-// Milliseconds that the macOS watch `ready` promise gets before the watch reports no path (1000).
+// Milliseconds that the macOS watch `ready` promise gets before the watch reports no path.
 const ARM_DEADLINE_MS = 1_000;
-// Keys that one event-grown structure keeps before the watch gives up the field (500).
+// Keys that one event-grown structure keeps before the watch gives up the field.
 const MAX_KEYS = 500;
-// Reads in flight that one turn keeps before the watch gives up the field (500).
+// Reads in flight that one turn keeps before the watch gives up the field.
 const MAX_READS = 500;
-// Event paths that one `git check-ignore` call reads (200).
+// Event paths that one `git check-ignore` call reads.
 const IGNORE_BATCH_SIZE = 200;
-// Candidate paths that one file check reads at a time (32).
+// Candidate paths that one file check reads at a time.
 const FILE_BATCH_SIZE = 32;
-// Milliseconds before the window start within which a modification time still counts as a write
-// (2000). Two seconds covers a coarse file system clock and a small skew, and reports a write that
+// Milliseconds before the window start within which a modification time still counts as a write.
+// Two seconds covers a coarse file system clock and a small skew, and reports a write that
 // it cannot separate from the window.
 const MTIME_MARGIN_MS = 2_000;
-// Milliseconds after the window start within which a change time still counts as a read (2.5). The
-// saved Windows probe put a pre-window change time at most 2.100 ms after the start. It put a
-// timestamp-preserving restore at least 2.896 ms after the start.
+// Milliseconds after the window start within which a change time still counts as a read. A change
+// time is a write only when it is strictly later than the start plus this guard. The saved Windows
+// probe put a pre-window change time at most 2.100 ms after the start. It put a
+// timestamp-preserving restore at least 2.896 ms after the start. The guard sits between them, and an
+// in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.5;
 
 /**
@@ -120,10 +122,6 @@ export async function startMainWorkTreeWatch(
   // system clock. The performance clock's wall time can sit a per-process millisecond or more away
   // from it on Windows, so the start comes from the system clock.
   const windowStart = Date.now();
-  // A change time is a write only when it is strictly later than the start plus this guard. The
-  // saved Windows probe put a pre-window change time at most 2.100 ms after the start. It put a
-  // timestamp-preserving restore at least 2.896 ms after the start. The guard sits between them. An
-  // in-window restore inside the guard is not reported.
   const changeTimeAfterStart = windowStart + CHANGE_TIME_GUARD_MS;
   let failed = false;
   let watcherClosed = false;
@@ -132,17 +130,14 @@ export async function startMainWorkTreeWatch(
   let flushing = null;
   let deadlineAt = Number.POSITIVE_INFINITY;
   let drainController = null;
-  const pending = new Map();
+  const pending = new Set();
   const candidates = new Set();
   const seenFiles = new Set();
   const ignoredPrefixes = new Set();
   const reads = new Set();
   const controller = new AbortController();
-  let resolveArm = null;
   // Resolves when `ready` settles, or when the watch fails, stops, or closes.
-  const armWait = new Promise((resolve) => {
-    resolveArm = resolve;
-  });
+  const { promise: armWait, resolve: resolveArm } = Promise.withResolvers();
 
   const fail = (err) => {
     if (failed) return;
@@ -172,6 +167,14 @@ export async function startMainWorkTreeWatch(
   /** True once the end-of-turn drain passes its deadline. */
   const expired = () => performance.now() >= deadlineAt;
 
+  /** Stops the reads in flight, once. */
+  const abortReads = () => {
+    if (stopped) return;
+    stopped = true;
+    controller.abort();
+    drainController?.abort();
+  };
+
   /** Stops the watch and waits for every read in flight to settle. Never throws. */
   const stop = async () => {
     closeWatcher();
@@ -179,11 +182,7 @@ export async function startMainWorkTreeWatch(
     if (!done && !failed) {
       fail(new Error("the watch stopped before the turn read it"));
     }
-    if (!stopped && !done) {
-      stopped = true;
-      controller.abort();
-      drainController?.abort();
-    }
+    if (!done) abortReads();
     while (reads.size > 0) {
       await Promise.allSettled(reads);
       if (expired()) expire();
@@ -197,11 +196,7 @@ export async function startMainWorkTreeWatch(
   /** Ends the drain at its deadline and stops every read in flight. */
   const expire = () => {
     fail(new Error(`the main work tree watch drain passed its ${drainDeadlineMs} ms deadline`));
-    if (!stopped) {
-      stopped = true;
-      controller.abort();
-      drainController?.abort();
-    }
+    abortReads();
   };
 
   /** The signal of the end-of-turn drain, or of the watch before it closes. */
@@ -267,6 +262,9 @@ export async function startMainWorkTreeWatch(
     }
   };
 
+  const canceledIgnoreRead = () =>
+    Object.assign(new Error("git check-ignore was canceled"), { isCanceled: true });
+
   const readIgnored = async (paths, { signal }) => {
     const roots = new Set(paths.map((path) => path.split("/")[0]));
     const input = [...new Set([...paths, ...roots])].map((path) => `${path}\0`).join("");
@@ -285,15 +283,15 @@ export async function startMainWorkTreeWatch(
         await beforeIgnoreInputEnds({ pid: subprocess.pid, signal });
       }
       if (signal.aborted || expired()) {
-        throw Object.assign(new Error("git check-ignore was canceled"), { isCanceled: true });
+        throw canceledIgnoreRead();
       }
       subprocess.stdin.end();
       const result = await subprocess;
       if (signal.aborted || expired()) {
-        throw Object.assign(new Error("git check-ignore was canceled"), { isCanceled: true });
+        throw canceledIgnoreRead();
       }
       if (result.isCanceled) {
-        throw Object.assign(new Error("git check-ignore was canceled"), { isCanceled: true });
+        throw canceledIgnoreRead();
       }
       if (result.timedOut) throw new Error("git check-ignore timed out");
       if (result.exitCode !== 0 && result.exitCode !== 1) {
@@ -315,7 +313,7 @@ export async function startMainWorkTreeWatch(
         expire();
         return;
       }
-      const batch = [...pending.keys()].slice(0, IGNORE_BATCH_SIZE);
+      const batch = [...pending].slice(0, IGNORE_BATCH_SIZE);
       const ignored = await track(readIgnored(batch, { signal: readSignal() }));
       if (expired()) {
         expire();
@@ -409,11 +407,7 @@ export async function startMainWorkTreeWatch(
     const path = relativePath(filename);
     if (path === null || path.split("/").includes(".git")) return;
     if (ignoredByPrefix(path)) return;
-    const entry = pending.get(path);
-    if (entry) {
-      entry.kinds.add(type);
-      return;
-    }
+    if (pending.has(path)) return;
     if (pending.size >= maxPending) {
       fail(new Error(`more than ${maxPending} queued paths`));
       return;
@@ -422,7 +416,7 @@ export async function startMainWorkTreeWatch(
       fail(new Error(`more than ${maxReads} reads`));
       return;
     }
-    pending.set(path, { kinds: new Set([type]) });
+    pending.add(path);
     void track(checkKind(path));
   };
 

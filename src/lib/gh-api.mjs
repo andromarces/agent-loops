@@ -104,6 +104,45 @@ export function ghApiFailure(
   return tagRetry(err, { transient, transport });
 }
 
+// Cap of a `gh pr list` read. A reply of this size holds too many PRs to name one, so it is ambiguous.
+export const PR_LIST_LIMIT = 100;
+
+/** True for the fields every `gh pr list` reader needs: a positive number, a head, and a fork flag. */
+export function isPrListEntry(entry) {
+  return (
+    isJsonObject(entry) &&
+    Number.isSafeInteger(entry.number) &&
+    entry.number > 0 &&
+    typeof entry.headRefOid === "string" &&
+    typeof entry.isCrossRepository === "boolean"
+  );
+}
+
+/**
+ * Reads and validates a `gh pr list` reply through `read`. Returns `{ list }`, or `{ failure }`
+ * with the reason text that both readers report.
+ * @param {(argv: string[]) => Promise<{ status: number, stdout: string, stderr: string }>} read
+ * @param {string[]} argv
+ * @param {(entry: unknown) => boolean} isEntry
+ * @returns {Promise<{ list: object[] } | { failure: string }>}
+ */
+export async function readPrList(read, argv, isEntry) {
+  const reply = await read(argv);
+  if (!reply || reply.status !== 0) {
+    return {
+      failure: `gh pr list failed: ${ghFailureText({
+        status: reply?.status ?? "unknown",
+        stderr: reply?.stderr ?? "",
+      })}`,
+    };
+  }
+  const list = JSON.parse(reply.stdout);
+  if (!Array.isArray(list) || list.length >= PR_LIST_LIMIT || !list.every(isEntry)) {
+    return { failure: "the gh pr list reply is not a list that names one PR" };
+  }
+  return { list };
+}
+
 // The words that the network stack of `gh` writes for a transport failure, which carries no server
 // reply and so no HTTP status (#1312).
 const TRANSPORT_FAILURES = [
@@ -152,23 +191,11 @@ export function isTransportFailure({ stdout, stderr }) {
  *   stdout that is not JSON throws a raw `SyntaxError`
  */
 export async function ghApi(gh, args, cwd) {
-  const { status, stdout, stderr, transient, include, terminal, bodyClass, replyStatus } = await gh(
-    ["api", ...args],
-    cwd,
-  );
-  if (status !== 0) {
-    throw ghApiFailure(args[0], {
-      status,
-      stdout,
-      stderr,
-      transient,
-      include,
-      terminal,
-      bodyClass,
-      replyStatus,
-    });
+  const result = await gh(["api", ...args], cwd);
+  if (result.status !== 0) {
+    throw ghApiFailure(args[0], result);
   }
-  const text = stdout.trim();
+  const text = result.stdout.trim();
   return text === "" ? null : JSON.parse(text);
 }
 
@@ -250,7 +277,7 @@ const TOKEN_NAMES = ["GH_TOKEN", "GITHUB_TOKEN"];
  */
 function defaultHost(reply) {
   const hosts = reply?.hosts;
-  if (typeof hosts !== "object" || hosts === null || Array.isArray(hosts)) {
+  if (!isJsonObject(hosts)) {
     return null;
   }
   const configured = [];
@@ -617,11 +644,57 @@ export function boundedCall(gh, timeoutMs, signal = null) {
   return call;
 }
 
-// The first failure of a group, in sequential order, carried past the wait for
-// the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
-// had already fired when the failure was captured. A failure captured before the
-// deadline stays the outcome, so a deadline that expires during the wait cannot
-// replace it. The entry points unwrap it with `failureOf`.
+/**
+ * A runner for one long command, such as a batch run. Every call ends when its bound expires or
+ * a signal aborts. A caller bound wins over the default, and a caller signal joins the run signal.
+ * A reply that ends after an abort throws and reaches the caller as no data. The first abort
+ * source decides between a cancel and a timeout.
+ * @param {Function} gh
+ * @param {number} timeoutMs
+ * @param {AbortSignal | null} [signal]
+ */
+export function boundedRunner(gh, timeoutMs, signal = null) {
+  return async (args, cwd, options = {}) => {
+    const bound = options.timeoutMs ?? timeoutMs;
+    const deadline = AbortSignal.timeout(bound);
+    const signals = [options.signal, signal, deadline].filter(Boolean);
+    const combined = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    let canceled = false;
+    let cancelReason;
+    combined.addEventListener(
+      "abort",
+      () => {
+        if (deadline.aborted) return;
+        canceled = true;
+        cancelReason = combined.reason;
+      },
+      { once: true },
+    );
+    if (deadline.aborted) throw readTimeout(bound);
+    if (combined.aborted) {
+      canceled = true;
+      cancelReason = combined.reason;
+    }
+    if (canceled) throw canceledCall(cancelReason);
+    const reply = await gh(args, cwd, { ...options, timeoutMs: bound, signal: combined });
+    if (canceled) throw canceledCall(cancelReason);
+    if (reply?.timedOut || deadline.aborted) throw readTimeout(bound);
+    return reply;
+  };
+}
+
+/** The error of a call that ended after a caller signal aborted, with that reason as `cause`. */
+function canceledCall(reason) {
+  return Object.assign(new Error("the call was canceled"), { name: "AbortError", cause: reason });
+}
+
+/**
+ * The first failure of a group, in sequential order, carried past the wait for
+ * the cancelled siblings. `expired` is whether the caller's deadline (`gh.deadline`)
+ * had already fired when the failure was captured. A failure captured before the
+ * deadline stays the outcome, so a deadline that expires during the wait cannot
+ * replace it. The entry points unwrap it with `failureOf`.
+ */
 export class ReadFailure {
   constructor(cause, expired) {
     this.cause = cause;
@@ -631,15 +704,17 @@ export class ReadFailure {
 
 export const failureOf = (err) => (err instanceof ReadFailure ? err.cause : err);
 
-// Runs independent reads together. Each maker receives a runner that the group
-// can cancel. The reads are awaited in list order, so the first failure in that
-// order throws as soon as it is reached, the error the same reads run in sequence
-// surfaced. A later sibling that is slow or stalled never delays that error. On a
-// failure the remaining reads are cancelled and settled before the throw, so no
-// `gh` child outlives the caller. `stopWhen(value)` ends the group early, as a
-// sequential caller that returns at that value would: the later reads are
-// cancelled and settled, their failures are never surfaced, and the values read
-// so far are returned.
+/**
+ * Runs independent reads together. Each maker receives a runner that the group
+ * can cancel. The reads are awaited in list order, so the first failure in that
+ * order throws as soon as it is reached, the error the same reads run in sequence
+ * surfaced. A later sibling that is slow or stalled never delays that error. On a
+ * failure the remaining reads are cancelled and settled before the throw, so no
+ * `gh` child outlives the caller. `stopWhen(value)` ends the group early, as a
+ * sequential caller that returns at that value would: the later reads are
+ * cancelled and settled, their failures are never surfaced, and the values read
+ * so far are returned.
+ */
 export async function inOrder(gh, makers, stopWhen = () => false) {
   const group = new AbortController();
   const scoped = withSignal(gh, group.signal);

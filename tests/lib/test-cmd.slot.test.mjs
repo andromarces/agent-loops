@@ -39,6 +39,7 @@ afterEach(async () => {
 
 const slash = (path) => path.replaceAll("\\", "/");
 
+// Process: the slot runner starts each command as a child, so its status and exit code come from one.
 // A work tree, a scratch directory with the helper scripts, and one slot.
 async function setup() {
   const cwd = await createTempRepo();

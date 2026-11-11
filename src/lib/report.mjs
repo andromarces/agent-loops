@@ -16,6 +16,7 @@ const REPORT_LABELS = [
 export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 
 const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
+const LABEL_OR_VERDICT = [...REPORT_LABEL_NAMES, "Verdict"].join("|");
 
 // A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
 // Only the six report labels gain this form, so a bold lead with another name stays text (issue
@@ -106,7 +107,7 @@ function normalizeReportLabels(text, boldLabels = true) {
 // The Verdict label is excluded: a malformed verdict already maps to `unknown`
 // and never carries report text.
 const DECORATED_LABEL_LINE = new RegExp(
-  `^(?!(?:${REPORT_LABEL_NAMES.join("|")}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${REPORT_LABEL_NAMES.join("|")})[*_\`]{0,2}\\s*:`,
+  `^(?!(?:${LABEL_NAMES}):)\\s*(?:>\\s*|#{1,6}\\s+|[-*+]\\s*|\\d+[.)]\\s+)*[*_\`]{0,2}(?:${LABEL_NAMES})[*_\`]{0,2}\\s*:`,
   "i",
 );
 
@@ -127,11 +128,12 @@ const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d\-*+])
 // list pattern but carries no item, so it does not drop text.
 const THEMATIC_BREAK = /^\s*(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/;
 
-// A Markdown table delimiter row: cells of only dashes with optional colons, separated by `|`,
-// with or without outer pipes. A line with no `|` is no delimiter row (issue #1366).
 const TABLE_DELIMITER = /^:?-+:?$/;
 
-/** True when the line is a Markdown table delimiter row: cells of only dashes with optional colons, separated by `|`, with or without outer pipes. */
+/**
+ * True when the line is a Markdown table delimiter row: cells of only dashes with optional colons,
+ * separated by `|`, with or without outer pipes. A line with no `|` is no delimiter row (issue #1366).
+ */
 function isTableDelimiter(line) {
   if (!line.includes("|")) {
     return false;
@@ -203,18 +205,12 @@ const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])
 // every lead-in rule missed another list shape (issue #449), so the rule is the widest
 // one. It holds every label the strict match, DECORATED_LABEL_LINE, or LIST_LINE reads, and it
 // also holds a mid-sentence mention such as `the conclusion: none`. That mention fails closed.
-const LABEL_MENTION = new RegExp(
-  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]{0,2}\\s*:`,
-  "i",
-);
+const LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]{0,2}\\s*:`, "i");
 
 // A label or `Verdict` mention that bars a prose line from introducing a folded list (issue #898).
 // It differs from LABEL_MENTION in one way: any run of emphasis or code marks may follow the name,
 // not at most two. A mark before the name needs no rule, because the match has no lead-in condition.
-const HEADING_LABEL_MENTION = new RegExp(
-  `(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})[*_\`]*\\s*:`,
-  "i",
-);
+const HEADING_LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]*\\s*:`, "i");
 
 /**
  * True when the response holds a closing block attempt: any report label name or `Verdict`
@@ -607,33 +603,35 @@ const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\
 // An ordered sub-item at the parent text column, with exactly one ASCII space after its marker.
 const orderedSubitem = (marker) => new RegExp(`^ {${marker.length}}\\d+\\. (?=\\S)`);
 
-// A line that reads as a report label or `Verdict` line under any markup or separator: after NFKC
-// normalization it skips every leading character that is no letter or digit (quote, heading, list,
-// and emphasis marks, in any count) and one optional number, then holds a label name or `Verdict`,
-// any case, optional whitespace, and a character that is no letter, digit, or whitespace. Every
-// colon variant (`:`, `：`, `∶`) and every other separator therefore matches, and the check names no
-// markup or separator shape. A label word that a letter, digit, or whitespace-then-letter follows
-// (`Notes about x`, `Why this matters:`) is prose and does not match.
 const LABEL_WORD_THEN_SEPARATOR = new RegExp(
-  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?(?:${[...REPORT_LABEL_NAMES, "Verdict"].join("|")})\\s*[^\\p{L}\\p{N}\\s]`,
+  `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?(?:${LABEL_OR_VERDICT})\\s*[^\\p{L}\\p{N}\\s]`,
   "iu",
 );
 
-/** True when the line reads as a report label or `Verdict` line under any markup or separator. */
+/**
+ * True when the line reads as a report label or `Verdict` line under any markup or separator. After
+ * NFKC normalization it skips every leading character that is no letter or digit, such as quote,
+ * heading, list, and emphasis marks, in any count. It then skips one optional number. It holds a
+ * label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit,
+ * or whitespace. Every colon variant (`:`, `：`, `∶`) and every other separator therefore matches,
+ * and the check names no markup or separator shape. A label word that a letter, digit, or
+ * whitespace-then-letter follows (`Notes about x`, `Why this matters:`) is prose and does not match.
+ */
 function readsAsLabelLine(line) {
   return LABEL_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
 }
 
-// A `Verdict` line under any markup or separator: after NFKC normalization it skips leading
-// non-letter, non-digit characters and one optional number.
-// It then holds `Verdict`, any case, optional whitespace, and a character that is no letter, digit,
-// or whitespace. An ordered sub-item never folds it into item text (issue #1082).
 const VERDICT_WORD_THEN_SEPARATOR = new RegExp(
   `^[^\\p{L}\\p{N}]*(?:\\p{N}+[^\\p{L}\\p{N}]*)?Verdict\\s*[^\\p{L}\\p{N}\\s]`,
   "iu",
 );
 
-/** True when the line reads as a `Verdict` line under any markup or separator. */
+/**
+ * True when the line reads as a `Verdict` line under any markup or separator. After NFKC
+ * normalization it skips leading non-letter, non-digit characters and one optional number. It then
+ * holds `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or
+ * whitespace. An ordered sub-item never folds it into item text (issue #1082).
+ */
 function readsAsVerdictLine(line) {
   return VERDICT_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
 }
@@ -719,15 +717,12 @@ function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
-// A bold prose line that can introduce a folded list, for example `**Reviewer notes.**`
-// (issue #1367). The bold must wrap the whole line, so a `*` bullet and a `**bold** note` line
-// with trailing text stay out.
 const BOLD_PROSE_LINE = /^\*\*[^*]+\*\*$/;
 
 /**
  * True when the line is a whole-line bold prose heading that can introduce a folded list (issue
- * #1367). Examples are `**Reviewer notes.**`. A `*` bullet and `**bold** note` with trailing text
- * are no heading.
+ * #1367). Examples are `**Reviewer notes.**`. The bold must wrap the whole line, so a `*` bullet and
+ * a `**bold** note` line with trailing text stay out.
  */
 function isBoldProseLine(line) {
   return BOLD_PROSE_LINE.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
@@ -833,11 +828,11 @@ function lastLabeled(lines, label) {
   return found;
 }
 
-// An accept counts only with a Checks line in the closing block, matching the
-// parent rule the prompt states (#217) and the interactive --require-accept gate
-// (issue #218). An accept without a Checks line is treated as not accepted.
 /**
  * The first failing acceptance check, "verdict" or "checks", or null when the review is accepted.
+ * An accept counts only with a Checks line in the closing block. That matches the parent rule the
+ * prompt states (#217) and the interactive --require-accept gate (issue #218). An accept without a
+ * Checks line is treated as not accepted.
  * The optional stored report is the one the turn result carries, so a fail-closed null is kept.
  * @param {string} response
  * @param {ReturnType<typeof parseReportBlock>} [report]

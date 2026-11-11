@@ -1,20 +1,25 @@
 // Argument parsing and pre-write validation for `agent-loop batch` (ADR 0106).
 // The runtime validates explicit values only: it reads no request and prompts for nothing.
-import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { access, constants, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
+import { basename, dirname, join, resolve } from "node:path";
 import { supportedAgents } from "../agents/index.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
-import { DEFAULT_TIMEOUT, initRefusal, ROLE_KINDS, roleFlags } from "../lib/args.mjs";
-import { canonicalPath } from "../lib/canonical-path.mjs";
+import {
+  DEFAULT_TIMEOUT,
+  initRefusal,
+  ROLE_KINDS,
+  roleFlags,
+  STOP_FLAG_WALK,
+  walkFlags,
+} from "../lib/args.mjs";
+import { canonicalPath, isInside } from "../lib/canonical-path.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
 import { logWarn } from "../lib/log.mjs";
+import { gitOrThrow } from "./git.mjs";
 import { normalizeItems } from "./items.mjs";
 
-const runFile = promisify(execFile);
 const ROLE_FLAGS = roleFlags(ROLE_KINDS);
 const PLACEHOLDERS = new Set(["issue", "title", "branch", "repo"]);
 const MAX_LOOPS = 64;
@@ -50,9 +55,11 @@ export const DEFAULT_PR_TASK_TEMPLATE = [
   "In review-only, change nothing and finish after the reviewer turn.",
 ].join("\n");
 
-const usage = (message) => Object.assign(new Error(message), { usage: true });
+/** A usage error, so the CLI exits with code 2. */
+export const usage = (message) => Object.assign(new Error(message), { usage: true });
 
-function positiveInt(flag, value) {
+/** The flag value as a positive integer, or a usage error. */
+export function positiveInt(flag, value) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < 1) {
     throw usage(`${flag} must be a positive integer.`);
@@ -113,102 +120,97 @@ export function parseBatchArgs(argv) {
     options[`${role}Effort`] = null;
   }
 
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i];
-    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
-    const flag = eq === -1 ? raw : raw.slice(0, eq);
-    const inline = eq === -1 ? null : raw.slice(eq + 1);
-    if (flag === "--help" || flag === "-h") {
-      return { help: true };
-    }
-    const read = (name) => {
-      if (inline !== null) {
-        if (inline === "") throw usage(`Missing value for ${name}.`);
-        return inline;
+  let help = false;
+  walkFlags(
+    argv,
+    0,
+    (flag, read, inline) => {
+      if (flag === "--help" || flag === "-h") {
+        help = true;
+        return STOP_FLAG_WALK;
       }
-      const value = argv[++i];
-      if (!value || value.startsWith("-")) throw usage(`Missing value for ${name}.`);
-      return value;
-    };
-    const readPath = (name) => resolve(read(name));
-
-    if (Object.hasOwn(ROLE_FLAGS, flag)) {
-      options[ROLE_FLAGS[flag]] = read(flag);
-      continue;
-    }
-    switch (flag) {
-      case "--repo":
-        options.repo = readPath(flag);
-        break;
-      case "--issue": {
-        const number = positiveInt(flag, read(flag));
-        if (options.issues.includes(number)) throw usage(`Duplicate --issue: ${number}.`);
-        options.issues.push(number);
-        break;
+      const readPath = (name) => resolve(read(name));
+      if (Object.hasOwn(ROLE_FLAGS, flag)) {
+        options[ROLE_FLAGS[flag]] = read(flag);
+        return true;
       }
-      case "--items-file":
-        options.itemsFile = readPath(flag);
-        break;
-      case "--require-specification":
-        if (inline !== null) throw usage("--require-specification does not take a value.");
-        options.requireSpecification = true;
-        break;
-      case "--from-audit":
-        options.fromAudit = read(flag);
-        break;
-      case "--loops":
-        options.loops = loopCount(read(flag));
-        break;
-      case "--max-steps":
-        options.maxSteps = positiveInt(flag, read(flag));
-        break;
-      case "--base":
-        options.base = read(flag);
-        break;
-      case "--work-tree-root":
-        options.workTreeRoot = readPath(flag);
-        break;
-      case "--task-template":
-        options.taskTemplate = read(flag);
-        break;
-      case "--setup-cmd":
-        options.setupCmd = read(flag);
-        break;
-      case "--setup-timeout":
-        options.setupTimeout = positiveInt(flag, read(flag));
-        break;
-      case "--test-cmd":
-        options.testCmd = read(flag);
-        break;
-      case "--test-cmd-timeout":
-        options.testCmdTimeout = positiveInt(flag, read(flag));
-        break;
-      case "--timeout": {
-        const seconds = Number(read(flag));
-        if (!Number.isSafeInteger(seconds) || seconds < 0) {
-          throw usage("--timeout must be a non-negative integer.");
+      switch (flag) {
+        case "--repo":
+          options.repo = readPath(flag);
+          break;
+        case "--issue": {
+          const number = positiveInt(flag, read(flag));
+          if (options.issues.includes(number)) throw usage(`Duplicate --issue: ${number}.`);
+          options.issues.push(number);
+          break;
         }
-        options.timeout = seconds === 0 ? null : seconds;
-        break;
-      }
-      case "--reviewer-sandbox": {
-        const value = read(flag);
-        if (!["read-only", "workspace-write"].includes(value)) {
-          throw usage(
-            `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
-          );
+        case "--items-file":
+          options.itemsFile = readPath(flag);
+          break;
+        case "--require-specification":
+          if (inline !== null) throw usage("--require-specification does not take a value.");
+          options.requireSpecification = true;
+          break;
+        case "--from-audit":
+          options.fromAudit = read(flag);
+          break;
+        case "--loops":
+          options.loops = loopCount(read(flag));
+          break;
+        case "--max-steps":
+          options.maxSteps = positiveInt(flag, read(flag));
+          break;
+        case "--base":
+          options.base = read(flag);
+          break;
+        case "--work-tree-root":
+          options.workTreeRoot = readPath(flag);
+          break;
+        case "--task-template":
+          options.taskTemplate = read(flag);
+          break;
+        case "--setup-cmd":
+          options.setupCmd = read(flag);
+          break;
+        case "--setup-timeout":
+          options.setupTimeout = positiveInt(flag, read(flag));
+          break;
+        case "--test-cmd":
+          options.testCmd = read(flag);
+          break;
+        case "--test-cmd-timeout":
+          options.testCmdTimeout = positiveInt(flag, read(flag));
+          break;
+        case "--timeout": {
+          const seconds = Number(read(flag));
+          if (!Number.isSafeInteger(seconds) || seconds < 0) {
+            throw usage("--timeout must be a non-negative integer.");
+          }
+          options.timeout = seconds === 0 ? null : seconds;
+          break;
         }
-        setReviewerSandbox(options, value, false);
-        break;
+        case "--reviewer-sandbox": {
+          const value = read(flag);
+          if (!["read-only", "workspace-write"].includes(value)) {
+            throw usage(
+              `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
+            );
+          }
+          setReviewerSandbox(options, value, false);
+          break;
+        }
+        case "--reviewer-workspace-write":
+          if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
+          setReviewerSandbox(options, "workspace-write", true);
+          break;
+        default:
+          return false;
       }
-      case "--reviewer-workspace-write":
-        if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
-        setReviewerSandbox(options, "workspace-write", true);
-        break;
-      default:
-        throw usage(`Unknown argument: ${raw}`);
-    }
-  }
+      return true;
+    },
+    { error: usage, allowInlineOnStop: true },
+  );
+  if (help) return { help: true };
 
   if (options.repo === null) throw usage("Missing required --repo.");
   if (options.fromAudit !== null && options.issues.length > 0) {
@@ -338,7 +340,7 @@ export async function canonicalWritePath(path) {
 }
 
 /** The nearest existing directory at or above `path`. */
-export async function nearestExistingDirectory(path) {
+async function nearestExistingDirectory(path) {
   let current = resolve(path);
   for (;;) {
     try {
@@ -354,10 +356,10 @@ export async function nearestExistingDirectory(path) {
 }
 
 /** Refuses a runs root that lies inside any Git work tree (ADR 0106 decision 8). */
-export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = git } = {}) {
+export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = gitOrThrow } = {}) {
   const candidate = await canonicalWritePath(runsRoot);
   const top = await gitWorkTreeTop(candidate, gitRun);
-  if (top !== null && inside(top, candidate)) {
+  if (top !== null && isInside(top, candidate)) {
     throw usage("The runs root must lie outside every Git work tree.");
   }
 }
@@ -387,53 +389,101 @@ async function gitWorkTreeTop(candidate, gitRun) {
 }
 
 /** Refuses a work-tree root inside any Git work tree, not only the target repository. */
-export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = git } = {}) {
+export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = gitOrThrow } = {}) {
   const candidate = await canonicalWritePath(workTreeRoot);
   const top = await gitWorkTreeTop(candidate, gitRun);
-  if (top !== null && inside(top, candidate)) {
+  if (top !== null && isInside(top, candidate)) {
     throw usage("The work-tree root must lie outside every Git work tree.");
   }
 }
 
-async function git(args, cwd) {
-  const { stdout } = await runFile("git", args, { cwd, encoding: "utf8" });
-  return stdout;
-}
-
 async function workTreeEntries(repo) {
   try {
-    const stdout = await git(["worktree", "list", "--porcelain", "-z"], repo);
+    const stdout = await gitOrThrow(["worktree", "list", "--porcelain", "-z"], repo);
     return parseWorkTreeList(stdout);
   } catch (err) {
     throw usage(`--repo is not a Git work tree: ${err.message}`);
   }
 }
 
-const inside = (parent, child) => {
-  const rel = relative(parent, child);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-};
-
-async function assertWritableDirectory(path) {
+/**
+ * Refuses a work-tree root that is not a writable directory, naming the `noun` that writes it.
+ * A missing path is checked at its nearest existing ancestor.
+ * `rootError` selects the batch rethrow or the audit usage refusal at a filesystem root.
+ */
+export async function assertWritableDirectory(path, noun, { rootError = "usage" } = {}) {
+  const refusal = `The work-tree root is not a directory the ${noun} can write.`;
   let current = path;
   for (;;) {
     try {
       const found = await stat(current);
-      if (!found.isDirectory()) {
-        throw usage("The work-tree root is not a directory the batch can write.");
-      }
+      if (!found.isDirectory()) throw usage(refusal);
       await access(current, constants.W_OK);
       return;
     } catch (err) {
-      if (err?.code === "ENOENT") {
-        const parent = dirname(current);
-        if (parent === current) throw err;
-        current = parent;
-        continue;
+      if (err?.usage && rootError !== "throw") throw err;
+      if (err?.code !== "ENOENT") throw usage(refusal);
+      const parent = dirname(current);
+      if (parent === current) {
+        if (rootError === "throw") throw err;
+        throw usage(refusal);
       }
-      throw usage("The work-tree root is not a directory the batch can write.");
+      current = parent;
     }
   }
+}
+
+/** The stable short key of a repository path, with a Windows drive letter in lower case. */
+export function repoKey(repo) {
+  return sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
+}
+
+/**
+ * Resolves the main work tree, base branch, base revision, work-tree root, and key shared by a
+ * batch and an audit. `readText` returns stdout, and `gitRun` runs the work-tree-root check. Both
+ * keep each caller's runner.
+ */
+export async function prepareRepository({
+  options,
+  repo,
+  entries,
+  readText,
+  gitRun,
+  noun,
+  defaultRoot,
+  rootError = "usage",
+}) {
+  const first = entries[0];
+  if (first === undefined || first.bare) throw usage("--repo must name a Git main work tree.");
+  const main = await canonicalPath(first.path);
+  if (main !== repo) throw usage(`--repo must name the main work tree (${main}).`);
+
+  let base = options.base ?? null;
+  if (base === null) {
+    try {
+      const remote = (
+        await readText(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo)
+      ).trim();
+      base = remote.startsWith("origin/") ? remote.slice("origin/".length) : remote;
+    } catch {
+      base = "main";
+    }
+  }
+  let revision = null;
+  try {
+    revision = await readText(
+      ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`],
+      repo,
+    );
+  } catch {
+    throw usage(`--base ${base} has no refs/remotes/origin/${base}.`);
+  }
+
+  const rootCanonical = await canonicalWritePath(options.workTreeRoot ?? defaultRoot);
+  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
+  await assertWritableDirectory(rootCanonical, noun, { rootError });
+
+  return { base, revision, workTreeRoot: rootCanonical, repoKey: repoKey(repo) };
 }
 
 /**
@@ -442,49 +492,25 @@ async function assertWritableDirectory(path) {
  * @param {object} options parsed options
  * @param {{ gitRun?: (args: string[], cwd: string) => Promise<string> }} [deps]
  */
-export async function prepareBatch(options, { gitRun = git } = {}) {
+export async function prepareBatch(options, { gitRun = gitOrThrow } = {}) {
   const repo = await canonicalPath(options.repo);
   const entries = await workTreeEntries(repo);
-  const first = entries[0];
-  if (first === undefined || first.bare) {
-    throw usage("--repo must name a Git main work tree.");
-  }
-  const main = await canonicalPath(first.path);
-  if (main !== repo) {
-    throw usage(`--repo must name the main work tree (${main}).`);
-  }
-
-  let base = options.base ?? null;
-  if (base === null) {
-    try {
-      const remote = (
-        await gitRun(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repo)
-      ).trim();
-      base = remote.startsWith("origin/") ? remote.slice("origin/".length) : remote;
-    } catch {
-      base = "main";
-    }
-  }
-  try {
-    await gitRun(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`], repo);
-  } catch {
-    throw usage(`--base ${base} has no refs/remotes/origin/${base}.`);
-  }
-
-  const workTreeRoot =
-    options.workTreeRoot ??
-    join(dirname(repo), `${basename(repo)}-batch-${options.id ?? "preview"}`);
-  const rootCanonical = await canonicalWritePath(workTreeRoot);
-  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
-  await assertWritableDirectory(rootCanonical);
-
-  const repoKey = sha256(repo.replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase())).slice(0, 12);
+  const prepared = await prepareRepository({
+    options,
+    repo,
+    entries,
+    readText: gitRun,
+    gitRun,
+    noun: "batch",
+    rootError: "throw",
+    defaultRoot: join(dirname(repo), `${basename(repo)}-batch-${options.id ?? "preview"}`),
+  });
   return {
     ...options,
     repo,
-    base,
-    workTreeRoot: rootCanonical,
-    repoKey,
+    base: prepared.base,
+    workTreeRoot: prepared.workTreeRoot,
+    repoKey: prepared.repoKey,
     roles: Object.fromEntries(
       ROLE_KINDS.map((role) => [
         role,

@@ -142,17 +142,8 @@ async function readRequiredSource(
   cwd,
   { absentOnError, classify, malformed = () => false },
 ) {
-  const {
-    status,
-    stdout,
-    stderr,
-    unreadable,
-    transient,
-    include,
-    terminal,
-    bodyClass,
-    replyStatus,
-  } = await gh(["api", ...args], cwd);
+  const reply = await gh(["api", ...args], cwd);
+  const { status, stdout, stderr, unreadable } = reply;
   if (status !== 0) {
     if (unreadable) {
       return { state: UNKNOWN, contexts: [], unparsed: true };
@@ -163,16 +154,7 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    throw ghApiFailure(args[0], {
-      status,
-      stdout,
-      stderr,
-      transient,
-      include,
-      terminal,
-      bodyClass,
-      replyStatus,
-    });
+    throw ghApiFailure(args[0], reply);
   }
   const text = stdout.trim();
   if (text === "") {
@@ -190,7 +172,7 @@ async function readRequiredSource(
   return {
     state,
     contexts,
-    unparsed: typeof body !== "object" || body === null || malformed(body),
+    unparsed: typeof body !== "object" || malformed(body),
   };
 }
 
@@ -548,31 +530,33 @@ export async function readRulesetState(gh, slug, base, cwd) {
   return rules.state;
 }
 
-// Required status contexts from every source: repository rulesets, classic branch
-// protection, and `gh pr checks --required`.
-// Deduplicated by name and app qualifier. `unknown` names every configuration
-// source whose reply settled nothing, because such a source may hold a required
-// check this caller never saw. An empty union is then a refusal, naming each
-// source that settled nothing; an empty union over sources that each stated they
-// hold no required check is an established absence the gate records (issue #336).
-// `gh pr checks --required` contributes names and nothing else, so it never
-// appears among the sources that settled nothing and never establishes an
-// absence. It lists only the checks that already reported, so it can name a
-// required check and it cannot prove one is absent: on a base branch with no
-// required check it prints nothing, which is the same silence as a read failure.
-//
-// With `retryable`, the protection read is a status-classified `--include` read like the paged
-// rules read, so a failed read of either source with a retryable status carries `transient`
-// and a caller can retry it on its next poll (#1091). The default reads stay as the gate pins them.
-//
-// With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is
-// not repeated (#1125).
-//
-// With `sourceCache`, a Map the caller owns, a ruleset or protection result that was read cleanly is
-// kept per base branch and reused by later calls with the same Map, so a repeated caller reads each
-// source once (#1267). Only a result that settled a class other than `UNKNOWN` is kept: an unknown,
-// unreadable, unparsed, or failed read is read again by the next call. A change to the rules after
-// the first read is not seen through the same Map.
+/**
+ * Required status contexts from every source: repository rulesets, classic branch
+ * protection, and `gh pr checks --required`.
+ * Deduplicated by name and app qualifier. `unknown` names every configuration
+ * source whose reply settled nothing, because such a source may hold a required
+ * check this caller never saw. An empty union is then a refusal, naming each
+ * source that settled nothing; an empty union over sources that each stated they
+ * hold no required check is an established absence the gate records (issue #336).
+ * `gh pr checks --required` contributes names and nothing else, so it never
+ * appears among the sources that settled nothing and never establishes an
+ * absence. It lists only the checks that already reported, so it can name a
+ * required check and it cannot prove one is absent: on a base branch with no
+ * required check it prints nothing, which is the same silence as a read failure.
+ *
+ * With `retryable`, the protection read is a status-classified `--include` read like the paged
+ * rules read, so a failed read of either source with a retryable status carries `transient`
+ * and a caller can retry it on its next poll (#1091). The default reads stay as the gate pins them.
+ *
+ * With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is
+ * not repeated (#1125).
+ *
+ * With `sourceCache`, a Map the caller owns, a ruleset or protection result that was read cleanly is
+ * kept per base branch and reused by later calls with the same Map, so a repeated caller reads each
+ * source once (#1267). Only a result that settled a class other than `UNKNOWN` is kept: an unknown,
+ * unreadable, unparsed, or failed read is read again by the next call. A change to the rules after
+ * the first read is not seen through the same Map.
+ */
 export async function requiredContexts(
   gh,
   slug,

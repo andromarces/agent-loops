@@ -127,10 +127,7 @@ function settleWithin(
 ) {
   const child = subprocess.nodeChildProcess ?? subprocess;
   const timers = new Set();
-  let stopWaiting;
-  const gaveUp = new Promise((resolve) => {
-    stopWaiting = resolve;
-  });
+  const { promise: gaveUp, resolve: stopWaiting } = Promise.withResolvers();
   const after = (ms, action) => timers.add(setTimeout(action, ms));
   // The OS pipes of the child. With a transform, the stream is the output of the transform. Execa
   // ends that stream with its input, so the bound leaves it alone.
@@ -322,9 +319,9 @@ export async function exec(command, args = [], options = {}) {
     };
     if (marked) {
       const markedEnv = withNpmLogSettings({ ...process.env, ...childEnv }, env);
+      // A worker and a reviewer also get the pnpm deps check set to `warn`.
       execaOptions.env = withPnpmDepsCheckWarn(markedEnv);
       execaOptions.extendEnv = false;
-      // A worker and a reviewer also get the pnpm deps check set to `warn`.
     } else {
       // Any other role keeps the inherited environment, with `env` over it.
       execaOptions.env = childEnv;

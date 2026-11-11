@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0123: Shard the macOS CI test job behind a fan-in required context](0123-shard-the-macos-ci-test-job.md). It replaces decision 1's `ci` matrix `[ubuntu-latest, macos-latest]` with `[ubuntu-latest]` and moves macOS work to its own shard, smoke, and gate jobs. Every other decision stays in force.
 
 ## Date
 

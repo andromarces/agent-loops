@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
-import { errorLine } from "./error-message.mjs";
-import { entryCarrier, reportedPathNames } from "./entry-report.mjs";
+import { errorCode, errorLine } from "./error-message.mjs";
+import { reportedPathNames } from "./entry-report.mjs";
 import { gitRead } from "./git-read.mjs";
 import { logWarn } from "./log.mjs";
 import { sha256File, workTreeRoot } from "./snapshot.mjs";
@@ -91,7 +91,7 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
         ]);
       } catch (err) {
         // A file system error message carries the path, so the warning names the error code only.
-        const code = typeof err?.code === "string" && /^[A-Z0-9_]+$/.test(err.code) ? err.code : "";
+        const code = errorCode(err);
         const reason = bound.signal.aborted ? `over ${boundMs} ms` : code || "unknown error";
         const subject = rootLockfile ? `the lockfile ${relPath}` : "a dependency file";
         logWarn(`worker: ${subject} read failed (${reason}); reporting it as changed`);
@@ -105,19 +105,17 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
         bound.stopped,
       ]);
       // One bounded list read includes tracked and untracked files and skips ignored paths.
-      let candidates = [];
-      let listFailed = false;
+      let candidates;
       try {
         const pending = listDependencyFiles(root, bound);
         pending.catch(() => {});
         candidates = await Promise.race([pending, bound.stopped]);
       } catch {
-        listFailed = true;
         logWarn(
           "worker: the dependency file list read failed; reporting every dependency file as changed",
         );
+        return failedRecord();
       }
-      if (listFailed) return failedRecord();
       const hashed = candidates.slice(0, MAX_DEPENDENCY_FILES);
       const overflow = candidates.slice(MAX_DEPENDENCY_FILES);
       if (overflow.length > 0) {
@@ -171,8 +169,6 @@ export function diffLockfiles(before, after) {
   return [...new Set([...node, ...nonNode])].sort();
 }
 
-const FIXED_ROOT_LOCKFILES = new Set(LOCKFILES);
-
 /**
  * Names the changed paths for the envelope, redacted like the other path fields. A fixed root
  * lockfile name stays byte-identical, because the turn does not choose it.
@@ -180,16 +176,5 @@ const FIXED_ROOT_LOCKFILES = new Set(LOCKFILES);
  * @returns {string[]}
  */
 export function reportedLockfilePaths(paths) {
-  return reportedPathNames(paths, (path) => FIXED_ROOT_LOCKFILES.has(path));
+  return reportedPathNames(paths, (path) => LOCKFILES.includes(path));
 }
-
-const carrier = entryCarrier("lockfileChanged");
-
-/**
- * Carries the paths on a fatal error as `err.lockfileChanged`. A frozen error or a throwing setter
- * keeps the original error, and the paths stay readable through `failedLockfileChanged`.
- */
-export const carryLockfileChanged = carrier.carry;
-
-/** Returns the paths a fatal error carries, or `undefined` when it carries none. */
-export const failedLockfileChanged = carrier.failed;

@@ -5,11 +5,17 @@ import { describe, expect, test, vi } from "vite-plus/test";
 import { defaultAgents, runAgent } from "../../src/agents/index.mjs";
 import { exec } from "../../src/lib/exec.mjs";
 
-// Only `exec` is replaced: the Codex turn directory removal runs its helper through `execBounded`.
-vi.mock("../../src/lib/exec.mjs", async (importOriginal) => ({
-  ...(await importOriginal()),
-  exec: vi.fn(),
-}));
+// `exec` is replaced by the cases. The turn directory removal is answered in this process, so no
+// `turn-tmpdir-remove.mjs` child starts per turn.
+vi.mock("../../src/lib/exec.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal.mjs");
+  return {
+    ...actual,
+    exec: vi.fn(),
+    execBounded: turnTmpdirRemovalDouble(actual.execBounded),
+  };
+});
 
 const SESSION = "11111111-1111-4111-8111-111111111111";
 

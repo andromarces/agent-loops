@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { execa } from "execa";
-import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import {
   auditPaths,
   parseAuditArgs,
@@ -32,10 +32,30 @@ import { removePath } from "../fs-helpers.mjs";
 const roots = [];
 const repos = [];
 let removeRepo;
+let sharedRevision;
+let sharedWorkTree;
+
+// Creates the detached checkout of `revision` under `base` and records its identity.
+async function auditWorkTree(base, revision) {
+  const workTreePath = join(base, "revision");
+  await git(["worktree", "add", "--detach", workTreePath, revision], removeRepo);
+  const identity = await pathIdentity(workTreePath);
+  return {
+    path: workTreePath,
+    canonicalPath: workTreePath,
+    dev: String(identity.dev),
+    ino: String(identity.ino),
+    revision,
+  };
+}
 
 beforeAll(async () => {
   removeRepo = await createTempRepo();
   repos.push(removeRepo);
+  sharedRevision = (await git(["rev-parse", "HEAD"], removeRepo)).stdout;
+  const base = await mkdtemp(join(tmpdir(), "audit-shared-"));
+  roots.push(base);
+  sharedWorkTree = await auditWorkTree(base, sharedRevision);
 }, 60_000);
 
 afterAll(async () => {
@@ -98,28 +118,18 @@ function fakeTurns({ reviewers = {}, consolidations = [] } = {}) {
   return { runTurn, calls };
 }
 
-async function preparedAudit(overrides = {}) {
+// One clean repository and checkout serve the cases that never change them. A case that writes
+// into the checkout asks for its own, so the shared state stays immutable across cases.
+async function preparedAudit({ ownWorkTree = false, ...overrides } = {}) {
   const base = await mkdtemp(join(tmpdir(), "audit-it-"));
   roots.push(base);
-  const repo = await createTempRepo();
-  repos.push(repo);
-  const revision = (await git(["rev-parse", "HEAD"], repo)).stdout;
-  const workTreePath = join(base, "revision");
-  await git(["worktree", "add", "--detach", workTreePath, revision], repo);
-  const identity = await pathIdentity(workTreePath);
-  const workTree = {
-    path: workTreePath,
-    canonicalPath: workTreePath,
-    dev: String(identity.dev),
-    ino: String(identity.ino),
-    revision,
-  };
+  const workTree = ownWorkTree ? await auditWorkTree(base, sharedRevision) : sharedWorkTree;
   return {
     id: "20260101-000000-test",
-    repo,
+    repo: removeRepo,
     repoKey: "abc123abc123",
     base: "main",
-    revision,
+    revision: sharedRevision,
     workTreeRoot: join(base, "root"),
     reviewers: [
       { kind: "claude", model: null, effort: null },
@@ -177,7 +187,7 @@ test("an audit reviewer receives the reviewer prompt and codex defaults to no sa
 // Usefulness: a reviewer that changes the audit checkout fails that audit and stops for the
 // owner, leaving the file as found and launching no later reviewer or create (ADR 0019).
 test("a reviewer that changes the checkout stops for the owner and leaves the file", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const gh = fakeGh();
   const turns = fakeTurns({
@@ -282,7 +292,7 @@ async function pausedAudit(
 // Usefulness: a resume that finds a moved HEAD stops for the owner, leaves the checkout as
 // found, and discards the saved findings so the old result cannot feed creation.
 test("a resume stops for the owner when the checkout moved", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   await pausedAudit(prepared);
   await git(
@@ -344,7 +354,7 @@ test("a resume stops for the owner when the checkout moved", async () => {
 // Usefulness: the owner's approval does not feed a saved result from a changed checkout; drift
 // discards the approval, and a later approval after the owner restores the checkout proceeds.
 test("approve does not feed a saved result from a changed checkout", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   const runsRoot = join(prepared.workTreeRoot, "runs");
   await pausedAudit(prepared, {
     reviewerTwo: new Error("failed"),
@@ -432,7 +442,7 @@ test("a snapshot failure stops the audit before the next reviewer", async () => 
 // Usefulness: setup that changes the audit checkout is a drift, so the run stops for the owner,
 // launches no reviewer, and leaves the setup's file as found (ADR 0109).
 test("setup that changes the checkout stops for the owner and launches no reviewer", async () => {
-  const prepared = await preparedAudit();
+  const prepared = await preparedAudit({ ownWorkTree: true });
   await mkdir(prepared.workTreeRoot, { recursive: true });
   const setupScript = join(prepared.workTreeRoot, "setup.cjs");
   await writeFile(setupScript, "require('node:fs').writeFileSync('init.txt','changed');\n");
@@ -510,6 +520,65 @@ test("an approval bound to another revision is discarded", async () => {
   expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
 });
 
+describe("bounded audit reads", () => {
+  let prepared;
+  beforeAll(async () => {
+    prepared = await preparedAudit();
+  });
+
+  const isolated = (name) => ({ ...prepared, workTreeRoot: join(prepared.workTreeRoot, name) });
+  const runsRootOf = (scoped) => join(scoped.workTreeRoot, "runs");
+  const frozenCheckout = async () => ({ head: prepared.revision, clean: true });
+  const replyOnAbort =
+    (reply) =>
+    (args, cwd, options = {}) =>
+      new Promise((resolve) => {
+        const end = () => resolve(reply);
+        if (options.signal?.aborted) end();
+        else options.signal?.addEventListener("abort", end, { once: true });
+      });
+
+  // Usefulness: the audit issue read ends at the bound instead of hanging the run.
+  test("an audit issue read that never returns ends at the bound", async () => {
+    const scoped = isolated("bound");
+    await pausedAudit(scoped, { existingIssues: null });
+    const result = await runAudit({
+      prepared: { ...scoped, mode: "resume" },
+      runsRoot: runsRootOf(scoped),
+      gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
+      deps: { ...depsWith(scoped.workTree), ghTimeoutMs: 20, readCheckout: frozenCheckout },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.summary.pauseReason).toBe("issue-read-failed");
+  });
+
+  // Usefulness: a create that reports success after the run abort ends the audit interrupted.
+  test("an audit create that ends after the run abort fails closed", async () => {
+    const scoped = isolated("cancel");
+    await pausedAudit(scoped);
+    const abort = new AbortController();
+    const gh = (args, cwd, options = {}) => {
+      const reply = { status: 0, stdout: "https://github.com/o/r/issues/7\n", stderr: "" };
+      if (args[0] !== "issue" || args[1] !== "create") return Promise.resolve(reply);
+      abort.abort(new Error("stopped in the create"));
+      return options.signal?.aborted
+        ? Promise.resolve(reply)
+        : new Promise((resolve) => {
+            options.signal.addEventListener("abort", () => resolve(reply), { once: true });
+          });
+    };
+    const result = await runAudit({
+      prepared: { ...scoped, mode: "resume" },
+      runsRoot: runsRootOf(scoped),
+      gh,
+      signal: abort.signal,
+      deps: { ...depsWith(scoped.workTree), readCheckout: frozenCheckout },
+    });
+    expect(result.exitCode).toBe(130);
+    expect(result.summary.status).toBe("interrupted");
+  });
+});
+
 // Usefulness: a repeated worker flag with a different value is refused, not silently overwritten.
 test("a repeated worker flag with a conflicting value is a usage error", () => {
   expect(() =>
@@ -556,21 +625,90 @@ test("two reviewers run before one consolidation and create one issue per findin
     ],
   });
 
-  const { exitCode, summary } = await runAudit({
-    prepared,
-    runsRoot,
-    gh: gh.gh,
-    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
-  });
+  const lines = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
+  try {
+    const { exitCode, summary } = await runAudit({
+      prepared,
+      runsRoot,
+      gh: gh.gh,
+      deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+    });
 
-  expect(exitCode).toBe(0);
-  expect(summary.status).toBe("created");
-  expect(turns.calls.map((call) => call.roleName)).toEqual(["reviewer", "reviewer", "worker"]);
-  expect(turns.calls[2].prompt).toContain("First defect");
-  expect(turns.calls[2].prompt).toContain("Second defect");
-  expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(2);
-  expect(summary.issues.map((issue) => issue.number)).toEqual([1, 2]);
-  expect(summary.issues.every((issue) => issue.existing === false)).toBe(true);
+    expect(exitCode).toBe(0);
+    expect(summary.status).toBe("created");
+    expect(turns.calls.map((call) => call.roleName)).toEqual(["reviewer", "reviewer", "worker"]);
+    expect(turns.calls[2].prompt).toContain("First defect");
+    expect(turns.calls[2].prompt).toContain("Second defect");
+    expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(2);
+    expect(summary.issues.map((issue) => issue.number)).toEqual([1, 2]);
+    expect(summary.issues.every((issue) => issue.existing === false)).toBe(true);
+    const creationLines = lines.filter(
+      (line) => line.includes("creating issue ") || line.includes("created issue #"),
+    );
+    expect(creationLines).toHaveLength(4);
+    expect(creationLines.every((line) => line.startsWith("[agent-loop] info: "))).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+// Usefulness: a failed issue creation logs one error line, so the failure stays visible.
+test("a failed issue creation logs one error line", async () => {
+  const base = await mkdtemp(join(tmpdir(), "audit-log-"));
+  roots.push(base);
+  const workTreePath = join(base, "revision");
+  await mkdir(workTreePath, { recursive: true });
+  const revision = "1111111111111111111111111111111111111111";
+  const identity = await pathIdentity(workTreePath);
+  const prepared = {
+    id: "20260101-000000-test",
+    repo: "o/r",
+    repoKey: "abc123abc123",
+    base: "main",
+    revision,
+    workTreeRoot: join(base, "root"),
+    reviewers: [
+      { kind: "claude", model: null, effort: null },
+      { kind: "agy", model: null, effort: null },
+    ],
+    worker: { kind: "codex", model: null, effort: null },
+    timeout: null,
+    reviewerSandbox: null,
+    setupCmd: null,
+    setupTimeout: 600,
+    mode: "resume",
+    workTree: {
+      path: workTreePath,
+      canonicalPath: workTreePath,
+      dev: String(identity.dev),
+      ino: String(identity.ino),
+      revision,
+    },
+  };
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared);
+  const gh = fakeGh();
+  const failingGh = async (args) =>
+    args[0] === "issue" && args[1] === "create"
+      ? { status: 1, stdout: "", stderr: "creation refused" }
+      : gh.gh(args);
+  const errors = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((line) => errors.push(String(line)));
+  try {
+    const { summary } = await runAudit({
+      prepared,
+      runsRoot,
+      gh: failingGh,
+      deps: { readCheckout: async () => ({ head: revision, clean: true }) },
+    });
+    expect(summary.pauseReason).toBe("issue-create-failed");
+    const failures = errors.filter((line) => line.includes("issue creation failed"));
+    expect(failures).toHaveLength(1);
+    expect(failures[0].startsWith("[agent-loop] error: ")).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 // Usefulness: a supplied focus is the only reviewer goal, it reaches every reviewer and the
@@ -1458,6 +1596,14 @@ test("audit arguments require two reviewers and one worker", () => {
       "codex",
     ]),
   ).toThrow("Duplicate reviewer settings: claude.");
+});
+
+// Usefulness: an inline value on the sandbox alias is refused before the sandbox conflict.
+test("an inline value on the sandbox alias wins over a conflict", () => {
+  const base = ["--repo", ".", "--reviewer", "codex", "--reviewer", "codex", "--worker", "codex"];
+  expect(() =>
+    parseAuditArgs([...base, "--reviewer-sandbox", "read-only", "--reviewer-workspace-write=true"]),
+  ).toThrow("--reviewer-workspace-write does not take a value.");
 });
 
 // Usefulness: the operator focus is one text source, and a blank text cannot become a reviewer

@@ -4,19 +4,16 @@
 import { isJsonObject } from "../lib/json.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { readFile } from "node:fs/promises";
-import { git as gitRead, identityEqual, pathIdentity } from "./git.mjs";
+import {
+  commitsAhead,
+  git as gitRead,
+  identityEqual,
+  isAncestor,
+  pathIdentity,
+  readWorkTreeGitState,
+} from "./git.mjs";
 
 const asGit = (deps) => deps.git ?? gitRead;
-
-async function commitsAhead(from, to, cwd, git) {
-  const result = await git(["rev-list", "--count", `${from}..${to}`], cwd);
-  return result.exitCode === 0 && /^\d+$/.test(result.stdout) ? Number(result.stdout) : null;
-}
-
-async function ancestorOf(ancestor, descendant, cwd, git) {
-  const result = await git(["merge-base", "--is-ancestor", ancestor, descendant], cwd);
-  return result.exitCode === 0;
-}
 
 async function ghJson(gh, args, cwd, label) {
   let reply;
@@ -37,14 +34,32 @@ async function ghJson(gh, args, cwd, label) {
 
 const owner = (reason) => ({ status: "needs-owner", reason, pr: null, requireCi: null });
 
-/** The work-tree heads that this loop's own transcript recorded for a worker or reviewer turn. */
-async function readRecordedHeads(loop) {
-  if (typeof loop.transcript !== "string") return [];
-  let data;
-  try {
-    data = JSON.parse(await readFile(loop.transcript, "utf8"));
-  } catch {
-    return [];
+// The success of a merged pull request, or null when no merged head matches the local branch.
+async function mergedOutcome(merged, workTree, git) {
+  for (const pull of merged) {
+    const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, {
+      runner: git,
+    });
+    if (ahead === null) return owner("the local commit count could not be read");
+    if (ahead === 0) {
+      return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
+    }
+  }
+  return null;
+}
+
+/**
+ * The work-tree heads that this loop's own transcript recorded for a worker or reviewer turn.
+ * `data` is the already-parsed transcript, or undefined to read the recorded file.
+ */
+async function readRecordedHeads(loop, data) {
+  if (data === undefined) {
+    if (typeof loop.transcript !== "string") return [];
+    try {
+      data = JSON.parse(await readFile(loop.transcript, "utf8"));
+    } catch {
+      return [];
+    }
   }
   if (!isJsonObject(data) || !Array.isArray(data.events)) return [];
   const heads = [];
@@ -126,12 +141,13 @@ async function reconcilePullRequest({ loop, repo, gh, git, state, headsOf }) {
 /**
  * Reads the loop's local and remote state and applies the reconciliation rules.
  * `loop` holds `workTree` (`path`, `canonicalPath`, `dev`, `ino`, `branch`) and `pr` (declared).
+ * `transcript` is the already-parsed transcript, or undefined to read the recorded file.
  * @returns {Promise<{ status: "resume" | "succeeded" | "needs-owner", reason: string | null, pr: number | null, requireCi: number | null }>}
  */
-export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
+export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcript }) {
   const git = asGit(deps);
   const canonical = deps.canonicalPath ?? canonicalPath;
-  const headsOf = deps.recordedHeads ?? readRecordedHeads;
+  const headsOf = deps.recordedHeads ?? ((target) => readRecordedHeads(target, transcript));
   const identityOf = deps.pathIdentity ?? pathIdentity;
   const workTree = loop.workTree;
   if (!workTree?.path || typeof workTree.path !== "string") {
@@ -147,9 +163,8 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   }
   let state;
   try {
-    const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], workTree.path);
-    const head = await git(["rev-parse", "HEAD"], workTree.path);
-    const status = await git(["status", "--porcelain"], workTree.path);
+    const reads = await readWorkTreeGitState(workTree.path, { runner: git });
+    const { branch, head, status } = reads;
     if (branch.exitCode !== 0 || head.exitCode !== 0 || status.exitCode !== 0) {
       throw new Error(branch.stderr || head.stderr || status.stderr || "a Git read failed");
     }
@@ -192,14 +207,14 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
         "--state",
         "all",
         "--json",
-        "number,state,headRefOid,isCrossRepository,baseRefName",
+        "number,state,headRefOid,isCrossRepository,baseRefName,mergeCommit",
       ],
       repo,
       "the pull request list read",
     );
     if (!Array.isArray(pulls)) throw new Error("the pull request list read returned no list");
     for (const pull of pulls) {
-      if (!isJsonObject(pull) || !Number.isInteger(pull.number)) {
+      if (!isJsonObject(pull) || !Number.isInteger(pull.number) || typeof pull.state !== "string") {
         throw new Error("the pull request list read returned a malformed entry");
       }
     }
@@ -220,23 +235,7 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
     return owner(err.message);
   }
 
-  const details = [];
-  for (const pull of pulls) {
-    try {
-      const view = await ghJson(
-        gh,
-        ["pr", "view", String(pull.number), "--json", "state,headRefOid,mergeCommit"],
-        repo,
-        `the read of pull request ${pull.number}`,
-      );
-      if (!isJsonObject(view) || typeof view.state !== "string") {
-        throw new Error(`the read of pull request ${pull.number} named no state`);
-      }
-      details.push({ ...pull, ...view });
-    } catch (err) {
-      return owner(err.message);
-    }
-  }
+  const details = pulls;
 
   if (loop.pr !== null && loop.pr !== undefined) {
     if (!details.some((pull) => pull.number === loop.pr)) {
@@ -264,12 +263,8 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
 
   if (loop.kind === "task") {
     if (merged.length > 0) {
-      for (const pull of merged) {
-        const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, git);
-        if (ahead === null) return owner("the local commit count could not be read");
-        if (ahead === 0)
-          return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
-      }
+      const succeeded = await mergedOutcome(merged, workTree, git);
+      if (succeeded !== null) return succeeded;
       return owner("the merged pull request head lacks a local commit");
     }
   }
@@ -278,12 +273,8 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
     if (merged.length === 0) {
       return owner("the issue is closed and no pull request of this branch is merged");
     }
-    for (const pull of merged) {
-      const ahead = await commitsAhead(pull.headRefOid, workTree.branch, workTree.path, git);
-      if (ahead === null) return owner("the local commit count could not be read");
-      if (ahead === 0)
-        return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
-    }
+    const succeeded = await mergedOutcome(merged, workTree, git);
+    if (succeeded !== null) return succeeded;
     return owner("the merged pull request head lacks a local commit");
   }
 
@@ -311,8 +302,10 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {} }) {
   }
 
   if (remoteHead !== null && remoteHead !== state.head) {
-    const ahead = await commitsAhead(remoteHead, state.head, workTree.path, git);
-    const remoteIsAncestor = await ancestorOf(remoteHead, state.head, workTree.path, git);
+    const ahead = await commitsAhead(remoteHead, state.head, workTree.path, { runner: git });
+    const remoteIsAncestor = await isAncestor(remoteHead, state.head, workTree.path, {
+      runner: git,
+    });
     if (ahead === null) return owner("the local commit count could not be read");
     if (ahead > 0 && remoteIsAncestor) {
       return { status: "resume", reason: null, pr: null, requireCi: null };

@@ -518,25 +518,38 @@ export async function waitChecks({
  * The wait helpers read and write this object, so every poll shares one cache.
  * @param {object} options The resolved options of `waitChecks`.
  */
-function createWaitContext(options) {
+function createWaitContext({
+  pr,
+  cwd,
+  timeoutSeconds,
+  deadline,
+  all,
+  head,
+  expect,
+  gh,
+  now,
+  sleep,
+  childExitCeilingMs,
+  signal,
+}) {
   const context = {
-    pr: options.pr,
-    cwd: options.cwd,
-    all: options.all,
-    head: options.head,
-    expect: options.expect,
-    gh: options.gh,
-    now: options.now,
-    sleep: options.sleep,
-    childExitCeilingMs: options.childExitCeilingMs,
-    signal: options.signal,
-    end: options.deadline ?? options.now() + options.timeoutSeconds * 1000,
+    pr,
+    cwd,
+    all,
+    head,
+    expect,
+    gh,
+    now,
+    sleep,
+    childExitCeilingMs,
+    signal,
+    end: deadline ?? now() + timeoutSeconds * 1000,
     // `all` waits on every check of the PR head, not only the required ones (#896, #950).
     checksArgv: [
       "pr",
       "checks",
-      String(options.pr),
-      ...(options.all ? [] : ["--required"]),
+      String(pr),
+      ...(all ? [] : ["--required"]),
       "--json",
       "name,state,bucket",
     ],
@@ -545,7 +558,7 @@ function createWaitContext(options) {
     headArgv: [
       "pr",
       "view",
-      String(options.pr),
+      String(pr),
       "--json",
       "headRefOid,baseRefName,mergeable,mergeStateStatus",
     ],
@@ -599,7 +612,7 @@ function timeoutOf(context) {
 
 /**
  * The one place that adds `childExitUnconfirmed`.
- * Every envelope the wait returns passes through it, settled or timed out, and the catch below carries the flag on an error.
+ * Every envelope the wait returns passes through it, settled or timed out, and the catch above carries the flag on an error.
  */
 function seal(context, envelope) {
   return context.unconfirmed ? { ...envelope, childExitUnconfirmed: true } : envelope;
@@ -674,21 +687,10 @@ async function pause(context) {
   return true;
 }
 
-/** The wait context that the required-check source and absence reads take. */
-function gateContext(context) {
-  return {
-    bounded: context.bounded,
-    slug: context.slug,
-    pr: context.pr,
-    cwd: context.cwd,
-    sourceCache: context.sourceCache,
-  };
-}
-
 /** Reads the required-check absence of `base` after the repository slug read. */
 async function absent(context, base, names, reply) {
   await ensureSlug(context);
-  return absenceOf(gateContext(context), base, names, reply);
+  return absenceOf(context, base, names, reply);
 }
 
 /** Reads the PR head and base branch of the wait. */
@@ -833,7 +835,7 @@ async function commitOutcome(context, sha, base, listed, names) {
     headEmpty = entries.runs.length === 0 && entries.statuses.length === 0;
     items = context.all
       ? allItems(entries)
-      : requiredItems(entries, await contextsOf(gateContext(context), base, listed, names), sha);
+      : requiredItems(entries, await contextsOf(context, base, listed, names), sha);
   } catch (raw) {
     // A failure that `gh pr checks` lists settles the wait, so a commit or source read that fails
     // never delays it. The bound and every other failure still end it.

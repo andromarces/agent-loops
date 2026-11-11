@@ -69,11 +69,11 @@ function resolveSelection(token) {
 async function askSelection(
   discovered,
   { input = process.stdin, output = process.stdout } = {},
-  { terminal } = {},
+  { terminal, marker = "detected" } = {},
 ) {
   const menu = HARNESS_ORDER.map((harness, index) => {
-    const marker = discovered.includes(harness) ? " [detected]" : "";
-    return `${index + 1}. ${HARNESS_META[harness].label} (${harness})${marker}`;
+    const mark = discovered.includes(harness) ? ` [${marker}]` : "";
+    return `${index + 1}. ${HARNESS_META[harness].label} (${harness})${mark}`;
   });
   // Readline calls setRawMode on a terminal input, so a terminal that refused
   // raw mode runs the same prompt without terminal handling.
@@ -112,11 +112,10 @@ async function selectHarnesses(names, checked, io, { markDetected = false } = {}
     process.exitCode = asked.reason === "sigint" ? 130 : 1;
     return null;
   }
-  const answer = await askSelection(
-    checked,
-    io,
-    asked.rawModeUnavailable ? { terminal: false } : {},
-  );
+  const answer = await askSelection(checked, io, {
+    ...(asked.rawModeUnavailable ? { terminal: false } : {}),
+    marker: markDetected ? "detected" : "installed",
+  });
   if (answer === "") {
     return checked;
   }

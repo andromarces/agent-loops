@@ -8,13 +8,14 @@ import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promise
 import { basename, isAbsolute, join } from "node:path";
 import { mapInBatches } from "./batches.mjs";
 import { canonicalPath } from "./canonical-path.mjs";
-import { gitRead, gitReadError, readTopLevel, WORK_TREE_READ_TIMEOUT_MS } from "./git-read.mjs";
+import { readTopLevel } from "./git-read.mjs";
 import { logInfo, logWarn } from "./log.mjs";
 import {
   hasControlCharacter,
   locateWorkTrees,
   lstatOrNull,
   readWorkTrees,
+  signalBoundReadWorkTree,
 } from "./work-tree-layout.mjs";
 
 // Paths that can configure a child CLI or a build. A directory is walked, and the
@@ -62,28 +63,6 @@ export const MAX_WALKED_ENTRIES = 2000;
 // that was copied or change its line endings, so the snapshot would list it and
 // the run's reviewed state would shift (ADR 0018).
 const GIT_CONTROL_FILES = new Set([".gitignore", ".gitattributes"]);
-
-// Keeps the `local files` message and plain error class of the earlier builder.
-const localReadError = (reason, context) =>
-  gitReadError(reason, context, {
-    errorClass: Error,
-    prefix: "local files: ",
-    detail: (result) => `: ${(result.stderr || result.code || "").trim()}`,
-    exit: (result) => result.exitCode ?? "none",
-  });
-
-function git(cwd, args, { allowExit = [], ...options } = {}) {
-  // `stripFinalNewline: false` (execa, `lib/io/strip-newline.js`) keeps the output
-  // byte-exact. By default execa removes a final `\n` or `\r\n`, which can be part
-  // of a path.
-  return gitRead(cwd, args, {
-    timeoutMs: WORK_TREE_READ_TIMEOUT_MS,
-    stripFinalNewline: false,
-    ...options,
-    allowExit: [0, ...allowExit],
-    createError: localReadError,
-  });
-}
 
 /**
  * Folds a file name to the form that the strictest file system reads it as:
@@ -387,7 +366,7 @@ async function collect(ctx, rel, abs) {
  * `signal` ends a running `git` read, and the caller passes the result to `copyLocalFiles`.
  */
 export async function locateLocalFiles(cwd, { signal } = {}) {
-  const read = (dir, args, options) => git(dir, args, { signal, ...options });
+  const read = signalBoundReadWorkTree(signal);
   return locateWorkTrees(cwd, read);
 }
 
@@ -443,7 +422,7 @@ export async function copyLocalFiles(
     );
   }
   const extra = [...new Set(extraPaths.map(normalizeLocalPath))];
-  const read = (dir, args, options) => git(dir, args, { signal, ...options });
+  const read = signalBoundReadWorkTree(signal);
   // `located` is a layout that a dispatch already read; a direct call reads its own.
   const found = located === undefined ? await locateWorkTrees(cwd, read) : located;
   // The operator paths are checked before anything is copied, and also when nothing is, so a

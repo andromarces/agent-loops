@@ -35,6 +35,7 @@ import {
 } from "./lib/continuation.mjs";
 import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
+import { samePath } from "./lib/canonical-path.mjs";
 import { cancelOnSigInt } from "./lib/sigint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
 import { runHarnessCheckCommand } from "./harness-check.mjs";
@@ -175,7 +176,7 @@ function assertTask(task) {
 // Compares the write targets, so a file symlink and its target count as one file (#658).
 async function sameFile(a, b) {
   const [left, right] = await Promise.all([resolveWriteTarget(a), resolveWriteTarget(b)]);
-  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+  return samePath(left, right);
 }
 
 function formatSummary(summary) {
@@ -235,10 +236,15 @@ async function loadContinuation({ options, roles, events, agents, signal, review
     return { earlierGate, earlierPr, reviewerSandbox };
   } catch (err) {
     console.error(`
-${redactedText(readProp(err, "message") ?? err)}`);
+${redactedErrorMessage(err)}`);
     process.exitCode = readProp(err, "isCanceled") ? 130 : 1;
     return null;
   }
+}
+
+/** The redacted message of a thrown value, or the value itself when it has no message. */
+function redactedErrorMessage(err) {
+  return redactedText(readProp(err, "message") ?? err);
 }
 
 /**
@@ -337,7 +343,7 @@ export async function main(
       assertTask(options.task);
     }
   } catch (err) {
-    console.error(`\n${redactedText(readProp(err, "message") ?? err)}`);
+    console.error(`\n${redactedErrorMessage(err)}`);
     process.exitCode = 1;
     return;
   }
@@ -395,8 +401,7 @@ export async function main(
     // An empty error text gets a fallback so a failed run never records or prints a blank error.
     const finish = async ({ exitCode, error, failed }) => {
       const errorText = failed
-        ? redactedText(readProp(error, "message") ?? error) ||
-          redactedText("Run failed with an empty error message.")
+        ? redactedErrorMessage(error) || redactedText("Run failed with an empty error message.")
         : null;
       transcriptData.exitCode = exitCode;
       transcriptData.error = errorText;

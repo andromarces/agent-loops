@@ -6,7 +6,7 @@ import { normalizeAgent } from "../agents/index.mjs";
 import { throwIfCanceled } from "../agents/shared.mjs";
 import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
-import { reportedPathNames } from "../lib/entry-report.mjs";
+import { MAX_ENTRIES, reportedPathNames } from "../lib/entry-report.mjs";
 import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-file-changes.mjs";
@@ -629,15 +629,12 @@ async function differingLocalFiles(state, cwd, signal) {
   }
 }
 
-// The most path entries that a local-files report names, the same bound as the other path fields.
-const MAX_LOCAL_FILE_ENTRIES = 20;
-
 /** Redacts and caps the side-aware entries, the same as the other path fields. */
 function reportedLocalFileChanges(changes) {
   return changes
     .map((entry) => ({ path: redactAndClean(String(entry.path)), changed: entry.changed }))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    .slice(0, MAX_LOCAL_FILE_ENTRIES);
+    .slice(0, MAX_ENTRIES);
 }
 
 /**

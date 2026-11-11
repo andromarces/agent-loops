@@ -172,9 +172,6 @@ export function cliCommandForms(
 const NO_LOAD_GENERATORS =
   "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
 
-// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611.
-// The rule also bars a load generator and a process that outlives the turn (issue #934).
-
 const TARGETED_RUN_BOUND =
   "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, then the test files that name the path or file name of a changed file that is not an importable module, for example a script, a config file, or a template, at most 10 test files in total, never a whole directory.";
 
@@ -193,6 +190,8 @@ const TARGETED_RUN_BOUND_FALLBACK = `
 const slotCommandForms = (options) =>
   cliCommandForms(() => "test-slot -- <suite command as separate arguments>", options);
 
+// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611.
+// The rule also bars a load generator and a process that outlives the turn (issue #934).
 /**
  * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
  * A targeted run covers at most 10 files. The order is the mirror files, then the test files that
@@ -218,9 +217,8 @@ export function testSlotRule(options) {
 }
 
 // A held test slot made two workers skip or reorder the TDD red run, and no report recorded it
-// (issue #1612). A red run of one or a few test files is a targeted run, so a held slot makes it
-// wait. The wait stays inside the turn, and a run that did not start reaches `Checks` (ADR 0096).
-// A path that cannot be quoted keeps the direct targeted run of ADR 0044's fallback.
+// (issue #1612). The wait stays inside the turn, and a run that did not start reaches `Checks`
+// (ADR 0096).
 
 /**
  * The TDD red-run rule of the worker first turn (issue #1612, ADR 0096). A red run of one or a few

@@ -38,6 +38,12 @@ export const EPHEMERAL_ROOT_MESSAGE =
 
 const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
 
+/** The root of `path` and its segments below that root, for `pathApi`. */
+function rootAndSegments(path, pathApi) {
+  const { root } = pathApi.parse(path);
+  return { root, segments: splitPath(path.slice(root.length)) };
+}
+
 // The path module and the realpath of a platform. On Windows the native realpath expands an 8.3
 // short segment, which the JS realpath keeps (#1068).
 const platformApi = (platform) =>
@@ -102,32 +108,9 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * directory, which is when its name has no 8.3 shape, or when `related` says that its existing
  * parent is neither at, above, nor below a temporary root. Every segment below a kept one is
  * missing too and is kept.
- *
- * `isEphemeralPackageRoot` takes the canonical path of the package root first, before it reads the
- * temporary roots, then accepts the path only when that canonical path is among the spellings of
- * the first check and a second check gives the same spellings. A rename or delete that lands after
- * that first canonicalization has read the affected segment refuses the install (#1074). Tests
- * cover a link to a layout directory that vanishes while the first check runs, and a link spelling
- * of a temporary root that is renamed while the temporary roots are read.
- *
- * `isEphemeralPackageRoot` also looks at each prefix of the package root once, before the first
- * canonicalization, and refuses when a prefix that this look saw is missing at the second check
- * (#1077). Tests cover a link spelling of a bunx and a yarn dlx layout that is renamed as the first
- * canonicalization starts.
- *
- * known-limit: a change that lands before that first look reads the affected segment, or while it
- * reads it, is accepted (#1074, #1077). The process then never sees the segment present, so a
- * vanished link spelling of a temporary root looks the same as a missing stable path, which the
- * missing-segment rule above keeps accepted on purpose. No check inside one process can tell the
- * two apart without refusing every missing stable path and missing default root. A change after
- * the second check, such as a runner that deletes its folder while the installer writes files, is
- * not detected either, and that deletion is the one that the refusal exists for.
- *
- * Access failure and cost were verified on Windows 11 on 2026-10-25 (#709).
  */
 function expandShortSegments(path, related, failures) {
-  const { root } = win32.parse(path);
-  const segments = splitPath(path.slice(root.length));
+  const { root, segments } = rootAndSegments(path, win32);
   let expanded = root;
   for (const [i, segment] of segments.entries()) {
     const name = longName(expanded, segment, failures);
@@ -187,8 +170,7 @@ function isDanglingLink(path) {
  */
 function resolvedParentSpellings(path, platform, failures) {
   const { path: pathApi, realpath } = platformApi(platform);
-  const { root } = pathApi.parse(path);
-  const segments = splitPath(path.slice(root.length));
+  const { root, segments } = rootAndSegments(path, pathApi);
   const found = [];
   for (let depth = 1; depth < segments.length; depth++) {
     try {
@@ -251,8 +233,7 @@ function presentPrefixes(packageRoot, platform) {
   if (platform !== process.platform) return [];
   const { path: pathApi } = platformApi(platform);
   const absolute = absolutePath(packageRoot, platform);
-  const { root } = pathApi.parse(absolute);
-  const segments = splitPath(absolute.slice(root.length));
+  const { root, segments } = rootAndSegments(absolute, pathApi);
   const present = [];
   for (let depth = 1; depth <= segments.length; depth++) {
     const prefix = pathApi.join(root, ...segments.slice(0, depth));
@@ -332,12 +313,23 @@ const EPHEMERAL = { kind: "ephemeral" };
 
 /**
  * `{ kind: "unreadable", folder }` when a check fails closed on a folder it cannot read, `EPHEMERAL`
- * for any other refusal, else `null`. `folder` is the first folder that a check could not read.
+ * for any other refusal, else `null`. `folder` is the first folder that a check cannot read.
+ * Access failure and cost were verified on Windows 11 on 2026-10-25 (#709).
  */
 function packageRootRefusal(packageRoot, platform, tempRoots) {
   const failures = { unreadable: null };
   if (tempRoots.invalid === true) return EPHEMERAL;
+  // `isEphemeralPackageRoot` also looks at each prefix of the package root once, before the first
+  // canonicalization. It refuses when a prefix that this look saw is missing at the second check
+  // (#1077). Tests cover a link spelling of a bunx and a yarn dlx layout that is renamed as the
+  // first canonicalization starts.
   const seen = presentPrefixes(packageRoot, platform);
+  // `isEphemeralPackageRoot` takes the canonical path of the package root first, before it reads the
+  // temporary roots. It accepts the path only when that canonical path is among the spellings of the
+  // first check. A second check must give the same spellings. A rename or delete that lands after
+  // that first canonicalization has read the affected segment refuses the install (#1074). Tests
+  // cover a link to a layout directory that vanishes while the first check runs. They cover a link
+  // spelling of a temporary root that is renamed while the temporary roots are read.
   const initial = canonicalPath(packageRoot, platform, failures);
   // A path that cannot be resolved is a runner cache only when a spelling of it shows the layout,
   // under a temporary root as given or as its realpath resolves it.
@@ -400,6 +392,13 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
     !packageSpellings.includes(initial) ||
     again.length !== packageSpellings.length ||
     again.some((spelling, i) => spelling !== packageSpellings[i]);
+  // known-limit: a change that lands before that first look reads the affected segment, or while it
+  // reads it, is accepted (#1074, #1077). The process then never sees the segment present, so a
+  // vanished link spelling of a temporary root looks the same as a missing stable path. The
+  // missing-segment rule above keeps that path accepted on purpose. No check inside one process can
+  // tell the two apart without refusing every missing stable path and missing default root. A change
+  // after the second check is not detected either, for example a runner that deletes its folder
+  // while the installer writes files. That deletion is the one that the refusal exists for.
   return changed ? EPHEMERAL : null;
 }
 

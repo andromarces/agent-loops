@@ -9,7 +9,9 @@ import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
+import { isJsonObject } from "../lib/json.mjs";
 import { withGitIdentityReads } from "../lib/git-read.mjs";
+import { isSha256Hex } from "../lib/hash.mjs";
 import { refreshLocalFile } from "../lib/local-file-changes.mjs";
 import { normalizeLocalPath } from "../lib/local-files.mjs";
 import { logInfo, setVerbose, setLogsToStderr } from "../lib/log.mjs";
@@ -36,8 +38,8 @@ import { finishRun } from "./finish.mjs";
 import { readStdin, refuseUnreadableGate, releaseWorkTreeLock, requireState } from "./state.mjs";
 
 // Every operation of `agent-loop role`, in default-first usage order. `runEnding` marks an
-// operation that ends, extends, or changes the PR or a model of a run. A child process of that run
-// never runs one.
+// operation that ends, extends, changes the PR or a model, or refreshes the local state of a run.
+// A child process of that run never runs one.
 const ROLE_OPERATIONS = [
   { name: "dispatch", runEnding: false, run: dispatch },
   { name: "finish", runEnding: true, run: finish },
@@ -267,11 +269,8 @@ async function refreshLocal(args, { signal } = {}) {
         );
       }
       const hashes = state.localFilesCopiedSha256;
-      const expected =
-        hashes !== null && typeof hashes === "object" && !Array.isArray(hashes)
-          ? hashes[rel]
-          : undefined;
-      if (typeof expected !== "string" || !/^[0-9a-f]{64}$/.test(expected)) {
+      const expected = isJsonObject(hashes) ? hashes[rel] : undefined;
+      if (!isSha256Hex(expected)) {
         throw new RoleError(
           `refresh-local --path ${JSON.stringify(rel)} is refused: the run holds no stored hash for it, so it cannot prove the copy unchanged.`,
         );
@@ -416,9 +415,9 @@ async function waitChecksOperation(
     // The bound cannot move with wall time, and every child timeout stays an integer.
     now = () => Math.floor(performance.now()),
     sleep,
-    assertWorkTree = assertGitWorkTree,
     // `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it.
     // A test can spend clock time on validation and check that the time comes out of the bound.
+    assertWorkTree = assertGitWorkTree,
     // Injectable so a test can use a short ceiling; production keeps the wait default (issue #1465).
     childExitCeilingMs,
   } = {},

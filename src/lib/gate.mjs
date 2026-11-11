@@ -1,11 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { isFullSha } from "./git-sha.mjs";
+import { isSha256Hex } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
 import { acceptanceFailure } from "./report.mjs";
 import { reviewedState, snapshot } from "./snapshot.mjs";
 
 const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "acceptedSinceWorker"];
-const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
 /** The gate state of a run that starts with no earlier run (#234). */
 export const freshGate = () => ({
@@ -232,7 +232,7 @@ export async function matchingGate(earlierGate, cwd, { signal } = {}) {
     !isReviewedShape(reviewed) ||
     reviewed.exact !== true ||
     !(isFullSha(reviewed.head) || reviewed.head === "unborn") ||
-    !DIGEST_PATTERN.test(reviewed.digest)
+    !isSha256Hex(reviewed.digest)
   ) {
     return null;
   }

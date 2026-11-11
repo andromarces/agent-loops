@@ -75,6 +75,7 @@ const EXEC = fileURLToPath(new URL("../src/lib/exec.mjs", import.meta.url));
 // Usefulness: acceptance (#669) — a second real SIGINT during a role dispatch whose child ignores
 // SIGTERM leaves no child alive, prints one cancel envelope, and exits 130. Windows has no
 // signals, so the case cannot run there.
+// Process: the signal must reach a separate CLI, so its exit code and envelope are read here.
 test.skipIf(process.platform === "win32")(
   "a second real SIGINT during a role dispatch kills the child, prints one envelope, and exits 130",
   async () => {

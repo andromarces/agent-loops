@@ -7,3 +7,10 @@ import { createHash } from "node:crypto";
 export function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
 }
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** Whether `value` is a lowercase SHA-256 hex digest. */
+export function isSha256Hex(value) {
+  return typeof value === "string" && SHA256_HEX.test(value);
+}

@@ -15,10 +15,11 @@ const test = createBarrierTest();
 
 // The interactive prompt reads its answer from this stub instead of a terminal.
 // A set `failure` makes the prompt reject, as a closed or canceled terminal does.
-const prompt = vi.hoisted(() => ({ answer: "", failure: null }));
+const prompt = vi.hoisted(() => ({ answer: "", failure: null, questions: [] }));
 vi.mock("node:readline/promises", () => ({
   createInterface: () => ({
-    question: async () => {
+    question: async (text) => {
+      prompt.questions.push(String(text));
       if (prompt.failure) {
         throw prompt.failure;
       }
@@ -555,6 +556,42 @@ test.each([
     expect(process.exitCode).toBe(0);
     expect(existsSync(join(home, ".codex", "hooks.json"))).toBe(installed.codex);
     expect(existsSync(join(home, ".claude", "settings.json"))).toBe(installed.claude);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    process.env.PATH = originalPath;
+    if (ttyDescriptor) {
+      Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
+    } else {
+      delete process.stdin.isTTY;
+    }
+    restoreAgentLoopHome();
+    process.exitCode = 0;
+  }
+});
+
+// Usefulness: uninstall marks `[installed]`, so no `[detected]` label appears.
+test("CLI uninstall labels an installed harness in the numbered prompt", async () => {
+  const home = await makeHome();
+  process.env.AGENT_LOOP_HOME = home;
+  const originalPath = process.env.PATH;
+  const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+  process.env.PATH = home;
+  prompt.questions.length = 0;
+  try {
+    process.exitCode = 0;
+    await cliMain(["install", "--harness", "claude"]);
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    prompt.answer = "1";
+    await cliMain(["uninstall"]);
+    expect(process.exitCode).toBe(0);
+    const question = prompt.questions.at(-1);
+    expect(question).toContain(" [installed]");
+    expect(question).not.toContain(" [detected]");
   } finally {
     console.log = originalLog;
     console.error = originalError;

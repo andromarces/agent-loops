@@ -49,6 +49,17 @@ function fakeGh() {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy,body")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: "OPEN",
+            blockedBy: { nodes: [] },
+            body: "## Problem\nMissing.\n\n## Acceptance\n\n- one check\n",
+          }),
+          stderr: "",
+        };
+      }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: [] } }), stderr: "" };
       }

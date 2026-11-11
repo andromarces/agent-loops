@@ -17,6 +17,13 @@ function issueReply(state, { body = BODY_OK, blocked = [] } = {}) {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy,body")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ state, blockedBy: { nodes: blocked }, body }),
+          stderr: "",
+        };
+      }
       if (args.includes("blockedBy")) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: blocked } }), stderr: "" };
       }
@@ -35,6 +42,66 @@ function issueReply(state, { body = BODY_OK, blocked = [] } = {}) {
     throw new Error(`unexpected gh call: ${args.join(" ")}`);
   };
 }
+
+// Usefulness: one eligibility check reads the state, blockers, and body in one gh call.
+test("one eligibility check reads the issue once", async () => {
+  const calls = [];
+  const gh = (args) => {
+    calls.push(args);
+    if (args[0] === "pr" && args[1] === "view") {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
+    if (args[0] === "issue" && args[1] === "view") {
+      return {
+        status: 0,
+        stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] }, body: BODY_OK }),
+        stderr: "",
+      };
+    }
+    throw new Error(`unexpected gh call: ${args.join(" ")}`);
+  };
+  const result = await checkEligibility({
+    issue: 7,
+    gh,
+    repo: "C:\\repo",
+    claim: { exists: false },
+    openPrClosures: { closed: new Set(), incompletePr: null },
+    requireSpecification: true,
+  });
+  expect(result.ok).toBe(true);
+  const issueReads = calls.filter((args) => args[0] === "issue" && args[1] === "view");
+  expect(issueReads).toHaveLength(1);
+  expect(issueReads[0]).toContain("state,blockedBy,body");
+});
+
+// Usefulness: a cached repository slug skips the repo view on the next closure read.
+test("a cached repository slug skips the repository read", async () => {
+  let repositoryReads = 0;
+  const gh = (args) => {
+    if (args[0] === "pr" && args[1] === "list") {
+      return {
+        status: 0,
+        stdout: JSON.stringify([{ number: 5, closingIssuesReferences: [], headRefName: "b" }]),
+        stderr: "",
+      };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      repositoryReads += 1;
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    if (args[0] === "api") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    throw new Error(`unexpected gh call: ${args.join(" ")}`);
+  };
+  const first = await readOpenPrClosures({ gh, repo: "C:\\repo" });
+  await readOpenPrClosures({ gh, repo: "C:\\repo", slug: first.slug });
+  expect(repositoryReads).toBe(1);
+});
 
 // Usefulness: a closed issue is skipped with the named reason and launches no child.
 test("a closed issue is skipped", async () => {

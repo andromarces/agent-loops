@@ -44,6 +44,17 @@ const matchingPushNote =
 const hookOutputRule =
   "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`. Keep the full output of a commit or push hook, or at least its failing and summary lines. Report the hook result in Checks.";
 
+// The PR rules that every turn repeats, in the order that the first turn prints them.
+const prTurnRules = [
+  namedPushRule,
+  matchingPushNote,
+  hookOutputRule,
+  prBodyRule,
+  closingIssuesRule,
+  commitLinkRule,
+  stageOnlyNeededPathsRule,
+];
+
 // The pnpm dependency check also defaults to install in the run work tree.
 // A worker command there can run the project lifecycle scripts (issue #1385).
 const pnpmRunRule =
@@ -104,32 +115,20 @@ const laterTurnTmpdirRule =
   "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
 
 /**
- * Builds a worker turn prompt. `firstTurn` adds the full preamble; a later turn gets the push,
- * body, commit-link, staging, temporary-path, and closing-block rules only. `task` adds the init
- * task block. `slotOptions` overrides the Node and CLI paths of the slot rules, as `testSlotRule`
+ * Builds a worker turn prompt. `firstTurn` adds the full preamble. A later turn gets a shorter
+ * prompt with the rules that its conversation still needs. `task` adds the init task block.
+ * `slotOptions` overrides the Node and CLI paths of the slot rules, as `testSlotRule`
  * accepts.
  */
 export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
-    // A later turn can commit and push a fix in a conversation that has no preamble yet, so it
-    // repeats the PR body, named push, commit-link, staging, and temporary-path rules. It repeats the closing block too, because a worker drifts from the block as the
-    // conversation grows (issue #1118), and names the `Conclusion:` line as its required first line
-    // (issue #1179).
+    // A later turn can commit and push a fix with no preamble yet. So it repeats the push,
+    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path, and closing-block
+    // rules. It repeats the closing block because a worker drifts from it as the conversation grows
+    // (issue #1118). The rules also name the `Conclusion:` line as its first line (issue #1179).
     return escapeLineSeparators(`${prompt}
 
-${namedPushRule}
-
-${matchingPushNote}
-
-${hookOutputRule}
-
-${prBodyRule}
-
-${closingIssuesRule}
-
-${commitLinkRule}
-
-${stageOnlyNeededPathsRule}
+${prTurnRules.join("\n\n")}
 
 ${laterTurnTmpdirRule}
 
@@ -160,13 +159,7 @@ Your role:
   branch and push it, so the reviewer sees a committed head and the PR head
   matches that commit. A task is PR work when its change is delivered on a pull
   request.
-- ${namedPushRule}
-- ${matchingPushNote}
-- ${hookOutputRule}
-- ${prBodyRule}
-- ${closingIssuesRule}
-- ${commitLinkRule}
-- ${stageOnlyNeededPathsRule}
+- ${prTurnRules.join("\n- ")}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
   switch it, and leave it in place after the push. Every later turn of
