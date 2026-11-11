@@ -17,9 +17,9 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
-import { readState, statePaths } from "../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
+import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
+import { readState, statePaths } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -35,10 +35,10 @@ import {
   stdinPrompt,
   withRepo,
   WORKER_REPLY,
-} from "./role-helpers.mjs";
-import { createCleanRepoDir } from "./git-helpers.mjs";
-import { freePlanGh, unreachableGh } from "./gh-doubles.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { createCleanRepoDir } from "../git-helpers.mjs";
+import { freePlanGh, unreachableGh } from "../gh-doubles.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

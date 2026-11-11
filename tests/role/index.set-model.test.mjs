@@ -1,8 +1,8 @@
 import { stat } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../src/lib/exec.mjs";
-import { statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
+import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../../src/lib/exec.mjs";
+import { statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -13,7 +13,7 @@ import {
   reviewerTurn,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
 // `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
 // (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`

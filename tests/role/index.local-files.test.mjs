@@ -1,7 +1,7 @@
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   ACCEPT,
   basicDeps,
@@ -18,9 +18,9 @@ import {
   setup,
   withRepo,
   WORKER_REPLY,
-} from "./role-helpers.mjs";
-import { exists } from "./fs-helpers.mjs";
-import { cleanRepoGit, createLinkedWithEnv, createLinkedWorkTree } from "./git-helpers.mjs";
+} from "./helpers.mjs";
+import { exists } from "../fs-helpers.mjs";
+import { cleanRepoGit, createLinkedWithEnv, createLinkedWorkTree } from "../git-helpers.mjs";
 
 // Answers `git` from memory for the reads that no case here asserts (see `cutRoleReads`). The copy's
 // own reads reach the real `execa`, and so does every other command.

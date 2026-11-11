@@ -22,7 +22,7 @@ export function expectRule(text, ...terms) {
 // Checks line and a gate input. A reword that keeps those two nouns passes, and a removed rule
 // fails. Reading an inversion out of prose is out of scope here. The behavior of the rule is
 // covered where it runs, in `--require-accept refuses a finish that relies on a worker Checks line`
-// in tests/role.finish-abort.test.mjs.
+// in tests/role/finish.abort.test.mjs.
 const REVIEWER_GATE_SENTENCE =
   /[^.!?]*(?:reviewer'?s? checks line[^.!?]*gate input|gate input[^.!?]*reviewer'?s? checks line)[^.!?]*[.!?]/i;
 

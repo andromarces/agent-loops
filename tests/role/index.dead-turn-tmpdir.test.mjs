@@ -29,10 +29,10 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { readProcessCommands, readProcessTable } from "../src/lib/process-ancestry.mjs";
-import { statePaths } from "../src/lib/runstate.mjs";
-import { withTurnTmpdir } from "../src/lib/turn-tmpdir.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { readProcessCommands, readProcessTable } from "../../src/lib/process-ancestry.mjs";
+import { statePaths } from "../../src/lib/runstate.mjs";
+import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -45,16 +45,16 @@ import {
   REPORT,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { deadPid, processExists } from "./process-helpers.mjs";
+} from "./helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { deadPid, processExists } from "../process-helpers.mjs";
 
 const newRunRepo = () => newCleanRunRepo(gitDouble);
 
 // Passes every state write through, except the ones that a test arms to fail after the record write
 // of a turn directory. `failures` is how many of the next writes throw, `Infinity` for every one.
 const stateWrites = vi.hoisted(() => ({ failures: 0 }));
-vi.mock("../src/lib/atomic-write.mjs", async (importOriginal) => {
+vi.mock("../../src/lib/atomic-write.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -68,7 +68,7 @@ vi.mock("../src/lib/atomic-write.mjs", async (importOriginal) => {
   };
 });
 
-const ROLE = fileURLToPath(new URL("../src/role/index.mjs", import.meta.url));
+const ROLE = fileURLToPath(new URL("../../src/role/index.mjs", import.meta.url));
 const scratches = [];
 // Every spawned dispatch, so teardown ends it on every path, a startup timeout included.
 const dispatches = [];

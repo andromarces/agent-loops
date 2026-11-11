@@ -54,6 +54,6 @@ Andro Marces
 - Related: [ADR 0014](0014-extend-the-step-budget-of-a-live-run.md), [ADR 0041](0041-declare-the-run-pr-after-init-with-declare-pr.md)
 - Implementation:
   - Source: `setModel` in `src/role/index.mjs`, `rejectInitFlagChanges` in `src/role/args.mjs`
-  - Tests: `tests/role.set-model.test.mjs`
+  - Tests: `tests/role/index.set-model.test.mjs`
   - Docs: `docs/reference/role.md`, `docs/orchestrator-instructions.md`, `docs/orchestrator/child-run-guard.md`
 - [ADR Index](README.md)

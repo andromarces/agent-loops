@@ -23,9 +23,9 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../src/lib/exec.mjs";
-import { snapshot } from "../src/lib/snapshot.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
+import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../../src/lib/exec.mjs";
+import { snapshot } from "../../src/lib/snapshot.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   ACCEPT,
   cleanup,
@@ -41,7 +41,7 @@ import {
   setup,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 import {
   freePlanGh,
   PASSING_RUN,
@@ -50,9 +50,9 @@ import {
   prChecksArgs,
   prGateGh,
   unreachableGh,
-} from "./gh-doubles.mjs";
-import { CLEAN_REPO_HEAD, cleanRepoGit } from "./git-helpers.mjs";
-import { SUMMARY } from "./run-fixtures.mjs";
+} from "../gh-doubles.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit } from "../git-helpers.mjs";
+import { SUMMARY } from "../run-fixtures.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

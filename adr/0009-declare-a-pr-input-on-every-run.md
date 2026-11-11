@@ -166,8 +166,8 @@ Andro Marces
   - Source: The `--pr` flag in `src/cli.mjs`
   - Source: The prompt block in `src/prompts/orchestrator.mjs`
   - Test: `tests/runtime*.test.mjs`
-  - Test: `tests/role.finish-abort.test.mjs`
-  - Test: `tests/role.init.test.mjs`
+  - Test: `tests/role/finish.abort.test.mjs`
+  - Test: `tests/role/index.init.test.mjs`
   - Test: `tests/cli.args.test.mjs`
   - Test: `tests/prompts/orchestrator*.test.mjs`
   - Documented in `docs/orchestrator-instructions.md`

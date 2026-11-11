@@ -42,13 +42,13 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand, main } from "../src/role/index.mjs";
-import { restoreRunsRoot } from "./env-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
-import { processExists } from "./process-helpers.mjs";
-import { RESISTANT_CHILD } from "./sigterm-resistant-fixture.mjs";
-import { within } from "./wait-helpers.mjs";
+import { executeRoleCommand, main } from "../../src/role/index.mjs";
+import { restoreRunsRoot } from "../env-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { createTempRepo, gitAbortingPostTurn } from "../git-helpers.mjs";
+import { processExists } from "../process-helpers.mjs";
+import { RESISTANT_CHILD } from "../sigterm-resistant-fixture.mjs";
+import { within } from "../wait-helpers.mjs";
 import {
   basicDeps,
   cleanup,
@@ -61,16 +61,16 @@ import {
   spyStdoutWrite,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
-import { createBarrierTest } from "./barrier-helpers.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // The moved dispatch cancel tests run through a body barrier (issue #943), so a body that
 // outlasts its timeout cannot change `gitDouble.answer` while the next test runs.
 const barrierTest = createBarrierTest();
 
-const ROLE = fileURLToPath(new URL("../src/role/index.mjs", import.meta.url));
-const EXEC = fileURLToPath(new URL("../src/lib/exec.mjs", import.meta.url));
+const ROLE = fileURLToPath(new URL("../../src/role/index.mjs", import.meta.url));
+const EXEC = fileURLToPath(new URL("../../src/lib/exec.mjs", import.meta.url));
 
 // Usefulness: acceptance (#669) — a second real SIGINT during a role dispatch whose child ignores
 // SIGTERM leaves no child alive, prints one cancel envelope, and exits 130. Windows has no

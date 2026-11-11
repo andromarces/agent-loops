@@ -180,7 +180,7 @@ Andro Marces
   - Test: `tests/lib/test-cmd.test.mjs`
   - Test: `tests/lib/redact.test.mjs`
   - Test: `tests/runtime.test-cmd.test.mjs`
-  - Test: `tests/role.test-cmd.test.mjs`
+  - Test: `tests/role/index.test-cmd.test.mjs`
   - Test: `tests/cli*.test.mjs`
   - Test: `tests/prompts/`
   - Documented in `docs/orchestrator-instructions.md`

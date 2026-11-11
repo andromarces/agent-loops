@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
 import { execa } from "execa";
-import { snapshot } from "../src/lib/snapshot.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { snapshot } from "../../src/lib/snapshot.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -18,14 +18,14 @@ import {
   stdinPrompt,
   withRepo,
   WORKER_REPLY,
-} from "./role-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { roleReadsGit } from "./git-helpers.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { roleReadsGit } from "../git-helpers.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
 // #1713).
-vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+vi.mock("../../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, literalTmpdirRoots: () => [] };
 });

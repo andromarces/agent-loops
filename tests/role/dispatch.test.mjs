@@ -30,10 +30,10 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { reviewedState, snapshot } from "../src/lib/snapshot.mjs";
-import { ProcessReadError } from "../src/lib/process-ancestry.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { readState, statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
+import { ProcessReadError } from "../../src/lib/process-ancestry.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -48,11 +48,11 @@ import {
   setup,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { CLEAN_REPO_HEAD, createTempRepo, gitWhileDotGitExists } from "./git-helpers.mjs";
-import { PASSING_RUN, prGateGh } from "./gh-doubles.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { CLEAN_REPO_HEAD, createTempRepo, gitWhileDotGitExists } from "../git-helpers.mjs";
+import { PASSING_RUN, prGateGh } from "../gh-doubles.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 const MODEL_REFUSAL =
   "The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.";

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -13,7 +13,7 @@ import {
   repos,
   setup,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
 // `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
 // (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`

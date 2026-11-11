@@ -1,11 +1,11 @@
 import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { SPAWNED_RUN_ENV } from "../src/lib/exec.mjs";
-import { cwdHash } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
-import { symlinkOrSkip } from "./fs-helpers.mjs";
-import { createLinkedWorkTree } from "./git-helpers.mjs";
+import { SPAWNED_RUN_ENV } from "../../src/lib/exec.mjs";
+import { cwdHash } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
+import { symlinkOrSkip } from "../fs-helpers.mjs";
+import { createLinkedWorkTree } from "../git-helpers.mjs";
 import {
   basicDeps,
   cleanup,
@@ -15,7 +15,7 @@ import {
   repos,
   setup,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

@@ -2,12 +2,12 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vite-plus/test";
-import { statePaths } from "../src/lib/runstate.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
-import { restoreRunsRoot } from "./env-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
-import { prGateGh } from "./gh-doubles.mjs";
+import { statePaths } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
+import { restoreRunsRoot } from "../env-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "../git-helpers.mjs";
+import { prGateGh } from "../gh-doubles.mjs";
 
 export const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
 export const WORKER_REPLY = `${REPORT}\nContinuing next turn.`;

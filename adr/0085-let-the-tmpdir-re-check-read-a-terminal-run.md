@@ -55,5 +55,5 @@ Andro Marces
 - Implementation:
   - Parent command: `recheck-tmpdir` in `src/role/index.mjs`
   - Docs: `docs/reference/role.md`, `docs/orchestrator/runtime-advisory-fields.md`, and `src/help.mjs`
-  - Tests: `tests/role.recheck-tmpdir.test.mjs`
+  - Tests: `tests/role/index.recheck-tmpdir.test.mjs`
 - [ADR Index](README.md)

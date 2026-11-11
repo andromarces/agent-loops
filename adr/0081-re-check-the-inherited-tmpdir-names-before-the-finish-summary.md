@@ -85,5 +85,5 @@ Andro Marces
   - State: `recordInheritedTmpdirNames` in `src/role/dispatch.mjs`
   - Headless prompt: `inheritedTmpdirPresent` in `src/runtime.mjs` and `src/prompts/orchestrator.mjs`
   - Docs: `docs/orchestrator/runtime-advisory-fields.md` and `docs/orchestrator-instructions.md`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
+  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role/index.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
 - [ADR Index](README.md)

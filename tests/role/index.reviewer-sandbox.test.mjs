@@ -14,8 +14,8 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { readState, statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -25,7 +25,7 @@ import {
   reviewerTurn,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
 afterEach(async () => {
   gitDouble.answer = null;

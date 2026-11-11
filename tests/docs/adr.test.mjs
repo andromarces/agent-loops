@@ -4,6 +4,36 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
 
 const adrDir = fileURLToPath(new URL("../../adr/", import.meta.url));
+const repoRoot = resolve(adrDir, "..");
+const adr19 = "adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md";
+const readRepoFile = (path) => readFile(join(repoRoot, path), "utf8");
+
+/** The user docs as one text: the reference topic files, the reference index, then the README. */
+async function readUserDocs() {
+  const docs = join(repoRoot, "docs/reference");
+  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
+  const paths = [
+    ...topics.map((name) => join(docs, name)),
+    join(repoRoot, "docs/reference.md"),
+    join(repoRoot, "README.md"),
+  ];
+  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
+}
+
+// The five accepted gaps of issue #421, each as the phrases that identify it.
+const SANDBOX_GAPS = [
+  ["detection-only enforcement", [/detective/i, /MutationError/, /no revert|does not revert/i]],
+  [
+    "snapshot blind spots",
+    [/ignored file/i, /outside the repository/i, /restores? before/i, /other refs/i],
+  ],
+  ["remote GitHub writes", [/remote/i, /push.*merge.*review.*comment/i, /#422/]],
+  ["prompt-injection blast radius", [/prompt-injection/i]],
+  [
+    "unelevated Windows sandbox",
+    [/unelevated Windows/i, /EPERM/, /docs\/reference\/parent-guard\.md/],
+  ],
+];
 const ALLOWED_STATUSES = new Set([
   "proposed",
   "accepted",
@@ -352,4 +382,55 @@ test("ADR 0095 supersedes the temporary directory reporting rules and keeps the 
   const adr68 = readme.split("\n").find((line) => line.startsWith("- 0068"));
   expect(adr68).not.toContain("qualified by ADR 0076");
   expect(adr68).toContain("ADR 0095");
+});
+
+// Usefulness: verifies ADR 0019 names all five accepted gaps of the issue, so the record of what
+// the opt-in gives up cannot lose one.
+test("ADR 0019 names the five accepted gaps", async () => {
+  const text = await readRepoFile(adr19);
+  for (const [, patterns] of SANDBOX_GAPS) {
+    for (const pattern of patterns) {
+      expect(text).toMatch(pattern);
+    }
+  }
+});
+
+// Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in as ADR
+// 0019 does. The text names the flag, the sandbox mode, the network option, the ADR, and each gap.
+test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0019", async () => {
+  const text = await readUserDocs();
+  expect(text).toContain("--reviewer-workspace-write");
+  expect(text).toContain("workspace-write");
+  expect(text).toContain("network_access=false");
+  expect(text).toMatch(/ADR 0019/);
+  expect(text).toMatch(/detect/i);
+  expect(text).toMatch(/ignored file/i);
+  expect(text).toMatch(/remote state/i);
+  expect(text).toMatch(/instruction/i);
+  expect(text).toMatch(/unelevated Windows/i);
+});
+
+// Usefulness: verifies ADR 0019 supersedes ADR 0001 in both directions and in the index. It
+// restates the decisions of ADR 0001 that still hold, so no live decision is lost.
+test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
+  const adr1 = await readRepoFile("adr/0001-hybrid-orchestrator-runtime.md");
+  const text = await readRepoFile(adr19);
+  const index = await readRepoFile("adr/README.md");
+  expect(adr1).toMatch(/## Status\s+superseded/);
+  expect(adr1).toMatch(/Superseded by \[ADR 0019[^\]]*\]\(0019-/);
+  expect(text).toMatch(/## Status\s+partially-superseded/);
+  expect(text).toMatch(/Supersedes \[ADR 0001[^\]]*\]\(0001-hybrid-orchestrator-runtime\.md\)/);
+  // The parts of ADR 0001 that still hold.
+  expect(text).toMatch(/read-only by default/i);
+  expect(text).toMatch(/orchestrator[^.]*read-only/i);
+  expect(text).toMatch(/two-layer/i);
+  expect(text).toMatch(/run_worker/);
+  expect(text).toMatch(/--max-steps/);
+  expect(text).toMatch(/one repair turn/i);
+  expect(text).toMatch(/changed, verified, deferred, notDone, open|`changed`, `verified`/);
+  const row = (n) => index.split("\n").find((line) => line.startsWith(`- ${n} — [`));
+  expect(row("0001")).toMatch(/ — superseded — /);
+  expect(row("0001")).toMatch(/ADR 0019/);
+  expect(row("0019")).toMatch(/ — partially-superseded — /);
+  expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });

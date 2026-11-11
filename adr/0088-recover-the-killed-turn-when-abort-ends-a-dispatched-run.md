@@ -49,5 +49,5 @@ Andro Marces
 - [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md)
 - Implementation:
   - Source: `abort` in `src/role/index.mjs`; `recordUncertainTurn` in `src/role/dispatch.mjs`
-  - Tests: `tests/role.dead-turn-tmpdir.test.mjs`
+  - Tests: `tests/role/index.dead-turn-tmpdir.test.mjs`
 - [ADR Index](README.md)

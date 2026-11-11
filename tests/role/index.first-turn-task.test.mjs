@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { statePaths } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { statePaths } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -15,13 +15,13 @@ import {
   reviewerTurn,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { SUMMARY } from "./run-fixtures.mjs";
+} from "./helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { SUMMARY } from "../run-fixtures.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
 // #1713).
-vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+vi.mock("../../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, literalTmpdirRoots: () => [] };
 });

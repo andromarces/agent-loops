@@ -2,10 +2,10 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
-import { sha256 } from "../src/lib/hash.mjs";
-import { statePaths } from "../src/lib/runstate.mjs";
-import { testSlotRule } from "../src/prompts/rules.mjs";
-import { executeRoleCommand, main as runRoleMain } from "../src/role/index.mjs";
+import { sha256 } from "../../src/lib/hash.mjs";
+import { statePaths } from "../../src/lib/runstate.mjs";
+import { testSlotRule } from "../../src/prompts/rules.mjs";
+import { executeRoleCommand, main as runRoleMain } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -18,9 +18,9 @@ import {
   spyStdoutWrite,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { exists, removePath } from "./fs-helpers.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { exists, removePath } from "../fs-helpers.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

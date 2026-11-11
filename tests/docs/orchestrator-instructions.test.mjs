@@ -1308,47 +1308,6 @@ const readHelpText = () =>
     (result) => result.stdout,
   ));
 
-// The five accepted gaps of issue #421, each as the phrases that identify it.
-const SANDBOX_GAPS = [
-  ["detection-only enforcement", [/detective/i, /MutationError/, /no revert|does not revert/i]],
-  [
-    "snapshot blind spots",
-    [/ignored file/i, /outside the repository/i, /restores? before/i, /other refs/i],
-  ],
-  ["remote GitHub writes", [/remote/i, /push.*merge.*review.*comment/i, /#422/]],
-  ["prompt-injection blast radius", [/prompt-injection/i]],
-  [
-    "unelevated Windows sandbox",
-    [/unelevated Windows/i, /EPERM/, /docs\/reference\/parent-guard\.md/],
-  ],
-];
-
-// Usefulness: verifies ADR 0019 names all five accepted gaps of the issue, so the record of what
-// the opt-in gives up cannot lose one.
-test("ADR 0019 names the five accepted gaps", async () => {
-  const text = await readRepoFile(adr19);
-  for (const [, patterns] of SANDBOX_GAPS) {
-    for (const pattern of patterns) {
-      expect(text).toMatch(pattern);
-    }
-  }
-});
-
-// Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in as ADR
-// 0019 does. The text names the flag, the sandbox mode, the network option, the ADR, and each gap.
-test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0019", async () => {
-  const text = await readUserDocs();
-  expect(text).toContain("--reviewer-workspace-write");
-  expect(text).toContain("workspace-write");
-  expect(text).toContain("network_access=false");
-  expect(text).toMatch(/ADR 0019/);
-  expect(text).toMatch(/detect/i);
-  expect(text).toMatch(/ignored file/i);
-  expect(text).toMatch(/remote state/i);
-  expect(text).toMatch(/instruction/i);
-  expect(text).toMatch(/unelevated Windows/i);
-});
-
 // Usefulness: verifies every surface that states the network limit says what it covers: the shell
 // commands that the sandbox runs. No surface claims that it blocks model-side tools such as
 // web_search. A reader never takes the limit for a block on every channel.
@@ -1366,31 +1325,6 @@ test.each([
   const text = await load();
   expect(text).toMatch(/shell commands/i);
   expect(text).toMatch(/model-side tools?|web_search|web search/i);
-});
-
-// Usefulness: verifies ADR 0019 supersedes ADR 0001 in both directions and in the index. It
-// restates the decisions of ADR 0001 that still hold, so no live decision is lost.
-test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
-  const adr1 = await readRepoFile("adr/0001-hybrid-orchestrator-runtime.md");
-  const text = await readRepoFile(adr19);
-  const index = await readRepoFile("adr/README.md");
-  expect(adr1).toMatch(/## Status\s+superseded/);
-  expect(adr1).toMatch(/Superseded by \[ADR 0019[^\]]*\]\(0019-/);
-  expect(text).toMatch(/## Status\s+partially-superseded/);
-  expect(text).toMatch(/Supersedes \[ADR 0001[^\]]*\]\(0001-hybrid-orchestrator-runtime\.md\)/);
-  // The parts of ADR 0001 that still hold.
-  expect(text).toMatch(/read-only by default/i);
-  expect(text).toMatch(/orchestrator[^.]*read-only/i);
-  expect(text).toMatch(/two-layer/i);
-  expect(text).toMatch(/run_worker/);
-  expect(text).toMatch(/--max-steps/);
-  expect(text).toMatch(/one repair turn/i);
-  expect(text).toMatch(/changed, verified, deferred, notDone, open|`changed`, `verified`/);
-  const row = (n) => index.split("\n").find((line) => line.startsWith(`- ${n} — [`));
-  expect(row("0001")).toMatch(/ — superseded — /);
-  expect(row("0001")).toMatch(/ADR 0019/);
-  expect(row("0019")).toMatch(/ — partially-superseded — /);
-  expect(row("0019")).toMatch(/Supersedes ADR 0001/);
 });
 
 // Usefulness: verifies the reviewer prompt, the user docs, the orchestrator instructions, the other

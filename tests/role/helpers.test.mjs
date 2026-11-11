@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { cleanup, setup } from "./role-helpers.mjs";
+import { cleanup, setup } from "./helpers.mjs";
 
 // Passes through to the real `mkdtemp`; one test holds a call open to pause `setup` mid-flight.
 const gate = vi.hoisted(() => ({ real: null }));

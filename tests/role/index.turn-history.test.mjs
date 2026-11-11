@@ -1,8 +1,8 @@
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { readState, statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -14,7 +14,7 @@ import {
   REPORT,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
 // `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
 // (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`

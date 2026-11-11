@@ -1,11 +1,11 @@
-import { exists } from "./fs-helpers.mjs";
+import { exists } from "../fs-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { readSparseCheckout } from "../src/lib/sparse-checkout.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
-import { createLinkedWorkTree, createTempRepo } from "./git-helpers.mjs";
+import { readSparseCheckout } from "../../src/lib/sparse-checkout.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
+import { createLinkedWorkTree, createTempRepo } from "../git-helpers.mjs";
 import {
   basicDeps,
   cleanup,
@@ -14,7 +14,7 @@ import {
   repos,
   setup,
   withRepo,
-} from "./role-helpers.mjs";
+} from "./helpers.mjs";
 
 // Every case drives real Git in a real repository, because the report must match what Git reads.
 

@@ -1,6 +1,6 @@
 import { afterEach, expect, vi } from "vite-plus/test";
-import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { readState, statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -11,8 +11,8 @@ import {
   REPORT,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
 // (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`

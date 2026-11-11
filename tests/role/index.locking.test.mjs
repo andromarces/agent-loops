@@ -17,8 +17,8 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { readState, statePaths, writeState } from "../src/lib/runstate.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { readState, statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -32,9 +32,9 @@ import {
   stdinPrompt,
   withRepo,
   WORKER_REPLY,
-} from "./role-helpers.mjs";
-import { cleanRepoGit } from "./git-helpers.mjs";
-import { deadPid } from "./process-helpers.mjs";
+} from "./helpers.mjs";
+import { cleanRepoGit } from "../git-helpers.mjs";
+import { deadPid } from "../process-helpers.mjs";
 
 afterEach(cleanup);
 

@@ -381,7 +381,7 @@ Andro Marces
   - Source: The gate line in `src/prompts/orchestrator.mjs`
   - Test: `tests/lib/ci-gate.*.test.mjs`
   - Test: `tests/runtime*.test.mjs`
-  - Test: `tests/role.finish-abort.test.mjs`
+  - Test: `tests/role/finish.abort.test.mjs`
   - Test: `tests/prompts/orchestrator*.test.mjs`
   - Documented in `docs/orchestrator-instructions.md`
   - Documented in [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
-import { executeRoleCommand, main as runRoleMain } from "../src/role/index.mjs";
+import { executeRoleCommand, main as runRoleMain } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -13,8 +13,8 @@ import {
   spyStdoutWrite,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
 // (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`

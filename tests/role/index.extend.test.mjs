@@ -2,9 +2,9 @@ import { mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { statePaths, writeState } from "../src/lib/runstate.mjs";
-import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../src/lib/exec.mjs";
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
+import { statePaths, writeState } from "../../src/lib/runstate.mjs";
+import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../../src/lib/exec.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -16,9 +16,9 @@ import {
   setup,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
+} from "./helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "../git-helpers.mjs";
 
 // `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
 // (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`

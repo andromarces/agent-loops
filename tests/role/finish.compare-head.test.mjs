@@ -17,7 +17,7 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand, parseRoleArgs } from "../src/role/index.mjs";
+import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   ACCEPT,
   basicDeps,
@@ -35,9 +35,9 @@ import {
   setup,
   UNRESOLVED_SUMMARY,
   withRepo,
-} from "./role-helpers.mjs";
-import { equalsArgs, prViewArgs } from "./gh-doubles.mjs";
-import { CLEAN_REPO_HEAD, cleanRepoGit } from "./git-helpers.mjs";
+} from "./helpers.mjs";
+import { equalsArgs, prViewArgs } from "../gh-doubles.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit } from "../git-helpers.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

@@ -20,8 +20,8 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { executeRoleCommand } from "../src/role/index.mjs";
-import { readState, statePaths } from "../src/lib/runstate.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
+import { readState, statePaths } from "../../src/lib/runstate.mjs";
 import {
   ACCEPT,
   basicDeps,
@@ -41,9 +41,9 @@ import {
   stdinPrompt,
   UNRESOLVED_SUMMARY,
   withRepo,
-} from "./role-helpers.mjs";
-import { removePath } from "./fs-helpers.mjs";
-import { CLEAN_REPO_HEAD, cleanRepoGit } from "./git-helpers.mjs";
+} from "./helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
+import { CLEAN_REPO_HEAD, cleanRepoGit } from "../git-helpers.mjs";
 import {
   apiArgs,
   equalsArgs,
@@ -54,7 +54,7 @@ import {
   pageStdout,
   prViewArgs,
   REPO_VIEW_ARGS,
-} from "./gh-doubles.mjs";
+} from "../gh-doubles.mjs";
 
 afterEach(cleanup);
 afterEach(() => {

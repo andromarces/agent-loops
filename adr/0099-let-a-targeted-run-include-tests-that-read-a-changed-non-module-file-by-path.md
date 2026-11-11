@@ -54,6 +54,6 @@ Andro Marces
 - Related issues: [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492)
 - Implementation:
   - Source: `TARGETED_RUN_BOUND` and `testSlotRule` in `src/prompts/rules.mjs`
-  - Tests: `tests/prompts/report.test.mjs`
+  - Tests: `tests/prompts/rules.test.mjs`
   - Docs: `docs/reference/usage.md`, `docs/orchestrator/reviewer-evidence.md`, `adr/README.md`
 - [ADR Index](README.md)

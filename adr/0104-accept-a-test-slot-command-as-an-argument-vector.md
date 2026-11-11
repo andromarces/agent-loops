@@ -55,6 +55,6 @@ Andro Marces
 - Related issue: #1590
 - Implementation:
   - Source: `parseTestSlotArgs` and `runCommand` in `src/lib/test-slot-cli.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
-  - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`, `tests/prompts/worker.test.mjs`, `tests/prompts/reviewer.test.mjs`
+  - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/rules.test.mjs`, `tests/prompts/worker.test.mjs`, `tests/prompts/reviewer.test.mjs`
   - Docs: `docs/reference/usage.md`
 - [ADR Index](README.md)

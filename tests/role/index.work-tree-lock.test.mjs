@@ -2,10 +2,10 @@ import { execa } from "execa";
 import { realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { ExecError } from "../src/lib/exec.mjs";
-import { cwdHash } from "../src/lib/runstate.mjs";
-import { workTreeLockReason } from "../src/lib/work-tree-lock.mjs";
-import { executeRoleCommand } from "../src/role/index.mjs";
+import { ExecError } from "../../src/lib/exec.mjs";
+import { cwdHash } from "../../src/lib/runstate.mjs";
+import { workTreeLockReason } from "../../src/lib/work-tree-lock.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
   basicDeps,
   cleanup,
@@ -17,9 +17,9 @@ import {
   repos,
   stdinPrompt,
   withRepo,
-} from "./role-helpers.mjs";
-import { createLinkedWorkTree } from "./git-helpers.mjs";
-import { SUMMARY } from "./run-fixtures.mjs";
+} from "./helpers.mjs";
+import { createLinkedWorkTree } from "../git-helpers.mjs";
+import { SUMMARY } from "../run-fixtures.mjs";
 
 afterEach(cleanup);
 

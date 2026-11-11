@@ -51,6 +51,6 @@ Andro Marces
 - Related issues: #848, #921, #934
 - Implementation:
   - Source: `redRunRule` in `src/prompts/rules.mjs`, `src/prompts/worker.mjs`
-  - Tests: `tests/prompts/worker.test.mjs`, `tests/prompts/report.test.mjs`
+  - Tests: `tests/prompts/worker.test.mjs`, `tests/prompts/rules.test.mjs`
   - Docs: `docs/reference/role.md`
 - [ADR Index](README.md)

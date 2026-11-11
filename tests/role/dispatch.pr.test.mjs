@@ -1,7 +1,7 @@
 import { afterEach, expect, vi } from "vite-plus/test";
 import { execa } from "execa";
-import { executeRoleCommand } from "../src/role/index.mjs";
-import { runGh } from "../src/lib/gh-api.mjs";
+import { executeRoleCommand } from "../../src/role/index.mjs";
+import { runGh } from "../../src/lib/gh-api.mjs";
 import {
   cleanup,
   dispatchArgv,
@@ -12,8 +12,8 @@ import {
   stdinPrompt,
   withRepo,
   WORKER_REPLY,
-} from "./role-helpers.mjs";
-import { createBarrierTest } from "./barrier-helpers.mjs";
+} from "./helpers.mjs";
+import { createBarrierTest } from "../barrier-helpers.mjs";
 
 const HEAD = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 

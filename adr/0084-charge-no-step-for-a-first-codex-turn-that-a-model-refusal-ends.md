@@ -65,5 +65,5 @@ Andro Marces
   - Result field: `runChild` in `src/child-turn.mjs`
   - Refund and envelope: `dispatch` in `src/role/dispatch.mjs`
   - Docs: `docs/reference/role.md`, `docs/reference/architecture.md`, and `docs/orchestrator/run-history.md`
-  - Tests: `tests/agents/codex.test.mjs` and `tests/role.dispatch.test.mjs`
+  - Tests: `tests/agents/codex.test.mjs` and `tests/role/dispatch.test.mjs`
 - [ADR Index](README.md)
