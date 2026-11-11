@@ -15,6 +15,7 @@ import {
   noNotify,
   preparedFor,
   waitForLaunch,
+  waitPrepared,
 } from "./supervisor-helpers.mjs";
 
 // Usefulness: a real spawn failure fails the loop with its code and no started line.
@@ -346,8 +347,7 @@ test("a pending decision frees its only slot and the next issue launches", async
 
 // Usefulness: one issue launch reads the title with its eligibility call, so it starts one fewer gh.
 test("one issue launch reads the title with its eligibility call", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const calls = [];
   const base = fakeGh();
   const gh = (args, cwd, options) => {
@@ -385,16 +385,15 @@ test("one issue launch reads the title with its eligibility call", async () => {
     const task = child.calls[0].args[child.calls[0].args.indexOf("--task") + 1];
     expect(task).toContain("Work 1 A title on ");
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
 // Usefulness: a missing or blank eligibility title falls back to the issue number in the task.
 test("a missing or blank issue title falls back to the issue number", async () => {
-  const repo = await batchRepo();
   try {
     for (const title of [undefined, "   "]) {
-      const prepared = await preparedFor(repo, [1]);
+      const prepared = await waitPrepared([1]);
       const base = fakeGh();
       const gh = (args, cwd, options) => {
         if (
@@ -420,6 +419,6 @@ test("a missing or blank issue title falls back to the issue number", async () =
       expect(task).toContain("Work 1 issue 1 on ");
     }
   } finally {
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });

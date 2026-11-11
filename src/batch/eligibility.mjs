@@ -155,7 +155,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
 
 /**
  * Applies the eligibility checks of decision 6 in order for one issue. `claim` is the result of
- * `readClaim`; `openPrClosures` is the result of `readOpenPrClosures`, or null while that read is
+ * `readClaim`. `openPrClosures` is the result of `readOpenPrClosures`, or null while that read is
  * not needed.
  * @returns {Promise<{ ok: true, title?: string } | { ok: false, reason: string, evidence: string }>}
  */
