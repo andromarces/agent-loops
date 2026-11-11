@@ -189,7 +189,7 @@ test.concurrent.skipIf(process.platform === "win32")(
           return `${index}:${pids[index]}:exit ${codes[index]}:marker ${marker}:trace ${trace}:steps ${reached}`;
         });
       const message = records
-        ? `call-* directories: ${claimed}. call-* directories without a record: ${claimed - records.length}. start markers: ${markers?.length}. step records: ${steps?.size}. claims logged: ${loggedClaims}. calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]. exit codes: ${codes.join(",")}.`
+        ? `call-* directories: ${claimed}. call-* directories without a record: ${claimed - records.length}. start markers: ${markers?.length}, step records: ${steps?.size}. claims logged: ${loggedClaims}. calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}], exit codes: ${codes.join(",")}.`
         : `the shim records or directory were unreadable. exit codes: ${codes.join(",")}.`;
       expect(
         calls.filter((call) => call.exitCode === 0),
