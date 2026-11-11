@@ -2,9 +2,17 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Supersedes [ADR 0004: Distribute the CLI as a scoped public npm package](0004-scoped-npm-distribution.md). The decisions of ADR 0004 that still hold are restated below, with two changes: the `prepare` guard installs the Vite+ hook dispatcher in place of Husky, and `engines.node` follows the `vite-plus` Node range.
+
+Partially superseded by [ADR 0124: Drop Node 22 support before its end of life](0124-drop-node-22-support.md). The superseded parts are:
+
+- Decision 11's `engines.node` range. Superseded by [ADR 0124](0124-drop-node-22-support.md): the range is `^24.11.0 || >=26.0.0`.
+- The consequence that Node 22.0 to 22.17 and 24.0 to 24.10 lose support. Superseded by [ADR 0124](0124-drop-node-22-support.md): Node 22 and every version below 24.11.0 lose support.
+- The consequence that `vp staged` needs Node 22.22.1 or later on the 22 line, or 24.11.0 or later. Superseded by [ADR 0124](0124-drop-node-22-support.md): it needs 24.11.0 or later.
+
+Every other decision and consequence stays in force.
 
 ## Date
 

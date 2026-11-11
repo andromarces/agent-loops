@@ -30,7 +30,7 @@ jobs:
       # recover from it because the restored store stays corrupt.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
       # pnpm#14407: on Windows, Defender/indexer transiently locks store paths
       # during install; retry instead of failing the job on the first lock hit.
       - name: Install dependencies
@@ -65,10 +65,11 @@ jobs:
             exit 1
           fi
 
-  # Node 26 is the Active LTS line and `engines.node` accepts it, but the `ci`
-  # matrix and every other job run Node 22 only (issue #1632). This job stays
-  # separate so the required ci (<os>) contexts keep their names, and it
-  # inherits the workflow-level concurrency group.
+  # Node 26 is the Active LTS line and `engines.node` accepts it. The `ci`
+  # matrix runs the latest Node 24, and the `node-24` job runs the 24.11.0
+  # floor (issue #1632). Every other job runs Node 24. This job stays separate
+  # so the required ci (<os>) contexts keep their names, and it inherits the
+  # workflow-level concurrency group.
   node-26:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -84,11 +85,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  # Node 24 is the Maintenance LTS line, `engines.node` accepts it
-  # (`^24.11.0`), and `release.yml` publishes on Node 24, but no CI job tests
-  # it (issue #1676). This job stays separate so the required ci (<os>)
-  # contexts keep their names, and it inherits the workflow-level concurrency
-  # group.
+  # Node 24 is the Maintenance LTS line, and `engines.node` accepts it
+  # (`^24.11.0`). `release.yml` publishes on Node 24. The `ci` matrix runs the
+  # latest Node 24, and this job tests the 24.11.0 floor (issues #1676 and
+  # #1812). It stays separate so the required ci (<os>) contexts keep their
+  # names, and it inherits the workflow-level concurrency group.
   node-24:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -100,26 +101,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-
-  # Node 22.18.0 is the floor of `engines.node` (`^22.18.0`), but no pull
-  # request job tests it (issue #1768). This job stays separate so the required
-  # ci (<os>) contexts keep their names, and it inherits the workflow-level
-  # concurrency group.
-  node-22-floor:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      # No setup-node cache: pnpm. See the note in the ci job (#38).
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22.18.0
+          node-version: 24.11.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
@@ -141,7 +123,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
       - name: Install dependencies
         shell: bash
         run: |
@@ -170,7 +152,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
       - name: Install dependencies
         shell: bash
         run: |
@@ -230,7 +212,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
       - name: Install dependencies
         shell: bash
         run: |
@@ -257,7 +239,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 24
       - name: Install dependencies
         shell: bash
         run: |
