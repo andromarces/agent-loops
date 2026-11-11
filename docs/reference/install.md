@@ -2,15 +2,15 @@
 
 ## Requirements
 
-- Node.js `^22.18.0 || ^24.11.0 || >=26.0.0` (22.18.0 or later on the 22 line, 24.11.0 or later on the 24 line, or 26.0.0 or later)
+- Node.js `^24.11.0 || >=26.0.0` (24.11.0 or later on the 24 line, or 26.0.0 or later)
 - Git (the target `--cwd` must be inside a Git work tree)
 - Installed and authenticated CLI agents (see [Harness CLI versions](#harness-cli-versions) for the version floors)
 
 pnpm is required only for development in a clone, not for a registry install.
 
 The package `engines.node` range
-matches the `vite-plus` range. On a Node version outside it, npm warns, and with
-`engine-strict` set the install fails.
+follows the `vite-plus` range but drops the Node 22 line. On a Node version outside
+it, npm warns, and with `engine-strict` set the install fails.
 
 ### Harness CLI versions
 

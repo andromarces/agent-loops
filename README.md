@@ -16,7 +16,7 @@ Supported agent CLIs: `claude`, `codex`, `agy`, `opencode`, `copilot`.
 
 ## Requirements
 
-- Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`
+- Node.js `^24.11.0 || >=26.0.0`
 - Git
 - At least one agent CLI from the list above, installed and signed in
 

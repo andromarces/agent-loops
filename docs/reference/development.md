@@ -20,8 +20,8 @@ depends on, then runs `pnpm install`. `tests/pnpm-workspace.overrides.test.mjs` 
 
 Development uses pnpm and the repository Git hooks. The dev toolchain is
 Vite+ (`vite-plus`), which needs the Node range in [Requirements](install.md#requirements).
-The `pre-commit` hook runs `vp staged`, which needs Node 22.22.1 or later on the
-22 line, or 24.11.0 or later, and Git 2.32.0 or later. Every script runs the
+The `pre-commit` hook runs `vp staged`, which needs Node 24.11.0 or later, and
+Git 2.32.0 or later. Every script runs the
 project-local `vp`, so no global `vp` install is needed. User-scope integrations
 point at the package location, so a clone registers its own copy with `npm link`
 before `agent-loop install`:
