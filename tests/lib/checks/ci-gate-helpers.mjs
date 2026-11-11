@@ -121,8 +121,8 @@ export function fakeGh(routes) {
   };
 }
 
-// The `gh` calls the gate makes, as the exact argument elements it passes, so a
-// merged call gets no route (issue #538).
+// The `gh` calls the gate makes, each as the exact argument elements it passes, so a
+// call merging two elements gets no route (issue #538).
 export const PR_VIEW = prViewArgs(42).join(" ");
 
 export const PR_CHECKS = prChecksArgs(42).join(" ");
@@ -258,7 +258,8 @@ export const INDEPENDENT_GROUPS = [
 ];
 
 // A gh double that counts the calls still running. A call whose key is in `stalled`
-// never replies and ends only when its abort signal fires, as a killed `gh` child ends.
+// never replies and ends only when its abort signal fires. This models a hung `gh` child that the
+// runner kills.
 export function stallingGh(inner, stalled, abortDelayMs = 0) {
   const live = { active: 0 };
   const gh = async (args, cwd, options = {}) => {

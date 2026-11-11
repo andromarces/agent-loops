@@ -32,8 +32,8 @@ describe("createBodyBarrier with a body that never ends", () => {
     return () => vi.useRealTimers();
   });
 
-  // Usefulness: acceptance (#942) — the first wait ends at its bound and names the hung body, so the
-  // failed test shows the blocker.
+  // Usefulness: acceptance (#942) — the first wait ends at its bound, and the error names the hung
+  // body that blocked the failed test.
   test("the first wait fails at its bound and names the hung body", async () => {
     const barrier = createBodyBarrier({ waitMs: WAIT_MS });
     barrier.run(hang, "hung body");

@@ -162,8 +162,8 @@ export function scriptedGh(
         timedOut: false,
       };
     }
-    // The reads of the Actions hold: a base branch and a PR, each with no workflow file, so an
-    // unscripted test never holds.
+    // The reads of the Actions hold: a base branch with no workflow file and a PR with no changed
+    // files. So a test that scripts no workflow never holds for a run.
     const endpoint = args[0] === "api" ? args[1] : "";
     if (endpoint === "repos/owner/repo/commits/main") {
       return ok(pageStdout({ sha: "c".repeat(40) }));
@@ -344,9 +344,9 @@ export const runEntry = (id, name, conclusion, minute) => ({
 });
 
 /**
- * A `gh` whose check-run endpoint answers page `n` with `pages[n - 1]`, a JSON value or raw
- * stdout, and fails an unnamed page. Every other read passes through. `requests` lists the page
- * numbers asked for.
+ * A `gh` whose check-run endpoint answers page `n` with `pages[n - 1]`, a JSON value or a raw
+ * stdout string, and fails an unnamed page. Every other read passes through. `requests` lists the
+ * page numbers asked for.
  */
 export function pagedCheckRunsGh(pages, { all = false } = {}) {
   const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all });
