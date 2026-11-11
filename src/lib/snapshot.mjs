@@ -100,10 +100,9 @@ export async function sha256File(path, { signal } = {}) {
     const handle = await open(path, "r");
     let stream;
     try {
-      // Bound the read to the size of the opened file, so a file that
-      // grows during the read keeps the digest of its bytes at open. An empty file has no bound,
-      // as an unbounded stream reads to EOF. The stream owns the handle and closes it on end,
-      // error, or abort.
+      // Bound the read to the size of the opened file. A file that grows during the read then keeps
+      // the digest of its bytes at open. An empty file has no bound, as an unbounded stream reads to
+      // EOF. The stream owns the handle and closes it on end, error, or abort.
       const { size } = await handle.stat();
       const range = size > 0 ? { start: 0, end: size - 1 } : {};
       // An abort during the read destroys the stream, which closes the file handle and rejects the read.

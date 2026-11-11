@@ -119,6 +119,7 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   // The second round runs because a marker next to text can form a value.
   // It names the variable, and `[*]` is shorter than the match it replaces.
   // Each distinct marker text of the variables in the run gets one marker.
+  // Two variables with one value share one match, named for the first variable in the environment.
   const named = (run) => [...new Set([...run.names].map(markerFor))].join("");
 
   // For one secret-named variable, the result is byte-identical when the raw and escaped occurrences
@@ -126,7 +127,6 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   // It also needs no complete value in a marker or across a marker and its text.
   // With several values, marker text or an overlap can make the result differ. The differences are
   // not a closed list, and the tests pin examples.
-  // Two variables with one value share one match, named for the first variable in the environment.
   // Exact-value match only: a secret that the command derives, encodes, or reads from a file is not found.
   // A later change of the result is a cut, a removal of control characters, or a serialization.
   let out = text;
