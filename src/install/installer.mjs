@@ -563,16 +563,15 @@ async function restoreFile(record, dryRun) {
 /**
  * Removes every target the manifest records for the selected harnesses under
  * the manifest lock. A dry run takes no lock and writes nothing. If lstat of the
- * home reports ENOENT, for any reason, the call takes no lock, reads and writes
+ * home reports ENOENT, for any reason, the call takes no lock. It reads and writes
  * nothing, reports nothing to remove, and never creates the home. That includes
  * a Windows path that cannot name a directory: no install can exist there, so no
- * data is lost, and it no longer raises an error (maintainer
- * decision, issue #570). An install that creates the home after that check runs
- * after this uninstall returned, as if the uninstall had come first. Any other
- * lstat error takes the locked path, so no branch mutates without the lock.
+ * data is lost. Any other lstat error takes the locked path, so no branch mutates
+ * without the lock.
  */
 export async function uninstall(options = {}) {
   const home = options.home ?? resolveHome();
+  // An install that creates the home after this `lstat` runs after the uninstall returned, as if the uninstall had come first.
   if (homeIsMissing(home)) {
     return [];
   }

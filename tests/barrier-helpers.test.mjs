@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { createBarrierTest } from "./barrier-helpers.mjs";
-import { createBodyBarrier } from "./body-barrier.mjs";
+import { createBodyBarrier } from "./body-barrier-helpers.mjs";
 
 // The default bound is a safety net for the regression pair. Its timed-out body ends on demand.
 // A loaded runner cannot stretch its 10 ms delay to 50 s. The naming test drives this clock itself.

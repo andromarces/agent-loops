@@ -12,7 +12,7 @@ import {
   expectAbortKillsShim,
   expectBoundKillsShim,
 } from "../../process-helpers.mjs";
-import {} from "../ci-gate-helpers.mjs";
+import {} from "./ci-gate-helpers.mjs";
 
 // Usefulness: verifies the real `gh` runner passes the installed execa only options
 // that it accepts, and that the command and arguments of the read reach the spawn
@@ -150,11 +150,11 @@ describe("the gh runner against the installed execa", () => {
 // (issue #329). Termination only: the bound value is proved in
 // spawn-bounds.test.mjs, so the waits here are ceilings that load cannot reach
 // (issue #373).
-test(
+test.concurrent(
   "runGh terminates the gh child when its bound expires",
   async () => {
-    const result = await expectBoundKillsShim("gh", (timeoutMs) =>
-      runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs }),
+    const result = await expectBoundKillsShim("gh", (timeoutMs, { env }) =>
+      runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs, env }),
     );
     expect(result.timedOut).toBe(true);
   },
@@ -165,12 +165,12 @@ test(
 // signal fires, which is how the read cancels a call it no longer waits for.
 // The bound is off and the abort follows the shim's start, so only the signal
 // can stop the child (issue #320 review).
-test(
+test.concurrent(
   "runGh terminates the gh child when its abort signal fires",
   async () => {
     const result = await expectAbortKillsShim(
       "gh",
-      (signal) => runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
+      (signal, { env }) => runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal, env }),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(result.status).not.toBe(0);

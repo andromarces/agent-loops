@@ -75,14 +75,15 @@ const PROCESS_COLUMNS = {
  * Reads the process table with the named columns. The read runs through `exec`, so `signal` cancels
  * it and `timeout` (seconds) bounds it. `columns` lists the numeric columns first and one text
  * column last, for example `["pid", "ppid", "name"]`. Every failure rejects with a
- * `ProcessReadError`, whose `isCanceled` is true for a cancel.
+ * `ProcessReadError`, whose `isCanceled` is true for a cancel. `env` overrides the child
+ * environment of the read.
  * @param {(keyof typeof PROCESS_COLUMNS)[]} columns
- * @param {{ signal?: AbortSignal, timeout?: number }} [options]
+ * @param {{ signal?: AbortSignal, timeout?: number, env?: object }} [options]
  * @returns {Promise<Record<string, string | number>[]>}
  */
 async function readProcessColumns(
   columns,
-  { signal, timeout = PROCESS_READ_TIMEOUT_SECONDS, forceKillAfterDelay } = {},
+  { signal, timeout = PROCESS_READ_TIMEOUT_SECONDS, forceKillAfterDelay, env } = {},
 ) {
   const windows = process.platform === "win32";
   const specs = columns.map((column) => PROCESS_COLUMNS[column]);
@@ -102,6 +103,7 @@ async function readProcessColumns(
     ({ stdout } = await exec(command, args, {
       signal,
       timeout,
+      env,
       // Injectable so a test can shorten the delay; production keeps execa's 5000 ms default.
       forceKillAfterDelay,
       maxBuffer: PROCESS_TABLE_MAX_BUFFER,
@@ -144,7 +146,7 @@ async function readProcessColumns(
 
 /**
  * Lists every process with its full command line, for a check that needs the arguments.
- * @param {{ signal?: AbortSignal, timeout?: number }} [options]
+ * @param {{ signal?: AbortSignal, timeout?: number, env?: object }} [options]
  * @returns {Promise<{ pid: number, command: string }[]>}
  */
 export function readProcessCommands(options) {
@@ -153,7 +155,7 @@ export function readProcessCommands(options) {
 
 /**
  * Lists every process with its parent and name, for the ancestry walk.
- * @param {{ signal?: AbortSignal, timeout?: number }} [options]
+ * @param {{ signal?: AbortSignal, timeout?: number, env?: object }} [options]
  * @returns {Promise<{ pid: number, ppid: number, name: string }[]>}
  */
 export function readProcessTable(options) {

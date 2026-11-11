@@ -1,9 +1,8 @@
 // Item identity of a batch (adr/0121-mix-issue-pull-request-and-task-items-in-one-batch.md).
 // An issue keeps its number as identity, so an issue-only batch stores the same names as before.
 // A pull request and a free-text task use a prefixed string, which is also a safe path segment.
+import { MODES } from "../lib/args.mjs";
 
-/** The loop modes of one item, the same values as the single-task `--mode`. */
-const ITEM_MODES = new Set(["work-first", "review-first", "review-only"]);
 const ITEM_KINDS = new Set(["issue", "pr", "task"]);
 const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -40,7 +39,7 @@ function normalizeItem(raw, index) {
   if (!ITEM_KINDS.has(raw.kind)) {
     throw new Error(`${at} names an unknown kind: ${raw.kind ?? "none"}.`);
   }
-  if (raw.mode !== undefined && raw.mode !== null && !ITEM_MODES.has(raw.mode)) {
+  if (raw.mode !== undefined && raw.mode !== null && !MODES.has(raw.mode)) {
     throw new Error(`${at} names an unknown mode: ${raw.mode}.`);
   }
   if (raw.task !== undefined && raw.task !== null && !nonEmpty(raw.task)) {

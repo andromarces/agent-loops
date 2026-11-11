@@ -49,7 +49,7 @@ function fakeGh() {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({

@@ -7,7 +7,7 @@ import {
 } from "../../../src/lib/checks/ci-required-sources.mjs";
 import { checkCi } from "../../../src/lib/checks/ci-gate.mjs";
 import { equalsArgs, isPagedRead, pagedApiArgs, pageStdout } from "../../gh-doubles.mjs";
-import { fakeGh, HEAD, REVIEWED, routes, SLUG, run } from "../ci-gate-helpers.mjs";
+import { fakeGh, HEAD, REVIEWED, routes, SLUG, run } from "./ci-gate-helpers.mjs";
 
 const RULE = { type: "deletion" };
 const REQUIRED = {

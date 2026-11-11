@@ -84,14 +84,42 @@ function vpBinPath() {
   return join(dirname(require.resolve("vite-plus/package.json")), "bin", "vp");
 }
 
-function main() {
+function vitePlusRequire() {
+  const require = createRequire(import.meta.url);
+  return createRequire(join(dirname(require.resolve("vite-plus/package.json")), "package.json"));
+}
+
+/** Reads the reporter names that the installed Vitest uses when none are given. */
+async function defaultReporters() {
+  const configUrl = pathToFileURL(vitePlusRequire().resolve("vitest/config")).href;
+  const { configDefaults } = await import(configUrl);
+  return configDefaults.reporters;
+}
+
+/** Builds the Vitest arguments that keep the installed default reporters and add a JSON report. */
+async function testArguments(reportPath, extraArgs = []) {
+  const reporters = await defaultReporters();
+  return [
+    vpBinPath(),
+    "test",
+    "run",
+    ...reporters.map((name) => `--reporter=${name}`),
+    "--reporter=json",
+    `--outputFile.json=${reportPath}`,
+    ...extraArgs,
+  ];
+}
+
+async function main() {
   const reportPath = join(tmpdir(), `agent-loops-test-duration-${process.pid}.json`);
   try {
     const started = performance.now();
     const run = spawnSync(
       process.execPath,
-      [vpBinPath(), "test", "run", "--reporter=json", `--outputFile=${reportPath}`],
-      { stdio: "inherit" },
+      await testArguments(reportPath, process.argv.slice(2)),
+      {
+        stdio: "inherit",
+      },
     );
     const elapsedMs = performance.now() - started;
     if (run.error) throw run.error;

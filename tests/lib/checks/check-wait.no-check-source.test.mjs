@@ -1,13 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../../src/lib/checks/check-wait.mjs";
-import {
-  fakeClock,
-  fileReply,
-  HEAD_A,
-  HEAD_B,
-  readOk,
-  scriptedGh,
-} from "../check-wait-helpers.mjs";
+import { fakeClock, fileReply, HEAD_A, HEAD_B, readOk, scriptedGh } from "./check-wait-helpers.mjs";
 
 // The `--all` wait's no-check-source early return (issue #1054). After the PR head itself showed no
 // check run and no commit status, the probe pins the base SHA, then reads the files of the PR, the

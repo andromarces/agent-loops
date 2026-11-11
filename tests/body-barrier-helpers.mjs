@@ -1,16 +1,15 @@
 /**
- * Tracks the bodies of tests that change process-wide state (a `console.error` spy,
- * `process.exitCode`). Vitest lets a body that passed its timeout keep running, so its late
- * cleanup can land inside the next test. `run(body)` registers a body, and `settled()` resolves
- * when every registered body has ended, whether it fulfilled or rejected. Call `settled()` from a
- * `beforeEach` hook, so no test starts while an earlier body still runs.
+ * Tracks the bodies of tests that change process-wide state, such as a `console.error` spy or
+ * `process.exitCode`. Vitest lets a body past its timeout keep running, so its late cleanup can
+ * land inside the next test. `run(body)` registers a body, and `settled()` resolves when every
+ * registered body has ended, fulfilled or rejected. Call `settled()` from a `beforeEach` hook, so
+ * no test starts while an earlier body still runs.
  *
- * `name` labels a body in errors (default: the function name). One wait lasts at most `waitMs`
- * (default 50 s, under the 60 s hook timeout of the callers). A wait that reaches it abandons the
- * bodies still running and rejects naming them. While an abandoned body runs, every later
- * `settled()` rejects at once with the same names, so one hung body costs one wait. When the body
- * ends, waits work again.
+ * One wait lasts at most `waitMs`, and a wait that reaches it abandons the bodies still running
+ * and rejects naming them. Every later `settled()` rejects at once with the same names until the
+ * body ends, so one hung body costs one wait, and waits work again.
  */
+// The default 50 s stays under the 60 s hook timeout of the callers.
 export function createBodyBarrier({ waitMs = 50_000 } = {}) {
   const running = new Map();
   const abandoned = new Set();
@@ -21,6 +20,7 @@ export function createBodyBarrier({ waitMs = 50_000 } = {}) {
       `The test body "${hung()}" did not end within ${waitMs} ms, so this test cannot start without risking its spy and exit code.`,
     );
   return {
+    // `name` labels a body in errors, and the body function name is the default.
     run(body, name = body.name || "anonymous body") {
       const promise = (async () => body())();
       const forget = () => {

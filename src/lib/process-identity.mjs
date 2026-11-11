@@ -1,6 +1,5 @@
 // Process identity: liveness of a pid and its start-time stamp, which tells a live owner from a
-// reused pid (#173, ADR 0020). Reads the process table or /proc. The state lock and six other
-// modules import it.
+// reused pid (#173, ADR 0020). Reads the process table or /proc.
 import { readFile, readlink } from "node:fs/promises";
 import { execBounded } from "./exec.mjs";
 
@@ -168,16 +167,16 @@ export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } 
       return await linuxProcStamp(pid);
     }
     if (process.platform === "darwin") {
-      // `ps -o lstart=` runs under TZ=UTC and LC_ALL=C.
-      // The kernel stores the start time (`p_starttime`) once at creation and `ps` formats it, so a later clock step does not change it.
-      // From the XNU source, and not exercised here, because the test machine cannot step its clock.
+      // `ps -o lstart=` runs under TZ=UTC and LC_ALL=C. The kernel stores the start time
+      // (`p_starttime`) once at creation, so a later clock step does not change it (ADR 0020).
       const time = parseLstart(
         await queryOutput("ps", ["-o", "lstart=", "-p", String(pid)], timeoutMs),
       );
       return time === null ? null : `darwin-lstart:${time}`;
     }
     if (process.platform === "win32") {
-      // The PowerShell `Process.StartTime` reads the creation FILETIME, and a clock step is likewise not exercised here.
+      // The PowerShell `Process.StartTime` reads the creation FILETIME, which a clock step does
+      // not change (ADR 0020).
       const text = await queryOutput(
         "powershell.exe",
         [
@@ -201,11 +200,10 @@ let ownStartTimeQuery;
 /**
  * The start time stamp of this process, read once on the first lock creation, because every
  * acquisition carries it in the lock content. Linux reads /proc, macOS spawns one `ps`, and Windows
- * spawns one PowerShell. The PowerShell spawn takes about 0.8 s on a loaded 16-CPU Windows host
- * (2026-10-23), bounded by `START_TIME_QUERY_MS`. Node has no cheaper source of the OS start time,
- * because `process.uptime()` stops during a system sleep on POSIX. `Date.now()` minus that value is
- * then not the start time. known-limit: the Windows spawn is paid once by each process that takes a
- * lock.
+ * spawns one PowerShell. The PowerShell spawn is bounded by `START_TIME_QUERY_MS`, and its measured
+ * cost is in ADR 0020. Node has no cheaper source of the OS start time, because `process.uptime()`
+ * stops during a system sleep on POSIX. `Date.now()` minus that value is then not the start time.
+ * known-limit: the Windows spawn is paid once by each process that takes a lock.
  */
 export function ownStartTime() {
   ownStartTimeQuery ??= processStartTime(process.pid).then((stamp) => stamp ?? undefined);

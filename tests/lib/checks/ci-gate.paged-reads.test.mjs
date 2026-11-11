@@ -8,7 +8,7 @@ import { checkRuns, commitStatuses } from "../../../src/lib/checks/commit-entrie
 import { ABSENT, UNKNOWN, requiredContexts } from "../../../src/lib/checks/ci-required-sources.mjs";
 import { readOne } from "../../../src/lib/checks/gh-api.mjs";
 import { failureOf } from "../../../src/lib/checks/bounded-call.mjs";
-import { SLUG } from "../ci-gate-helpers.mjs";
+import { SLUG } from "./ci-gate-helpers.mjs";
 
 const SHA = "1111111111111111111111111111111111111111";
 const LINK = 'Link: <https://other.example/repos/x/y/check-runs?page=2>; rel="next"\r\n';

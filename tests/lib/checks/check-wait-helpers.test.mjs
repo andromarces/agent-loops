@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { scriptedGh } from "../check-wait-helpers.mjs";
+import { scriptedGh } from "./check-wait-helpers.mjs";
 
 // Usefulness: verifies the scripted `gh` routes on the argument elements, so a
 // call that merges the arguments into one element gets no reply and its error

@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterEach, expect, test } from "vite-plus/test";
+import { isLocalHuskyHooksPath } from "../../.vite-hooks/husky-path.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
 const GUARD = fileURLToPath(new URL("../../.vite-hooks/install.mjs", import.meta.url));
+const HUSKY_PATH = fileURLToPath(new URL("../../.vite-hooks/husky-path.mjs", import.meta.url));
 
 let dir;
 afterEach(async () => {
@@ -15,10 +17,10 @@ afterEach(async () => {
 });
 
 /**
- * Creates a Git repository that holds a copy of the guard and a stub
- * `vite-plus` whose `bin/vp` runs `vpScript` (`null` leaves no `bin/vp`). Git
- * reads an empty global config file and no system config, so a test sets each
- * scope explicitly.
+ * Creates a Git repository that holds a copy of the guard and its Husky path
+ * helper. The repository also holds a stub `vite-plus` whose `bin/vp` runs
+ * `vpScript` (`null` leaves no `bin/vp`). Git reads an empty global config file
+ * and no system config, so a test sets each scope explicitly.
  */
 async function setup({ vpScript = "process.exit(0);" } = {}) {
   dir = await mkdtemp(join(tmpdir(), "vite-hooks-guard-"));
@@ -29,6 +31,7 @@ async function setup({ vpScript = "process.exit(0);" } = {}) {
   await writeFile(join(vitePlus, "package.json"), '{ "name": "vite-plus" }\n');
   if (vpScript !== null) await writeFile(join(vitePlus, "bin", "vp"), `${vpScript}\n`);
   await copyFile(GUARD, join(repo, ".vite-hooks", "install.mjs"));
+  await copyFile(HUSKY_PATH, join(repo, ".vite-hooks", "husky-path.mjs"));
   const globalConfig = join(dir, "global.gitconfig");
   await writeFile(globalConfig, "");
   const env = { GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" };
@@ -54,6 +57,7 @@ const failures = [
   { name: "the git probe fails", env: { GIT_DIR: "missing-git-dir" } },
 ];
 
+// Process: the case reads the exit code and output streams of a new process, an allowed exception.
 // Usefulness: verifies the warning-only `prepare` contract on every failure path
 // (exit 0, no stdout, one warning line of its own, no stack), which keeps a
 // consumer install clean; no other test checks the output streams.
@@ -69,6 +73,7 @@ test.each(failures)("prepare only warns when $name", async ({ vpScript, env }) =
   expect(lines.filter((line) => /^\s+at\s/.test(line))).toEqual([]);
 });
 
+// Process: only a real prepare run shows the git config state that it leaves, an end-to-end exception.
 // Usefulness: verifies that the Husky migration leaves every core.hooksPath that
 // is not the local Husky path, so a user's own hooks setting survives `prepare`
 // even when a Husky value from another scope is the effective one.
@@ -90,17 +95,27 @@ test("prepare keeps a custom local hooks path and a Husky path of another scope"
 const huskyForms = [".husky/_", ".husky/_/", "./.husky/_", "<repo>/.husky/_"];
 if (process.platform === "win32") huskyForms.push(".husky\\_", "<repo>\\.husky\\_\\");
 
-// Usefulness: verifies that every spelling of the local Husky path is cleared, so
-// `vp config` can install the dispatcher instead of leaving hooks inactive.
-test.each(huskyForms)("prepare clears the local Husky hooks path %s", async (form) => {
+// Usefulness: verifies that the Husky match accepts every spelling of the local path, so `vp config` can install the dispatcher instead of leaving hooks inactive.
+test.each(huskyForms)("the Husky match accepts the local hooks path %s", async (form) => {
+  dir = await mkdtemp(join(tmpdir(), "vite-hooks-husky-"));
+  const repo = join(dir, "repo");
+  await mkdir(repo);
+
+  expect(isLocalHuskyHooksPath(repo, form.replace("<repo>", repo))).toBe(true);
+});
+
+// Process: only a real prepare run clears the stored core.hooksPath, an end-to-end exception.
+// Usefulness: verifies that prepare clears the local Husky hooks path in a real repository, so `vp config` can install the dispatcher instead of leaving hooks inactive.
+test("prepare clears the local Husky hooks path", async () => {
   const { repo, git, prepare } = await setup();
-  await git("config", "--local", "core.hooksPath", form.replace("<repo>", repo));
+  await git("config", "--local", "core.hooksPath", "<repo>/.husky/_".replace("<repo>", repo));
 
   await prepare();
 
   expect((await git("config", "--local", "core.hooksPath")).exitCode).toBe(1);
 });
 
+// Process: the case reads the exit code and output streams of a new process, an allowed exception.
 // Usefulness: verifies that a package directory outside any Git work tree, such as
 // the temporary checkout of an `npm install github:...`, installs silently, so a Git
 // URL install prints no hook warning; no other test runs `prepare` without a repo.

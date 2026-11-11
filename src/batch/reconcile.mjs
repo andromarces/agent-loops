@@ -3,6 +3,7 @@
 // stops the loop as needs-owner.
 import { isJsonObject } from "../lib/json.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
+import { readGhJson } from "./gh-read.mjs";
 import { readFile } from "node:fs/promises";
 import {
   commitsAhead,
@@ -16,19 +17,15 @@ import {
 const asGit = (deps) => deps.git ?? gitRead;
 
 async function ghJson(gh, args, cwd, label) {
-  let reply;
   try {
-    reply = await gh(args, cwd);
+    return await readGhJson(gh, args, cwd);
   } catch (err) {
+    if (err?.kind === "json") throw new Error(`${label} returned unreadable JSON`);
+    if (err?.kind === "empty") throw new Error(`${label} failed: no reply`);
+    if (err?.kind === "status" && (err.reply?.stderr ?? "").trim() === "") {
+      throw new Error(`${label} failed: no reply`);
+    }
     throw new Error(`${label} failed: ${err?.message ?? err}`);
-  }
-  if (reply === undefined || reply === null || reply.status !== 0) {
-    throw new Error(`${label} failed: ${(reply?.stderr ?? "").trim() || "no reply"}`);
-  }
-  try {
-    return JSON.parse(reply.stdout);
-  } catch {
-    throw new Error(`${label} returned unreadable JSON`);
   }
 }
 

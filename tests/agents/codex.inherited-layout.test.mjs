@@ -15,7 +15,7 @@ import { OK_EVENTS, withInheritedTmp, fakeCodex, runTurn } from "./codex-tmpdir-
 // `turn-tmpdir-remove.mjs` child starts per turn.
 vi.mock("../../src/lib/exec.mjs", async (importActual) => {
   const actual = await importActual();
-  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal.mjs");
+  const { turnTmpdirRemovalDouble } = await import("../turn-tmpdir-removal-helpers.mjs");
   return {
     ...actual,
     exec: vi.fn(),

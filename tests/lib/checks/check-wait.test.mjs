@@ -17,7 +17,7 @@ import {
   replyOf,
   FORBIDDEN,
   NOT_FOUND,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 // Usefulness: verifies the wait returns the required check states and no timeout
 // once nothing is pending, and that it keeps polling past a read that reported no

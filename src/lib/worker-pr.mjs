@@ -5,11 +5,10 @@ import { readableErrorText } from "./error-message.mjs";
 import {
   DEFAULT_READ_TIMEOUT_MS,
   isPrListEntry,
-  PR_LIST_LIMIT,
-  readPrList,
+  readOpenBranchPrs,
   runGh,
 } from "./checks/gh-api.mjs";
-import { gitRead } from "./git-read.mjs";
+import { gitRead, readHeadBranch } from "./git-read.mjs";
 
 const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;
 
@@ -59,8 +58,7 @@ async function readRunState(cwd, signal) {
   const headRead = gitRead(cwd, ["rev-parse", "--verify", "-q", "HEAD"], { signal });
   headRead.catch(() => {});
   try {
-    const branchRead = await gitRead(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
-    const branch = branchRead.exitCode === 0 ? branchRead.stdout.trim() : "";
+    const branch = await readHeadBranch(gitRead, cwd, { signal });
     if (branch === "") return { branch: null, remote: null, repo: null, head: null };
     const remoteRead = await gitRead(cwd, ["config", "--get", `branch.${branch}.remote`], {
       signal,
@@ -125,30 +123,16 @@ export async function resolveWorkerPr({
     if (before.head !== head) {
       return { pr: null, reason: "the work tree head changed after the worker turn" };
     }
-    const argv = [
-      "pr",
-      "list",
-      "--head",
+    const read = await readOpenBranchPrs({
       branch,
-      "--state",
-      "open",
-      "--json",
-      "number,headRefName,headRefOid,isCrossRepository,url",
-      "--limit",
-      String(PR_LIST_LIMIT),
-    ];
-    const read = await readPrList(
-      (args) => gh(args, cwd, { signal, timeoutMs }),
-      argv,
-      isListEntry,
-    );
+      read: (args) => gh(args, cwd, { signal, timeoutMs }),
+      fields: "number,headRefName,headRefOid,isCrossRepository,url",
+      isEntry: isListEntry,
+    });
     if (read.failure) {
       return { pr: null, reason: read.failure };
     }
-    const { list } = read;
-    const sameRepo = list.filter(
-      (entry) => entry.headRefName === branch && !entry.isCrossRepository,
-    );
+    const sameRepo = read.list.filter((entry) => entry.headRefName === branch);
     if (sameRepo.length === 0) {
       return { pr: null, reason: `no open PR from branch ${branch}`, quiet: true };
     }

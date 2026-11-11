@@ -183,7 +183,7 @@ test("the not-specified check is opt-in", async () => {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] }, body }),
@@ -322,7 +322,7 @@ function mixedGh({ prHead = "a".repeat(40), prState = "OPEN", afterFreeze = null
       return { status: 0, stdout: "[]", stderr: "" };
     }
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({
@@ -604,7 +604,7 @@ test("a failed PR lookup skips an issue item instead of launching it", async () 
   const gh = async (args) => {
     if (args[0] === "pr" && args[1] === "view") throw new Error("gh failed");
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({

@@ -4,7 +4,7 @@ Run one coding task as a loop of CLI coding agents.
 
 - An **orchestrator** agent picks the next step.
 - A **worker** agent changes the code and runs the tests.
-- A **reviewer** agent checks the result. It must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed. Every CLI except Codex runs the reviewer with a read-only flag whose effect differs by CLI ([reviewer safety](docs/reference/reviewer-safety.md)), and a Codex reviewer runs with no sandbox by default, so only the mutation check detects an edit.
+- A **reviewer** agent checks the result, and [the architecture reference](docs/reference/architecture.md#architecture) states its file-change rule. Every CLI except Codex runs the reviewer with a read-only flag whose effect differs by CLI ([reviewer safety](docs/reference/reviewer-safety.md)). A Codex reviewer runs with no sandbox by default, so only the mutation check detects an edit.
 - A Node.js runtime enforces the step budget and the timeouts, and detects a change to the work tree during a reviewer or orchestrator turn.
 
 ```text
@@ -110,9 +110,9 @@ file that you edited after install.
 
 - [Full reference](docs/reference.md): every option, safety rule, and verified
   behavior.
-- [Batch runs](docs/reference/usage.md#batch-runs): run several loops in one foreground
+- [Batch runs](docs/reference/batch.md): run several loops in one foreground
   supervisor.
-- [Test slot](docs/reference/usage.md#test-slot): limit concurrent full test suite runs through shared test slots.
+- [Test slot](docs/reference/test-slot.md): limit concurrent full test suite runs through shared test slots.
 - [Develop from a clone](docs/reference/development.md#from-a-clone-development)
 - [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md)
 

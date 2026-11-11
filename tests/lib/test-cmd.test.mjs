@@ -1,13 +1,14 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { expect, test as baseTest, vi } from "vite-plus/test";
 import { readableErrorText } from "../../src/lib/error-message.mjs";
 import { logInfo } from "../../src/lib/log.mjs";
 import { redactAndClean } from "../../src/lib/redact.mjs";
 import { TAIL_CHARS, runTestCmd } from "../../src/lib/test-cmd.mjs";
-import { removePath, trackedTempDir } from "../fs-helpers.mjs";
+import { removePath } from "../fs-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
@@ -16,18 +17,41 @@ import {
   withGitHangingAfter,
 } from "../process-helpers.mjs";
 
-const dirs = [];
-afterEach(async () => {
-  for (const dir of dirs.splice(0)) {
-    await removePath(dir);
-  }
-});
+// One case's temporary paths, kept apart from every other case that runs beside it.
+const caseDirs = new AsyncLocalStorage();
+
+// Runs one case with its own temporary paths, removed when the case ends.
+function withTempDirs(run) {
+  return async (...args) => {
+    const dirs = [];
+    try {
+      return await caseDirs.run(dirs, () => run(...args));
+    } finally {
+      for (const dir of dirs.splice(0)) await removePath(dir);
+    }
+  };
+}
+
+function trackDir(path) {
+  caseDirs.getStore().push(path);
+  return path;
+}
+
+// Every case removes the paths it created, so a concurrent case never removes another case's paths.
+const test = (name, run, timeout) => baseTest(name, withTempDirs(run), timeout);
+test.concurrent = (name, run, timeout) => baseTest.concurrent(name, withTempDirs(run), timeout);
+test.skipIf = (condition) => (name, run, timeout) =>
+  baseTest.skipIf(condition)(name, withTempDirs(run), timeout);
+test.concurrent.skipIf = (condition) => (name, run, timeout) =>
+  baseTest.concurrent.skipIf(condition)(name, withTempDirs(run), timeout);
 
 // Process: the command cases read the exit code, output, or timeout of a real child.
 async function repo() {
-  const dir = await createTempRepo();
-  dirs.push(dir);
-  return dir;
+  return trackDir(await createTempRepo());
+}
+
+async function tempDir(prefix) {
+  return trackDir(await mkdtemp(join(tmpdir(), prefix)));
 }
 
 // One shell-neutral way to run a JS body: double quotes outside, single quotes inside.
@@ -76,7 +100,7 @@ test("the command runs in the given work tree", async () => {
 // the command, and no walk of the parent links finds it. `trapTerm` makes the command
 // exit 0 on SIGTERM, the shape of a runner that cleans up and exits.
 async function hangingTree({ orphan = false, trapTerm = false }) {
-  const dir = await trackedTempDir("test-cmd-hang-", dirs);
+  const dir = await tempDir("test-cmd-hang-");
   const grandchildPid = join(dir, "grandchild.pid");
   const childPid = join(dir, "child.pid");
   const grandchild = join(dir, "grandchild.js");
@@ -137,7 +161,7 @@ async function expectAllGone(pidFiles) {
 // A runner that spawns a descendant with ignored stdio and exits on SIGTERM, while the
 // descendant ignores SIGTERM and stays alive: only the immediate group SIGKILL reaches it.
 async function termIgnoringTree() {
-  const dir = await trackedTempDir("test-cmd-sigterm-", dirs);
+  const dir = await tempDir("test-cmd-sigterm-");
   const pidFile = join(dir, "descendant.pid");
   const descendant = join(dir, "descendant.js");
   const runner = join(dir, "runner.js");
@@ -156,7 +180,7 @@ async function termIgnoringTree() {
 
 // Usefulness: verifies a descendant that ignores SIGTERM and stdio still dies with the group at
 // the timeout, so execa's SIGTERM never replaces the runtime's immediate SIGKILL (#1307 review).
-test.skipIf(process.platform === "win32")(
+test.concurrent.skipIf(process.platform === "win32")(
   "POSIX only: a timeout SIGKILLs a descendant that ignores SIGTERM and stdio",
   async () => {
     const cwd = await repo();
@@ -191,7 +215,7 @@ test.skipIf(process.platform === "win32")(
 // it started, which stay in its process group, are both gone (issue #420). The bound
 // is 3 seconds, the floor of a whole second plus time for both node processes to
 // start on a loaded machine.
-test("a timeout kills the command and its child process and reports timed-out", async () => {
+test.concurrent("a timeout kills the command and its child process and reports timed-out", async () => {
   const cwd = await repo();
   const { command, pidFiles } = await hangingTree({});
   const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
@@ -205,7 +229,7 @@ test("a timeout kills the command and its child process and reports timed-out", 
 // command exits with after the kill signal, as the ADR and the docs state, so a
 // parent never reads a timeout as the exit code of a runner that trapped the
 // signal and exited 0 (issue #420 review).
-test("a timed-out command reports exitCode null even when it exits 0 on the signal", async () => {
+test.concurrent("a timed-out command reports exitCode null even when it exits 0 on the signal", async () => {
   const cwd = await repo();
   const { command, pidFiles } = await hangingTree({ trapTerm: true });
   const run = await runTestCmd({ command, timeoutSeconds: 3, cwd });
@@ -219,7 +243,7 @@ test("a timed-out command reports exitCode null even when it exits 0 on the sign
 // reaches the orphan through the group, and Windows has no group and reaches only the live
 // parent links, so the maintainer-approved limit of ADR 0017 keeps an orphan there (issue
 // #420, approved 2026-10-04).
-test.skipIf(process.platform === "win32")(
+test.concurrent.skipIf(process.platform === "win32")(
   "POSIX only: a timeout kills an orphan that stayed in the process group of the command",
   async () => {
     const cwd = await repo();
@@ -252,7 +276,8 @@ test(
   async () => {
     const error = await expectAbortKillsShim(
       "git",
-      (signal) => runTestCmd({ command: node(""), cwd: tmpdir(), signal }).catch((err) => err),
+      (signal, { env }) =>
+        runTestCmd({ command: node(""), cwd: tmpdir(), signal, env }).catch((err) => err),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(error.isCanceled).toBe(true);
@@ -267,9 +292,9 @@ test.skipIf(process.platform === "win32")(
   "a second cancel after a finished command reports its result and the change as not captured",
   async () => {
     const cwd = await repo();
-    await withGitHangingAfter(4, async ({ hungPid }) => {
+    await withGitHangingAfter(4, async ({ hungPid, env }) => {
       const second = new AbortController();
-      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal });
+      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal, env });
       const pid = await hungPid();
       second.abort();
       const testRun = await pending;
@@ -433,7 +458,7 @@ test(
   "an abort signal during the command startup kills the command",
   async () => {
     const cwd = await repo();
-    const dir = await trackedTempDir("test-cmd-startup-abort-", dirs);
+    const dir = await tempDir("test-cmd-startup-abort-");
     const gated = join(dir, "gate.pid");
     const release = join(dir, "gate-release.txt");
     const expired = join(dir, "gate-expired.txt");

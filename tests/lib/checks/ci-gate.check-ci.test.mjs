@@ -19,7 +19,7 @@ import {
   routes,
   run,
   stallingGh,
-} from "../ci-gate-helpers.mjs";
+} from "./ci-gate-helpers.mjs";
 
 // Usefulness: verifies the gate passes when every required check run passed on
 // the head commit and the PR matches the reviewed state (issue #218).

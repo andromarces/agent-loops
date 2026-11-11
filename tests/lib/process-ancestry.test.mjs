@@ -163,11 +163,11 @@ test.skipIf(!posix)("readProcessTable lists pid, parent pid, and name", async ()
 
 // Usefulness: verifies a hung ancestry read ends at its bound, names only the reason class, and
 // ends the child, so `harness-check` cannot hang on a stuck process table (#729).
-test.skipIf(!posix)(
+test.concurrent.skipIf(!posix)(
   "readProcessTable ends a hung read at its bound and names no output",
   async () => {
-    const error = await expectBoundKillsShim("ps", (timeoutMs) =>
-      readProcessTable({ timeout: timeoutMs / 1000 }).catch((err) => err),
+    const error = await expectBoundKillsShim("ps", (timeoutMs, { env }) =>
+      readProcessTable({ timeout: timeoutMs / 1000, env }).catch((err) => err),
     );
     expect(error).toMatchObject({ name: "ProcessReadError", isCanceled: false });
     expect(error.reason).toMatch(/^timed out after /);

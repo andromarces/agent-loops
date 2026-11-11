@@ -47,7 +47,8 @@ jobs:
         run: pnpm fmt:check
       - if: runner.os == 'Linux'
         run: pnpm lint
-      - run: pnpm test
+      # Print the slowest-tests report in this job's full, unsharded run.
+      - run: pnpm test:duration
       # Exercise install and uninstall against the PR checkout on Ubuntu.
       # macOS gets installer evidence in macos-smoke before merge, not only
       # after a release. Windows installer evidence runs in windows-smoke

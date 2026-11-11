@@ -95,18 +95,18 @@ function splitInlineFlag(arg) {
 // Both readers accept a safe integer only. Above `Number.MAX_SAFE_INTEGER`, an
 // integer double has no room for `value + 1`, so a step counter built from it
 // stops advancing and `--max-steps` stops bounding anything (#312).
-function readPositiveInt(flag, value) {
+export function readPositiveInt(flag, value, error = defaultError) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 1) {
-    throw new Error(`${flag} must be a positive integer.`);
+    throw error(`${flag} must be a positive integer.`);
   }
   return val;
 }
 
-function readNonNegativeInt(flag, value) {
+export function readNonNegativeInt(flag, value, error = defaultError) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 0) {
-    throw new Error(`${flag} must be a non-negative integer.`);
+    throw error(`${flag} must be a non-negative integer.`);
   }
   return val;
 }
@@ -128,7 +128,7 @@ function testCmdError(testCmd, testCmdTimeout) {
 
 // The reviewer sandbox modes of a Codex reviewer (ADR 0038). `none` is the default of a new run
 // and has no flag. The flag names only the two sandboxed modes.
-const REVIEWER_SANDBOX_FLAG_MODES = ["read-only", "workspace-write"];
+export const REVIEWER_SANDBOX_FLAG_MODES = ["read-only", "workspace-write"];
 export const REVIEWER_SANDBOX_MODES = ["none", ...REVIEWER_SANDBOX_FLAG_MODES];
 
 /**
@@ -168,12 +168,17 @@ function reviewerSandboxError(reviewerSandbox, reviewerKind) {
 // The parsed option objects that used the `--reviewer-workspace-write` alias, for the conflict text.
 const aliasUsers = new WeakSet();
 
-function setReviewerSandbox(args, value, viaAlias) {
+/**
+ * Sets the reviewer sandbox of `args`, refusing a disagreeing second value. The alias call names
+ * the earlier value, since the alias arrives second. A `--reviewer-sandbox` call names the later
+ * value. `error` builds the refusal, so each parser keeps its own error type.
+ */
+export function setReviewerSandbox(args, value, viaAlias, error = defaultError) {
   const earlier = args.reviewerSandbox;
   if (earlier !== null && earlier !== value) {
     const alias = viaAlias || aliasUsers.has(args);
     const shown = viaAlias ? earlier : value;
-    throw new Error(
+    throw error(
       alias
         ? `--reviewer-workspace-write conflicts with --reviewer-sandbox ${shown}.`
         : `--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`,
@@ -186,11 +191,12 @@ function setReviewerSandbox(args, value, viaAlias) {
 // Defaults shared by the headless CLI, the role subcommand, and the loop runtime.
 export const DEFAULT_MAX_STEPS = 20;
 export const DEFAULT_TIMEOUT = 3600;
+export const DEFAULT_SETUP_TIMEOUT = 600;
 
 // Loop modes, shared by the headless `--mode` and the role subcommand `--mode`
 // so both paths accept the same values and refuse the same PR flags in
 // review-only (#337).
-const MODES = new Set(["work-first", "review-first", "review-only"]);
+export const MODES = new Set(["work-first", "review-first", "review-only"]);
 
 function modeError(value) {
   return `--mode must be one of work-first, review-first, review-only, got: ${value}`;

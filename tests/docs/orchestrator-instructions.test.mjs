@@ -1391,11 +1391,10 @@ const REVIEWER_SCOPE =
   "must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed";
 
 // Usefulness: verifies requirement "every surface that states the reviewer file-change rule states
-// the scoped rule, not a blanket ban" (issue #837). A reviewer or an operator reading the README,
-// the architecture reference, or the orchestrator role list is then not told that a test run with
-// ignored output is forbidden. A restored blanket phrase fails here.
+// the scoped rule, not a blanket ban" (issue #837). An operator reading the architecture reference or
+// the orchestrator role list is then not told that a test run with ignored output is forbidden. A
+// restored blanket phrase fails here.
 test.each([
-  ["README.md", () => readRepoFile("README.md")],
   ["docs/reference/architecture.md", () => readRepoFile("docs/reference/architecture.md")],
   [
     "the headless orchestrator prompt",
@@ -1404,6 +1403,12 @@ test.each([
 ])("%s states the scoped reviewer file-change rule", async (_name, load) => {
   const text = (await load()).replace(/\s+/g, " ");
   expect(text).toContain(REVIEWER_SCOPE);
+});
+
+// Usefulness: verifies README links to the page that states the scoped reviewer rule, so the rule stays reachable (issue #1850).
+test("README links to the scoped reviewer file-change rule", async () => {
+  const text = await readRepoFile("README.md");
+  expect(text).toContain("](docs/reference/architecture.md#architecture)");
 });
 
 // Usefulness: verifies no reviewed surface restates the reviewer rule as a blanket file ban
@@ -1565,10 +1570,10 @@ test("the core tells the parent to read the shellDenied rule after any worker or
   );
 });
 
-// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent
-// runs can both take, such as an ADR number, so the parent reserves a number per run before dispatch
-// and names the index-row conflict under `open` (#1176). The existing tracking-issue test does not
-// reach this rule.
+// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent runs can both take, such as an ADR number (#1176).
+// The parent reserves a number per run before dispatch and names the index-row conflict under `open`.
+// The existing tracking-issue test does not reach this rule.
+// The rule also covers a changelog release version in a concurrent run (#1835).
 test("the shared-artifact rule covers a sequential identifier that concurrent runs can both take", async () => {
   const section = (
     await readFile(join(referenceSectionsDir, "shared-tracking-artifacts.md"), "utf8")
@@ -1584,6 +1589,10 @@ test("the shared-artifact rule covers a sequential identifier that concurrent ru
   );
   expectRule(section, /index row/i, /conflict at merge/i);
   expectRule(section, /finish summary/i, /`open`/);
+  // The changelog release version is the same kind of identifier (#1835).
+  expectRule(section, /changelog release version/i, /sequential identifier/i);
+  expectRule(section, /changelog entry/i, /reserve the version/i, /worker prompt/i);
+  expectRule(section, /existing unreleased heading/i);
   const core = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   expectRule(core, /sequential identifier/i, /ADR number/);
   expect(core).toContain("](orchestrator/shared-tracking-artifacts.md)");
@@ -1656,7 +1665,6 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["waiting-for-checks.md", "The hold covers no workflow that runs only on push"],
   ["reviewer-evidence.md", "The runtime reads the required-check status for that PR head"],
   ["reviewer-evidence.md", "The runtime reports the status it read beside the reviewer result"],
-  ["reviewer-sandbox.md", "Output under a path that the reviewer chose"],
   ["waiting-for-checks.md", "A check that a third-party app registers late"],
 ];
 

@@ -243,7 +243,8 @@ async function chmodPlain(base, rel, target, mode) {
 
 /**
  * Copies one source file over its run copy and returns the hash of the bytes written.
- * Reads the source once, then writes those bytes through a temporary file and a rename.
+ * Reads the source once, then writes those bytes through a temporary file and a rename, or replaces
+ * nothing when the copy already holds those bytes.
  * The temporary file starts at 0600, then takes the copy's prior mode on the open handle.
  * On Windows, a read-only target is cleared for the rename and takes the prior mode back from
  * the temporary file; a failed rename restores the target mode before the cleanup.
@@ -282,6 +283,10 @@ export async function refreshLocalFile(
   }
   const target = join(rootReal, rel);
   await beforeWrite?.(target);
+  // An unchanged copy needs no replace, so its bytes, mode, and inode stay as they are.
+  if (copy.hash === source.hash) {
+    return copy.hash;
+  }
   const temp = join(dirname(target), `.refresh-${randomUUID()}.tmp`);
   await beforeTempCreate?.(temp);
   // Remove the temporary path only after this call creates it.
