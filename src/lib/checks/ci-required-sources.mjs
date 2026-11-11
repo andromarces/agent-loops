@@ -270,7 +270,7 @@ export function classifyRulesets(data) {
     const checks = rule.parameters?.required_status_checks;
     if (!Array.isArray(checks) || checks.length === 0) {
       // A required-status-check rule that names no check states neither an
-      // absence nor a context the gate could enforce.
+      // absence nor a context the gate can enforce.
       return { state: UNKNOWN, contexts: [] };
     }
     for (const check of checks) {
