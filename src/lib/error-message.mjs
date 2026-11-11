@@ -6,8 +6,8 @@ export const UNREADABLE_MESSAGE = "Unreadable error";
 /**
  * Error value for an envelope. A string message returns with secret-named environment values
  * redacted (ADR 0017), because a refusal can echo an argument that holds one. Any other
- * message is serialized once under the key `error`, as the envelope did before,
- * so a `toJSON` that redacts by key keeps its output and runs exactly once. The
+ * message is serialized once under the key `error`, so a `toJSON` that redacts by key keeps its
+ * output and runs exactly once. The
  * returned plain JSON value serializes the same on every later call, so the
  * stdout envelope and the state file hold one value. A message that cannot
  * serialize, or whose serialization yields no value (a function, a Symbol, a

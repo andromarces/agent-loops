@@ -100,7 +100,7 @@ export async function sha256File(path, { signal } = {}) {
     const handle = await open(path, "r");
     let stream;
     try {
-      // Bound the read to the size of the opened file, as the whole-file read did, so a file that
+      // Bound the read to the size of the opened file, so a file that
       // grows during the read keeps the digest of its bytes at open. An empty file has no bound,
       // as an unbounded stream reads to EOF. The stream owns the handle and closes it on end,
       // error, or abort.
@@ -175,7 +175,7 @@ function statusEntries(stdout) {
 
 /**
  * Hashes the files of `entries` in batches of `HASH_BATCH_SIZE`. Entries keep their order, and the
- * first failure in that order throws, as the sequential hashes did. `signal` stops a hash at the
+ * first failure in that order throws. `signal` stops a hash at the
  * caller's deadline.
  */
 const hashEntries = (root, entries, signal) =>

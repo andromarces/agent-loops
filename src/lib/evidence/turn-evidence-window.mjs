@@ -297,8 +297,7 @@ async function readAdvisory(state) {
 /**
  * Reads the shared Git change, the lockfile change, the main work tree change, the copied source
  * change, and both advisory lists together for a turn that failed. A rejected read throws in the
- * order shared Git, lockfile, main work tree, copied source, advisory. That is the order the reads
- * ran in before they ran together.
+ * order shared Git, lockfile, main work tree, copied source, advisory.
  * @param {ChildEvidenceState} state
  */
 async function readFailedTurnEvidence(state) {

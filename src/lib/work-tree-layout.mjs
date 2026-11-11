@@ -27,7 +27,7 @@ export async function lstatOrNull(path, options) {
 }
 
 /** True when `path` holds a control character: a line feed, a carriage return, a tab, and so on. */
-// eslint-disable-next-line no-control-regex -- The control set is the contract.
+// oxlint-disable-next-line no-control-regex -- The control set is the contract.
 export const hasControlCharacter = (path) => /[\u0000-\u001f\u007f]/.test(path);
 
 /**
@@ -150,7 +150,7 @@ export async function readWorkTreeLayout(cwd, read, { signal } = {}) {
   return { root, rootReal, entries, own };
 }
 
-// Keeps the `local files` message and plain error class of the earlier builder.
+// Uses the `local files` message and a plain error class.
 const localReadError = (reason, context) =>
   gitReadError(reason, context, {
     errorClass: Error,
