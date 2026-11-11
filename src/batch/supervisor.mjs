@@ -592,16 +592,17 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       beginStop();
       const pending = [];
       for (const [issue, child] of children) {
-        pending.push(active.get(issue) ?? settleChild(issue, child, () => true));
-      }
-      const settled = await Promise.race([Promise.allSettled(pending), hardStop.then(() => null)]);
-      if (settled !== null) {
-        for (const result of settled) {
-          if (result.status === "rejected") {
-            logError(`the child cleanup failed: ${result.reason?.message ?? result.reason}`);
-          }
+        const registered = active.get(issue);
+        if (registered !== undefined) {
+          pending.push(registered);
+          continue;
         }
+        const settling = settleChild(issue, child, () => true);
+        // The handler logs a failure that arrives before or after a second SIGINT ends the wait.
+        settling.catch((err) => logError(`the child cleanup failed: ${err?.message ?? err}`));
+        pending.push(settling);
       }
+      await Promise.race([Promise.allSettled(pending), hardStop.then(() => null)]);
       await finalizeBatch();
     } catch (err) {
       logError(`the throw cleanup failed: ${err?.message ?? err}`);
@@ -1370,7 +1371,14 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       await settleChild(issue, child, () => interrupted || hard);
     })();
     active.set(issue, promise);
-    promise.finally(() => active.delete(issue));
+    // Both handlers keep the settle chain handled, and a failed checkpoint write is logged.
+    promise.then(
+      () => active.delete(issue),
+      (err) => {
+        active.delete(issue);
+        logError(`the child settle failed: ${err?.message ?? err}`);
+      },
+    );
   };
 
   const finishChild = async (issue, exitCode, { interrupted: wasInterrupted }) => {

@@ -35,6 +35,30 @@ import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { pollUntil, within } from "../wait-helpers.mjs";
 
+// A test arms one checkpoint write failure by file suffix. Every other write runs as before.
+const checkpointWrite = vi.hoisted(() => ({ suffix: null, error: null, fired: false }));
+
+vi.mock("../../src/lib/atomic-write.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    writeFileAtomic: async (file, text, options) => {
+      const armed = checkpointWrite.suffix;
+      if (!checkpointWrite.fired && armed !== null && String(file).endsWith(armed)) {
+        checkpointWrite.fired = true;
+        throw checkpointWrite.error;
+      }
+      return actual.writeFileAtomic(file, text, options);
+    },
+  };
+});
+
+function failCheckpointWrite(suffix, error) {
+  checkpointWrite.suffix = suffix;
+  checkpointWrite.error = error;
+  checkpointWrite.fired = false;
+}
+
 const BODY = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", ""].join("\n");
 const SUMMARY = {
   changed: "a",
@@ -848,6 +872,106 @@ describe("bounded batch reads", () => {
       expect(stops).toEqual(["SIGINT", "SIGKILL"]);
       expect(process.listenerCount("SIGINT")).toBe(before.size + 1);
     } finally {
+      for (const listener of getEventListeners(process, "SIGINT")) {
+        if (!before.has(listener)) process.removeListener("SIGINT", listener);
+      }
+    }
+  });
+
+  // Usefulness: a failed settle checkpoint write leaves no unhandled rejection and the loop running.
+  test("a settle checkpoint write failure is handled", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [901], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    const child = childDouble({ hold: true });
+    const failure = Object.assign(new Error("the checkpoint write failed"), { code: "EPERM" });
+    const unhandled = [];
+    const onUnhandled = (err) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const run = runBatch({
+        prepared: one,
+        runsRoot,
+        gh: fakeGh(),
+        deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+      });
+      await waitForLaunch(child);
+      await pollUntil(async () => {
+        const loop = await readLoop(runsRoot, one.id, 901);
+        return loop?.pid != null ? loop : undefined;
+      }, 10_000);
+      failCheckpointWrite("issue-901.json", failure);
+      child.pending[0].resolve({ exitCode: 0 });
+      await expect(run).rejects.toBe(failure);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      const loop = await readLoop(runsRoot, one.id, 901);
+      expect(loop.status).toBe("running");
+    } finally {
+      checkpointWrite.suffix = null;
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  // Usefulness: a late settle write failure after a second SIGINT is logged once.
+  test("a late settle write failure after a second SIGINT is logged once", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [902], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    const stops = [];
+    const sigintSeen = deferred();
+    const gate = deferred();
+    const pidFailure = Object.assign(new Error("the pid checkpoint write failed"), {
+      code: "EPERM",
+    });
+    const writeFailure = Object.assign(new Error("the checkpoint write failed"), {
+      code: "EPERM",
+    });
+    const spawn = async () => ({
+      pid: {
+        toJSON() {
+          throw pidFailure;
+        },
+      },
+      startTime: null,
+      done: gate.promise,
+      kill: (signal) => {
+        stops.push(signal);
+        sigintSeen.resolve();
+      },
+      hardKill: () => {
+        stops.push("SIGKILL");
+      },
+      close: () => {},
+    });
+    const lines = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      lines.push(args.map(String).join(" "));
+    });
+    const before = new Set(getEventListeners(process, "SIGINT"));
+    try {
+      const run = runBatch({
+        prepared: one,
+        runsRoot,
+        gh: fakeGh(),
+        deps: { ...fakeGitDeps, notifier: noNotify, spawn },
+      });
+      await sigintSeen.promise;
+      process.emit("SIGINT");
+      await expect(run).rejects.toBe(pidFailure);
+      expect(stops).toEqual(["SIGINT", "SIGKILL"]);
+      failCheckpointWrite("issue-902.json", writeFailure);
+      gate.resolve({ exitCode: 0 });
+      await pollUntil(() => {
+        const text = lines.join("\n");
+        return text.includes("error") && text.includes(writeFailure.message) ? true : undefined;
+      }, 10_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      const errorLines = lines.filter(
+        (line) => line.includes("error") && line.includes(writeFailure.message),
+      );
+      expect(errorLines).toHaveLength(1);
+    } finally {
+      checkpointWrite.suffix = null;
+      spy.mockRestore();
       for (const listener of getEventListeners(process, "SIGINT")) {
         if (!before.has(listener)) process.removeListener("SIGINT", listener);
       }
