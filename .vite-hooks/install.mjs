@@ -5,9 +5,9 @@
 // Contract: always exit 0, write nothing to stdout, and on any failure write one
 // warning line to stderr (child stderr still passes through).
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { isLocalHuskyHooksPath } from "./husky-path.mjs";
 
 const { CI, NODE_ENV, VP_GIT_HOOKS } = process.env;
 if (CI === "true" || NODE_ENV === "production" || VP_GIT_HOOKS === "0") process.exit(0);
@@ -26,18 +26,6 @@ const git = (step, okStatuses, ...args) => {
   if (!okStatuses.includes(result.status))
     fail(step, `git exited with ${result.status ?? result.signal}`);
   return result;
-};
-
-// Real path of the nearest existing ancestor, plus the missing tail, so a path
-// that does not exist yet still compares equal through a symlinked parent or a
-// Windows 8.3 short name (the native call expands both).
-const real = (path) => {
-  try {
-    return realpathSync.native(path);
-  } catch {
-    const parent = dirname(path);
-    return parent === path ? path : join(real(parent), basename(path));
-  }
 };
 
 try {
@@ -63,7 +51,7 @@ try {
     "core.hooksPath",
   );
   const value = local.stdout.replace(/\r?\n$/, "");
-  if (local.status === 0 && real(resolve(root, value)) === real(resolve(root, ".husky/_")))
+  if (local.status === 0 && isLocalHuskyHooksPath(root, value))
     git(
       "clearing the Husky core.hooksPath",
       [0],
