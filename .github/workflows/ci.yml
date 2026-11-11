@@ -87,7 +87,7 @@ jobs:
       - run: pnpm test
 
   # Node 24 is the Maintenance LTS line, and `engines.node` accepts it
-  # (`^24.11.0`). `release.yml` publishes on Node 24. The `ci` matrix runs the
+  # (`^24.11.0`). `release.yml` publishes on Node 26. The `ci` matrix runs the
   # latest Node 24, and this job tests the 24.11.0 floor (issues #1676 and
   # #1812). It stays separate so the required ci (<os>) contexts keep their
   # names, and it inherits the workflow-level concurrency group.

@@ -12,6 +12,10 @@ Partially superseded by [ADR 0124: Drop Node 22 support before its end of life](
 - The consequence that Node 22.0 to 22.17 and 24.0 to 24.10 lose support. Superseded by [ADR 0124](0124-drop-node-22-support.md): Node 22 and every version below 24.11.0 lose support.
 - The consequence that `vp staged` needs Node 22.22.1 or later on the 22 line, or 24.11.0 or later. Superseded by [ADR 0124](0124-drop-node-22-support.md): it needs 24.11.0 or later.
 
+Partially superseded by [ADR 0128: Publish on Node 26 with a pnpm trust policy](0128-publish-on-node-26-with-a-pnpm-trust-policy.md). The superseded part is:
+
+- Decision 13's Node 24 publish line. Superseded by [ADR 0128](0128-publish-on-node-26-with-a-pnpm-trust-policy.md): `npm stage publish` runs on Node 26.
+
 Every other decision and consequence stays in force.
 
 ## Date
