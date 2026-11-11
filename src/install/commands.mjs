@@ -13,7 +13,7 @@ import { install, uninstall } from "./installer.mjs";
 import { stablePackageRoot } from "./stable-root.mjs";
 import { readManifest, resolveHome } from "./manifest.mjs";
 
-const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 function parseHarnessList(value) {
   const harnesses = [

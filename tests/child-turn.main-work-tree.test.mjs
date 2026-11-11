@@ -21,8 +21,8 @@ vi.mock("execa", async (importOriginal) => {
 import { execa } from "execa";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
-import { readMainWorkTree } from "../src/lib/main-work-tree-change.mjs";
-import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
+import { readMainWorkTree } from "../src/lib/evidence/main-work-tree-change.mjs";
+import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";

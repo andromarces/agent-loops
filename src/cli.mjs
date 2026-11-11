@@ -46,7 +46,7 @@ import { assertGitWorkTree } from "./lib/snapshot.mjs";
 import { runTestSlot } from "./lib/test-slot-cli.mjs";
 import { createTranscriptWriter } from "./lib/transcript.mjs";
 import { withRunWarnings } from "./lib/run-warnings.mjs";
-import { runGh } from "./lib/gh-api.mjs";
+import { runGh } from "./lib/checks/gh-api.mjs";
 import { printHelp } from "./help.mjs";
 import { runProbeTurn } from "./child-turn.mjs";
 import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";

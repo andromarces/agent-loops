@@ -21,7 +21,7 @@ import { SUMMARY } from "./run-fixtures.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
 // #1713).
-vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+vi.mock("../src/lib/evidence/tmpdir-entries.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, literalTmpdirRoots: () => [] };
 });

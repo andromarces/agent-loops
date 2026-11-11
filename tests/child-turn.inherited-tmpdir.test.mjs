@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
+import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
@@ -78,7 +78,7 @@ test("a worker turn carries no inherited-directory entry", async () => {
 // system temporary directory that differs from the inherited one is reported in the envelope
 // (#1596 observed it on macOS with no field). This is the one real run for that path: the adapter
 // call and the envelope wiring are its behavior, and the read itself is covered in process by
-// `tests/lib/tmpdir-entries.test.mjs` and `tests/lib/turn-evidence-window.test.mjs`.
+// `tests/lib/evidence/tmpdir-entries.test.mjs` and `tests/lib/evidence/turn-evidence-window.test.mjs`.
 test("a worker turn reports a literal system temporary directory entry", async () => {
   const literal = await mkdtemp(join(temp, "literal-"));
   const result = await turn(

@@ -3,7 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
 
-const adrDir = fileURLToPath(new URL("../../adr/", import.meta.url));
+const adrDir = fileURLToPath(new URL("../../adr", import.meta.url));
 const ALLOWED_STATUSES = new Set([
   "proposed",
   "accepted",

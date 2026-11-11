@@ -80,10 +80,10 @@ Andro Marces
 - [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md)
 - [ADR 0076: Leave out an inherited temporary directory entry that the settle re-read no longer holds](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md)
 - Implementation:
-  - Runtime: `presentInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`
+  - Runtime: `presentInheritedTmpdir` in `src/lib/evidence/tmpdir-entries.mjs`
   - Parent read: `recheck-tmpdir` in `src/role/index.mjs`
   - State: `recordInheritedTmpdirNames` in `src/role/dispatch.mjs`
   - Headless prompt: `inheritedTmpdirPresent` in `src/runtime.mjs` and `src/prompts/orchestrator.mjs`
   - Docs: `docs/orchestrator/runtime-advisory-fields.md` and `docs/orchestrator-instructions.md`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
 - [ADR Index](README.md)

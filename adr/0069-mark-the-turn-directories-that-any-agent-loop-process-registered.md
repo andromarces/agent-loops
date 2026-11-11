@@ -60,7 +60,7 @@ Andro Marces
 - Superseded by: [ADR 0076](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md)
 - Related: [ADR 0047](0047-give-each-codex-turn-a-private-temporary-directory.md), [ADR 0049](0049-pin-the-machine-wide-roots-for-every-child-turn.md), [Issue #1024](https://github.com/andromarces/agent-loops/issues/1024), [Issue #1178](https://github.com/andromarces/agent-loops/issues/1178)
 - Implementation:
-  - Source: `src/lib/turn-tmpdir-registry.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `appearedInInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`
+  - Source: `src/lib/turn-tmpdir-registry.mjs`, `withTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `appearedInInheritedTmpdir` in `src/lib/evidence/tmpdir-entries.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`
   - Docs: `docs/orchestrator/runtime-advisory-fields.md`, `docs/orchestrator-instructions.md`
 - [ADR Index](README.md)

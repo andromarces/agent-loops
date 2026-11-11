@@ -3,7 +3,7 @@ import { expect, test, vi } from "vite-plus/test";
 vi.mock("execa", () => ({ execa: vi.fn() }));
 
 import { execa } from "execa";
-import { runGh } from "../../src/lib/gh-api.mjs";
+import { runGh } from "../../src/lib/checks/gh-api.mjs";
 import { FORCE_KILL_AFTER_DELAY_MS } from "../process-helpers.mjs";
 import { copyLocalFiles } from "../../src/lib/local-files.mjs";
 import { assertGitWorkTree, snapshot } from "../../src/lib/snapshot.mjs";

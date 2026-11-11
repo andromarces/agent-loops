@@ -4,7 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { canonicalPath } from "../lib/canonical-path.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/gh-api.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/checks/gh-api.mjs";
 import { declaredPrFromTranscript } from "../lib/gate.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
