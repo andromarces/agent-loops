@@ -1565,10 +1565,10 @@ test("the core tells the parent to read the shellDenied rule after any worker or
   );
 });
 
-// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent
-// runs can both take, such as an ADR number, so the parent reserves a number per run before dispatch
-// and names the index-row conflict under `open` (#1176). The existing tracking-issue test does not
-// reach this rule. It also covers a changelog release version in a concurrent run (#1835).
+// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent runs can both take, such as an ADR number (#1176).
+// The parent reserves a number per run before dispatch and names the index-row conflict under `open`.
+// The existing tracking-issue test does not reach this rule.
+// The rule also covers a changelog release version in a concurrent run (#1835).
 test("the shared-artifact rule covers a sequential identifier that concurrent runs can both take", async () => {
   const section = (
     await readFile(join(referenceSectionsDir, "shared-tracking-artifacts.md"), "utf8")
