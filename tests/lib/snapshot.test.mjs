@@ -102,13 +102,13 @@ test.skipIf(process.platform === "win32")(
 // when the bound expires, on Windows and on macOS. A real process is the only way
 // to check that a slow `git` cannot add its own time to a caller's total limit,
 // because every other test uses a real fast `git` (issue #329).
-test(
+test.concurrent(
   "assertGitWorkTree refuses a probe that outlasts its bound",
   async () => {
     // Termination only: the bound value is proved in spawn-bounds.test.mjs, so the
     // waits here are ceilings that load cannot reach (issue #373).
-    await expectBoundKillsShim("git", (timeoutMs) =>
-      expect(assertGitWorkTree(tmpdir(), { timeoutMs })).rejects.toThrow(
+    await expectBoundKillsShim("git", (timeoutMs, { env }) =>
+      expect(assertGitWorkTree(tmpdir(), { timeoutMs, env })).rejects.toThrow(
         /validation did not complete within its bound/,
       ),
     );
@@ -118,12 +118,12 @@ test(
 
 // Usefulness: verifies a cancel ends a hung work-tree probe and marks the refusal as a cancel, so
 // `role dispatch` and the headless run keep exit 130 instead of exit 1 (#729).
-test(
+test.concurrent(
   "assertGitWorkTree ends a hung probe on cancel and reports a cancel",
   async () => {
     const error = await expectAbortKillsShim(
       "git",
-      (signal) => assertGitWorkTree(tmpdir(), { signal }).catch((err) => err),
+      (signal, { env }) => assertGitWorkTree(tmpdir(), { signal, env }).catch((err) => err),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(error).toBeInstanceOf(SnapshotError);
@@ -134,11 +134,11 @@ test(
 
 // Usefulness: verifies a hung `git` read in the snapshot ends at its bound with a SnapshotError, so
 // a stuck child cannot hang the turn (#729).
-test(
+test.concurrent(
   "snapshot refuses a git read that outlasts its bound",
   async () => {
-    const error = await expectBoundKillsShim("git", (timeoutMs) =>
-      snapshot(tmpdir(), { timeoutMs }).catch((err) => err),
+    const error = await expectBoundKillsShim("git", (timeoutMs, { env }) =>
+      snapshot(tmpdir(), { timeoutMs, env }).catch((err) => err),
     );
     expect(error).toBeInstanceOf(SnapshotError);
     expect(error.message).toMatch(/timed out/);
@@ -148,12 +148,12 @@ test(
 
 // Usefulness: verifies a cancel ends a hung `git` read in the snapshot and marks the error as a
 // cancel, which the caller maps to exit 130 (#729).
-test(
+test.concurrent(
   "snapshot ends a hung git read on cancel and reports a cancel",
   async () => {
     const error = await expectAbortKillsShim(
       "git",
-      (signal) => snapshot(tmpdir(), { signal }).catch((err) => err),
+      (signal, { env }) => snapshot(tmpdir(), { signal, env }).catch((err) => err),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(error).toBeInstanceOf(SnapshotError);
@@ -191,7 +191,7 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const repo = await createTempRepo();
     try {
-      await withGitHangingAfter(4, async ({ hungPid }) => {
+      await withGitHangingAfter(4, async ({ hungPid, env }) => {
         const first = new AbortController();
         const second = new AbortController();
         const pending = withMutationCheck(
@@ -200,7 +200,7 @@ test.skipIf(process.platform === "win32")(
           async () => {
             first.abort();
           },
-          { signal: first.signal, forceSignal: second.signal },
+          { signal: first.signal, forceSignal: second.signal, env },
         ).catch((err) => err);
         const pid = await hungPid();
         // The first cancel alone does not end the evidence snapshot.
@@ -236,14 +236,14 @@ test.skipIf(process.platform === "win32")(
     const controller = new AbortController();
     const remove = cancelOnSigInt(controller);
     try {
-      await withGitHangingAfter(4, async ({ hungPid }) => {
+      await withGitHangingAfter(4, async ({ hungPid, env }) => {
         const pending = withMutationCheck(
           repo,
           "worker",
           async () => {
             process.emit("SIGINT");
           },
-          { signal: controller.signal },
+          { signal: controller.signal, env },
         ).catch((err) => err);
         await hungPid();
         process.emit("SIGINT");

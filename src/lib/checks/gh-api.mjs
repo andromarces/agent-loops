@@ -19,10 +19,10 @@ const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
  * The environment of this process without the names that turn on the debug log of `gh`, and
  * without the names in `dropEnv`.
  */
-function ghEnv(dropEnv) {
+function ghEnv(dropEnv, env = process.env) {
   const dropped = new Set([...GH_DEBUG_NAMES, ...dropEnv.map((name) => name.toUpperCase())]);
   return Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !dropped.has(name.toUpperCase())),
+    Object.entries({ ...process.env, ...env }).filter(([name]) => !dropped.has(name.toUpperCase())),
   );
 }
 
@@ -35,12 +35,13 @@ function ghEnv(dropEnv) {
  * this one call removes from the child environment, compared in upper case because Windows names
  * are case-blind.
  */
-export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [] } = {}) {
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [], env } = {}) {
   const result = await execBounded("gh", args, {
     cwd,
     timeoutMs,
     signal,
-    env: ghEnv(dropEnv),
+    // env overrides the inherited environment of the child.
+    env: ghEnv(dropEnv, env),
     extendEnv: false,
   });
   return {
