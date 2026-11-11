@@ -1,8 +1,8 @@
-import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { SPAWNED_RUN_ENV } from "../../src/lib/exec.mjs";
-import { cwdHash } from "../../src/lib/runstate.mjs";
+import { cwdHash, statePaths } from "../../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../../src/role/index.mjs";
 import { symlinkOrSkip } from "../fs-helpers.mjs";
 import { createLinkedWorkTree } from "../git-helpers.mjs";
@@ -66,6 +66,12 @@ const dispatchAgain = (linked) =>
 
 const hashesOf = async (linked) => (await readRepoState(linked)).localFilesCopiedSha256;
 
+/** The inode, modification time, and bytes of one file, to prove that a call left it alone. */
+const fileIdentity = async (path) => {
+  const info = await stat(path);
+  return { ino: info.ino, mtimeMs: info.mtimeMs, bytes: await readFile(path, "utf8") };
+};
+
 // Usefulness: verifies acceptance — after a refresh, a later envelope does not report the path.
 // It also verifies that a later source change is reported again.
 // Not redundant: it is the end-to-end behavior that the issue records.
@@ -84,6 +90,25 @@ test("a recorded refresh stops a later envelope from reporting the path", async 
   expect((await dispatchAgain(linked)).payload.localFilesDiffer).toEqual([
     { path: ".env", changed: "source" },
   ]);
+});
+
+// Usefulness: verifies acceptance — an unchanged copy gains no replace and the state file no write.
+// Not redundant: it compares the copy and state identity, which the other refresh tests ignore.
+test("a refresh of an unchanged copy replaces no file and writes no state", async () => {
+  const { linked } = await linkedRun();
+  const copy = join(linked, ".env");
+  const stateFile = statePaths({ cwd: linked }).stateFile;
+  const before = { copy: await fileIdentity(copy), state: await fileIdentity(stateFile) };
+
+  const refreshed = await refresh(linked, ".env");
+
+  const after = { copy: await fileIdentity(copy), state: await fileIdentity(stateFile) };
+  expect(refreshed.exitCode).toBe(0);
+  expect(refreshed.payload).toEqual({ status: "ok", lifecycle: "active", path: ".env" });
+  expect(after.copy).toEqual(before.copy);
+  expect(after.state).toEqual(before.state);
+  const leftovers = (await readdir(linked)).filter((name) => name.startsWith(".refresh-"));
+  expect(leftovers).toEqual([]);
 });
 
 // Usefulness: verifies the refresh stores the new hash only for the named path.
