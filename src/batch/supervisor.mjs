@@ -426,11 +426,17 @@ function taskTextFor({ item, loop, prepared, title, branch }) {
  * event; a quiet interval writes nothing.
  */
 export async function runBatch(options) {
-  const run = { stopListening: () => {}, hasLiveChildren: () => false };
+  const run = {
+    stopListening: () => {},
+    hasLiveChildren: () => false,
+    stopAfterThrow: async () => {},
+  };
   let keepListeners = false;
   try {
     return await runBatchWithListeners(options, run);
   } catch (err) {
+    // A throw ends live children the same way the first SIGINT does, then rethrows it.
+    await run.stopAfterThrow();
     // A live child keeps its listeners so a later interrupt still reaches it.
     keepListeners = run.hasLiveChildren();
     throw err;
@@ -483,16 +489,20 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     controller.abort(reason);
     forward("SIGINT");
   };
+  // The first interrupt, from a signal or a throw, arms the hard-kill bound of every live child.
+  const beginStop = () => {
+    if (interrupted) return;
+    interrupt();
+    for (const [issue, child] of children) {
+      const timer = setTimeout(() => {
+        if (children.has(issue)) child.hardKill?.();
+      }, INTERRUPT_WAIT_MS);
+      timer.unref?.();
+    }
+  };
   const onSigInt = () => {
-    if (!interrupted) {
-      interrupt();
-      for (const [issue, child] of children) {
-        const timer = setTimeout(() => {
-          if (children.has(issue)) child.hardKill?.();
-        }, INTERRUPT_WAIT_MS);
-        timer.unref?.();
-      }
-    } else if (!hard) {
+    if (!interrupted) beginStop();
+    else if (!hard) {
       hard = true;
       progress("second interrupt: ending the child trees now");
       forward("SIGKILL");
@@ -565,6 +575,25 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         new Map((manifest.skipped ?? []).map((loop) => [loop.key, loop])),
       ),
     };
+  };
+
+  // A throw with no live child writes nothing, as before. Otherwise it stops every live child,
+  // waits for its finish path, and marks the batch interrupted. A cleanup failure is logged and
+  // never replaces the original error.
+  run.stopAfterThrow = async () => {
+    if (children.size === 0) return;
+    try {
+      beginStop();
+      const settled = await Promise.allSettled(active.values());
+      for (const result of settled) {
+        if (result.status === "rejected") {
+          logError(`the child cleanup failed: ${result.reason?.message ?? result.reason}`);
+        }
+      }
+      await finalizeBatch();
+    } catch (err) {
+      logError(`the throw cleanup failed: ${err?.message ?? err}`);
+    }
   };
 
   if (prepared.resume) {

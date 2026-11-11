@@ -655,10 +655,15 @@ describe("bounded batch reads", () => {
     expect(getEventListeners(signal, "abort")).toHaveLength(0);
   });
 
-  // Usefulness: a throw with a live child rejects at once and keeps its listeners for a later abort.
-  test("a throw with a live child keeps its listeners", async () => {
+  // Usefulness: a throw with one live child forwards SIGINT, records interrupted, and a resume
+  // continues that loop from its transcript.
+  test("a throw with a live child stops it and a resume continues it", async () => {
     const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
     const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    const makeTree = async ({ workTree, branch }) => {
+      await mkdir(workTree, { recursive: true });
+      return { path: workTree, canonicalPath: workTree, dev: "1", ino: "1", branch };
+    };
     await runBatch({
       prepared: two,
       runsRoot,
@@ -689,7 +694,7 @@ describe("bounded batch reads", () => {
         cleanup: null,
       }));
     }
-    const child = childDouble({ hold: true });
+    const child = childDouble({ steps: 3, hold: true });
     const stops = [];
     const spawn = async (options) => {
       const started = await child.spawn(options);
@@ -702,6 +707,7 @@ describe("bounded batch reads", () => {
       };
     };
     const abort = new AbortController();
+    const failure = new Error("the git fetch failed");
     const before = process.listenerCount("SIGINT");
     const run = runBatch({
       prepared: { ...two, resume: true },
@@ -712,23 +718,106 @@ describe("bounded batch reads", () => {
         notifier: noNotify,
         spawn,
         signal: abort.signal,
-        reconcileLoop: async () => {
-          throw new Error("the git fetch failed");
+        createWorkTree: makeTree,
+        verifyWorkTree: async (loop) => {
+          if (loop.issue === 2) throw failure;
+          return null;
         },
       },
     });
-    await expect(run).rejects.toThrow("the git fetch failed");
-    expect(stops).toEqual([]);
-    expect((await readLoop(runsRoot, two.id, 1)).status).toBe("running");
-    expect(process.listenerCount("SIGINT")).toBe(before + 1);
-    abort.abort(new Error("stop the child now"));
-    expect(stops).toContain("SIGINT");
-    let loop = await readLoop(runsRoot, two.id, 1);
-    for (let attempt = 0; attempt < 100 && loop?.status === "running"; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      loop = await readLoop(runsRoot, two.id, 1);
-    }
+    await expect(run).rejects.toBe(failure);
+    expect(stops).toEqual(["SIGINT"]);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
+    const loop = await readLoop(runsRoot, two.id, 1);
     expect(loop.status).toBe("interrupted");
+    expect(loop.reason).toBe("interrupted");
+    expect((await readManifest(runsRoot, two.id)).status).toBe("interrupted");
+    expect((await stat(loop.workTree.path)).isDirectory()).toBe(true);
+    const claim = batchPaths(runsRoot).claim(two.repoKey, 1);
+    expect((await stat(claim)).isFile()).toBe(true);
+
+    await updateLoop(runsRoot, two.id, 2, (current) => ({
+      ...current,
+      status: "skipped",
+      skipReason: "test",
+      reason: null,
+    }));
+    const childResume = childDouble({ steps: 2 });
+    const resumed = await runBatch({
+      prepared: { ...two, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childResume.spawn,
+        installSignal: false,
+      },
+    });
+    expect(childResume.calls).toHaveLength(1);
+    expect(childResume.calls[0].args).toContain("--continue-from");
+    expect(valueAfter(childResume.calls[0].args, "--continue-from")).toBe(loop.transcript);
+    expect(childResume.calls[0].transcript).toBe(loop.transcript);
+    expect(childResume.calls[0].maxSteps).toBe("7");
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+  });
+
+  // Usefulness: a throw with no live child adds no checkpoint, manifest, or log write.
+  test("a throw with no live child writes no extra state", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [1], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    await runBatch({
+      prepared: one,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    await removePath(batchPaths(runsRoot).transcript(one.id, 1));
+    await updateLoop(runsRoot, one.id, 1, (loop) => ({
+      ...loop,
+      status: "queued",
+      attempts: 0,
+      cleanup: null,
+    }));
+    const file = batchPaths(runsRoot).loop(one.id, 1);
+    const before = await stat(file, { bigint: true });
+    const lines = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      lines.push(String(chunk));
+      return true;
+    });
+    try {
+      const failure = new Error("the work tree check failed");
+      const run = runBatch({
+        prepared: { ...one, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          installSignal: false,
+          verifyWorkTree: async () => {
+            throw failure;
+          },
+        },
+      });
+      await expect(run).rejects.toBe(failure);
+      const manifest = await readManifest(runsRoot, one.id);
+      expect(manifest.status).toBe("running");
+      const loop = await readLoop(runsRoot, one.id, 1);
+      expect(loop.status).toBe("queued");
+      const after = await stat(file, { bigint: true });
+      expect(after.mtimeNs).toBe(before.mtimeNs);
+      expect(lines.some((line) => /interrupt|cleanup failed/i.test(line))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

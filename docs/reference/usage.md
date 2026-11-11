@@ -485,6 +485,8 @@ Exit codes:
 
 The first SIGINT stops new launches, forwards SIGINT to each live child, and waits up to 30 seconds for each to exit. Each child writes its transcript and exit code. The batch then writes every checkpoint, marks unfinished loops `interrupted`, keeps every work tree and claim, and exits 130. A second SIGINT ends the child trees without waiting. A hard kill runs no handler; the next `batch resume` checks process ownership before anything else.
 
+A run that throws while a child is live stops that child the same way, writes the same checkpoints, and rethrows the error.
+
 `batch resume` runs each non-terminal loop in order:
 
 1. A checkpoint whose process still lives is not restarted. The resume waits for that process and reconciles it from its transcript. An identity that cannot be read stops the loop as `needs-owner`.
