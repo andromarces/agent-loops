@@ -50,6 +50,7 @@ Andro Marces
 ## Links
 
 - [Issue #1825: Keep review-only reviewer items by label and count dropped entries](https://github.com/andromarces/agent-loops/issues/1825)
+- [PR #1833: Keep review-only reviewer items in separate report fields](https://github.com/andromarces/agent-loops/pull/1833)
 - [ADR 0115: Report each loop's final report in the batch summary](0115-batch-loop-final-report.md)
 - [Implementation: batch loop report](../src/batch/report.mjs)
 - [Tests: batch loop report](../tests/batch/report.test.mjs)
