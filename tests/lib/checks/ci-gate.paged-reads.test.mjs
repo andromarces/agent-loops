@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { checkRuns, commitStatuses } from "../../../src/lib/checks/commit-entries.mjs";
 import { ABSENT, UNKNOWN, requiredContexts } from "../../../src/lib/checks/ci-required-sources.mjs";
-import { failureOf, readOne } from "../../../src/lib/checks/gh-api.mjs";
+import { readOne } from "../../../src/lib/checks/gh-api.mjs";
+import { failureOf } from "../../../src/lib/checks/bounded-call.mjs";
 import { SLUG } from "../ci-gate-helpers.mjs";
 
 const SHA = "1111111111111111111111111111111111111111";

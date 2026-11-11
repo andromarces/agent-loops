@@ -1,6 +1,7 @@
 // The JSON envelope of `agent-loop role`: the error result for a thrown value and the stdout write.
 import { writeSync } from "node:fs";
 import { errorMessage, redactedText, readProp, UNREADABLE_MESSAGE } from "../lib/error-message.mjs";
+import { SIGINT_MESSAGE } from "../lib/sigint.mjs";
 
 // The refusal that `agent-loop role` reports as a one-line error envelope.
 export class RoleError extends Error {}
@@ -11,7 +12,7 @@ const consume = () => {};
 export function errorResult(err) {
   // A cancel outside the turn `try` block, such as the process-table read of a resume or an init (#725).
   if (readProp(err, "isCanceled")) {
-    return { exitCode: 130, payload: { status: "error", error: "Interrupted by SIGINT" } };
+    return { exitCode: 130, payload: { status: "error", error: SIGINT_MESSAGE } };
   }
   try {
     // A wait that failed with a `gh` child whose exit it never observed says so. The parent
@@ -31,7 +32,7 @@ export function errorResult(err) {
       exitCode: canceled ? 130 : 1,
       payload: {
         status: "error",
-        error: canceled ? "Interrupted by SIGINT" : UNREADABLE_MESSAGE,
+        error: canceled ? SIGINT_MESSAGE : UNREADABLE_MESSAGE,
       },
     };
   }

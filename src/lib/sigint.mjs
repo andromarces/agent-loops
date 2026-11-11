@@ -2,6 +2,12 @@ import { readableErrorText, readProp } from "./error-message.mjs";
 import { endCommandTrees, killLiveTrees } from "./exec-tree.mjs";
 import { logWarn, logError } from "./log.mjs";
 
+/** The one text of a SIGINT cancel, shared by the exit paths and the cancel error. */
+export const SIGINT_MESSAGE = "Interrupted by SIGINT";
+
+/** The cancel error, as the rest of the role CLI reports it, so Ctrl+C exits 130. */
+export const canceledError = () => Object.assign(new Error(SIGINT_MESSAGE), { isCanceled: true });
+
 const FORCE_EXIT_WAIT_MS = 2000;
 
 // Milliseconds that a deferred exit waits for the run to write its result before it exits.

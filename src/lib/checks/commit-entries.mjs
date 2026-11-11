@@ -2,7 +2,8 @@
 // context against them (#218). Both types are considered, because a required name
 // can appear as either type. The finish gate, the check wait, the status read, and
 // the source probe share these reads.
-import { ghApi, inOrder, pagedRead } from "./gh-api.mjs";
+import { ghApi, pagedRead } from "./gh-api.mjs";
+import { inOrder } from "./bounded-call.mjs";
 import { isJsonObject } from "../json.mjs";
 
 // A check run passes with one of these conclusions; every other conclusion and

@@ -36,7 +36,7 @@ import {
 import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
 import { samePath } from "./lib/canonical-path.mjs";
-import { cancelOnSigInt } from "./lib/sigint.mjs";
+import { cancelOnSigInt, SIGINT_MESSAGE } from "./lib/sigint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
 import { runHarnessCheckCommand } from "./harness-check.mjs";
 import { runInstallCommand, runUninstallCommand } from "./install/commands.mjs";
@@ -495,7 +495,7 @@ export async function main(
         const reason = message == null ? "" : redactedText(message);
         await finish({
           exitCode: 130,
-          error: new Error(reason ? `Interrupted by SIGINT: ${reason}` : "Interrupted by SIGINT"),
+          error: new Error(reason ? `${SIGINT_MESSAGE}: ${reason}` : SIGINT_MESSAGE),
           failed: true,
         });
       } else {
