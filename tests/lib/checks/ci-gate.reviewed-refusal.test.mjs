@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vite-plus/test";
 import { checkCi, checkPrHead } from "../../../src/lib/checks/ci-gate.mjs";
-import { fakeGh, REVIEWED, routes } from "../ci-gate-helpers.mjs";
+import { fakeGh, REVIEWED, routes } from "./ci-gate-helpers.mjs";
 
 // Usefulness: verifies the turn-order refusal names the worker turn after the review, so a parent
 // does not read the failure as a reviewer fault (#1509).

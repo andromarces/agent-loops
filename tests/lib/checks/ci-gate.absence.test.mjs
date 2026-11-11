@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { checkCi } from "../../../src/lib/checks/ci-gate.mjs";
-import { fakeGh, HEAD, prInfo, REVIEWED, routes, run } from "../ci-gate-helpers.mjs";
+import { fakeGh, HEAD, prInfo, REVIEWED, routes, run } from "./ci-gate-helpers.mjs";
 
 // The exact reply a private repository on the GitHub Free plan writes to the
 // required-context API endpoints (#301).

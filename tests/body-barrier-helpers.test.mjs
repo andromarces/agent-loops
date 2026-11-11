@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, describe, expect, test, vi } from "vite-plus/test";
-import { createBodyBarrier } from "./body-barrier.mjs";
+import { createBodyBarrier } from "./body-barrier-helpers.mjs";
 
 // The second test reads what the first test sets up, so this suite opts out of shuffle.
 describe("createBodyBarrier", { shuffle: false }, () => {

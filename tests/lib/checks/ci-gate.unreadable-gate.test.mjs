@@ -10,7 +10,7 @@ import {
   REPO_VIEW,
   routes,
   RULES_PAGE,
-} from "../ci-gate-helpers.mjs";
+} from "./ci-gate-helpers.mjs";
 
 const FREE_PLAN_403 =
   "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)";

@@ -6,7 +6,13 @@ import { executeRoleCommand } from "../../src/role/index.mjs";
 import { statePaths } from "../../src/lib/runstate.mjs";
 import { cleanup, newCleanRunRepo, repos, setup } from "./helpers.mjs";
 import { parseRoleArgs } from "../../src/role/index.mjs";
-import { fakeClock, blockOf, HEAD_A, HEAD_B, scriptedGh } from "../lib/check-wait-helpers.mjs";
+import {
+  fakeClock,
+  blockOf,
+  HEAD_A,
+  HEAD_B,
+  scriptedGh,
+} from "../lib/checks/check-wait-helpers.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { pageStdout } from "../gh-doubles.mjs";
 

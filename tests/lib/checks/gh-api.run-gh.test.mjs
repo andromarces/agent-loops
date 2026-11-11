@@ -12,7 +12,7 @@ import {
   expectAbortKillsShim,
   expectBoundKillsShim,
 } from "../../process-helpers.mjs";
-import {} from "../ci-gate-helpers.mjs";
+import {} from "./ci-gate-helpers.mjs";
 
 // Usefulness: verifies the real `gh` runner passes the installed execa only options
 // that it accepts, and that the command and arguments of the read reach the spawn

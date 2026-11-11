@@ -13,7 +13,7 @@ import {
   replyOf,
   serverError,
   waitOn,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 /**
  * One required wait whose first poll reads `no checks reported` and whose second lists a pass, with

@@ -11,7 +11,7 @@ import {
   pinned,
   FORBIDDEN,
   NOT_FOUND,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 /** Runs one wait in all-checks mode against scripted reads, on a fake clock. */
 function onceAll(reads, timeoutSeconds = 60) {
