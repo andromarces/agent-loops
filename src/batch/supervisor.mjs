@@ -331,6 +331,35 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
   };
 
+  // One notification per entry into the state where no loop is queued or running and at least one
+  // loop waits on an owner merge (adr/0127-notify-when-only-owner-merges-remain.md). A loop that
+  // becomes queued or running clears the mark.
+  let ownerMergeSent = false;
+  const notifyOwnerMergeOnly = async () => {
+    if (interrupted || hard) return;
+    const records = [...loops.values()];
+    if (records.some((loop) => loop.status === "queued" || loop.status === "running")) {
+      ownerMergeSent = false;
+      return;
+    }
+    const waitingLoops = records.filter((loop) => loop.status === "waiting");
+    if (waitingLoops.length === 0 || ownerMergeSent) return;
+    ownerMergeSent = true;
+    const described = waitingLoops.map((loop) => {
+      const blockers = (loop.blockingIssues ?? []).map((blocker) => {
+        const pr = loops.get(blocker)?.pr;
+        return Number.isInteger(pr) ? `${blocker} (PR #${pr})` : String(blocker);
+      });
+      return `issue ${loop.issue} waits for ${blockers.length === 0 ? "an unknown blocker" : blockers.join(", ")}`;
+    });
+    progress(`owner merges remain: ${described.join("; ")}`);
+    await sendNotification({
+      kind: "owner-merge",
+      title: "Batch waits for owner merges",
+      text: `Batch ${id} has no queued or running loop. ${described.join(". ")}.`,
+    });
+  };
+
   // The run controller and interruption state exist here, so preflight reads see the run signal.
   const controller = new AbortController();
   const active = new Map();
@@ -1315,6 +1344,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     children.delete(issue);
     slots.delete(issue);
     await finishChild(issue, exitCode, { interrupted: interruptedNow() });
+    await notifyOwnerMergeOnly();
   };
 
   // One transcript read result: `{ ok: true, data }`, or a refusal that names the cause.
@@ -1725,6 +1755,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
   }
   await refreshPendingDecisions();
+  await notifyOwnerMergeOnly();
   // An issue that already holds a slot is taken for its own recovery or launch. A new issue
   // enters only while a slot is free.
   const canTake = () => {
@@ -1791,6 +1822,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       else await withLoopOwnership(issue, runOne);
       await new Promise((resolve) => setImmediate(resolve));
     }
+    await notifyOwnerMergeOnly();
     if (hard || interrupted) break;
     if (pausedReason !== null && active.size === 0) break;
     const hasRecordedHeld = () => slots.size > active.size;
@@ -1823,6 +1855,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         await refreshHeld(reads);
         await refreshWaiting();
         await refreshPendingDecisions(reads);
+        await notifyOwnerMergeOnly();
       }
       continue;
     }
@@ -1837,6 +1870,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       await refreshHeld(reads);
       await refreshWaiting();
       await refreshPendingDecisions(reads);
+      await notifyOwnerMergeOnly();
       continue;
     }
     // Only pending decisions remain. Apply a live answer that already arrived, then stop.

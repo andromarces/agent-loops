@@ -8,6 +8,8 @@ partially-superseded
 
 [adr/0117-state-the-held-lock-paused-rule-and-its-precedence.md](0117-state-the-held-lock-paused-rule-and-its-precedence.md) partially supersedes this ADR. The replaced part is the held-lock sentence of decision 9, which states the `paused` report but states no precedence. The rest of decision 9 and every other decision, consequence, and acceptance check stays in force.
 
+[adr/0127-notify-when-only-owner-merges-remain.md](0127-notify-when-only-owner-merges-remain.md) partially supersedes this ADR. The replaced part is the event list of decision 6, which names three events. Every other part of decision 6, including the notifier mechanics, and every other decision, consequence, and acceptance check stays in force.
+
 ## Supersedes
 
 This ADR partially supersedes
