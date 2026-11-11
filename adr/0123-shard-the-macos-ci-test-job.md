@@ -14,7 +14,7 @@ This ADR partially supersedes [ADR 0079: Shard the Windows CI test job behind a 
 
 ## Context
 
-`ci (macos-latest)` was the longest pull request job. On 2026-11-09 its median was 274 s over 11 successful runs (issue #1767). That measurement included fixed sleeps in `tests/batch/supervisor.test.mjs`. Issue #1763 replaced those sleeps with event waits, and PR #1795 merged that change on 2026-11-10.
+`ci (macos-latest)` was the longest pull request job. On 2026-11-09 its median was 274 s over 11 successful runs (issue #1767). That measurement included fixed sleeps in the supervisor tests. Issue #1763 replaced those sleeps with event waits, and PR #1795 merged that change on 2026-11-10.
 
 Thirteen successful `pull_request` runs from 2026-11-10T19:14Z to 2026-11-10T20:02Z contain that merge. The macOS job median is 230 s, with a range of 207 s to 249 s. Its test step median is 208 s, with a range of 190 s to 223 s. The slowest Windows shard, `windows-tests (2)`, has a median of 161 s and a range of 131 s to 187 s. `ci (ubuntu-latest)` has a median of 114 s.
 

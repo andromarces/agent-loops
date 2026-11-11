@@ -87,5 +87,5 @@ Andro Marces
   - Original-evidence binding: `repairedReportMatches` in `src/lib/report.mjs`
   - Acceptance policy: `acceptanceFailure` in `src/lib/report.mjs`
   - Docs: `docs/orchestrator/closing-block.md`, `docs/orchestrator/run-history.md`, `docs/reference/architecture.md`, and `docs/reference/role.md`
-  - Tests: `tests/child-turn.report-repair.test.mjs` and `tests/role.dispatch.reports.test.mjs`
+  - Tests: `tests/child-turn.report-repair.test.mjs` and `tests/role/dispatch.reports.test.mjs`
 - [ADR Index](README.md)

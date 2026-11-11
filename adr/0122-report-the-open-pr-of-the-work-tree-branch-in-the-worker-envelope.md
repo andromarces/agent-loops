@@ -57,6 +57,6 @@ Andro Marces
 - [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md)
 - Implementation:
   - Source: `readWorkTreePr` in `src/lib/work-tree-pr.mjs`, `dispatch` in `src/role/dispatch.mjs`
-  - Tests: `tests/lib/work-tree-pr.test.mjs`, `tests/role.dispatch.pr.test.mjs`
+  - Tests: `tests/lib/work-tree-pr.test.mjs`, `tests/role/dispatch.pr.test.mjs`
   - Docs: `docs/orchestrator-instructions.md`, `docs/orchestrator/pr-declaration.md`
 - [ADR Index](README.md)

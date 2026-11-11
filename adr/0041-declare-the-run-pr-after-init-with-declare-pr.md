@@ -57,6 +57,6 @@ Andro Marces
 - [ADR 0021: Do not let a new session take over a run](0021-no-parent-session-takeover.md)
 - Implementation:
   - Source: `declarePr` in `src/role/index.mjs`
-  - Tests: `tests/role.declare-pr.test.mjs`
+  - Tests: `tests/role/index.declare-pr.test.mjs`
   - Docs: `docs/orchestrator-instructions.md` (Declaring a PR run), `docs/reference/role.md`
 - [ADR Index](README.md)

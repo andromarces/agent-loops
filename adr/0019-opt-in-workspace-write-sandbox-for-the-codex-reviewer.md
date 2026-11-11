@@ -272,7 +272,7 @@ Andro Marces
   - Source: The flag in `src/cli.mjs` and `src/lib/args.mjs`
   - Test: `tests/agents/`
   - Test: `tests/runtime.reviewer-sandbox.test.mjs`
-  - Test: `tests/role.reviewer-sandbox.test.mjs`
+  - Test: `tests/role/index.reviewer-sandbox.test.mjs`
   - Test: `tests/orchestrator.test.mjs`
   - Test: `tests/cli.args.test.mjs`
   - Test: `tests/prompts/`

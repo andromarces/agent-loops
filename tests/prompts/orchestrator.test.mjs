@@ -362,7 +362,7 @@ test("resultPrompt carries the in-turn main work tree change of a worker result"
 // (issue #234, issue #328). The gate the rule describes is covered where it runs,
 // in `--require-accept refuses a finish after a worker turn with no later review`
 // and `--require-accept refuses a finish that relies on a worker Checks line` in
-// tests/role.finish-abort.test.mjs, so this check covers the prompt text.
+// tests/role/finish.abort.test.mjs, so this check covers the prompt text.
 test("initialPrompt states the completion rule and its mode mapping", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   // The completion rule, with the negation bound to the action, so a finish

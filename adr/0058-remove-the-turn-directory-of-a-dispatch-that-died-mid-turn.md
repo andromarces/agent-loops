@@ -62,6 +62,6 @@ Andro Marces
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - Implementation:
   - Source: `withTurnTmpdir` and `removeAbandonedTurnTmpdir` in `src/lib/turn-tmpdir.mjs`, `onSpawn` of `exec` in `src/lib/exec.mjs`, `runCodex` in `src/agents/codex.mjs`, `runChild` in `src/child-turn.mjs`, `recoverLifecycle` in `src/role/dispatch.mjs`
-  - Tests: `tests/role.dead-turn-tmpdir.test.mjs`, `tests/lib/turn-tmpdir.test.mjs`, `tests/lib/exec.test.mjs`
+  - Tests: `tests/role/index.dead-turn-tmpdir.test.mjs`, `tests/lib/turn-tmpdir.test.mjs`, `tests/lib/exec.test.mjs`
   - Docs: `docs/reference/architecture.md`, `docs/reference/role.md`
 - [ADR Index](README.md)

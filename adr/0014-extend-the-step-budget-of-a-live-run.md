@@ -278,7 +278,7 @@ Andro Marces
 - [PR #1489: refactor: group role modules and rename prompt rules](https://github.com/andromarces/agent-loops/pull/1489)
 - Implementation: [`extend`](../src/role/index.mjs), [`withOpenRun`](../src/role/index.mjs), [`rejectMisplacedFlags`](../src/role/args.mjs), [`rejectInitFlagChanges`](../src/role/args.mjs), and [`requireState`](../src/role/state.mjs)
 - Guards: [`storedReviewerSandbox`](../src/role/args.mjs), [`recordedReviewerSandbox`](../src/lib/args.mjs), [`normalizedLocalPaths`](../src/role/args.mjs), [`normalizeLocalPath`](../src/lib/local-files.mjs), [`isSpawnedByRun`](../src/lib/exec.mjs), and [`recheckKeptTurnTmpdir`](../src/lib/turn-tmpdir.mjs)
-- Tests: [`tests/role.extend.test.mjs`](../tests/role.extend.test.mjs) and [`tests/role.dead-turn-tmpdir.test.mjs`](../tests/role.dead-turn-tmpdir.test.mjs)
+- Tests: [`tests/role/index.extend.test.mjs`](../tests/role/index.extend.test.mjs) and [`tests/role/index.dead-turn-tmpdir.test.mjs`](../tests/role/index.dead-turn-tmpdir.test.mjs)
 - [ADR 0035: State that a Copilot worker cannot run shell commands and flag a denied call](0035-state-that-a-copilot-worker-cannot-run-shell-commands-and-flag-a-denied-call.md)
 - [ADR 0006: Require a parent session id for interactive runs](0006-require-parent-session-for-interactive-runs.md)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)

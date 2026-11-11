@@ -63,5 +63,5 @@ Reviewer `Notes` reach only `open`, and a note then reads as an unresolved findi
 - [Implementation: turn directory warning](../src/lib/turn-tmpdir.mjs)
 - [Implementation: reviewer scratch warning](../src/lib/reviewer-scratch.mjs)
 - [Tests: batch loop report](../tests/batch/report.test.mjs)
-- [Tests: batch report store write](../tests/batch/report-write.test.mjs)
+- [Tests: batch report store write](../tests/batch/supervisor.report-write.test.mjs)
 - [ADR Index](README.md)

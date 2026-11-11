@@ -63,6 +63,6 @@ Andro Marces
 - Related issues: #848, #872, [#934](https://github.com/andromarces/agent-loops/issues/934), [#1078](https://github.com/andromarces/agent-loops/issues/1078), [#1492](https://github.com/andromarces/agent-loops/issues/1492), [#1611](https://github.com/andromarces/agent-loops/issues/1611)
 - Implementation:
   - Source: `holdTestSlot` in `src/lib/test-slot.mjs`, `parseTestSlotArgs` in `src/lib/test-slot-cli.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
-  - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/report.test.mjs`
+  - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/rules.test.mjs`
   - Docs: `docs/orchestrator-instructions.md`, `docs/reference/usage.md` (Test slot)
 - [ADR Index](README.md)

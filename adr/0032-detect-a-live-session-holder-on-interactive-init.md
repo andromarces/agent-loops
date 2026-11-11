@@ -95,7 +95,7 @@ Andro Marces
   - Source: `refuseHeldIds` in `src/lib/command-line.mjs`
   - Source: `heldSessionIds` in `src/lib/command-line.mjs`
   - Source: The call in `dispatchLocked` in `src/role/dispatch.mjs`
-  - Test: `tests/role.init.test.mjs`
+  - Test: `tests/role/index.init.test.mjs`
   - Test: `tests/lib/continuation.test.mjs`
   - Test: `tests/lib/command-line.test.mjs`
 - [ADR Index](README.md)
