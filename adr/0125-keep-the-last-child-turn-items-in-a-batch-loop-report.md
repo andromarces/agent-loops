@@ -35,6 +35,7 @@ A batch loop report takes `summary` from the last `finish` action of the last at
 ## Links
 
 - [Issue #1824: Keep the last turn's Deferred, Notes, and Blockers when a batch loop ends without a finish](https://github.com/andromarces/agent-loops/issues/1824)
+- [PR #1832: Keep the last turn items when a batch loop ends without a finish](https://github.com/andromarces/agent-loops/pull/1832)
 - [adr/0115-batch-loop-final-report.md](0115-batch-loop-final-report.md)
 - [Implementation: batch loop report](../src/batch/report.mjs)
 - [Tests: batch loop report](../tests/batch/report.test.mjs)
