@@ -7,6 +7,7 @@ import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
 import {
   asSessionId,
+  CAPACITY_STATUS,
   assertResumedSession,
   childRan,
   closingText,
@@ -16,6 +17,7 @@ import {
   readSessionHead,
   requireHeldUnconfirmedSession,
   setMainLoopUsage,
+  singleSessionId,
   turnExecOptions,
 } from "./shared.mjs";
 
@@ -25,8 +27,6 @@ const SHELL_DENIAL_TEXT = "Permission denied because no interactive user respons
 // Copilot CLI 1.0.106-2 writes the provider HTTP status on the terminal `session.error` event of
 // a failed turn. A probe against a local 529 server with a BYOK provider captured that event. A
 // provider capacity reply is status 529 (issue #1323).
-const CAPACITY_STATUS = 529;
-
 /**
  * Marks a failed turn whose terminal failure is a provider capacity reply. The terminal failure is
  * the last `session.error` event, so an earlier retried failure followed by another cause is never
@@ -235,15 +235,15 @@ function reportedModels(events) {
  * model to the session the role keeps.
  */
 function streamSession(events) {
-  const ids = new Set();
+  const values = [];
   for (const event of events) {
     if (!isJsonObject(event)) continue;
     const data = isJsonObject(event.data) ? event.data : {};
     for (const value of [event.sessionId, event.session_id, data.sessionId, data.session_id]) {
-      if (value !== undefined) ids.add(asSessionId(value) ?? null);
+      if (value !== undefined) values.push(value);
     }
   }
-  const result = findResultEvent(events);
-  const resultId = asSessionId(resultSessionId(result));
-  return ids.size === 1 && resultId && ids.has(resultId) ? resultId : undefined;
+  const session = singleSessionId(values);
+  const resultId = asSessionId(resultSessionId(findResultEvent(events)));
+  return session && resultId === session ? session : undefined;
 }

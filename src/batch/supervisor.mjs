@@ -1,8 +1,9 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per item, prints progress on stderr, and returns one summary for stdout.
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
@@ -41,7 +42,7 @@ import {
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, loopReportFromRead, readLoopReport } from "./report.mjs";
-import { stepsUsedFromData, transcriptExitFromData } from "./steps.mjs";
+import { readTranscript, stepsFromRead, transcriptExitFromData } from "./steps.mjs";
 import { mapInBatches } from "../lib/batches.mjs";
 import {
   acquireClaim,
@@ -70,7 +71,7 @@ const INTERRUPT_WAIT_MS = 30_000;
 /** The wait between two re-checks of a blocked issue (adr/0110-release-batch-slots-on-owner-decisions.md decision 5). */
 export const POLL_INTERVAL_MS = 15_000;
 /** The bound on one poll read of the wait state. */
-export const POLL_READ_TIMEOUT_MS = 60_000;
+const POLL_READ_TIMEOUT_MS = 60_000;
 /** The most independent reads in flight at once. */
 const READ_BATCH_SIZE = 4;
 
@@ -79,27 +80,11 @@ function storedValue(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
-/** The step count from one transcript read, with the refusal text of a direct read. */
-function stepsFromRead(read, { checkpointSteps = 0, attempts = 0 } = {}) {
-  if (read.ok) return stepsUsedFromData(read.data, { checkpointSteps, attempts });
-  if (read.missing === true && attempts === 0) return { ok: true, steps: checkpointSteps };
-  return {
-    ok: false,
-    reason:
-      read.invalid === true ? "the transcript is not valid JSON" : "the transcript is missing",
-  };
-}
-
+/** Waits `ms`, and an abort ends the wait without an error. An already aborted signal waits too. */
 function defaultSleep(ms, signal) {
-  return new Promise((resolve) => {
-    let timer;
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
-    };
-    timer = setTimeout(done, ms);
-    signal?.addEventListener("abort", done, { once: true });
+  if (signal?.aborted) return delay(ms);
+  return delay(ms, undefined, { signal }).catch((error) => {
+    if (error?.name !== "AbortError") throw error;
   });
 }
 
@@ -1258,7 +1243,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
 
   const finishChild = async (issue, exitCode, { interrupted: wasInterrupted }) => {
     let loop = await readLoop(runsRoot, id, issue);
-    const transcript = await readTranscript(loop.transcript);
+    const transcript = await readLoopTranscript(loop.transcript);
     const steps = stepsFromRead(transcript, {
       checkpointSteps: loop.stepsUsed,
       attempts: loop.attempts,
@@ -1335,26 +1320,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     await notifyOwnerMergeOnly();
   };
 
-  // One transcript read result: `{ ok: true, data }`, or a refusal that names the cause.
-  const readTranscript = async (file) => {
-    const readText = deps.readTranscript ?? ((path) => readFile(path, "utf8"));
-    let text;
-    try {
-      text = await readText(file);
-    } catch (err) {
-      return {
-        ok: false,
-        missing: err?.code === "ENOENT",
-        reason:
-          err?.code === "ENOENT" ? "the transcript is missing" : "the transcript is unreadable",
-      };
-    }
-    try {
-      return { ok: true, data: JSON.parse(text) };
-    } catch {
-      return { ok: false, invalid: true, reason: "the transcript is not valid JSON" };
-    }
-  };
+  const readLoopTranscript = (file) => readTranscript(file, deps.readTranscript);
 
   const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr, transcript }) => {
     await changeLoop(
@@ -1437,7 +1403,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
    */
   const continueLoop = async (issue, initial) => {
     let loop = initial;
-    const transcript = await readTranscript(loop.transcript);
+    const transcript = await readLoopTranscript(loop.transcript);
     if ((!transcript.ok || transcript.data === null) && loop.attempts > 0) {
       await markNeedsOwner(issue, "unverified-steps", {
         evidence: "the transcript is missing",

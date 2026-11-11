@@ -307,7 +307,7 @@ export function logRoleOptionWarnings(role, kind, model, effort, logged) {
  * keeping the missing tail. A root reached through a directory link is therefore compared against
  * the real work tree, never against the alias spelling.
  */
-export async function canonicalWritePath(path) {
+async function canonicalWritePath(path) {
   let current = resolve(path);
   const tail = [];
   for (;;) {
@@ -374,7 +374,7 @@ async function gitWorkTreeTop(candidate, gitRun) {
 }
 
 /** Refuses a work-tree root inside any Git work tree, not only the target repository. */
-export async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = gitOrThrow } = {}) {
+async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = gitOrThrow } = {}) {
   const candidate = await canonicalWritePath(workTreeRoot);
   const top = await gitWorkTreeTop(candidate, gitRun);
   if (top !== null && isInside(top, candidate)) {
@@ -396,7 +396,7 @@ async function workTreeEntries(repo) {
  * A missing path is checked at its nearest existing ancestor.
  * `rootError` selects the batch rethrow or the audit usage refusal at a filesystem root.
  */
-export async function assertWritableDirectory(path, noun, { rootError = "usage" } = {}) {
+async function assertWritableDirectory(path, noun, { rootError = "usage" } = {}) {
   const refusal = `The work-tree root is not a directory the ${noun} can write.`;
   let current = path;
   for (;;) {

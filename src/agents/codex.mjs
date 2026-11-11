@@ -7,6 +7,7 @@ import {
   boundedDetail,
   byteLength,
   closingText,
+  DETAIL_LIMIT,
   failedForAnotherReason,
   failureMessage as sharedFailureMessage,
   flagMissingSession,
@@ -31,7 +32,6 @@ const MODEL_REFUSAL = /\bThe '([^']+)' model is not supported\b/;
 // A failed Codex turn reports the exit cause and the last failure message only. It never reports
 // the stream, so command output cannot reach the envelope or the state file (issue #1353). The
 // detail is bounded to 500 characters including the ellipsis, and the whole message stays under 700.
-const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no Codex error event in the output";
 
 /**

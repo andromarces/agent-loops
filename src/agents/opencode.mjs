@@ -4,10 +4,12 @@ import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
 import {
   asSessionId,
+  CAPACITY_STATUS,
   assertResumedSession,
   boundedDetail,
   byteLength,
   childRan,
+  DETAIL_LIMIT,
   failureMessage as sharedFailureMessage,
   isNonEmptyString,
   keepFailedSessionId,
@@ -15,6 +17,7 @@ import {
   recordResolvedModel,
   setResolvedModel,
   setUsageOrDelete,
+  singleSessionId,
   throwIfCanceled,
   turnExecOptions,
 } from "./shared.mjs";
@@ -23,7 +26,6 @@ import { joinTextParts } from "./opencode-text.mjs";
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
 // the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
 // carries model output, and stderr can carry a secret.
-const DETAIL_LIMIT = 500;
 const NO_DETAIL = "no provider error event in the output";
 const UNKNOWN_ERROR = "unknown error";
 
@@ -35,7 +37,6 @@ const UNKNOWN_ERROR = "unknown error";
 // and the provider error code `overloaded` in the structured response body. A probe against a
 // local 429 server streamed that event; a plain rate limit carries another code, and a quota is a
 // `provider.quota` event, so neither is marked.
-const CAPACITY_STATUS = 529;
 const OVERLOAD_STATUS = 429;
 const OVERLOAD_CODE = "overloaded";
 
@@ -264,14 +265,13 @@ async function settleTurn(state, events, { requestedSessionId, execOptions, star
  * stream never ties the export to a guessed session.
  */
 function streamSession(events) {
-  const ids = new Set();
+  const values = [];
   for (const event of events) {
-    ids.add(asSessionId(event.sessionID) ?? null);
+    values.push(event.sessionID);
     const part = event.part?.sessionID;
-    if (part !== undefined) ids.add(asSessionId(part) ?? null);
+    if (part !== undefined) values.push(part);
   }
-  const [id] = ids;
-  return ids.size === 1 ? id || undefined : undefined;
+  return singleSessionId(values);
 }
 
 /**

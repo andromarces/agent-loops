@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
 import { join } from "node:path";
-import { mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
 import { GIT_READ_TIMEOUT_MS, gitRead, readTopLevel, SnapshotError } from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
@@ -153,9 +153,6 @@ export async function workTreeRoot(cwd, { fresh = false, ...bound } = {}) {
   return rootResult.stdout;
 }
 
-// Files that one snapshot hashes at a time, so a large work tree never opens every file at once.
-const HASH_BATCH_SIZE = 32;
-
 /**
  * Parses the `status --porcelain=v1 -z` output into entries without a hash. A rename or copy also
  * emits its old path, which is consumed and not listed.
@@ -178,12 +175,12 @@ function statusEntries(stdout) {
 }
 
 /**
- * Hashes the files of `entries` in batches of `HASH_BATCH_SIZE`. Entries keep their order, and the
+ * Hashes the files of `entries` in batches of `DEFAULT_BATCH_SIZE`. Entries keep their order, and the
  * first failure in that order throws. `signal` stops a hash at the
  * caller's deadline.
  */
 const hashEntries = (root, entries, signal) =>
-  mapInBatches(entries, HASH_BATCH_SIZE, async (entry) => {
+  mapInBatches(entries, DEFAULT_BATCH_SIZE, async (entry) => {
     try {
       return { ...entry, hash: await sha256File(join(root, entry.path), { signal }) };
     } catch (err) {

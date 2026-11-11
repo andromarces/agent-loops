@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
+import { isEntryPoint } from "../src/lib/entrypoint.mjs";
 
 const SLOWEST = 20;
 
@@ -136,4 +137,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+if (isEntryPoint(import.meta.filename)) main();
