@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { afterAll, expect, test, vi } from "vite-plus/test";
 import { parseAuditArgs, prepareAudit } from "../../src/batch/audit-args.mjs";
+import { parseBatchArgs } from "../../src/batch/args.mjs";
 import { git } from "../../src/batch/git.mjs";
+import { parseFlags } from "../../src/lib/args.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 
@@ -66,6 +68,35 @@ test("an inline value on the sandbox alias wins over a conflict", () => {
   expect(() =>
     parseAuditArgs([...base, "--reviewer-sandbox", "read-only", "--reviewer-workspace-write=true"]),
   ).toThrow("--reviewer-workspace-write does not take a value.");
+});
+
+// Usefulness: the audit alias conflict names the later mode, matching the headless parser (issue #1837).
+test("the audit sandbox alias conflict names the later mode", () => {
+  const base = ["--repo", ".", "--reviewer", "codex", "--reviewer", "codex", "--worker", "codex"];
+  expect(() =>
+    parseAuditArgs([...base, "--reviewer-workspace-write", "--reviewer-sandbox", "read-only"]),
+  ).toThrow("--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.");
+});
+
+// Usefulness: one conflict text from all three parsers stops a caller reading a different mode (#1837).
+test("all three parsers name the same mode in the alias conflict", () => {
+  const argv = ["--reviewer-workspace-write", "--reviewer-sandbox", "read-only"];
+  const textOf = (run) => {
+    try {
+      run();
+      return null;
+    } catch (err) {
+      return err.message;
+    }
+  };
+  const lib = textOf(() =>
+    parseFlags(argv, { reviewerSandbox: null }, { roleFlagMap: {}, onFlag: () => false }),
+  );
+  const batch = textOf(() => parseBatchArgs(argv));
+  const audit = textOf(() => parseAuditArgs(argv));
+  expect(audit).toBe("--reviewer-workspace-write conflicts with --reviewer-sandbox read-only.");
+  expect(batch).toBe(audit);
+  expect(lib).toBe(audit);
 });
 
 // Usefulness: the operator focus is one text source.
