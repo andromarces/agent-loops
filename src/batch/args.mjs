@@ -2,7 +2,7 @@
 // The runtime validates explicit values only: it reads no request and prompts for nothing.
 import { readFileSync } from "node:fs";
 import { access, constants, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, parse, resolve } from "node:path";
 import { supportedAgents } from "../agents/index.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import {
@@ -362,7 +362,7 @@ async function nearestExistingDirectory(path) {
       return undefined;
     }
   });
-  return found ?? resolve(path);
+  return found ?? parse(resolve(path)).root;
 }
 
 /** Refuses a `noun` root inside any Git work tree, not only the target repository (ADR 0106 decision 8). */
