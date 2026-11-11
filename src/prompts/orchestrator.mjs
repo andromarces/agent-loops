@@ -441,7 +441,8 @@ function modeBlock(mode) {
 // conversation in its place (the agy known-limit), so each follow-up carries the
 // rule itself. The runtime mutation check reads only the local work tree, so the
 // rule is advisory (issue #422).
-const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote: ${REMOTE_WRITE_ACTIONS} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
+// The shared action list opens a new sentence here, so its first letter is upper case.
+const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS[0].toUpperCase()}${REMOTE_WRITE_ACTIONS.slice(1)} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
 
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
 const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}

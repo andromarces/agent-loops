@@ -152,33 +152,32 @@ async function linuxProcStamp(pid) {
 }
 
 /**
- * Start-time stamp of the process `pid`, `<kind>:<value>`, or null when it cannot
- * be read (a missing platform source, or a failed, timed-out, empty, or unparseable
- * read). Callers compare only stamps of one kind. The kind is chosen by platform:
- * - `linux-proc`: /proc stat ticks, boot id, and PID namespace (no spawn, clock
- *   independent).
- * - `darwin-lstart`: epoch seconds of `ps -o lstart=` under TZ=UTC and LC_ALL=C. The
- *   kernel stores the start time (`p_starttime`) once at process creation and `ps`
- *   formats it, so a clock step afterward does not change it (from the XNU source;
- *   not exercised here, since the test machine cannot step its clock).
- * - `win32-creation`: epoch seconds of the process creation time, from PowerShell
- *   (`Process.StartTime`, the creation FILETIME that Windows stores at creation;
- *   likewise not exercised under a clock step).
- * Any other platform has no stamp, and its locks read as alive. No native dependency.
+ * Start-time stamp of the process `pid` as `<kind>:<value>`, or null when it cannot be read.
+ * A missing platform source, and a failed, timed-out, empty, or unparseable read, give null.
+ * Callers compare only stamps of one kind, which the platform chooses. `linux-proc` uses /proc stat
+ * ticks, the boot id, and the PID namespace, with no spawn and no clock dependence.
+ * `darwin-lstart` and `win32-creation` hold epoch seconds from a fixed-at-creation source, so a
+ * later clock step does not change them. Any other platform has no stamp, its locks read as alive,
+ * and no native dependency is used.
  */
 export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } = {}) {
   // Injectable so a test can shorten the query bound; production keeps the 5000 ms default.
   try {
     if (process.platform === "linux") {
+      // `linux-proc` needs no spawn and no clock: /proc stat ticks, the boot id, and this PID namespace.
       return await linuxProcStamp(pid);
     }
     if (process.platform === "darwin") {
+      // `ps -o lstart=` runs under TZ=UTC and LC_ALL=C.
+      // The kernel stores the start time (`p_starttime`) once at creation, so a later clock step does not change it.
+      // From the XNU source, and not exercised here, because the test machine cannot step its clock.
       const time = parseLstart(
         await queryOutput("ps", ["-o", "lstart=", "-p", String(pid)], timeoutMs),
       );
       return time === null ? null : `darwin-lstart:${time}`;
     }
     if (process.platform === "win32") {
+      // The creation FILETIME that Windows stores at creation, and likewise not exercised under a clock step.
       const text = await queryOutput(
         "powershell.exe",
         [
@@ -200,13 +199,13 @@ export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } 
 let ownStartTimeQuery;
 
 /**
- * The start time stamp of this process, read once on the first lock creation: the
- * lock content of every acquisition carries it. Linux reads /proc; macOS spawns one
- * `ps`; Windows spawns one PowerShell (a startup of about 0.8 s on a loaded 16-CPU Windows host, 2026-10-23, bounded by
- * START_TIME_QUERY_MS). Node has no cheaper source of the OS start time:
- * `process.uptime()` stops during a system sleep on POSIX, so `Date.now()` minus it
- * is not the start time.
- * known-limit: the Windows spawn is paid once by each process that takes a lock.
+ * The start time stamp of this process, read once on the first lock creation, because every
+ * acquisition carries it in the lock content. Linux reads /proc, macOS spawns one `ps`, and Windows
+ * spawns one PowerShell. The PowerShell spawn takes about 0.8 s on a loaded 16-CPU Windows host
+ * (2026-10-23), bounded by `START_TIME_QUERY_MS`. Node has no cheaper source of the OS start time,
+ * because `process.uptime()` stops during a system sleep on POSIX. `Date.now()` minus that value is
+ * then not the start time. known-limit: the Windows spawn is paid once by each process that takes a
+ * lock.
  */
 export function ownStartTime() {
   ownStartTimeQuery ??= processStartTime(process.pid).then((stamp) => stamp ?? undefined);
@@ -312,41 +311,41 @@ function startTimesDiffer(recorded, current) {
 }
 
 /**
- * True when the owner of a lock or claim still runs. Checks in order:
- * 1. A valid `linux-proc` stamp whose PID namespace differs from the reader, or any
- *    valid `linux-proc` stamp while the reader namespace cannot be read, reads as alive
- *    before the pid probe, whether its pid is alive here or not. A differing namespace
- *    means the recorded pid belongs to another namespace (a container that shares the
- *    runs root), so `pidAlive` cannot say whether that owner runs. An unreadable
- *    reader namespace means the reader cannot tell whether the stamp namespace is its
- *    own, so it keeps the lock. Other stamp kinds skip this step.
- * 2. A dead pid reads as dead, with any stamp or none (the pid-only check).
- * 3. A live pid reads as dead only when its recorded stamp and the stamp of the process
- *    now at that pid are valid, of one kind, and differ (see `startTimesDiffer`): the
- *    pid was reused. Every other live pid reads as alive: no recorded stamp (an older
- *    version, or an owner that could not read its own), an invalid stamp, a kind
- *    mismatch, and a current read that is null (failed, timed out, empty, or
- *    unparseable).
- * known-limit: step 1 never takes a lock over, even when its owner is dead: a crashed
- * owner of another namespace, and a crashed owner of this namespace when the reader
- * cannot read its own PID namespace, keep the lock until a person checks that the owner
- * is gone and removes the lock file (and any `.reap.<digest>` claim beside it).
+ * True when the owner of a lock or claim still runs, checked in three steps.
+ * A `linux-proc` stamp whose PID namespace differs from the reader reads as alive before the pid
+ * probe. So does any valid `linux-proc` stamp when the reader cannot read its own namespace.
+ * A dead pid reads as dead, and a live pid reads as dead only on a valid stamp pair of one kind
+ * that differs. Every other live pid reads as alive, with no recorded stamp, an invalid stamp, a
+ * kind mismatch, or a null current read. known-limit: step 1 never takes a lock over, even when its
+ * owner is dead.
  */
 export async function ownerAlive(owner, cache) {
   const recorded = parseStamp(owner.startTime);
   if (recorded?.kind === "linux-proc" && recorded.namespace !== (await readerPidNamespace())) {
+    // A differing namespace means the recorded pid belongs to another namespace, such as a container
+    // that shares the runs root.
+    // `pidAlive` cannot say whether that owner runs, so the read stays alive.
+    // An unreadable reader namespace keeps the lock, because the reader cannot tell whose stamp it is.
+    // Other stamp kinds skip this step.
     return true;
   }
   if (!pidAlive(owner.pid)) {
+    // A dead pid reads as dead with any stamp or none, the pid-only check.
     // A dead pid frees its slot at once, and no stale entry waits to match a reused pid.
     cache?.forget(owner.pid);
     return false;
   }
   if (typeof owner.startTime !== "string") {
+    // No recorded stamp can come from an older version or an owner that could not read its own.
     return true;
   }
   // Without a cache, the own stamp is memoized after a good read, so a lock of this process needs
   // no query per check. A memoized failure still probes, so a recovered source frees the lock.
+  // The pid was reused only when both stamps are valid, of one kind, and differ (see `startTimesDiffer`).
+  // A null current read comes from a failed, timed-out, empty, or unparseable read, and reads as alive.
+  // A crashed owner of another namespace keeps the lock until a person checks that it is gone.
+  // So does a crashed owner of this namespace when the reader cannot read its own PID namespace.
+  // The person then removes the lock file, plus any `.reap.<digest>` claim beside it.
   let current;
   if (owner.pid === process.pid && cache === undefined) {
     current = (await ownStartTime()) ?? (await processStartTime(process.pid));

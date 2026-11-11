@@ -33,7 +33,7 @@ export function isFatalTurnError(err) {
 
 /**
  * Refuses unless `cwd` is inside a Git work tree. `timeoutMs` (default 120 s) bounds the probe
- * and terminates the `git` child on expiry, so a caller that owns a total
+ * and terminates the `git` child on expiry. A caller that owns a total
  * limit keeps that limit even when the probe hangs. A probe cut short by the
  * bound refuses, because a work tree it never confirmed is not a verified one.
  * `signal` ends the probe too, and the refusal then has `isCanceled` set.
@@ -66,19 +66,13 @@ function abortError(signal) {
 }
 
 /**
- * Returns null only for an absent or non-regular, non-symlink entry; read errors
- * other than ENOENT propagate. A symlink hashes its link target text, not the
- * file it points to, so two links with different targets never share a hash and
- * a dangling or directory link still has a content identity. The link text is
- * tagged before hashing, so a link never collides with a regular file that
- * holds the same bytes. The file streams through the hash in chunks, so it is never held whole in
- * memory, and only the bytes up to the size at open count. An aborted `signal` rejects with its
- * reason before the `lstat`. A cancel after the `lstat` rejects with Node's AbortError (code
- * ABORT_ERR, the reason as cause), and it wins over a later read error, including a file that
- * vanished after the cancel. An abort during the read destroys the stream, which closes the file
- * handle and rejects the read. An `fs` request already in flight is not interrupted, so the
- * destroy takes effect after that request returns. The `lstat` and `readlink` calls take no
- * signal.
+ * Returns null only for an absent or non-regular, non-symlink entry, and a read error other than
+ * ENOENT propagates. A symlink hashes its tagged link target text, not the file it points to, so no
+ * regular file of those bytes collides. A different target never shares the hash,
+ * and a dangling or directory link still has a content identity. A file streams through the hash
+ * in chunks, so it is never held whole in memory, and only bytes up to the size at open. An
+ * aborted `signal` rejects with its reason before the `lstat`. The `lstat` and `readlink` calls take
+ * no signal.
  */
 export async function sha256File(path, { signal } = {}) {
   signal?.throwIfAborted();
@@ -99,6 +93,7 @@ export async function sha256File(path, { signal } = {}) {
   }
   try {
     if (signal?.aborted) {
+      // A cancel after the `lstat` rejects with Node's AbortError (code ABORT_ERR), the reason as cause.
       throw abortError(signal);
     }
     const hash = createHash("sha256");
@@ -109,6 +104,8 @@ export async function sha256File(path, { signal } = {}) {
       // grows during the read keeps the digest of its bytes at open. An empty file has no bound,
       // as an unbounded stream reads to EOF. The stream owns the handle and closes it on end,
       // error, or abort.
+      // An abort during the read destroys the stream, which closes the file handle and rejects the read.
+      // An `fs` request already in flight is not interrupted, so the destroy waits for it to return.
       const { size } = await handle.stat();
       const range = size > 0 ? { start: 0, end: size - 1 } : {};
       stream = createReadStream(path, { fd: handle, signal, ...range });
@@ -239,7 +236,7 @@ export async function snapshot(cwd, bound) {
  * Derives the runtime-owned identity of the state a snapshot represents.
  * `digest` covers the work-tree entries (path, status, hash) and the index hash,
  * so two different uncommitted states at the same `head` differ. It identifies
- * the full Git-visible uncommitted state only when `exact` is true: a work-tree
+ * the full Git-visible uncommitted state only when `exact` is true. A work-tree
  * entry with no content hash that is not a deletion (for example a submodule)
  * has no content identity. Ignored files are out of scope, because the snapshot
  * never lists them.
@@ -302,14 +299,13 @@ export function diffSnapshots(before, after) {
 
 /**
  * Run `fn()` and compare Git snapshots taken before and after.
- * Throws `MutationError` when the diff is non-empty, even when `fn()` already
- * failed: the mutation error wins over the wrapped error, which is discarded.
- * Any thrown value is rethrown unchanged, a falsy one (`null`, `undefined`) included.
  * `fn` receives the before snapshot, so a caller can derive the reviewed state
- * without taking a second snapshot. `signal` cancels the before snapshot only. The after snapshot
- * ignores it, so a canceled turn still reports the paths it changed. The after snapshot ends on
- * `forceSignal` instead (default: the second-SIGINT signal of `signal`). It then throws a canceled
- * `SnapshotError` that says the evidence was not captured, and never reports the tree as unchanged.
+ * without taking a second snapshot. Throws `MutationError` when the diff is non-empty, even when
+ * `fn()` already failed, and that error wins over the wrapped error, which is discarded.
+ * `signal` cancels the before snapshot only, so a canceled turn still reports the paths it changed.
+ * The after snapshot ends on `forceSignal` instead (default: the second-SIGINT signal of `signal`).
+ * It then throws a canceled `SnapshotError` that says the evidence was not captured, and never
+ * reports the tree as unchanged.
  * @template T
  * @param {string} cwd
  * @param {string} role
@@ -367,6 +363,7 @@ export async function withMutationCheck(
   }
 
   if (threw) {
+    // Any thrown value is rethrown unchanged, a falsy one (`null`, `undefined`) included.
     throw actionError;
   }
 
