@@ -407,3 +407,11 @@ Moved from `docs/reference/session-resume.md` on 2026-11-08.
 - The state recorded `taskSentTo` as the replacement id.
 - The resumed reviewer turn exited 0.
 - Its prompt carried no `Init task:` block.
+
+## Parent guard hook survey
+
+Moved from `docs/reference/parent-guard.md` on 2026-11-12.
+
+- The base survey ran on 2026-09-21 against current vendor docs, current binaries, and the installed Copilot CLI 1.0.87-0 binary.
+- The Antigravity survey ran again on 2026-09-25 on Antigravity CLI 1.2.10.
+- The survey covers all five harnesses in the page table.

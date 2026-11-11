@@ -79,7 +79,7 @@ The parent rule ("the orchestrator never edits files") is prompt-only, so a drif
 
 ## Pre-tool hook availability by harness
 
-Surveyed 2026-09-21 against current vendor docs, current binaries, and the installed Copilot CLI 1.0.87-0 binary; Antigravity re-surveyed 2026-09-25 on CLI 1.2.10. A session-keyed guard needs both a pre-tool hook and a way for the parent to learn its own session id at init time; the guard ships only where both exist.
+A session-keyed guard needs both a pre-tool hook and a way for the parent to learn its own session id at init time. The guard ships only where both exist. The survey of all five harnesses and its dated results are in [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#parent-guard-hook-survey).
 
 | Harness            | Pre-tool hook                                                                                                                       | Guard                     |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -111,12 +111,7 @@ See [openai/codex#27833](https://github.com/openai/codex/issues/27833). Verify
 that the installed Codex version blocks `apply_patch` before relying on this
 guard. The hook is a best-effort guardrail, not a complete enforcement boundary.
 
-The full skill-to-edit check passed on Codex CLI 0.157.0-alpha.1 on Windows: the
-`$agent-loop` skill registered the Codex thread as the parent, `apply_patch`
-returned `GUARD_DENY_REASON`, `role abort` set the lifecycle to `aborted`, and
-`apply_patch` then succeeded. The probe ran with
-`sandbox_mode = "danger-full-access"`; the `role finish` release path is covered
-by `tests/hook/parent-guard.test.mjs`. The `workspace-write` leg stays
+The Codex guard pass is in issue #86: the skill registered the thread as the parent, `apply_patch` was denied, and `role abort` released the guard. The check ran with `sandbox_mode = "danger-full-access"`, and the `role finish` release path is covered by `tests/hook/parent-guard.test.mjs`. The `workspace-write` leg stays
 unverified on Windows: Codex's unelevated Windows sandbox blocks the child
 `git` spawn (`EPERM`) before run initialization
 ([openai/codex#37415](https://github.com/openai/codex/issues/37415)). The same

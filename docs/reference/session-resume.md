@@ -54,19 +54,7 @@ Verified on the installed CLIs (Claude Code 2.1.284 and 2.1.292 for issue #395, 
 
 ### `claude`: resume after a kill
 
-A resume of an unconfirmed id first needs a session file that this work tree and role own. On Windows 11 (Claude Code 2.1.295, issue #565): the file is `projects/<cwd with each non-alphanumeric character replaced by "-">/<id>.jsonl`, its first `user` record has `sessionId`, `cwd` as spelled at launch, and `message.content` as a string, the CLI keeps the case of the id that it is given, a `cwd` that differs only in the case of the drive letter is read as the same work tree (`realpath` returns one spelling), a junction as the project directory is refused, and a forced terminate (`taskkill /F /T`) before about 3 s leaves no session file, so the check refuses, a worker or reviewer turn reruns as a first turn, and an orchestrator turn ends the run and keeps the id with its mark, while one after about 3 s leaves a file that passes the check and resumes. On macOS 27.2 (Claude Code 2.1.296, issue #580), `SIGKILL` and `SIGTERM` sent to the headless parent pid gave the same results: the id and its mark stay, `--continue-from` resumes them after the ownership check when the session file exists, and a run whose sample showed no session file gives the refusal for an orchestrator id and a rerun as a first turn for a reviewer id. A check 1.5 s after the parent exit found no `claude` child after `SIGTERM`, and a `claude` child with parent pid 1 after `SIGKILL` in 12 of 14 probes.
-
-Issue #565 repeated the probes on macOS 27.2 (Node v26.11.1, Claude Code 2.1.296). The file layout, the first `user` record fields, and the case of the id match the Windows result. A `SIGKILL` of the `claude` process at 0.4, 1, and 2 s left no session file. The check refused, and `--resume` exited 1 with the line above. A `SIGKILL` at 2.5 to 30 s left a file that passed the check and resumed. A `SIGKILL` of the headless parent at 0.4 s ended the continued run with the refusal.
-
-At 1.5 s and 3.5 s, the continued run resumed. A file symlink and a directory symlink were refused. These symlink probes ran against a synthetic session store with a stub `claude`, not against real sessions. ADR 0016 holds the commands and the output. Linux, the Windows symlink cases, and a real-session symlink probe are not verified.
-
-Issue #398 probed a session id read from the output after a kill, on macOS 27.2 with Claude Code 2.1.296. The first command was `claude -p --model haiku --allowedTools Bash --output-format stream-json --verbose`. `SIGKILL` went to the `claude` process 4 s after the `Bash` `tool_use` event of a 64 s `node` timer. The first `system` `init` event printed the `session_id`. The resume command was `claude -p --model haiku --resume <id> --output-format json --verbose`.
-
-The resume exited 0. Its `init` event and its `result` event carried the same id. The answer named the word of the first prompt. It said that the timer result was not recorded. The `zsh` shell of the `Bash` call and its `node` child stayed alive after the kill, with parent pid 1.
-
-The adapter uses `--output-format json`, which prints no id before the end. The adapter relies on the pre-assigned id. No result contradicts the adapter.
-
-Issue #675 repeated the kill under `--output-format json` on macOS 27.2 with Claude Code 2.1.296. `SIGKILL` went to the `claude` pid 4 s after a 64 s `node` timer started, and stdout and stderr stayed empty. A direct CLI resume with `--resume <id>` exited 0, with the same id in its `init` and `result` events. The probe prompt carried no ownership marker, so it does not show the adapter recovery path, which issues #565 and #580 cover. The Linux and Windows Claude cases stay unverified, because no host of either kind was available (issue #675). ADR 0016 holds the commands and the decisive output.
+A Claude resume of an unconfirmed id needs a session file that this work tree and role own. A kill before the client writes that file leaves no session. The turn then reruns as a first turn, or an orchestrator run ends and keeps the id with its mark. The commands, timings, and output are in [ADR 0016](https://github.com/andromarces/agent-loops/blob/main/adr/0016-resume-a-failed-first-turn-with-a-fallback.md), and Linux and the Windows symlink cases are not verified.
 
 ### `agy`: resume of a missing session
 
@@ -86,17 +74,7 @@ The role state also keeps `taskSentTo`, the id of the conversation that last car
 
 If the CLI dropped that prompt, the conversation never sees the task. A cancel in the reviewer task-only turn counts as delivered, like any canceled turn that carried the task, so the next reviewer turn does not repeat the block. The cancel leaves the mark set and gives no verdict, so a run that ends first has no accepted verdict from that conversation. The mark is stored in the run state of `role dispatch` and in the `--transcript` roles, and `--continue-from` restores it with the id.
 
-A live probe ran on agy 1.3.2 (issue #579) in a scratch Git repository, with `--input-format text --output-format json` and the prompt on stdin. Probe 1 resumed a missing name and a missing well-formed UUID, both with `--mode plan`. Each exited 0, printed `warning: conversation "<name>" not found` on stderr, and returned `status` `SUCCESS` with a new `conversation_id`. A resume of an existing id, from the same or another work tree, returned the same id and no warning. The probes do not show that a missing id is the only cause of a replaced conversation. No probe resumed a missing id with no stderr line, so tests alone cover that branch.
-
-Probe 2 sent the runtime preamble-only worker prompt to a missing id, with no `--mode`. It answered `OK`. The work tree kept its HEAD and an empty `git status`. One probe does not show that the turn can never write.
-
-Probe 3 sent the runtime rerun orchestrator prompt to a missing id, with `--mode plan`. The prompt held the initial instructions, the restart sentence, and a worker result prompt. It answered `run_reviewer`, the action for the result, not `run_worker`, the first action that the instructions ask for. The same result prompt with no instructions also answered `run_reviewer`, because it names its own action list. So the probe shows that the rerun does not misread the instructions. It does not show that the instructions are needed.
-
-Issue #657 repeated the three probes on agy 1.3.2 on Windows 11 Pro (10.0.26220), on 2026-10-10, in a disposable Git repository in the system temporary directory, with the same flags and prompts. A missing name and a missing UUID each exited 0, printed `warning: conversation "<id>" not found`, and returned `SUCCESS` with a new id. An existing id returned the same id and no warning. The preamble-only worker prompt answered `OK`, with HEAD and `git status` unchanged.
-
-The rerun orchestrator prompt answered `run_reviewer`, and the result prompt alone also answered `run_reviewer`. The Windows result matches macOS. No Linux host was available, so Linux is not verified.
-
-No result contradicts the adapter or the runtime.
+A missing conversation returns a new `conversation_id` and a stderr warning, so the replacement receives the init task through the task-only turn. The probe commands and results are in issue #579, and issue #657 repeats them on Windows 11. Linux is not verified.
 
 ### `agy`: resume after a kill
 
@@ -108,13 +86,7 @@ With `--output-format stream-json`, the first event (`init`) carries `conversati
 
 ### `copilot`: resume of a missing session
 
-A live probe ran on Copilot CLI 1.0.95 (issue #375). It made a first turn with a fresh random `--session-id` and `--output-format json`, then two later calls with the same id. Each call exited 0.
-
-The last event of each call was a `result` event. Its top-level `sessionId` matched the pre-assigned id. The `result` event has the fields `type`, `timestamp`, `sessionId`, `exitCode`, and `usage`. The test mocks carry `type`, `sessionId`, and `exitCode`, so the adapter needed no change. The third call recalled the word of the first message, so a call with an existing id resumes that session.
-
-A first turn failed with a bad model and printed no result event. A later call with the pre-assigned id completed and echoed it. Issue #641 verified that a call with the pre-assigned id of a failed first turn resumes a session that holds the turn when the turn ran a tool (see the last column). No fallback applies to a confirmed id.
-
-Issue #398 repeated the case of a session that does not exist, on macOS 27.2 with Copilot CLI 1.0.96-2. A first call used a fresh random `--session-id` and no earlier session. It exited 0 and answered `NONE` to a question about an earlier message. Its `result` event echoed the id. An id with no session therefore creates a session. No CLI error can trigger a fallback.
+A call with an existing `--session-id` resumes that session, and an id with no session creates a new one. The `result` event carries the session id that the adapter reads. The probe commands and results are in issue #375 and [ADR 0016](https://github.com/andromarces/agent-loops/blob/main/adr/0016-resume-a-failed-first-turn-with-a-fallback.md).
 
 ### `copilot`: session id of a failed first turn
 
