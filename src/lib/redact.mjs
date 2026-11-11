@@ -8,7 +8,7 @@ const SECRET_NAME = /token|secret|passw|key|credential|auth/i;
 const SHRINK_MARKER = "[*]";
 // Scans of the text: the first on the input, then one for each marker that can form a value.
 const MAX_ROUNDS = 5;
-// Rounds that name the variable, as the replacement of one value after the other did.
+// Rounds that name the variable.
 const NAMED_ROUNDS = 2;
 
 /** Yields `[start, end)` of every occurrence of `pattern` in `text`, overlapping ones included. Linear. */
@@ -117,14 +117,16 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   };
   // With `shrink`, every marker is `[*]`, so the result is never longer than `text`.
   // The second round runs because a marker next to text can form a value.
-  // It names the variable as the earlier replacement did, and `[*]` is shorter than the match it replaces.
+  // It names the variable, and `[*]` is shorter than the match it replaces.
   // Each distinct marker text of the variables in the run gets one marker.
+  // Two variables with one value share one match, named for the first variable in the environment.
   const named = (run) => [...new Set([...run.names].map(markerFor))].join("");
 
-  // Parity with the earlier replacement, tested for one secret-named variable: the result is byte-identical when the raw and escaped occurrences do not overlap.
-  // It also needs the earlier result to hold no complete value, in a marker or across a marker and its text.
-  // With several values, marker text or an overlap can make the result differ, the differences are not a closed list, and the tests pin examples.
-  // Two variables with one value share one match, named for the first variable in the environment.
+  // For one secret-named variable, the result is byte-identical when the raw and escaped occurrences
+  // do not overlap.
+  // It also needs no complete value in a marker or across a marker and its text.
+  // With several values, marker text or an overlap can make the result differ. The differences are
+  // not a closed list, and the tests pin examples.
   // Exact-value match only: a secret that the command derives, encodes, or reads from a file is not found.
   // A later change of the result is a cut, a removal of control characters, or a serialization.
   let out = text;
@@ -145,7 +147,7 @@ function stripControl(text) {
   return (
     text
       .replaceAll("\r\n", "\n")
-      // eslint-disable-next-line no-control-regex -- Drops the same control characters as before.
+      // oxlint-disable-next-line no-control-regex -- Drops control characters other than a newline and a tab.
       .replace(/[\u0000-\u0008\u000b-\u001f]/g, "")
   );
 }

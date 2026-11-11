@@ -56,8 +56,10 @@ const OPERATION_SYNTAX = ROLE_OPERATIONS.map((operation) => operation.name).join
 const ROLE_USAGE = [
   `Usage: agent-loop role [${OPERATION_SYNTAX}] [flags]`,
   "",
-  "Runs dispatch, finish, abort, extend, declare-pr, refresh-local, set-model, or",
-  "wait-checks on a run, from a lifecycle state file. One JSON object on stdout,",
+  `Runs ${ROLE_OPERATIONS.slice(0, -1)
+    .map((operation) => operation.name)
+    .join(", ")}, or`,
+  `${ROLE_OPERATIONS.at(-1).name} on a run, from a lifecycle state file. One JSON object on stdout,`,
   "except this help; logs on stderr.",
   "",
   "Dispatch: agent-loop role dispatch --role worker|reviewer --prompt-file <path>",

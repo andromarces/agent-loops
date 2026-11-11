@@ -321,22 +321,8 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
   if (first) {
     return fail(first.failure.reason);
   }
-  // Run this after the per-check pass so a named check refusal keeps its name.
-  // `gh pr checks --required` lists only checks that already reported, so on a
-  // classic-protection-only repo a caller without admin rights cannot enumerate
-  // a required check that never started; GitHub reports that PR as blocked to such
-  // a caller, confirmed live with a non-admin `GITHUB_TOKEN` (#280). When no other
-  // required check reported, the empty-union refusal above fires first, because
-  // that caller's protection source is unreadable. The REST `mergeable_state`
-  // reads `blocked` for an admin and `unstable` for an anonymous caller on that
-  // same pull request, so its value depends on the viewer and is not a stable
-  // signal. The GraphQL `mergeStateStatus` reads `BLOCKED` for the admin and for
-  // a non-admin `GITHUB_TOKEN`, which is what was observed; GraphQL needs
-  // authentication, so no anonymous reading of it exists (#280). Other unmet rules
-  // (a required review, unresolved conversations, a required deployment) also report
-  // blocked, and the gate cannot tell them apart, so it fails closed (#271). The
-  // established-absence pass above refuses on it too, because a branch with no
-  // required check can still carry another required rule (#336).
+  // Run this after the per-check pass so a named check refusal keeps its name. A blocked merge
+  // state fails closed, because another unmet rule reports it too (ADR 0012, issues #280 and #336).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(MERGE_BLOCKED_REFUSAL);
   }
@@ -345,15 +331,14 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
 }
 
 /**
- * Why a run that declares `pr` could never finish through the `--require-ci` gate, or null. Reads the
- * repository rulesets of the PR base once, as the gate does, beside the protection source, which only an
- * unsettled rulesets read waits for (a failed protection read ends in null, as it always did), and reports the one answer the gate
- * refuses whatever the other sources hold: a repository-rulesets read that settled nothing, such as
- * the Free-plan 403. A read that fails for another reason, such as the network, logs a warning and
- * returns null, because the gate may read the sources when the run finishes.
- * `when` completes the warning of a failed read: "at start" for a `--pr` start, or the point where a
- * declaration of a worker-opened PR reads. `signal` is the caller cancel: it ends a running read, and
- * the call then rejects with `isCanceled` set instead of logging a warning and returning null.
+ * Why a run that declares `pr` can never finish through the `--require-ci` gate, or null. Reads the
+ * PR base repository rulesets once, as the gate does, beside the protection source, and only an
+ * unsettled rulesets read waits for it. A failed protection read ends in null. The call reports the
+ * one answer the gate refuses whatever the other sources hold: a repository-rulesets read that
+ * settled nothing, such as the Free-plan 403. A read that fails otherwise, such as the network,
+ * logs a warning and returns null, because the gate can read the sources at finish. `when`
+ * completes that warning with "at start" for a `--pr` start, or the point where a worker-opened PR
+ * declaration reads.
  * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number, when?: string, signal?: AbortSignal | null }} options
  * @returns {Promise<string | null>}
  */
@@ -366,6 +351,7 @@ export async function unreadableGateReason({
   signal = null,
 }) {
   // The signal ends a call that a runner does not bound itself, so a hung `gh` cannot hold the start open.
+  // A canceled call rejects with `isCanceled` set instead of logging a warning and returning null.
   const call = boundedCall(gh, timeoutMs, signal);
   // A canceled read fails like any other read, so the cancel is told from the failure by the signal.
   try {
