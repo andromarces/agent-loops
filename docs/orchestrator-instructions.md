@@ -17,7 +17,7 @@ Reference sections list below names each file and when to read it.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception.
-- Never write to GitHub or any remote: do not create, edit, comment on, review,
+- Never write to GitHub or any remote. Do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
   other remote state. A status read, such as `agent-loop role wait-checks`, is
   not a write. The runtime does not detect a remote write, so this rule is advisory.

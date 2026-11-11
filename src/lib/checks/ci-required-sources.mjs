@@ -1,6 +1,6 @@
-// Reads the required-check sources of a base branch (repository rulesets, classic branch
-// protection, and `gh pr checks`) and the pull request state that the CI gate judges (#218, #336).
-// The judgment lives in `ci-gate.mjs`.
+// Reads the required-check sources of a base branch: repository rulesets, classic branch
+// protection, and `gh pr checks`. It also reads the pull request state that the CI gate judges
+// (#218, #336). The judgment lives in `ci-gate.mjs`.
 import {
   ghApiFailure,
   ghFailureText,
@@ -15,15 +15,15 @@ import { isJsonObject, tryParseJson } from "../json.mjs";
 // A source the caller cannot read answers 404 or 403, and the message names the
 // credential. Observed live on the classic-protection endpoint (#280, #295):
 //
-//   `Not Found`                             404  a token without repository admin
+//   `Not Found`                             404  a token without repository admin.
 //   `Branch not protected`                  404  an admin, on a branch with no
-//                                                  classic protection
-//   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`
+//                                                  classic protection.
+//   `Resource not accessible by integration` 403  a `GITHUB_TOKEN`.
 //   `Resource not accessible by personal
 //    access token`                           403  a fine-grained PAT without the
-//                                                  Administration permission
+//                                                  Administration permission.
 //
-// All four leave the source with no required contexts, and the caller refuses an
+// All four leave the source with no required contexts. The caller refuses an
 // empty union over an unknown source either way, so the gate treats them alike.
 // The second is not a permission problem: the branch simply has no classic
 // protection, and a ruleset-only repository answers it for an admin. That one
@@ -31,47 +31,47 @@ import { isJsonObject, tryParseJson } from "../json.mjs";
 // (issue #336).
 //
 // A private repository on the GitHub Free plan answers 403 on the classic
-// protection, branch rules, and rulesets endpoints with a message that names the
-// plan instead of the credential (#301, measured on two private Free-plan
-// repositories with an admin classic PAT and an admin fine-grained PAT):
+// protection, branch rules, and rulesets endpoints. Its message names the plan
+// instead of the credential (#301). The measurement covered two private Free-plan
+// repositories, with an admin classic PAT and an admin fine-grained PAT:
 //
 //   `Upgrade to GitHub Pro or make this repository public
 //    to enable this feature.`                     403  a private repository on
-//                                                     the Free plan
+//                                                     the Free plan.
 //
 // The credential is not the problem, so the reasoning above does not carry over
 // and this reply has its own argument. The plan does not allow the rule that
-// would require a check, so no required context can exist on that repository and
-// the source is empty by the same outcome the caller refuses on. The reply is
-// the same on a branch that exists and on one that does not, so it carries
-// nothing about the branch.
+// requires a check. No required context can exist on that repository, and the
+// source is empty by the same outcome the caller refuses on. The reply is the
+// same on a branch that exists and on one that does not, so it carries nothing
+// about the branch.
 //
 // Match the message, not the status. `gh` renders every failure as
-// `gh: <message> (HTTP <status>)`, so a rate-limit or SSO 403 carries the same
-// suffix as the `GITHUB_TOKEN` 403 and the status cannot tell them apart. Reading
-// a rate-limit 403 as an unreadable source would silently drop every required
-// context and downgrade a named check refusal to the generic blocked refusal, so
-// anything unrecognized throws instead. A narrower match only costs a thrown
-// error, which still fails closed.
+// `gh: <message> (HTTP <status>)`. A rate-limit or SSO 403 then carries the same
+// suffix as the `GITHUB_TOKEN` 403, and the status cannot tell them apart.
+// Reading a rate-limit 403 as an unreadable source silently drops every required
+// context. It also downgrades a named check refusal to the generic blocked
+// refusal, so anything unrecognized throws instead. A narrower match only costs a
+// thrown error, which still fails closed.
 //
 // The Free-plan reply is compared as a whole string rather than added to
 // `UNREADABLE`. That pattern is an unanchored search, so an alternative added to
-// it matches any stderr that contains the message anywhere, including a reply
+// it matches any stderr that contains the message anywhere. That includes a reply
 // with extra text around it or another error line beside it. Comparing the whole
-// stderr, after dropping one trailing LF or CRLF, keeps the Free-plan reply exact
-// and leaves every input `UNREADABLE` treats a certain way untouched.
+// stderr keeps the Free-plan reply exact, after one trailing LF or CRLF is
+// dropped. Every input that `UNREADABLE` treats a certain way stays untouched.
 //
-// `Not Found` and the 403s are safe to read as unreadable on these two calls: the
-// slug comes from `gh repo view` and the base branch from the pull request, both of
-// which the caller has already read successfully, so a wrong value here cannot come
-// from a typo. The `Branch not found` reply, which an admin gets for a branch that
-// does not exist, is not matched and throws, so a typo still surfaces when the
-// caller can read protection. It cannot be relied on to surface otherwise: a
-// non-admin token can read the branch but not its protection settings, so a typo
-// answers the same `Not Found` as a protected branch, and a fine-grained PAT
-// without the Administration permission answers the same 403 whatever the branch
-// is. The already-read values are what make a typo impossible here, not the
-// message.
+// `Not Found` and the 403s are safe to read as unreadable on these two calls. The
+// slug comes from `gh repo view`, and the base branch comes from the pull request.
+// The caller has already read both successfully, so a wrong value here cannot
+// come from a typo. The `Branch not found` reply is not matched, so it throws. An
+// admin gets it for a branch that does not exist, so a typo still surfaces when
+// the caller can read protection. It cannot be relied on to surface otherwise.
+//
+// A non-admin token can read the branch but not its protection settings, so a typo
+// answers the same `Not Found` as a protected branch. A fine-grained PAT without
+// the Administration permission answers the same 403 whatever the branch is. The
+// already-read values are what make a typo impossible here, not the message.
 const UNREADABLE =
   /(?:Not Found|Branch not protected) \(HTTP 404\)|Resource not accessible by (?:integration|personal access token) \(HTTP 403\)/;
 
@@ -79,8 +79,8 @@ const UNREADABLE =
 // read it, on a branch with no classic protection. It is the one unreadable reply
 // that proves the source holds no required check (issue #336). It is compared
 // whole, like the Free-plan 403 below, because an unanchored search also matches
-// the same text inside another error: a reply that merely quotes it, or carries
-// it beside a second line, says nothing about the branch and must not read as an
+// the same text inside another error. A reply that merely quotes it, or carries
+// it beside a second line, says nothing about the branch. It must not read as an
 // absence (issue #336 review).
 const NOT_PROTECTED_404 = "gh: Branch not protected (HTTP 404)";
 
@@ -161,8 +161,8 @@ async function readRequiredSource(
 }
 
 // The classifications a required-check configuration source reply can carry.
-// `ABSENT` is a reply that states the source holds no required check, `HAS_CONTEXTS`
-// a reply that names at least one, and `UNKNOWN` a reply that settles nothing.
+// `ABSENT` is a reply that states the source holds no required check.
+// `HAS_CONTEXTS` names at least one, and `UNKNOWN` settles nothing.
 // `EMPTY` is the one outcome the ruleset source alone carries: a successful read
 // that found no rule. It is not a positive absence. It does not refuse the
 // per-check path, so a classic-only repository still finishes on that path
@@ -173,12 +173,12 @@ export const UNKNOWN = "unknown";
 export const EMPTY = "empty";
 
 // Every rule type GitHub documents for a repository ruleset, from the create and
-// update ruleset schemas. A rule entry whose `type` is missing, is not a string, or
-// is outside this list is unknown rather than skipped, because a type this list does
-// not carry may be a required-status-check rule under a name the gate has not seen
-// (issue #336 review). The list is the documented one, not an observed one: a
-// future GitHub rule type makes such a read unknown, which refuses, and that is the
-// safe direction.
+// update ruleset schemas. A rule entry is unknown rather than skipped when its
+// `type` is missing, is not a string, or is outside this list. A type this list
+// does not carry can be a required-status-check rule under a name the gate has not
+// seen (issue #336 review). The list is the documented one, not an observed one.
+// A future GitHub rule type makes such a read unknown, which refuses, and that is
+// the safe direction.
 const RULE_TYPES = new Set([
   "branch_name_pattern",
   "code_coverage",
@@ -224,30 +224,30 @@ const PROTECTION = "classic branch protection";
  */
 export function classifyRulesets(data) {
   // The paged read wraps every page in an outer array, so a complete read is an array
-  // of arrays. A body that is not that shape, or that holds a page which is not an
-  // array, is a read the gate cannot account for every page of, so it settles
-  // nothing rather than being classified from the pages that arrived (issue #336
-  // review).
+  // of arrays. A body is not that shape when it is not an array of arrays, or when
+  // it holds a page that is not an array. Such a read cannot account for every
+  // page, so it settles nothing instead of being classified from the pages that
+  // arrived (issue #336 review).
   if (!Array.isArray(data) || data.some((page) => !Array.isArray(page))) {
     return { state: UNKNOWN, contexts: [] };
   }
   if (data.length === 0) {
     // A read that returned no page at all is not a read that found no rule. An
     // empty body from the paginated call is the same reply whether the branch has
-    // no rule or the read returned nothing, and only the single empty page says
-    // the first (issue #336 review).
+    // no rule or the read returned nothing. Only the single empty page says the
+    // first (issue #336 review).
     return { state: UNKNOWN, contexts: [] };
   }
   if (data.every((page) => page.length === 0)) {
     // Exactly one empty page is the reply that says the branch has no rule, so it
-    // is `EMPTY`. More than one empty page is an anomalous sequence: GitHub stops
-    // paginating when there is no next page, so a second empty page means the read
-    // is not the complete result it claims to be (issue #336 review).
+    // is `EMPTY`. More than one empty page is an anomalous sequence. GitHub stops
+    // paginating when there is no next page. A second empty page then means the
+    // read is not the complete result it claims to be (issue #336 review).
     return { state: data.length === 1 ? EMPTY : UNKNOWN, contexts: [] };
   }
   if (data.some((page) => page.length === 0)) {
     // An empty page beside a page that holds rules settles nothing, for the same
-    // reason: a partial read must not be classified from the pages that did arrive
+    // reason. A partial read must not be classified from the pages that did arrive
     // (issue #336 review).
     return { state: UNKNOWN, contexts: [] };
   }
@@ -259,8 +259,8 @@ export function classifyRulesets(data) {
     }
     // A well-formed rule is an object that carries a string `type`.
     if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
-      // A type the gate does not know may be a required-status-check rule under a
-      // name this list does not carry, so it is unknown rather than skipped
+      // A type the gate does not know can be a required-status-check rule under a
+      // name this list does not carry. It is therefore unknown rather than skipped
       // (issue #336 review).
       return { state: UNKNOWN, contexts: [] };
     }
@@ -444,27 +444,27 @@ async function ghRequiredNames(gh, pr, cwd) {
   );
 }
 
-// A required status context: its name, plus the id of the app whose check run
-// must satisfy it when the source qualifies the context with one. A null `appId`
-// is unqualified and is satisfied by a check run or a commit status with the
-// name. Ruleset entries carry `integration_id`, classic-protection entries carry
-// `app_id`, and `gh pr checks --required` carries no app qualifier.
+// A required status context is its name. It also holds the id of the app whose
+// check run must satisfy it, when the source qualifies the context with one. A
+// null `appId` is unqualified and is satisfied by a check run or a commit status
+// with the name. Ruleset entries carry `integration_id`, classic-protection
+// entries carry `app_id`, and `gh pr checks --required` carries no app qualifier.
 function contextKey(name, appId) {
   return `${name}\0${appId ?? ""}`;
 }
 
 function addContext(contexts, name, appId = null) {
   if (name) {
-    // A source can report `-1` as the "any app" qualifier; treat it as absent.
+    // A source can report `-1` as the "any app" qualifier. Treat it as absent.
     const qualifier = appId == null || appId === -1 ? null : appId;
     contexts.set(contextKey(name, qualifier), { name, appId: qualifier });
   }
 }
 
 // The repository-rulesets source of `base`, classified. The endpoint paginates at 30 rules per page by
-// default, so a single read can stop before a required-status-check rule and report an absence for a
-// branch that requires one. Every page is fetched by page number, never by a reply-supplied `Link`
-// URL, and a body the gate cannot account for every page of is unknown or an error (issue #336
+// default, so a single read can stop before a required-status-check rule. It can then report an absence
+// for a branch that requires one. Every page is fetched by page number, never by a reply-supplied `Link`
+// URL. A body the gate cannot account for every page of is unknown or an error (issue #336
 // review, #1033).
 function readRulesets(gh, slug, base, cwd) {
   // Its absentOnError predicate never matches, because that endpoint does not write the 404.
@@ -583,9 +583,9 @@ export async function requiredContexts(
   }
 
   // An unqualified copy of an app-qualified name cannot express which app must
-  // pass, so it would judge the name by the newest run from any app and could
-  // refuse a passing qualified check. Drop it in favor of the qualified
-  // context, which the per-context check enforces.
+  // pass. It judges the name by the newest run from any app and can refuse a
+  // passing qualified check. Drop it in favor of the qualified context, which the
+  // per-context check enforces.
   const values = [...contexts.values()];
   const qualifiedNames = new Set(
     values.filter((context) => context.appId !== null).map((context) => context.name),
