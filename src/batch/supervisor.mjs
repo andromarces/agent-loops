@@ -41,7 +41,7 @@ import {
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
 import { missingLoopReport, loopReportFromRead, readLoopReport } from "./report.mjs";
-import { stepsUsedFromData, transcriptExitFromData } from "./steps.mjs";
+import { stepsUsedFromData, transcriptAbortFromData, transcriptExitFromData } from "./steps.mjs";
 import { mapInBatches } from "../lib/batches.mjs";
 import {
   acquireClaim,
@@ -188,6 +188,8 @@ function spawnFailureText(error) {
 
 const terminal = (status) => TERMINAL.has(status);
 const loopEnded = (status) => terminal(status) || status === "interrupted";
+// The failed line of an aborted loop carries the first line of the abort reason.
+const abortDetail = (line) => (line ? `aborted: ${line}` : "aborted");
 
 export function loopEntry(loop) {
   return {
@@ -1310,6 +1312,17 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
     }
+    const abort = transcriptAbortFromData(transcript.ok ? transcript.data : null, exitCode ?? null);
+    if (abort) {
+      await changeLoop(
+        issue,
+        { ...common, status: "failed", reason: "aborted", pr: declaredPr },
+        { transcript },
+      );
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      logError(`issue ${issue}: failed (${abortDetail(abort.reason)})`);
+      return;
+    }
     await changeLoop(
       issue,
       {
@@ -1382,8 +1395,13 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
   };
 
-  const finishFailure = async (issue, loop, reason, { stepsUsed, remainingSteps, transcript }) => {
-    logError(`issue ${issue}: failed (${reason})`);
+  const finishFailure = async (
+    issue,
+    loop,
+    reason,
+    { stepsUsed, remainingSteps, transcript, detail = null },
+  ) => {
+    logError(`issue ${issue}: failed (${detail ?? reason})`);
     await changeLoop(
       issue,
       {
@@ -1487,6 +1505,19 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       return;
     }
     if (recordedExit.ok && recordedExit.proven && [1, 2].includes(recordedExit.exitCode)) {
+      const abort =
+        recordedExit.exitCode === 1
+          ? transcriptAbortFromData(transcript.ok ? transcript.data : null, recordedExit.exitCode)
+          : null;
+      if (abort) {
+        await finishFailure(issue, loop, "aborted", {
+          stepsUsed,
+          remainingSteps,
+          transcript,
+          detail: abortDetail(abort.reason),
+        });
+        return;
+      }
       await finishFailure(issue, loop, `exit-${recordedExit.exitCode}`, {
         stepsUsed,
         remainingSteps,
