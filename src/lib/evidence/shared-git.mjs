@@ -231,39 +231,36 @@ function whileNotAborted(signal, request) {
 
 // Hashes a regular hook file in chunks, so a large hook is never held whole (issue #1858). The
 // stream owns the opened handle and closes it on end, error, or abort. A handle that resolves after
-// a cancel is closed too, and each file system request ends with the signal.
+// a cancel is closed in the background, and every request waits on the signal.
 async function hashHookFile(path, signal) {
-  const opening = open(path, "r");
+  let pendingOpen = null;
   let handle;
   try {
-    handle = await whileNotAborted(signal, () => opening);
+    handle = await whileNotAborted(signal, () => (pendingOpen = open(path, "r")));
   } catch (err) {
     // The open request cannot be stopped, so a handle that arrives after the cancel is closed here.
-    opening.then(
+    pendingOpen?.then(
       (late) => late.close().catch(() => {}),
       () => {},
     );
     throw err;
   }
-  let stream;
   try {
-    const { size } = await whileNotAborted(signal, () => handle.stat());
-    // Bound the read to the size of the opened file, as the whole-file read did.
-    const range = size > 0 ? { start: 0, end: size - 1 } : {};
-    stream = createReadStream(path, { fd: handle, signal, ...range });
+    return await whileNotAborted(signal, async () => {
+      const { size } = await handle.stat();
+      // Bound the read to the size of the opened file, as the whole-file read did.
+      const range = size > 0 ? { start: 0, end: size - 1 } : {};
+      const stream = createReadStream(path, { fd: handle, signal, ...range });
+      const hash = createHash("sha256");
+      for await (const chunk of stream) hash.update(chunk);
+      return hash.digest("hex");
+    });
   } catch (err) {
-    await handle.close();
-    throw err;
-  }
-  const hash = createHash("sha256");
-  try {
-    for await (const chunk of stream) hash.update(chunk);
-  } catch (err) {
-    // A cancel wins over a read error that follows it.
+    // A close that waits on a pending native request or a stream destroy stays off the rejection.
+    handle.close().catch(() => {});
     if (signal?.aborted) throw canceled();
     throw err;
   }
-  return hash.digest("hex");
 }
 
 // Hashes a hook file like `sha256File` does, but checks `signal` before each file system request, so

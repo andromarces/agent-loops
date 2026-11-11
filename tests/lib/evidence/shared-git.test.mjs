@@ -1,7 +1,7 @@
 import { inspect } from "node:util";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 // Makes the named `node:fs/promises` function throw an error whose message and path carry
 // `FS_MARKER`, as a Node file system error carries the path, while `fsFailure.operation` is set.
@@ -18,6 +18,7 @@ const fsFailure = vi.hoisted(() => ({
   delayedOpen: Promise.resolve(),
   delayedStat: Promise.resolve(),
   onStat: null,
+  statResolved: false,
   handleCloses: 0,
   requests: [],
 }));
@@ -62,21 +63,26 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         await fsFailure.delayedOpen;
       }
       const handle = await request;
-      const close = handle.close.bind(handle);
-      handle.close = async () => {
-        fsFailure.handleCloses += 1;
-        return close();
-      };
       if (fsFailure.statDelayMs > 0) {
         const stat = handle.stat.bind(handle);
-        handle.stat = () => {
+        handle.stat = async () => {
           fsFailure.onStat?.();
+          const result = await stat();
           fsFailure.delayedStat = new Promise((resolve) =>
             setTimeout(resolve, fsFailure.statDelayMs),
           );
-          return fsFailure.delayedStat.then(() => stat());
+          await fsFailure.delayedStat;
+          fsFailure.statResolved = true;
+          return result;
         };
       }
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        fsFailure.handleCloses += 1;
+        // A queued close waits behind the pending native request, as a FileHandle close does.
+        if (fsFailure.statDelayMs > 0 && !fsFailure.statResolved) await fsFailure.delayedStat;
+        return close();
+      };
       return handle;
     },
     readlink: failing("readlink"),
@@ -123,6 +129,7 @@ afterEach(async () => {
   fsFailure.delayedOpen = Promise.resolve();
   fsFailure.delayedStat = Promise.resolve();
   fsFailure.onStat = null;
+  fsFailure.statResolved = false;
   fsFailure.handleCloses = 0;
   fsFailure.requests.length = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
@@ -130,10 +137,10 @@ afterEach(async () => {
 
 // Real Git: the shared state read must match what Git reports for a linked work tree.
 // A repository and a linked work tree of it, so the shared state sits in the common directory.
-async function createRepoWithLinkedWorkTree() {
+async function createRepoWithLinkedWorkTree(store = dirs) {
   const repo = await createTempRepo();
-  dirs.push(repo);
-  const parent = await trackedTempDir("agent-loops-shared-git-", dirs);
+  store.push(repo);
+  const parent = await trackedTempDir("agent-loops-shared-git-", store);
   const linked = join(parent, "linked");
   // A real `git worktree add`: the linked work tree's `.git` file holds an absolute path, so each
   // case needs its own.
@@ -772,48 +779,59 @@ test("no hook file system request starts after the deadline", async () => {
   expect(fsFailure.requests).toEqual(atDeadline);
 }, 20_000);
 
-// Usefulness: verifies "a canceled hook read closes a handle that open resolves after the cancel"
-// (issue #1858): a leaked handle outlives the turn.
-test("a cancel during open closes the handle that opens later", async () => {
-  const { repo, linked } = await createRepoWithLinkedWorkTree();
-  await writeFile(join(repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
-  fsFailure.openDelayMs = 300;
-  const controller = new AbortController();
-  const read = readSharedGit(linked, { signal: controller.signal }).catch((err) => err);
-  await pollUntil(() => (fsFailure.requests.includes("open") ? true : undefined), 5_000);
-  controller.abort();
-  const failure = await read;
-  expect(failure).toMatchObject({ isCanceled: true });
-  await fsFailure.delayedOpen;
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(fsFailure.handleCloses).toBe(1);
-});
+describe("hook read cancellation (#1858)", () => {
+  const sharedDirs = [];
+  let linked;
 
-// Usefulness: verifies "a stalled hook stat ends at the deadline and closes its handle" (issue
-// #1858): an unbounded stat blocks the deadline.
-test("a stalled hook stat ends at the deadline and closes its handle", async () => {
-  const { repo, linked } = await createRepoWithLinkedWorkTree();
-  await writeFile(join(repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
-  let startDeadline;
-  const statStarted = new Promise((resolve) => {
-    startDeadline = resolve;
+  beforeAll(async () => {
+    const fixture = await createRepoWithLinkedWorkTree(sharedDirs);
+    await writeFile(join(fixture.repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
+    linked = fixture.linked;
   });
-  let statAt = 0;
-  fsFailure.statDelayMs = 800;
-  fsFailure.onStat = () => {
-    statAt = Date.now();
-    startDeadline();
-  };
-  const read = readSharedGit(linked, { deadlineMs: 200, deadlineStart: statStarted }).catch(
-    (err) => err,
-  );
-  const failure = await read;
-  expect(failure.message).toMatch(/200 ms/);
-  expect(Date.now() - statAt).toBeLessThan(600);
-  await fsFailure.delayedStat;
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(fsFailure.handleCloses).toBe(1);
-}, 20_000);
+
+  afterAll(async () => {
+    for (const dir of sharedDirs.splice(0)) await removePath(dir);
+  });
+
+  // Usefulness: verifies "a canceled hook read closes a handle that open resolves after the cancel"
+  // (issue #1858): a leaked handle outlives the turn.
+  test("a cancel during open closes the handle that opens later", async () => {
+    fsFailure.openDelayMs = 300;
+    const controller = new AbortController();
+    const read = readSharedGit(linked, { signal: controller.signal }).catch((err) => err);
+    await pollUntil(() => (fsFailure.requests.includes("open") ? true : undefined), 5_000);
+    controller.abort();
+    const failure = await read;
+    expect(failure).toMatchObject({ isCanceled: true });
+    await fsFailure.delayedOpen;
+    await pollUntil(() => (fsFailure.handleCloses > 0 ? true : undefined), 5_000);
+    expect(fsFailure.handleCloses).toBe(1);
+  });
+
+  // Usefulness: verifies "a stalled native hook stat does not hold the cancel rejection" (issue
+  // #1858): a queued close must not delay the canceled read.
+  test("a stalled native stat does not hold the cancel rejection", async () => {
+    let startDeadline;
+    const statStarted = new Promise((resolve) => {
+      startDeadline = resolve;
+    });
+    fsFailure.statDelayMs = 800;
+    fsFailure.onStat = () => startDeadline();
+    let rejectedBeforeStatResolved = false;
+    const failure = await readSharedGit(linked, {
+      deadlineMs: 200,
+      deadlineStart: statStarted,
+    }).catch((err) => {
+      rejectedBeforeStatResolved = !fsFailure.statResolved;
+      return err;
+    });
+    expect(failure.message).toMatch(/200 ms/);
+    expect(rejectedBeforeStatResolved).toBe(true);
+    await fsFailure.delayedStat;
+    await pollUntil(() => (fsFailure.handleCloses > 0 ? true : undefined), 5_000);
+    expect(fsFailure.handleCloses).toBe(1);
+  }, 20_000);
+});
 
 // Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):
 // passing both must not drop the turn signal.
