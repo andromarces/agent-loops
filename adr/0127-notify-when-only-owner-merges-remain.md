@@ -16,7 +16,7 @@ This ADR partially supersedes [ADR 0110: Release batch loop slots on owner decis
 
 ## Context
 
-Decision 6 sent a `merge-required` event when an issue first entered `waiting`. The blocker loop could still be queued or running then, so no merge was possible.
+Decision 6 sent a `merge-required` event when an issue first entered `waiting`. The blocker loop was sometimes still queued or running then, so no merge was possible.
 
 No event fired when the last active loop settled and only `waiting` loops remained. The final settle computed the `waiting` status after the waiting poll ended. The foreground command then stayed silent until the owner merged.
 
@@ -24,7 +24,7 @@ Batch `20261111-051729-b56b9466` showed the gap on 2026-11-11. Issues #1779 and 
 
 ## Decision
 
-1. **One event when only waiting loops remain.** The supervisor reads the loop records after a loop settles, after each waiting refresh, and before a waiting poll sleep. It sends one notification and writes one progress line when no loop is `queued` or `running` and at least one loop is `waiting`.
+1. **One event when only waiting loops remain.** The supervisor reads the loop records after each launch pass, after a loop settles, after each waiting refresh, and before a waiting poll sleep. It sends one notification and writes one progress line when no loop is `queued` or `running` and at least one loop is `waiting`.
 2. **The text names each blocker and its open pull request.** Each blocking issue is named. A blocker loop in this batch with a recorded `pr` adds that pull request number. A blocker without a record is named by its issue number only, and the text never states that it has no pull request. The batch adds no GitHub read on the poll for this text.
 3. **One send per entry into the state.** The supervisor marks the state as sent. The mark clears when a loop becomes `queued` or `running` again. An interrupt or a hard stop sends nothing.
 4. **The first `merge-required` event stays.** A waiting issue still sends `merge-required` on its first entry into `waiting`. The new event is separate and fires when no active loop remains.

@@ -1822,6 +1822,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       else await withLoopOwnership(issue, runOne);
       await new Promise((resolve) => setImmediate(resolve));
     }
+    await notifyOwnerMergeOnly();
     if (hard || interrupted) break;
     if (pausedReason !== null && active.size === 0) break;
     const hasRecordedHeld = () => slots.size > active.size;
