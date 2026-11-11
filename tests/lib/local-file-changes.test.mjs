@@ -210,7 +210,7 @@ test("a source save between the read and the write leaves the read bytes and rep
 // Windows does not expose POSIX mode bits, so the mode check is POSIX only.
 test.skipIf(process.platform === "win32")("a refresh keeps the mode of a 0600 copy", async () => {
   const { main, linked } = await createComparePair();
-  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(main, ".env"), "KEY=NEW\n");
   await writeFile(join(linked, ".env"), "KEY=OLD\n");
   await chmod(join(linked, ".env"), 0o600);
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -225,7 +225,7 @@ test.skipIf(process.platform === "win32")("a refresh keeps the mode of a 0600 co
 // Windows does not expose POSIX mode bits, so the mode check is POSIX only.
 test.skipIf(process.platform === "win32")("a refresh keeps a 0640 copy at 0640", async () => {
   const { main, linked } = await createComparePair();
-  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(main, ".env"), "KEY=NEW\n");
   await writeFile(join(linked, ".env"), "KEY=OLD\n");
   await chmod(join(linked, ".env"), 0o640);
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
@@ -322,7 +322,7 @@ test.skipIf(process.platform !== "win32")(
 // Not redundant: it forces the temporary create to fail on an existing entry.
 test("a failed exclusive create leaves the existing temporary entry", async () => {
   const { main, linked } = await createComparePair();
-  await writeFile(join(main, ".env"), "KEY=OLD\n");
+  await writeFile(join(main, ".env"), "KEY=NEW\n");
   await writeFile(join(linked, ".env"), "KEY=OLD\n");
   const baseline = await hashCopiedLocalFiles(linked, [".env"]);
   let temp = "";

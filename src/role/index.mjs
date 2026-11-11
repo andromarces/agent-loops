@@ -239,10 +239,12 @@ async function declarePr(args, { gh, signal } = {}) {
 
 /**
  * `refresh-local`: copies one copied local file's source over its run copy and stores the new hash.
+ * It replaces nothing and writes no state when the copy already holds the source bytes and the
+ * stored hash matches.
  * The call needs the stored parent session id on a non-terminal run, and a child role cannot run it.
  * The path must be one that init copied, with a stored hash.
  * The copy must still equal that hash, so a turn edit is refused and stays reported as a breach.
- * Other paths keep their stored hashes. The envelope names the path only, never content or a hash.
+ * Other paths keep their stored hashes, and the envelope names the path only, never content or a hash.
  */
 async function refreshLocal(args, { signal } = {}) {
   rejectMisplacedFlags(args, "refresh-local");
@@ -284,9 +286,12 @@ async function refreshLocal(args, { signal } = {}) {
         }
         throw new RoleError(err.message);
       }
-      state.localFilesCopiedSha256 = { ...hashes, [rel]: hash };
-      await writeState(paths.stateFile, state);
-      logInfo(`local file refreshed: ${rel} (${state.stepsUsed} steps used)`);
+      // An unchanged hash leaves the state file untouched, so a no-op writes nothing.
+      if (hash !== expected) {
+        state.localFilesCopiedSha256 = { ...hashes, [rel]: hash };
+        await writeState(paths.stateFile, state);
+      }
+      logInfo(`local file refresh complete: ${rel} (${state.stepsUsed} steps used)`);
       return {
         exitCode: 0,
         payload: { status: "ok", lifecycle: state.lifecycle, path: rel },
