@@ -337,7 +337,8 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
  * one answer the gate refuses whatever the other sources hold: a repository-rulesets read that
  * settled nothing, such as the Free-plan 403. A read that fails otherwise, such as the network,
  * logs a warning and returns null, because the gate can read the sources at finish. `when`
- * completes that warning with "at start" for a `--pr` start, or the declaration point.
+ * completes that warning with "at start" for a `--pr` start, or the point where a worker-opened PR
+ * declaration reads.
  * @param {{ pr: number, cwd: string, gh?: Function, timeoutMs?: number, when?: string, signal?: AbortSignal | null }} options
  * @returns {Promise<string | null>}
  */

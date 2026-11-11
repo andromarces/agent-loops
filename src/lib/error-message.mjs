@@ -14,7 +14,7 @@ export const UNREADABLE_MESSAGE = "Unreadable error";
  * envelope always carries `error`.
  */
 export function errorMessage(err) {
-  // Reading `err.message` throws out of the call.
+  // Throws when reading `err.message` throws.
   const message = err?.message ?? String(err);
   if (typeof message === "string") {
     return redactEnvSecrets(message);
