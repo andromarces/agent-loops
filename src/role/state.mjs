@@ -1,7 +1,7 @@
 // Shared run state and work tree lock helpers of `agent-loop role`. They are the required state
 // read, the unreadable-gate refusal, the prompt stdin read, and the acquire and release of the run lock.
 import { readStdinText } from "../lib/args.mjs";
-import { unreadableGateReason } from "../lib/ci-gate.mjs";
+import { unreadableGateReason } from "../lib/checks/ci-gate.mjs";
 import { unreadableGateRefusal } from "../lib/gate-refusal.mjs";
 import { cwdHash } from "../lib/runstate.mjs";
 import { lockWorkTree, unlockWorkTree } from "../lib/work-tree-lock.mjs";

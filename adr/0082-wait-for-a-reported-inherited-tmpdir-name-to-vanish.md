@@ -69,9 +69,9 @@ Andro Marces
 - [PR #1570](https://github.com/andromarces/agent-loops/pull/1570)
 - [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md)
 - Implementation:
-  - Re-check: `presentInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`
+  - Re-check: `presentInheritedTmpdir` in `src/lib/evidence/tmpdir-entries.mjs`
   - Parent command: `recheck-tmpdir` in `src/role/index.mjs`
   - Headless read: `src/runtime.mjs`
   - Docs: `docs/reference/role.md`, `docs/orchestrator/runtime-advisory-fields.md`, and `src/help.mjs`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
 - [ADR Index](README.md)

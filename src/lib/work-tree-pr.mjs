@@ -1,6 +1,6 @@
 // Reads the open pull request of the checked-out branch of a work tree for a worker envelope.
 // A detached head, no match, several matches, a cross-repository match, or a failed read yields null.
-import { repoSlug } from "./ci-required-sources.mjs";
+import { repoSlug } from "./checks/ci-required-sources.mjs";
 import { oneLine, readableErrorText } from "./error-message.mjs";
 import {
   boundedCall,
@@ -9,7 +9,7 @@ import {
   PR_LIST_LIMIT,
   readPrList,
   runGh,
-} from "./gh-api.mjs";
+} from "./checks/gh-api.mjs";
 import { gitRead } from "./git-read.mjs";
 import { isFullSha } from "./git-sha.mjs";
 import { logWarn } from "./log.mjs";

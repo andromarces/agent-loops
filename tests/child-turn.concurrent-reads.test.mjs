@@ -61,7 +61,7 @@ const holds = vi.hoisted(() => ({
     this.started.push(name);
   },
 }));
-vi.mock("../src/lib/shared-git.mjs", async (importOriginal) => {
+vi.mock("../src/lib/evidence/shared-git.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -74,7 +74,7 @@ vi.mock("../src/lib/shared-git.mjs", async (importOriginal) => {
     },
   };
 });
-vi.mock("../src/lib/lockfile-change.mjs", async (importOriginal) => {
+vi.mock("../src/lib/evidence/lockfile-change.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,
@@ -87,7 +87,7 @@ vi.mock("../src/lib/lockfile-change.mjs", async (importOriginal) => {
     },
   };
 });
-vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+vi.mock("../src/lib/evidence/tmpdir-entries.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,

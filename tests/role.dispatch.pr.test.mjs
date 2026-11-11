@@ -1,7 +1,7 @@
 import { afterEach, expect, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { executeRoleCommand } from "../src/role/index.mjs";
-import { runGh } from "../src/lib/gh-api.mjs";
+import { runGh } from "../src/lib/checks/gh-api.mjs";
 import {
   cleanup,
   dispatchArgv,

@@ -10,10 +10,10 @@ import {
   cliCommandForms,
 } from "./rules.mjs";
 import { actionFormats, REQUIRED_SUMMARY_KEYS } from "../contracts/orchestrator-action.mjs";
-import { turnResultFields, TURN_EVIDENCE_FIELDS } from "../lib/turn-evidence.mjs";
+import { turnResultFields, TURN_EVIDENCE_FIELDS } from "../lib/evidence/turn-evidence.mjs";
 import { agentHas } from "../lib/agent-kinds.mjs";
 import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
-import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/check-wait.mjs";
+import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/checks/check-wait.mjs";
 
 // Shared rule source: docs/orchestrator-instructions.md and its reference sections in
 // docs/orchestrator/ state the role rules for interactive parents (#56); this headless prompt states the same rules in

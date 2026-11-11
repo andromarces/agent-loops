@@ -60,6 +60,6 @@ Andro Marces
 - [ADR 0086](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md) (decisions 2 and 5 superseded)
 - [ADR 0080](0080-report-a-main-work-tree-change-inside-a-turn-window.md)
 - [ADR 0100](0100-arm-the-main-work-tree-watch-before-the-child-turn.md)
-- Implementation: `fileCandidates` in `src/lib/main-work-tree-watch.mjs`
-- Tests: `tests/lib/main-work-tree-watch.test.mjs`, `tests/child-turn.main-work-tree.test.mjs`
+- Implementation: `fileCandidates` in `src/lib/evidence/main-work-tree-watch.mjs`
+- Tests: `tests/lib/evidence/main-work-tree-watch.test.mjs`, `tests/child-turn.main-work-tree.test.mjs`
 - [ADR Index](README.md)

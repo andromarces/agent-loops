@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
-import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
+import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { createTempRepo } from "./git-helpers.mjs";

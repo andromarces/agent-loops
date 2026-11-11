@@ -10,7 +10,7 @@ import { removePath } from "../fs-helpers.mjs";
 
 const homes = [];
 
-export const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+export const PACKAGE_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 export async function makeHome() {
   const home = await mkdtemp(join(tmpdir(), "agent-loop-install-home-"));

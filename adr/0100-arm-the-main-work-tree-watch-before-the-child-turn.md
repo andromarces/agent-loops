@@ -53,10 +53,10 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { startMainWorkTreeWatch } from "../../../../src/lib/main-work-tree-watch.mjs";
+import { startMainWorkTreeWatch } from "../../../../src/lib/evidence/main-work-tree-watch.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const workTree = fileURLToPath(new URL("../../../../", import.meta.url));
+const workTree = fileURLToPath(new URL("../../../..", import.meta.url));
 const repo = join(here, "probe-repo");
 const target = join(repo, "init.txt");
 const mutant = process.argv[2] === "mutant";
@@ -173,6 +173,6 @@ Andro Marces
 - [Pull request #1629](https://github.com/andromarces/agent-loops/pull/1629)
 - [ADR 0080](0080-report-a-main-work-tree-change-inside-a-turn-window.md) (decision 1 superseded)
 - [ADR 0086](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md)
-- Implementation: `startMainWorkTreeWatch` and `watchRecursive` in `src/lib/main-work-tree-watch.mjs`
-- Tests: `tests/lib/main-work-tree-watch.test.mjs`
+- Implementation: `startMainWorkTreeWatch` and `watchRecursive` in `src/lib/evidence/main-work-tree-watch.mjs`
+- Tests: `tests/lib/evidence/main-work-tree-watch.test.mjs`
 - [ADR Index](README.md)

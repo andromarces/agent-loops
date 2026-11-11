@@ -88,7 +88,7 @@ Andro Marces
 - [ADR 0085: Let the inherited temporary directory re-check read a terminal run](0085-let-the-tmpdir-re-check-read-a-terminal-run.md)
 - [ADR 0093: Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md)
 - Implementation:
-  - Source: `appearedInInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`, `src/role/dispatch.mjs`, `src/runtime.mjs`, `src/prompts/orchestrator.mjs`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role.dispatch.reports.test.mjs`, `tests/runtime.inherited-tmpdir.test.mjs`
+  - Source: `appearedInInheritedTmpdir` in `src/lib/evidence/tmpdir-entries.mjs`, `src/role/dispatch.mjs`, `src/runtime.mjs`, `src/prompts/orchestrator.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`, `tests/role.dispatch.reports.test.mjs`, `tests/runtime.inherited-tmpdir.test.mjs`
   - Docs: `docs/orchestrator-instructions.md`, `docs/orchestrator/runtime-advisory-fields.md`, `docs/reference/role.md`
 - [ADR Index](README.md)

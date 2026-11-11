@@ -159,11 +159,11 @@ Andro Marces
 ## Links
 
 - [Issue #329: Give the interactive required-check wait a stated bound](https://github.com/andromarces/agent-loops/issues/329)
-- Implementation: `waitChecks` in `src/lib/check-wait.mjs`, the bounded runner
-  in `runGh` and `src/lib/ci-gate.mjs`, the `wait-checks` operation in
+- Implementation: `waitChecks` in `src/lib/checks/check-wait.mjs`, the bounded runner
+  in `runGh` and `src/lib/checks/ci-gate.mjs`, the `wait-checks` operation in
   `src/role/index.mjs`, the help text in `src/help.mjs`; tests in
-  `tests/lib/check-wait.test.mjs`, `tests/role.wait-checks.test.mjs`, and
-  `tests/lib/ci-gate.*.test.mjs`; documented in
+  `tests/lib/checks/check-wait.test.mjs`, `tests/role.wait-checks.test.mjs`, and
+  `tests/lib/checks/ci-gate.*.test.mjs`; documented in
   `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role)
 - [Issue #319: State the required-check wait per role and CLI](https://github.com/andromarces/agent-loops/issues/319)
 - [PR #322](https://github.com/andromarces/agent-loops/pull/322)

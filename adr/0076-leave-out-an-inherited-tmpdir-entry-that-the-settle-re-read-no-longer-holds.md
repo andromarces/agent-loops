@@ -63,7 +63,7 @@ Andro Marces
 - [ADR 0069: Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md)
 - Related: [Issue #1024](https://github.com/andromarces/agent-loops/issues/1024)
 - Implementation:
-  - Source: `appearedInInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`
+  - Source: `appearedInInheritedTmpdir` in `src/lib/evidence/tmpdir-entries.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`
   - Docs: `docs/orchestrator/runtime-advisory-fields.md`
 - [ADR Index](README.md)
