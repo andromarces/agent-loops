@@ -897,10 +897,33 @@ test("parseVerdict yields unknown when both verdicts are named", () => {
   }
 });
 
-// Usefulness: verifies a verdict outside the closing block never counts — only
-// a `Verdict:` line after the last `Conclusion:` line can produce a verdict.
+// Usefulness: verifies a verdict separated from the block by prose never counts, so a Verdict line
+// must sit inside the block or above it.
 test("parseVerdict ignores a Verdict line outside the closing block", () => {
-  expect(parseVerdict(`Verdict: accept\n${REPORT}\nfinal note after the block`)).toBe("unknown");
+  expect(parseVerdict(`Verdict: accept\nEarlier narration.\n\n${REPORT}`)).toBe("unknown");
+});
+
+// Usefulness: verifies a lone Verdict line directly above Conclusion yields accept, so a
+// reviewer accept in that shape is not lost (issue #1793).
+test("parseVerdict reads a lone Verdict line directly above Conclusion", () => {
+  expect(parseVerdict(`Verdict: accept\n\n${REPORT}`)).toBe("accept");
+  expect(parseVerdict(`Verdict: reject\n${REPORT}`)).toBe("reject");
+});
+
+// Usefulness: verifies a fenced or repeated Verdict line above Conclusion still yields unknown,
+// the guards the issue #1793 change must keep.
+test("parseVerdict keeps a fenced or repeated Verdict line above Conclusion out", () => {
+  expect(parseVerdict(["```", "Verdict: accept", "```", "", REPORT].join("\n"))).toBe("unknown");
+  expect(parseVerdict(`Verdict: accept\n\nEarlier note.\n\nVerdict: reject\n\n${REPORT}`)).toBe(
+    "unknown",
+  );
+});
+
+// Usefulness: verifies a Verdict line inside the block governs when another one sits above it,
+// so the last line still wins (issue #1793).
+test("parseVerdict keeps the Verdict line inside the block over one above it", () => {
+  expect(parseVerdict(`Verdict: accept\n\n${REPORT}\nVerdict: reject`)).toBe("reject");
+  expect(parseVerdict(`Verdict: reject\n\n${REPORT}\nVerdict: accept`)).toBe("accept");
 });
 
 // Usefulness: verifies a response without a Verdict line yields unknown.

@@ -1023,6 +1023,33 @@ test("reviewer dispatch exposes a null report and the raw response when the bloc
   expect(result.payload.raw).toContain("looks fine");
 });
 
+// Usefulness: verifies a reviewer Verdict line directly above Conclusion reaches the dispatch
+// envelope as accept, so the parent sees the verdict (issue #1793).
+test("reviewer dispatch reads a Verdict line directly above the closing block", async () => {
+  const repo = await newCleanRepo();
+  const verdictAbove = [
+    "Verdict: accept",
+    "",
+    "Conclusion: the state passes.",
+    "Why: changes match the task.",
+    "Blockers: none.",
+    "Checks: npm test",
+  ].join("\n");
+
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    state.sessionId = "rev-verdict-above";
+    return verdictAbove;
+  };
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.verdict).toBe("accept");
+});
+
 // Usefulness: verifies a closing block longer than the old 2000-character bound
 // keeps its whole text in `raw`, including a dropped list near the head, so the
 // flagged line still fails safe when the block is long (issue #268). A tail-only
