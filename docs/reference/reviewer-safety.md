@@ -156,7 +156,7 @@ The mutation check reads only the local work tree, index, and `HEAD`, so the run
 Two paths can carry a remote write:
 
 - Shell network. The `claude`, `agy`, and `opencode` read-only invocations keep shell network access (see [Codex read-only network limit](#codex-read-only-network-limit)), so a turn on one of them can run `gh` or `git` and change remote state. A Codex reviewer with no sandbox, the default, keeps shell network too. The `copilot` invocation refuses most shell commands without approval, but it runs `gh pr checks` (see the probe below).
-- A GitHub app connector on Codex. The connector is `codex_apps`. A `read-only` or `workspace-write` turn refuses a connector write with `MCP tool call requires approval, but approval policy is never`. The `danger-full-access` mode, which a Codex reviewer with no sandbox runs under, posted the comment. The observation applies to a Codex session that has that connector (issue #496).
+- A GitHub app connector on Codex. The connector is `codex_apps`. A `read-only` or `workspace-write` turn refuses a connector write with `MCP tool call requires approval, but approval policy is never`. A `danger-full-access` turn can post a connector comment, and a Codex reviewer with no sandbox runs in that mode. The observation applies to a Codex session that has that connector (issue #496).
 
 #### Denial probe (issue #432)
 

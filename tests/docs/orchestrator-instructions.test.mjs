@@ -809,7 +809,7 @@ test("the interactive instructions forbid a remote write and allow a status read
 });
 
 // Usefulness: verifies the user docs state that the runtime does not see a remote write (issue
-// #422). They name both paths and state the connector write probe result (issue #496).
+// #422). They name both paths and state the connector-write contract (issue #496).
 test("the user docs state the remote-write limit", async () => {
   const readme = (await readUserDocs()).replace(/\s+/g, " ");
   expect(readme).toContain(
@@ -817,9 +817,8 @@ test("the user docs state the remote-write limit", async () => {
   );
   expect(readme).toContain("Shell network.");
   expect(readme).toContain("`codex_apps`");
-  expect(readme).toContain(
-    "The `danger-full-access` mode, which a Codex reviewer with no sandbox runs under, posted the comment",
-  );
+  expect(readme).toContain("A `danger-full-access` turn can post a connector comment");
+  expect(readme).toContain("(issue #496)");
 });
 
 // The refused-`--cwd` rule that both parent paths state the same way. It is the decision, not a

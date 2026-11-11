@@ -111,13 +111,9 @@ See [openai/codex#27833](https://github.com/openai/codex/issues/27833). Verify
 that the installed Codex version blocks `apply_patch` before relying on this
 guard. The hook is a best-effort guardrail, not a complete enforcement boundary.
 
-The Codex guard pass is in issue #86: the skill registered the thread as the parent, `apply_patch` was denied, and `role abort` released the guard. The check ran with `sandbox_mode = "danger-full-access"`, and the `role finish` release path is covered by `tests/hook/parent-guard.test.mjs`. The `workspace-write` leg stays
-unverified on Windows: Codex's unelevated Windows sandbox blocks the child
-`git` spawn (`EPERM`) before run initialization
-([openai/codex#37415](https://github.com/openai/codex/issues/37415)). The same
-sandbox blocks `harness-check codex` (run through the installed CLI), because
-the process ancestry read spawns `powershell.exe` and hits `spawn EPERM`; the
-check exits 1 and the skill stops with a check that could not run.
+The Codex guard pass is in issue #86: the skill registered the thread as the parent. `apply_patch` was denied, and `role abort` released the guard. The check ran with `sandbox_mode = "danger-full-access"`. The `role finish` release path is covered by `tests/hook/parent-guard.test.mjs`.
+
+The `workspace-write` leg stays unverified on Windows: Codex's unelevated Windows sandbox blocks the child `git` spawn (`EPERM`) before run initialization ([openai/codex#37415](https://github.com/openai/codex/issues/37415)). The same sandbox blocks `harness-check codex`, which runs through the installed CLI. Its process ancestry read spawns `powershell.exe` and hits `spawn EPERM`. The check exits 1, so the skill stops with a check that did not run.
 
 That stop is
 safe, and it is a second blocker

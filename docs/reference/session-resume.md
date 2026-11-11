@@ -74,7 +74,7 @@ The role state also keeps `taskSentTo`, the id of the conversation that last car
 
 If the CLI dropped that prompt, the conversation never sees the task. A cancel in the reviewer task-only turn counts as delivered, like any canceled turn that carried the task, so the next reviewer turn does not repeat the block. The cancel leaves the mark set and gives no verdict, so a run that ends first has no accepted verdict from that conversation. The mark is stored in the run state of `role dispatch` and in the `--transcript` roles, and `--continue-from` restores it with the id.
 
-A missing conversation returns a new `conversation_id` and a stderr warning, so the replacement receives the init task through the task-only turn. The probe commands and results are in issue #579, and issue #657 repeats them on Windows 11. Linux is not verified.
+A missing conversation returns a new `conversation_id` and a stderr warning. A worker replacement then gets a preamble-only turn, a reviewer gets a task-only turn, and an orchestrator reruns with the initial instructions. The probe commands and results are in issue #579, and issue #657 repeats them on Windows 11. Linux is not verified.
 
 ### `agy`: resume after a kill
 
