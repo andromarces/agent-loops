@@ -117,6 +117,35 @@ test("the remote user reaches the ssh read", async () => {
   ]);
 });
 
+// Usefulness: verifies a percent-encoded ssh URL user decodes to git and the PR is declared.
+test("a percent-encoded ssh URL user decodes before the ssh read", async () => {
+  gitDouble.answer = runState("ssh://%67it@github-work/owner/repo.git");
+  const calls = [];
+  const ssh = async (args) => {
+    calls.push(args);
+    const withUser = args.includes("-l") && args[args.indexOf("-l") + 1] === "git";
+    return {
+      status: 0,
+      stdout: withUser ? "hostname github.com\n" : "hostname github-work\n",
+      stderr: "",
+      timedOut: false,
+    };
+  };
+
+  const result = await resolveWorkerPr({
+    cwd: "/repo",
+    head: HEAD,
+    gh: listGh([pr("https://github.com/owner/repo/pull/42")]),
+    ssh,
+  });
+
+  expect(result).toEqual({ pr: 42 });
+  expect(calls).toEqual([
+    ["-G", "-l", "git", "github-work"],
+    ["-G", "-l", "git", "github-work"],
+  ]);
+});
+
 // Usefulness: verifies acceptance 2, since the same alias remote still refuses a PR in another repository.
 test("an SSH host alias remote refuses a PR in another repository", async () => {
   const result = await resolveWorkerPr({

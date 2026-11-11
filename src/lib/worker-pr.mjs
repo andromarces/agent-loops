@@ -29,14 +29,26 @@ async function runSsh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
 
 /**
  * The canonical host that the SSH configuration gives for `host` with `user`, or null. `ssh -G`
- * contacts no host. A host or user that starts with `-` never reaches the argument list. A failed,
- * timed-out, canceled, or hostless read gives null.
+ * contacts no host. An `ssh:` URL user is percent-decoded, and a malformed value gives null. A host
+ * or user that starts with `-` never reaches the argument list. A failed, timed-out, canceled, or
+ * hostless read gives null.
  */
-async function resolvedSshHost(host, { user, ssh, cwd, signal, timeoutMs }) {
-  if (host.startsWith("-") || (user && user.startsWith("-"))) return null;
+async function resolvedSshHost(host, { user, decodeUser = false, ssh, cwd, signal, timeoutMs }) {
+  let login = user;
+  if (decodeUser && login) {
+    try {
+      login = decodeURIComponent(login);
+    } catch {
+      return null;
+    }
+  }
+  if (host.startsWith("-") || (login && login.startsWith("-"))) return null;
   let result;
   try {
-    result = await ssh(user ? ["-G", "-l", user, host] : ["-G", host], cwd, { signal, timeoutMs });
+    result = await ssh(login ? ["-G", "-l", login, host] : ["-G", host], cwd, {
+      signal,
+      timeoutMs,
+    });
   } catch {
     return null;
   }
@@ -61,6 +73,7 @@ async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, time
   let host;
   let segments;
   let sshRemote = false;
+  let decodeUser = false;
   if (scp) {
     [, user, host, ...segments] = scp;
     sshRemote = true;
@@ -79,6 +92,7 @@ async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, time
     user = url.username;
     host = url.hostname;
     sshRemote = pull === null && url.protocol === "ssh:";
+    decodeUser = sshRemote;
     segments = url.pathname.split("/").filter(Boolean);
     if (segments.length !== (pull !== null ? 4 : 2)) return null;
     if (pull !== null && (segments[2] !== "pull" || segments[3] !== String(pull))) return null;
@@ -88,7 +102,7 @@ async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, time
   const name = repo.replace(/\.git$/, "");
   const resolved =
     sshRemote && host
-      ? ((await resolvedSshHost(host, { user, ssh, cwd, signal, timeoutMs })) ?? host)
+      ? ((await resolvedSshHost(host, { user, decodeUser, ssh, cwd, signal, timeoutMs })) ?? host)
       : host;
   return resolved && owner && name ? `${resolved}/${owner}/${name}`.toLowerCase() : null;
 }
