@@ -89,8 +89,44 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 // Replays recorded Git results in-process, so a test case starts no Git process. A missing call
-// throws, so a replay never hides a changed call.
-const gitReplay = vi.hoisted(() => ({ calls: null, record: null, forwards: 0 }));
+// throws, so a replay never hides a changed call. The key holds the command, arguments, cwd, and
+// five Git scope environment values.
+const gitReplay = vi.hoisted(() => {
+  const scopeNames = [
+    "GIT_DIR",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+  ];
+  const normalize = (value) => {
+    if (typeof value !== "string" || value === "") return value;
+    let path = value.replaceAll("\\", "/");
+    if (process.platform === "win32") path = path.toLowerCase();
+    return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  };
+  const keyOf = (command, args, options) => {
+    const env = options?.env ?? {};
+    return JSON.stringify([
+      command,
+      args,
+      normalize(options?.cwd),
+      scopeNames.map((name) => [name, normalize(env[name])]),
+    ]);
+  };
+  const state = { calls: null, record: null, forwards: 0, keyOf };
+  state.take = (command, args, options) => {
+    const key = keyOf(command, args, options);
+    const index = state.calls.findIndex((call) => call.key === key);
+    if (index === -1) {
+      throw new Error(
+        `no recorded Git call for ${command} ${args.join(" ")} in ${options?.cwd ?? "no cwd"}`,
+      );
+    }
+    return state.calls.splice(index, 1)[0];
+  };
+  return state;
+});
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
 const configExit = vi.hoisted(() => ({ code: null, signals: [] }));
 vi.mock("execa", async (importOriginal) => {
@@ -100,13 +136,7 @@ vi.mock("execa", async (importOriginal) => {
     execa: (command, args, options) => {
       if (options?.cancelSignal) configExit.signals.push(options.cancelSignal);
       if (gitReplay.calls !== null) {
-        const index = gitReplay.calls.findIndex(
-          (call) => call.command === command && call.args.join("\0") === args.join("\0"),
-        );
-        if (index === -1) {
-          throw new Error(`no recorded Git call for ${command} ${args.join(" ")}`);
-        }
-        const [call] = gitReplay.calls.splice(index, 1);
+        const call = gitReplay.take(command, args, options);
         return { exitCode: call.exitCode, stdout: call.stdout, stderr: call.stderr };
       }
       if (configExit.code !== null && args[0] === "config") {
@@ -118,6 +148,7 @@ vi.mock("execa", async (importOriginal) => {
         result.then(
           (value) => {
             gitReplay.record.push({
+              key: gitReplay.keyOf(command, args, options),
               command,
               args: [...args],
               exitCode: value.exitCode,
