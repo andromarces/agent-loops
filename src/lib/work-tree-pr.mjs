@@ -6,11 +6,10 @@ import {
   boundedCall,
   DEFAULT_READ_TIMEOUT_MS,
   isPrListEntry,
-  PR_LIST_LIMIT,
-  readPrList,
+  readOpenBranchPrs,
   runGh,
 } from "./checks/gh-api.mjs";
-import { gitRead } from "./git-read.mjs";
+import { gitRead, readHeadBranch } from "./git-read.mjs";
 import { isFullSha } from "./git-sha.mjs";
 import { logWarn } from "./log.mjs";
 import { redactAndClean } from "./redact.mjs";
@@ -50,10 +49,8 @@ export async function readWorkTreePr({
   if (signal?.aborted) return null;
   let branch;
   try {
-    const result = await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
+    branch = await readHeadBranch(git, cwd, { signal });
     if (signal?.aborted) return null;
-    if (result.exitCode !== 0) return null;
-    branch = result.stdout.trim();
   } catch (err) {
     if (signal?.aborted || err?.isCanceled) return null;
     warnFailure(readableErrorText(err));
@@ -65,30 +62,20 @@ export async function readWorkTreePr({
     // The slug read names the work tree repository, and the list read is pinned to it.
     const slug = await repoSlug(call, cwd);
     if (signal?.aborted) return null;
-    const argv = [
-      "pr",
-      "list",
-      "--repo",
-      slug,
-      "--head",
+    const read = await readOpenBranchPrs({
       branch,
-      "--state",
-      "open",
-      "--json",
-      FIELDS,
-      "--limit",
-      String(PR_LIST_LIMIT),
-    ];
-    const read = await readPrList((args) => call(args, cwd), argv, isEntry);
+      read: (args) => call(args, cwd),
+      repo: slug,
+      fields: FIELDS,
+      isEntry,
+    });
     if (signal?.aborted) return null;
     if (read.failure) {
       warnFailure(read.failure);
       return null;
     }
-    const { list } = read;
-    const sameRepo = list.filter((entry) => !entry.isCrossRepository);
-    if (sameRepo.length !== 1) return null;
-    const [entry] = sameRepo;
+    if (read.list.length !== 1) return null;
+    const [entry] = read.list;
     return { number: entry.number, head: entry.headRefOid.toLowerCase() };
   } catch (err) {
     if (signal?.aborted || err?.isCanceled) return null;

@@ -142,6 +142,40 @@ export async function readPrList(read, argv, isEntry) {
   return { list };
 }
 
+/**
+ * Reads the open same-repository pull requests of `branch` in `cwd`, through `readPrList`. A `repo`
+ * slug pins the read to that repository, and null leaves it unpinned. A cross-repository entry is
+ * dropped from `list`. A failed read returns `{ failure }` with the reason text of `readPrList`.
+ * @param {{ branch: string, read: (argv: string[]) => Promise<object>, repo?: string | null,
+ *   fields: string, isEntry: (entry: unknown) => boolean, limit?: number }} options
+ * @returns {Promise<{ list: object[] } | { failure: string }>}
+ */
+export async function readOpenBranchPrs({
+  branch,
+  read,
+  repo = null,
+  fields,
+  isEntry,
+  limit = PR_LIST_LIMIT,
+}) {
+  const argv = [
+    "pr",
+    "list",
+    ...(repo === null ? [] : ["--repo", repo]),
+    "--head",
+    branch,
+    "--state",
+    "open",
+    "--json",
+    fields,
+    "--limit",
+    String(limit),
+  ];
+  const result = await readPrList(read, argv, isEntry);
+  if (result.failure) return { failure: result.failure };
+  return { list: result.list.filter((entry) => !entry.isCrossRepository) };
+}
+
 // The words that the network stack of `gh` writes for a transport failure, which carries no server
 // reply and so no HTTP status (#1312).
 const TRANSPORT_FAILURES = [
