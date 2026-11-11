@@ -808,8 +808,7 @@ test("the interactive instructions forbid a remote write and allow a status read
   expect(text).toContain("A status read, such as `agent-loop role wait-checks`, is not a write.");
 });
 
-// Usefulness: verifies the user docs state that the runtime does not see a remote write (issue
-// #422). They name both paths and state the connector-write contract (issue #496).
+// Usefulness: pins the connector-write contract, the no-sandbox reviewer mode, and the issue #496 pointer.
 test("the user docs state the remote-write limit", async () => {
   const readme = (await readUserDocs()).replace(/\s+/g, " ");
   expect(readme).toContain(
@@ -817,7 +816,9 @@ test("the user docs state the remote-write limit", async () => {
   );
   expect(readme).toContain("Shell network.");
   expect(readme).toContain("`codex_apps`");
-  expect(readme).toContain("A `danger-full-access` turn can post a connector comment");
+  expect(readme).toContain(
+    "A `danger-full-access` turn can post a connector comment, and a Codex reviewer with no sandbox runs in that mode",
+  );
   expect(readme).toContain("(issue #496)");
 });
 
