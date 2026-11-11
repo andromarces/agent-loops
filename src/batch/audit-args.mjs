@@ -2,15 +2,21 @@
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { supportedAgents } from "../agents/index.mjs";
-import { DEFAULT_TIMEOUT, openCodeOptionsError, STOP_FLAG_WALK, walkFlags } from "../lib/args.mjs";
+import {
+  DEFAULT_SETUP_TIMEOUT,
+  DEFAULT_TIMEOUT,
+  openCodeOptionsError,
+  readPositiveInt,
+  STOP_FLAG_WALK,
+  walkFlags,
+} from "../lib/args.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { parseWorkTreeList } from "../lib/git-read.mjs";
-import { logRoleOptionWarnings, positiveInt, prepareRepository, usage } from "./args.mjs";
+import { applyBatchFlag, logRoleOptionWarnings, prepareRepository, usage } from "./args.mjs";
 import { git } from "./git.mjs";
 
 const MAX_REVIEWERS = 16;
-const DEFAULT_SETUP_TIMEOUT = 600;
 
 /**
  * Parses `agent-loop batch audit start` arguments. Throws an error with `usage: true` for a missing
@@ -35,7 +41,6 @@ export function parseAuditArgs(argv) {
     focusFile: null,
   };
   let current = null;
-  let sandboxAlias = false;
   const repeated = new Map();
   const setScalar = (key, flag, value) => {
     if (repeated.has(key) && repeated.get(key) !== value) {
@@ -54,6 +59,7 @@ export function parseAuditArgs(argv) {
         help = true;
         return STOP_FLAG_WALK;
       }
+      if (applyBatchFlag(options, flag, read, inline)) return true;
       switch (flag) {
         case "--repo":
           options.repo = resolve(read(flag));
@@ -98,31 +104,7 @@ export function parseAuditArgs(argv) {
           options.setupCmd = read(flag);
           break;
         case "--setup-timeout":
-          options.setupTimeout = positiveInt(flag, read(flag));
-          break;
-        case "--timeout": {
-          const seconds = Number(read(flag));
-          if (!Number.isSafeInteger(seconds) || seconds < 0) {
-            throw usage("--timeout must be a non-negative integer.");
-          }
-          options.timeout = seconds === 0 ? null : seconds;
-          break;
-        }
-        case "--reviewer-sandbox": {
-          const value = read(flag);
-          if (!["read-only", "workspace-write"].includes(value)) {
-            throw usage(
-              `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
-            );
-          }
-          setSandbox(options, value, false, sandboxAlias);
-          sandboxAlias = false;
-          break;
-        }
-        case "--reviewer-workspace-write":
-          if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
-          setSandbox(options, "workspace-write", true, sandboxAlias);
-          sandboxAlias = true;
+          options.setupTimeout = readPositiveInt(flag, read(flag), usage);
           break;
         default:
           return false;
@@ -186,17 +168,6 @@ export function parseAuditArgs(argv) {
     throw usage("--reviewer-sandbox requires every --reviewer to be codex.");
   }
   return options;
-}
-
-function setSandbox(options, value, viaAlias, aliasSeen) {
-  const earlier = options.reviewerSandbox;
-  if (earlier !== null && earlier !== value) {
-    if (viaAlias || aliasSeen) {
-      throw usage(`--reviewer-workspace-write conflicts with --reviewer-sandbox ${earlier}.`);
-    }
-    throw usage(`--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`);
-  }
-  options.reviewerSandbox = value;
 }
 
 /**
