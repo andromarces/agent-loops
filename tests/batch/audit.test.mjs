@@ -625,21 +625,90 @@ test("two reviewers run before one consolidation and create one issue per findin
     ],
   });
 
-  const { exitCode, summary } = await runAudit({
-    prepared,
-    runsRoot,
-    gh: gh.gh,
-    deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
-  });
+  const lines = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
+  try {
+    const { exitCode, summary } = await runAudit({
+      prepared,
+      runsRoot,
+      gh: gh.gh,
+      deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
+    });
 
-  expect(exitCode).toBe(0);
-  expect(summary.status).toBe("created");
-  expect(turns.calls.map((call) => call.roleName)).toEqual(["reviewer", "reviewer", "worker"]);
-  expect(turns.calls[2].prompt).toContain("First defect");
-  expect(turns.calls[2].prompt).toContain("Second defect");
-  expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(2);
-  expect(summary.issues.map((issue) => issue.number)).toEqual([1, 2]);
-  expect(summary.issues.every((issue) => issue.existing === false)).toBe(true);
+    expect(exitCode).toBe(0);
+    expect(summary.status).toBe("created");
+    expect(turns.calls.map((call) => call.roleName)).toEqual(["reviewer", "reviewer", "worker"]);
+    expect(turns.calls[2].prompt).toContain("First defect");
+    expect(turns.calls[2].prompt).toContain("Second defect");
+    expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(2);
+    expect(summary.issues.map((issue) => issue.number)).toEqual([1, 2]);
+    expect(summary.issues.every((issue) => issue.existing === false)).toBe(true);
+    const creationLines = lines.filter(
+      (line) => line.includes("creating issue ") || line.includes("created issue #"),
+    );
+    expect(creationLines).toHaveLength(4);
+    expect(creationLines.every((line) => line.startsWith("[agent-loop] info: "))).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+// Usefulness: a failed issue creation logs one error line, so the failure stays visible.
+test("a failed issue creation logs one error line", async () => {
+  const base = await mkdtemp(join(tmpdir(), "audit-log-"));
+  roots.push(base);
+  const workTreePath = join(base, "revision");
+  await mkdir(workTreePath, { recursive: true });
+  const revision = "1111111111111111111111111111111111111111";
+  const identity = await pathIdentity(workTreePath);
+  const prepared = {
+    id: "20260101-000000-test",
+    repo: "o/r",
+    repoKey: "abc123abc123",
+    base: "main",
+    revision,
+    workTreeRoot: join(base, "root"),
+    reviewers: [
+      { kind: "claude", model: null, effort: null },
+      { kind: "agy", model: null, effort: null },
+    ],
+    worker: { kind: "codex", model: null, effort: null },
+    timeout: null,
+    reviewerSandbox: null,
+    setupCmd: null,
+    setupTimeout: 600,
+    mode: "resume",
+    workTree: {
+      path: workTreePath,
+      canonicalPath: workTreePath,
+      dev: String(identity.dev),
+      ino: String(identity.ino),
+      revision,
+    },
+  };
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  await pausedAudit(prepared);
+  const gh = fakeGh();
+  const failingGh = async (args) =>
+    args[0] === "issue" && args[1] === "create"
+      ? { status: 1, stdout: "", stderr: "creation refused" }
+      : gh.gh(args);
+  const errors = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((line) => errors.push(String(line)));
+  try {
+    const { summary } = await runAudit({
+      prepared,
+      runsRoot,
+      gh: failingGh,
+      deps: { readCheckout: async () => ({ head: revision, clean: true }) },
+    });
+    expect(summary.pauseReason).toBe("issue-create-failed");
+    const failures = errors.filter((line) => line.includes("issue creation failed"));
+    expect(failures).toHaveLength(1);
+    expect(failures[0].startsWith("[agent-loop] error: ")).toBe(true);
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 // Usefulness: a supplied focus is the only reviewer goal, it reaches every reviewer and the

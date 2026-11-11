@@ -5,7 +5,9 @@ import {
   asSessionId,
   assertResumedSession,
   boundedDetail,
+  byteLength,
   closingText,
+  failedForAnotherReason,
   failureMessage as sharedFailureMessage,
   flagMissingSession,
   isModelId,
@@ -63,7 +65,7 @@ function flagCapacityFailure(err, events) {
  * or signal ends the turn for another reason, so it is never marked.
  */
 function flagModelRefusal(err, events) {
-  if (!err || typeof err !== "object" || err.timedOut || err.isCanceled || err.isTerminated) {
+  if (failedForAnotherReason(err)) {
     return;
   }
   const model = MODEL_REFUSAL.exec(terminalFailureMessage(events))?.[1];
@@ -79,8 +81,8 @@ function flagModelRefusal(err, events) {
  */
 function failureMessage(err, events, timeout) {
   const detail = boundedDetail(terminalFailureMessage(events), DETAIL_LIMIT);
-  const stdoutBytes = Buffer.byteLength(err?.stdout ?? "");
-  const stderrBytes = Buffer.byteLength(err?.stderr ?? "");
+  const stdoutBytes = byteLength(err?.stdout);
+  const stderrBytes = byteLength(err?.stderr);
   return sharedFailureMessage({
     agent: "codex",
     err,

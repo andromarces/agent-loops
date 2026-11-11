@@ -1207,10 +1207,18 @@ test("batch status names the branch when no pull request is recorded", async () 
   }
 });
 
-// Usefulness: a child that exits 1 stays failed on the normal path.
+// Usefulness: a child that exits 1 stays failed on the normal path and reports the failure once.
 test("a child that exits 1 is failed on the normal path", async () => {
   const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
+  const lines = [];
+  const errorSpy = vi
+    .spyOn(console, "error")
+    .mockImplementation((line) => lines.push(String(line)));
+  const writeSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
+  });
   try {
     const { exitCode, summary } = await runBatch({
       prepared,
@@ -1225,9 +1233,14 @@ test("a child that exits 1 is failed on the normal path", async () => {
     });
     expect(exitCode).toBe(1);
     expect(summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1" });
+    const failures = lines.filter((line) => line.includes("failed (exit 1)"));
+    expect(failures).toHaveLength(1);
+    expect(failures[0].startsWith("[agent-loop] error: ")).toBe(true);
     const claim = batchPaths(runsRoot).claim(prepared.repoKey, 1);
     await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
+    errorSpy.mockRestore();
+    writeSpy.mockRestore();
     await cleanupRepo();
   }
 });

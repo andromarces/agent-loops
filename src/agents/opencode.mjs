@@ -1,4 +1,4 @@
-import { isJsonObject, parseJsonLines } from "../lib/json.mjs";
+import { isJsonObject, parseJsonLines, tryParseJson } from "../lib/json.mjs";
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import { exec } from "../lib/exec.mjs";
 import { logDebug, logInfo } from "../lib/log.mjs";
@@ -6,6 +6,7 @@ import {
   asSessionId,
   assertResumedSession,
   boundedDetail,
+  byteLength,
   childRan,
   failureMessage as sharedFailureMessage,
   isNonEmptyString,
@@ -198,12 +199,8 @@ function providerErrorCode(error) {
   if (typeof body !== "string") {
     return undefined;
   }
-  try {
-    const parsed = JSON.parse(body);
-    return typeof parsed?.error?.code === "string" ? parsed.error.code : undefined;
-  } catch {
-    return undefined;
-  }
+  const code = tryParseJson(body)?.error?.code;
+  return typeof code === "string" ? code : undefined;
 }
 
 /** Validates the stream of a turn whose child exited 0, records its session, usage, and model, and returns its text. */
@@ -423,19 +420,10 @@ function usageNumber(value) {
  * line is not an event at all, so neither reaches the message.
  */
 function lastErrorDetail(events) {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-
-    if (event?.type === "error") {
-      const detail = providerDetail(event.error);
-
-      if (detail) {
-        return detail;
-      }
-    }
-  }
-
-  return "";
+  const event = events.findLast(
+    (entry) => entry?.type === "error" && providerDetail(entry.error) !== "",
+  );
+  return event ? providerDetail(event.error) : "";
 }
 
 /**
@@ -463,9 +451,4 @@ function providerDetail(error) {
     status === undefined ? detail : `${detail} (status ${status})`,
     DETAIL_LIMIT,
   );
-}
-
-/** Returns the byte count of a stream, for a debug line that carries size and not content. */
-function byteLength(text) {
-  return Buffer.byteLength(text ?? "");
 }

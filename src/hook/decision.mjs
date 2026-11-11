@@ -85,21 +85,11 @@ export async function hookDecision(
  * session id, unparseable input, a tool the harness does not guard, and a lookup error print
  * nothing. The normal permission flow stays intact.
  * @param {(reason: string) => object} formatDeny builds the harness's deny payload
- * @param {{
- *   readSessionId?: (input: unknown) => string | null,
- *   isGuarded?: (input: unknown) => boolean,
- * }} [options] maps the harness input; defaults to the Claude/Codex/Copilot
- *   `session_id` field and every tool
+ * @param {object} [options] maps the harness input, as `hookDecision` accepts
  */
-export async function runParentGuard(
-  formatDeny,
-  {
-    readSessionId = (input) => (typeof input?.session_id === "string" ? input.session_id : null),
-    isGuarded = () => true,
-  } = {},
-) {
+export async function runParentGuard(formatDeny, options = {}) {
   const input = await readHookInput();
-  const payload = await hookDecision(input, formatDeny, { readSessionId, isGuarded });
+  const payload = await hookDecision(input, formatDeny, options);
   if (payload) {
     console.log(JSON.stringify(payload));
   }

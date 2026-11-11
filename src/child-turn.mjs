@@ -517,8 +517,12 @@ export async function runChild(options) {
     // Read after the last child call before the closing-block repair, the task-only turn included.
     // A repair turn runs after these reads, so an entry that it creates stays unseen (ADR 0094,
     // ADR 0095).
-    const localSourceChangedInTurn = await evidence.localSourceChangedInTurn();
-    const { inheritedTmpdirEntries, packageStoreEntries } = await evidence.advisory();
+    const [localSourceChangedInTurn, advisory] = await mapInBatches(
+      [evidence.localSourceChangedInTurn, evidence.advisory],
+      2,
+      (read) => read(),
+    );
+    const { inheritedTmpdirEntries, packageStoreEntries } = advisory;
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).
     throwIfCanceled(signal, roleName);

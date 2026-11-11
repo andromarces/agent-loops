@@ -38,6 +38,12 @@ export const EPHEMERAL_ROOT_MESSAGE =
 
 const splitPath = (path) => path.split(/[\\/]+/).filter(Boolean);
 
+/** The root of `path` and its segments below that root, for `pathApi`. */
+function rootAndSegments(path, pathApi) {
+  const { root } = pathApi.parse(path);
+  return { root, segments: splitPath(path.slice(root.length)) };
+}
+
 // The path module and the realpath of a platform. On Windows the native realpath expands an 8.3
 // short segment, which the JS realpath keeps (#1068).
 const platformApi = (platform) =>
@@ -104,8 +110,7 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
  * missing too and is kept.
  */
 function expandShortSegments(path, related, failures) {
-  const { root } = win32.parse(path);
-  const segments = splitPath(path.slice(root.length));
+  const { root, segments } = rootAndSegments(path, win32);
   let expanded = root;
   for (const [i, segment] of segments.entries()) {
     const name = longName(expanded, segment, failures);
@@ -165,8 +170,7 @@ function isDanglingLink(path) {
  */
 function resolvedParentSpellings(path, platform, failures) {
   const { path: pathApi, realpath } = platformApi(platform);
-  const { root } = pathApi.parse(path);
-  const segments = splitPath(path.slice(root.length));
+  const { root, segments } = rootAndSegments(path, pathApi);
   const found = [];
   for (let depth = 1; depth < segments.length; depth++) {
     try {
@@ -229,8 +233,7 @@ function presentPrefixes(packageRoot, platform) {
   if (platform !== process.platform) return [];
   const { path: pathApi } = platformApi(platform);
   const absolute = absolutePath(packageRoot, platform);
-  const { root } = pathApi.parse(absolute);
-  const segments = splitPath(absolute.slice(root.length));
+  const { root, segments } = rootAndSegments(absolute, pathApi);
   const present = [];
   for (let depth = 1; depth <= segments.length; depth++) {
     const prefix = pathApi.join(root, ...segments.slice(0, depth));

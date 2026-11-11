@@ -9,6 +9,7 @@ import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
+import { isJsonObject } from "../lib/json.mjs";
 import { withGitIdentityReads } from "../lib/git-read.mjs";
 import { isSha256Hex } from "../lib/hash.mjs";
 import { refreshLocalFile } from "../lib/local-file-changes.mjs";
@@ -268,10 +269,7 @@ async function refreshLocal(args, { signal } = {}) {
         );
       }
       const hashes = state.localFilesCopiedSha256;
-      const expected =
-        hashes !== null && typeof hashes === "object" && !Array.isArray(hashes)
-          ? hashes[rel]
-          : undefined;
+      const expected = isJsonObject(hashes) ? hashes[rel] : undefined;
       if (!isSha256Hex(expected)) {
         throw new RoleError(
           `refresh-local --path ${JSON.stringify(rel)} is refused: the run holds no stored hash for it, so it cannot prove the copy unchanged.`,
