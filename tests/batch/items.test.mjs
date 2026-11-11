@@ -502,7 +502,7 @@ test("a review-only pull request item succeeds with its verdict", async () => {
     expect(summary.loops[0].status).toBe("succeeded");
     expect(summary.loops[0].report).toMatchObject({
       verdict: "reject",
-      findings: "one finding",
+      reviewerNotes: "one finding",
     });
   } finally {
     await removePath(runsRoot);
