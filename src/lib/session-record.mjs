@@ -43,7 +43,7 @@ export const isUuid = (value) => typeof value === "string" && UUID.test(value);
  * points outside it: the real path is outside, but Git follows the junction and lists the file.
  * The write target of a file symlink counts too, because the write lands there (#658).
  */
-export async function isInside(root, path) {
+export async function isInsideByIdentity(root, path) {
   const rootId = await identity(root);
   const target = await resolveWriteTarget(path).catch(() => resolve(path));
   for (const start of [

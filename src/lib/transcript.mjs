@@ -4,7 +4,7 @@ import { readableErrorText, readProp, redactedText } from "./error-message.mjs";
 import { sha256 } from "./hash.mjs";
 import { logWarn, logWarnFull } from "./log.mjs";
 import {
-  isInside,
+  isInsideByIdentity,
   removeSessionRecord,
   sessionRecordPath,
   writeSessionRecord,
@@ -116,8 +116,8 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
   const chooseSaveMode = async () => {
     try {
       const root = await workTreeRoot(options.cwd, { signal });
-      if (!(await isInside(root, options.transcript))) return saveMode;
-      saveMode = (await isInside(root, await sessionRecordPath(options.transcript)))
+      if (!(await isInsideByIdentity(root, options.transcript))) return saveMode;
+      saveMode = (await isInsideByIdentity(root, await sessionRecordPath(options.transcript)))
         ? "none"
         : "record";
       if (saveMode === "record") transcriptData.runNonce = runNonce;

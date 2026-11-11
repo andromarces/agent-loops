@@ -5,7 +5,7 @@
 import { setLogsToStderr, logError } from "../lib/log.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
-import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree, usage } from "./args.mjs";
+import { parseBatchArgs, prepareBatch, refuseRootInGitWorkTree, usage } from "./args.mjs";
 import { parseAuditArgs, prepareAudit } from "./audit-args.mjs";
 import {
   listAuditStatus,
@@ -247,7 +247,7 @@ async function runAuditMain(argv, runsRoot) {
     const id = newAuditId();
     const prepared = await prepareAudit({ ...options, id });
     prepared.mode = "start";
-    await refuseRunsRootInGitWorkTree(runsRoot);
+    await refuseRootInGitWorkTree(runsRoot, "runs root");
     return runAuditCommand({ prepared, runsRoot });
   }
   if (command === "resume" || command === "approve") {
@@ -263,7 +263,7 @@ async function runAuditMain(argv, runsRoot) {
     if (state === null) {
       throw usage(`No audit ${id}.`);
     }
-    await refuseRunsRootInGitWorkTree(runsRoot);
+    await refuseRootInGitWorkTree(runsRoot, "runs root");
     return runAuditCommand({ prepared: preparedFromAudit(state, command), runsRoot });
   }
   if (command === "remove") {
@@ -279,7 +279,7 @@ async function runAuditMain(argv, runsRoot) {
     if (state === null) {
       throw usage(`No audit ${id}.`);
     }
-    await refuseRunsRootInGitWorkTree(runsRoot);
+    await refuseRootInGitWorkTree(runsRoot, "runs root");
     const { exitCode, summary } = await removeAudit({ runsRoot, id });
     console.log(JSON.stringify(summary, null, 2));
     return exitCode;
@@ -319,7 +319,7 @@ export async function runBatchMain(argv) {
       }
       const id = newBatchId();
       const prepared = await prepareBatch({ ...options, id });
-      await refuseRunsRootInGitWorkTree(runsRoot);
+      await refuseRootInGitWorkTree(runsRoot, "runs root");
       const { exitCode, summary } = await runBatch({
         prepared,
         runsRoot,
@@ -393,7 +393,7 @@ export async function runBatchMain(argv) {
       }
       const prepared = await preparedForResume(manifest);
       prepared.resume = true;
-      await refuseRunsRootInGitWorkTree(runsRoot);
+      await refuseRootInGitWorkTree(runsRoot, "runs root");
       const { exitCode, summary } = await runBatch({ prepared, runsRoot, gh: runGh });
       console.log(JSON.stringify(summary, null, 2));
       return exitCode;
