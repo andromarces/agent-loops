@@ -68,8 +68,9 @@ test("an inline value on the sandbox alias wins over a conflict", () => {
   ).toThrow("--reviewer-workspace-write does not take a value.");
 });
 
-// Usefulness: the operator focus is one text source. A blank text cannot become a reviewer goal,
-// so the refusal happens before a store, work tree, or child exists (issue #1750).
+// Usefulness: the operator focus is one text source.
+// A blank text cannot become a reviewer goal, so the refusal happens before a store, work tree,
+// or child exists (issue #1750).
 test("focus flags are mutually exclusive and refuse blank text", () => {
   const base = ["--repo", ".", "--reviewer", "claude", "--reviewer", "agy", "--worker", "codex"];
   expect(parseAuditArgs([...base, "--focus", "check cleanup"]).focus).toBe("check cleanup");
@@ -80,8 +81,8 @@ test("focus flags are mutually exclusive and refuse blank text", () => {
   expect(() => parseAuditArgs([...base, "--focus", "   "])).toThrow("--focus must not be empty.");
 });
 
-// Usefulness: a focus file that holds no text gives the reviewers no goal. The start is refused
-// before any store, work tree, or child exists (issue #1750).
+// Usefulness: a focus file that holds no text gives the reviewers no goal.
+// The start is refused before any store, work tree, or child exists (issue #1750).
 test("a blank focus file is refused and a file supplies the focus text", async () => {
   const main = await createTempRepo();
   repos.push(main);
@@ -166,8 +167,8 @@ test("prepareAudit refuses a work-tree root inside a Git work tree through the r
   ).rejects.toThrow("The work-tree root must lie outside every Git work tree.");
 });
 
-// Usefulness: the audit freezes one revision and refuses a base that has no remote ref, so no
-// reviewer can audit a moving branch.
+// Usefulness: the audit freezes one revision.
+// It refuses a base that has no remote ref, so no reviewer can audit a moving branch.
 test("prepare resolves the frozen revision and refuses a missing base", async () => {
   const main = await createTempRepo();
   repos.push(main);

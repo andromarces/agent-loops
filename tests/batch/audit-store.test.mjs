@@ -154,10 +154,10 @@ async function registeredAudit() {
   return { base, runsRoot: await writeRemoveAudit(base, state), state };
 }
 
-// Usefulness: a finished audit's work tree folder and store cost disk after the frozen issue set
-// exists. Both are gone after remove (ADR 0118).
-// Behavior exception: this is the one real end-to-end removal run. It removes a real Git work
-// tree and asserts the stderr progress at the removal boundary.
+// Usefulness: a finished audit's work tree folder and store cost disk after the frozen issue set exists.
+// Both are gone after remove (ADR 0118).
+// Behavior exception: this is the one real end-to-end removal run.
+// It removes a real Git work tree and asserts the stderr progress at the removal boundary.
 test("remove deletes the work tree and store of a finished audit", async () => {
   const { runsRoot, state } = await registeredAudit();
   const written = [];
@@ -183,8 +183,8 @@ test("remove deletes the work tree and store of a finished audit", async () => {
   expect(await pathIdentity(state.workTreeRoot)).toBe(null);
 });
 
-// Usefulness: a paused or needs-owner audit can still be resumed or inspected, so remove keeps
-// both the work tree and the store (ADR 0118).
+// Usefulness: a paused or needs-owner audit can be resumed or inspected.
+// Remove keeps both the work tree and the store (ADR 0118).
 // Filesystem-only: the status refusal happens before any Git read, so no registration is needed.
 test("remove keeps a paused or needs-owner audit", async () => {
   for (const status of ["paused", "needs-owner"]) {
@@ -199,8 +199,8 @@ test("remove keeps a paused or needs-owner audit", async () => {
   }
 });
 
-// Usefulness: the store holds the stable identity that reconciles an uncertain issue write, so
-// remove keeps both artifacts while the write is unreconciled (ADR 0118).
+// Usefulness: the store holds the stable identity that reconciles an uncertain issue write.
+// Remove keeps both artifacts while the write is unreconciled (ADR 0118).
 // Filesystem-only: the unreconciled-write refusal happens before any Git read.
 test("remove keeps an audit with an unreconciled issue write", async () => {
   const { runsRoot, state } = await filesystemAudit({
@@ -215,8 +215,8 @@ test("remove keeps an audit with an unreconciled issue write", async () => {
   expect(await readAudit(runsRoot, state.id)).not.toBe(null);
 });
 
-// Usefulness: a link inside the work tree that names a directory outside it must survive. The
-// removal never follows a link or junction (ADR 0106 decision 13, ADR 0118).
+// Usefulness: a link inside the work tree that names a directory outside it must survive.
+// The removal never follows a link or junction (ADR 0106 decision 13, ADR 0118).
 // In-process: the registration read, Git run, and work-tree removal are injected, so this case
 // starts no Git process.
 test("remove does not follow a link outside the work tree", async () => {
@@ -252,8 +252,8 @@ test("remove does not follow a link outside the work tree", async () => {
   expect(await pathIdentity(state.workTree.path)).toBe(null);
 });
 
-// Usefulness: a moved folder must not hide the locked Git registration. Otherwise remove deletes
-// the store while Git still holds a locked work tree (ADR 0118 decision 3).
+// Usefulness: a moved folder must not hide the locked Git registration.
+// Otherwise remove deletes the store while Git still holds a locked work tree (ADR 0118 decision 3).
 // In-process: a recorded registration reply and an alternate path form stand in for Git, so this
 // case starts no Git process.
 test("remove keeps a locked work tree whose folder moved away", async () => {
@@ -306,8 +306,8 @@ async function frozenAuditStore(overrides = {}) {
   return { runsRoot, repo, state };
 }
 
-// Usefulness: a created audit supplies exactly its frozen issue set in the stored order, and the
-// read writes nothing (issue #1734).
+// Usefulness: a created audit supplies exactly its frozen issue set in the stored order.
+// The read writes nothing (issue #1734).
 test("a created audit supplies its frozen issue set in order", async () => {
   const { runsRoot, repo, state } = await frozenAuditStore({
     issues: [
@@ -324,8 +324,8 @@ test("a created audit supplies its frozen issue set in order", async () => {
   expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
 });
 
-// Usefulness: a paused audit has no finished frozen set, so a batch start is refused before any
-// state write (issue #1734).
+// Usefulness: a paused audit has no finished frozen set.
+// A batch start is refused before any state write (issue #1734).
 test("a paused audit is refused", async () => {
   const { runsRoot, repo, state } = await frozenAuditStore({ status: "paused" });
 
@@ -343,8 +343,8 @@ test("a needs-owner audit is refused", async () => {
   );
 });
 
-// Usefulness: a pending issue write is not reconciled, so its issue set cannot be trusted
-// (issue #1734).
+// Usefulness: a pending issue write is not reconciled.
+// Its issue set cannot be trusted (issue #1734).
 test("an unreconciled issue write is refused", async () => {
   const { runsRoot, repo, state } = await frozenAuditStore({
     pendingCreate: { identity: "id-1", title: "Unconfirmed" },
@@ -356,7 +356,7 @@ test("an unreconciled issue write is refused", async () => {
   );
 });
 
-// Usefulness: the frozen set of another repository would launch unrelated issues (issue #1734).
+// Usefulness: a frozen set from another repository can launch unrelated issues (issue #1734).
 test("an audit of another repository is refused", async () => {
   const { runsRoot, repo, state } = await frozenAuditStore({
     issues: [{ title: "Finding", number: 20, url: "u20", existing: false }],
