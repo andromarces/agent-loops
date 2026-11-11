@@ -11,12 +11,14 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
   It is a diagnostic. The directories are shared with other processes. The runtime cannot
   attribute an entry to the turn, and it does not delete one.
 - For `inheritedTmpdirEntries`, only the turn directories that this process created, matched by
-  exact name, are left out. A turn directory is left out only until the removal ends. A directory
-  that the removal refused or failed on, such as a replacement of the turn directory, is listed.
-  Every other entry of the one post-turn read is listed, an `al-` name too. The runtime reads the
-  directories once after the last child call of the dispatch and before the closing-block repair,
-  with no re-read and no wait. An entry that the repair creates stays unseen. The field
-  creates no `open` item by itself, and it never refuses a finish.
+  exact name, are left out.
+  - A turn directory is left out only until the removal ends. A directory that the removal refused
+    or failed on, such as a replacement of the turn directory, is listed.
+  - Every other entry of the one post-turn read is listed, an `al-` name too. An entry that the
+    repair creates stays unseen.
+  - The runtime reads the directories once after the last child call of the dispatch and before
+    the closing-block repair, with no re-read and no wait. The field creates no `open` item by
+    itself, and it never refuses a finish.
   - On macOS the usual inherited directory is under `/var/folders` when `TMPDIR` is set. The
     report follows `os.tmpdir()`, the inherited directory, whatever path it names, and it also
     reads the literal system temporary directories that differ from it. The literal roots are
