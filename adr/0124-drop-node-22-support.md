@@ -16,7 +16,7 @@ This ADR partially supersedes [ADR 0022: Run the dev toolchain and Git hooks thr
 
 Node 22 reaches end of life on 2027-04-30 (issue #1812). ADR 0022 set `engines.node` to `^22.18.0 || ^24.11.0 || >=26.0.0` and kept the Node 22 line in CI. The main `ci` matrix, the macOS and Windows shards, the smoke jobs, and the `node-22-floor` job ran Node 22. That job tested the `22.18.0` floor.
 
-Node 24 is the lowest supported line after this change, and `release.yml` publishes on Node 24. The `node-24` job ran the latest Node 24 and duplicated the Ubuntu `ci` leg.
+Node 24 is the lowest supported line after this change, and `release.yml` publishes on Node 24. The `node-24` job ran the latest Node 24, and it duplicates the Ubuntu `ci` leg once that leg moves to Node 24.
 
 ## Decision
 

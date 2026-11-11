@@ -65,10 +65,11 @@ jobs:
             exit 1
           fi
 
-  # Node 26 is the Active LTS line and `engines.node` accepts it, but the `ci`
-  # matrix and every other job run Node 24 only (issue #1632). This job stays
-  # separate so the required ci (<os>) contexts keep their names, and it
-  # inherits the workflow-level concurrency group.
+  # Node 26 is the Active LTS line and `engines.node` accepts it. The `ci`
+  # matrix runs the latest Node 24, and the `node-24` job runs the 24.11.0
+  # floor (issue #1632). Every other job runs Node 24. This job stays separate
+  # so the required ci (<os>) contexts keep their names, and it inherits the
+  # workflow-level concurrency group.
   node-26:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -84,10 +85,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
-  # Node 24.11.0 is the floor of `engines.node` (`^24.11.0`), and the `ci`
-  # matrix runs the latest Node 24. This job tests the floor (issue #1812).
-  # It stays separate so the required ci (<os>) contexts keep their names, and
-  # it inherits the workflow-level concurrency group.
+  # Node 24 is the Maintenance LTS line, and `engines.node` accepts it
+  # (`^24.11.0`). `release.yml` publishes on Node 24. The `ci` matrix runs the
+  # latest Node 24, and this job tests the 24.11.0 floor (issues #1676 and
+  # #1812). It stays separate so the required ci (<os>) contexts keep their
+  # names, and it inherits the workflow-level concurrency group.
   node-24:
     runs-on: ubuntu-latest
     timeout-minutes: 15
