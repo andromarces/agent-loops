@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[adr/0126-keep-review-only-reviewer-items-in-separate-report-fields.md](0126-keep-review-only-reviewer-items-in-separate-report-fields.md) partially supersedes this ADR. The replaced parts are decision 2's report field list and decision 11's cap rule for copied values. Decisions 1, 3 to 10, 12, and 13 stay in force, and so does decision 11's redaction rule. Every other consequence and acceptance check stays in force.
 
 ## Supersedes
 

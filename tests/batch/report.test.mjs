@@ -258,8 +258,8 @@ test("a transcript warning list is redacted, capped, and reports its overflow", 
   }
 });
 
-// Usefulness: a review-only reject carries its actionable blocker even when Notes reads none.
-test("a review-only report keeps the blockers as findings", () => {
+// Usefulness: a review-only reject keeps its actionable blocker apart from notes that read none.
+test("a review-only report keeps the blockers in their own field", () => {
   const report = buildLoopReport(
     {
       events: [
@@ -279,6 +279,131 @@ test("a review-only report keeps the blockers as findings", () => {
     { attempts: 1, reviewOnly: true },
   );
   expect(report.verdict).toBe("reject");
-  expect(report.findings).toContain("fix the guard");
-  expect(report.findings).not.toBe("none");
+  expect(report.reviewerBlockers).toContain("fix the guard");
+  expect(report.reviewerBlockers).not.toBe("none");
+  expect(report.reviewerNotes).toBeNull();
+  expect(report.reviewerFindings).toBeNull();
+  expect(report.reviewerDeferred).toBeNull();
+});
+
+// Usefulness: a reader tells a finding from a blocker, a note, and a deferred item by its field.
+test("a review-only report keeps findings, blockers, notes, and deferred apart", () => {
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "result",
+          role: "reviewer",
+          result: {
+            status: "ok",
+            response: "Verdict: reject",
+            report: {
+              verdict: "reject",
+              findings: ["the first finding"],
+              blockers: "fix the guard",
+              notes: "a later check",
+              deferred: ["a live run"],
+            },
+          },
+        },
+        { type: "gate" },
+      ],
+      exitCode: 0,
+    },
+    { attempts: 1, reviewOnly: true },
+  );
+  expect(report.verdict).toBe("reject");
+  expect(report.reviewerFindings).toEqual(["the first finding"]);
+  expect(report.reviewerBlockers).toBe("fix the guard");
+  expect(report.reviewerNotes).toBe("a later check");
+  expect(report.reviewerDeferred).toEqual(["a live run"]);
+});
+
+// Usefulness: a capped reviewer list names its dropped count, so a reader does not take it as full.
+test("a reviewer findings list of 21 or more keeps 20 entries and counts the rest", () => {
+  const findings = Array.from({ length: 25 }, (_, index) => `finding ${index}`);
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "result",
+          role: "reviewer",
+          result: { status: "ok", response: "Verdict: accept", report: { findings } },
+        },
+      ],
+      exitCode: 0,
+    },
+    { attempts: 1, reviewOnly: true },
+  );
+  expect(report.reviewerFindings).toHaveLength(20);
+  expect(report.reviewerFindingsOverflow).toBe(5);
+});
+
+// Usefulness: a reviewer list of exactly 20 entries names no dropped entry.
+test("a reviewer findings list of 20 entries reports no overflow", () => {
+  const findings = Array.from({ length: 20 }, (_, index) => `finding ${index}`);
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "result",
+          role: "reviewer",
+          result: { status: "ok", response: "Verdict: accept", report: { findings } },
+        },
+      ],
+      exitCode: 0,
+    },
+    { attempts: 1, reviewOnly: true },
+  );
+  expect(report.reviewerFindings).toHaveLength(20);
+  expect(report.reviewerFindingsOverflow).toBe(0);
+});
+
+// Usefulness: a capped array inside the failed-turn test names its dropped count beside it.
+test("a capped failed-turn test array counts the entries it dropped", () => {
+  const command = Array.from({ length: 22 }, (_, index) => `command ${index}`);
+  const report = buildLoopReport(
+    {
+      events: [
+        { type: "test-run", fatal: true, testRun: { command, status: "fail" } },
+        { type: "gate" },
+      ],
+      exitCode: 1,
+      error: "the turn failed",
+    },
+    { attempts: 1 },
+  );
+  expect(report.failedTurnTest.command).toHaveLength(20);
+  expect(report.failedTurnTest.commandOverflow).toBe(2);
+});
+
+// Usefulness: a reviewer list redacts a secret-named environment value at the report boundary.
+test("a reviewer findings list redacts a secret-named environment value", () => {
+  const name = "AGENT_LOOP_REPORT_TEST_TOKEN";
+  const secret = "a-very-secret-value";
+  const before = process.env[name];
+  process.env[name] = secret;
+  try {
+    const findings = Array.from({ length: 21 }, (_, index) => `finding ${index}`);
+    findings[0] = `finding ${secret}`;
+    const report = buildLoopReport(
+      {
+        events: [
+          {
+            type: "result",
+            role: "reviewer",
+            result: { status: "ok", response: "Verdict: accept", report: { findings } },
+          },
+        ],
+        exitCode: 0,
+      },
+      { attempts: 1, reviewOnly: true },
+    );
+    expect(report.reviewerFindings).toHaveLength(20);
+    expect(report.reviewerFindingsOverflow).toBe(1);
+    expect(report.reviewerFindings.join("\n")).not.toContain(secret);
+  } finally {
+    if (before === undefined) delete process.env[name];
+    else process.env[name] = before;
+  }
 });

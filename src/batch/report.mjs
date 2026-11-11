@@ -49,16 +49,33 @@ function unreadReport(reason) {
   };
 }
 
-function redactValue(value) {
-  if (typeof value === "string") return redactAndClean(value);
+// A copied array keeps its first 20 entries. A count beside it names the rest.
+const MAX_LIST_ITEMS = 20;
+
+/**
+ * Redacts one copied value. An array keeps its first 20 entries and returns the dropped count.
+ * @returns {{ value: unknown, overflow: number }}
+ */
+function redactEntry(value) {
+  if (typeof value === "string") return { value: redactAndClean(value), overflow: 0 };
   if (Array.isArray(value)) {
-    const items = value.slice(0, 20).map(redactValue);
-    return items;
+    const items = value.slice(0, MAX_LIST_ITEMS).map((item) => redactEntry(item).value);
+    return { value: items, overflow: Math.max(0, value.length - MAX_LIST_ITEMS) };
   }
   if (isJsonObject(value)) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactValue(item)]));
+    const redacted = {};
+    for (const [key, item] of Object.entries(value)) {
+      const entry = redactEntry(item);
+      redacted[key] = entry.value;
+      if (Array.isArray(item)) redacted[`${key}Overflow`] = entry.overflow;
+    }
+    return { value: redacted, overflow: 0 };
   }
-  return value;
+  return { value, overflow: 0 };
+}
+
+function redactValue(value) {
+  return redactEntry(value).value;
 }
 
 function readSummary(raw) {
@@ -121,7 +138,36 @@ function warningsOf(data) {
   };
 }
 
-/** The verdict and findings of the last reviewer result in one transcript segment. */
+/** Whether a reviewer value holds a message: a non-blank string other than "none", or an array. */
+function isReviewerValue(value) {
+  return (
+    (typeof value === "string" && value.trim() !== "" && value.trim().toLowerCase() !== "none") ||
+    (Array.isArray(value) && value.length > 0)
+  );
+}
+
+/** Redacts one present reviewer value, or returns null when it is absent or reads "none". */
+function reviewerEntry(value) {
+  return isReviewerValue(value) ? redactEntry(value) : null;
+}
+
+/** The separate reviewer fields of a review-only report, with a count beside each capped array. */
+function reviewerFields(reviewer) {
+  const fields = { verdict: reviewer?.verdict ?? "unknown" };
+  const entries = [
+    ["reviewerFindings", reviewer?.findings],
+    ["reviewerBlockers", reviewer?.blockers],
+    ["reviewerNotes", reviewer?.notes],
+    ["reviewerDeferred", reviewer?.deferred],
+  ];
+  for (const [name, entry] of entries) {
+    fields[name] = entry?.value ?? null;
+    if (Array.isArray(entry?.value)) fields[`${name}Overflow`] = entry.overflow;
+  }
+  return fields;
+}
+
+/** The verdict, findings, blockers, notes, and deferred values of the last reviewer result. */
 function reviewerOutcome(events) {
   let found = null;
   for (const event of events) {
@@ -134,41 +180,27 @@ function reviewerOutcome(events) {
     const verdict = ["accept", "reject", "unknown"].includes(stated)
       ? stated
       : parseVerdict(response);
-    const raw = [
-      report?.findings,
-      result.findings,
-      report?.blockers,
-      report?.notes,
-      report?.deferred,
-    ].filter(
-      (value) =>
-        (typeof value === "string" &&
-          value.trim() !== "" &&
-          value.trim().toLowerCase() !== "none") ||
-        (Array.isArray(value) && value.length > 0),
-    );
+    const rawFindings = [report?.findings, result.findings].filter(isReviewerValue);
     const findings =
-      raw.length === 0
+      rawFindings.length === 0
         ? null
-        : raw.length === 1
-          ? typeof raw[0] === "string"
-            ? redactAndClean(raw[0])
-            : redactValue(raw[0])
-          : raw
-              .map((value) =>
-                typeof value === "string" ? redactAndClean(value) : redactValue(value),
-              )
-              .flat();
-    found = { verdict, findings };
+        : reviewerEntry(rawFindings.length === 1 ? rawFindings[0] : rawFindings.flat());
+    found = {
+      verdict,
+      findings,
+      blockers: reviewerEntry(report?.blockers),
+      notes: reviewerEntry(report?.notes),
+      deferred: reviewerEntry(report?.deferred),
+    };
   }
   return found;
 }
 
 /**
  * Builds the report of one parsed transcript. `attempts` is the loop attempt count, so a transcript
- * that does not cover the last attempt fails closed. `reviewOnly` adds the reviewer verdict and
- * findings. Every copied text is redacted here, at the reporting boundary, and an unread record
- * carries no field that reads as "none".
+ * that does not cover the last attempt fails closed. `reviewOnly` adds the reviewer verdict and the
+ * separate findings, blockers, notes, and deferred fields. Every copied text is redacted here, at
+ * the reporting boundary, and an unread record carries no field that reads as "none".
  * @param {unknown} data the parsed transcript
  * @param {{ attempts?: number, reviewOnly?: boolean }} [options]
  */
@@ -212,9 +244,7 @@ export function buildLoopReport(data, { attempts = 0, reviewOnly = false } = {})
     warnings: bounded.warnings,
     warningsOverflow: bounded.warningsOverflow,
     transcriptRead: { ok: true },
-    ...(reviewOnly
-      ? { verdict: reviewer?.verdict ?? "unknown", findings: reviewer?.findings ?? null }
-      : {}),
+    ...(reviewOnly ? reviewerFields(reviewer) : {}),
   };
 }
 
