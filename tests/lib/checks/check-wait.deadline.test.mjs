@@ -1,4 +1,4 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { waitChecks } from "../../../src/lib/checks/check-wait.mjs";
 import {
   fakeClock,
@@ -106,27 +106,36 @@ test("waitChecks waits for an abandoned gh read to exit before it returns", asyn
 // the ceiling and reports the bound (issue #329). This case keeps the production
 // child-exit ceiling, 5000 ms, because that default is the behavior under test (issue #1465).
 test("waitChecks returns within the bound plus the child-exit ceiling", async () => {
-  const signals = [];
-  const started = Date.now();
-  const result = await waitChecks({
-    pr: 42,
-    cwd: ".",
-    timeoutSeconds: 0.2,
-    // Never settles, and records the signal that must stop it.
-    gh: async (args, cwd, { signal } = {}) => {
-      signals.push(signal);
-      return new Promise(() => {});
-    },
-  });
-  expect(result.timedOut).toBe(true);
-  const elapsed = Date.now() - started;
-  // The ceiling is spent, and the total stays inside the stated bound.
-  expect(elapsed).toBeGreaterThanOrEqual(5000);
-  expect(elapsed).toBeLessThan(10_000);
-  // Every read is bounded by the time left and is signaled to stop when the
-  // bound is reached, which is what terminates the `gh` child.
-  expect(signals).toHaveLength(1);
-  expect(signals[0].aborted).toBe(true);
+  vi.useFakeTimers();
+  try {
+    const signals = [];
+    const started = Date.now();
+    const pending = waitChecks({
+      pr: 42,
+      cwd: ".",
+      timeoutSeconds: 0.2,
+      // Never settles, and records the signal that must stop it.
+      gh: async (args, cwd, { signal } = {}) => {
+        signals.push(signal);
+        return new Promise(() => {});
+      },
+    });
+    // The bound fires, then the read is given the production child-exit ceiling.
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await pending;
+    expect(result.timedOut).toBe(true);
+    const elapsed = Date.now() - started;
+    // The ceiling is spent, and the total stays inside the stated bound.
+    expect(elapsed).toBeGreaterThanOrEqual(5000);
+    expect(elapsed).toBeLessThan(10_000);
+    // Every read is bounded by the time left and is signaled to stop when the
+    // bound is reached, which is what terminates the `gh` child.
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
 }, 20000);
 
 // Usefulness: verifies every unconfirmed child of a poll sets `childExitUnconfirmed`, not

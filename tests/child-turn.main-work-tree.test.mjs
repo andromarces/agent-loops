@@ -594,22 +594,28 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
     files.push(file);
   }
   let watchHandle;
-  let next = 0;
+  let seen;
   const result = await turn(
     async () => {
-      await vi.waitFor(
-        async () => {
-          await readFile(files[Math.min(next++, files.length - 1)]);
-          expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
-        },
-        { timeout: 5_000 },
-      );
+      for (const file of files) await readFile(file);
+      // The access-time update reaches the watch only where the file system reports it, on Windows.
+      seen =
+        process.platform === "win32"
+          ? await vi
+              .waitFor(() => watchHandle.seenFileCount() > 0, { timeout: 5_000 })
+              .then(
+                () => true,
+                () => false,
+              )
+          : watchHandle.seenFileCount() > 0;
     },
     tree.linked,
     (handle) => {
       watchHandle = handle;
     },
   );
+  // The wait outcome is asserted here, because a rejection inside the act becomes an error result.
+  expect(seen).toBe(process.platform === "win32");
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
