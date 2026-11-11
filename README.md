@@ -110,9 +110,9 @@ file that you edited after install.
 
 - [Full reference](docs/reference.md): every option, safety rule, and verified
   behavior.
-- [Batch runs](docs/reference/usage.md#batch-runs): run several loops in one foreground
+- [Batch runs](docs/reference/batch.md): run several loops in one foreground
   supervisor.
-- [Test slot](docs/reference/usage.md#test-slot): limit concurrent full test suite runs through shared test slots.
+- [Test slot](docs/reference/test-slot.md): limit concurrent full test suite runs through shared test slots.
 - [Develop from a clone](docs/reference/development.md#from-a-clone-development)
 - [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md)
 

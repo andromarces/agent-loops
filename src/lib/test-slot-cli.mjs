@@ -57,9 +57,9 @@ owner, runs its command at once in the same process group, so a nested call
 cannot deadlock. Any other marker is ignored. SIGINT or SIGTERM ends the
 command's process tree, then frees the slot.
 
-Approved limits (ADR 0039, ADR 0044, docs/reference/usage.md#test-slot): a slot directory
-shared between OS users, detached work that outlives the slot release, and on
-POSIX a signal sent only to a nested wrapper, which can leave grandchildren.
+Approved limits (ADR 0039, ADR 0044, docs/reference/test-slot.md): a slot directory
+shared between OS users, and detached work that outlives the slot release. On
+POSIX, a signal sent only to a nested wrapper can leave grandchildren.
 
 Exit codes:
 
