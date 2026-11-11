@@ -88,6 +88,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     readlink: failing("readlink"),
   };
 });
+// Replays recorded Git results in-process, so a test case starts no Git process. A missing call
+// throws, so a replay never hides a changed call.
+const gitReplay = vi.hoisted(() => ({ calls: null, record: null, forwards: 0 }));
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
 const configExit = vi.hoisted(() => ({ code: null, signals: [] }));
 vi.mock("execa", async (importOriginal) => {
@@ -96,9 +99,36 @@ vi.mock("execa", async (importOriginal) => {
     ...real,
     execa: (command, args, options) => {
       if (options?.cancelSignal) configExit.signals.push(options.cancelSignal);
-      return configExit.code !== null && args[0] === "config"
-        ? { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" }
-        : real.execa(command, args, options);
+      if (gitReplay.calls !== null) {
+        const index = gitReplay.calls.findIndex(
+          (call) => call.command === command && call.args.join("\0") === args.join("\0"),
+        );
+        if (index === -1) {
+          throw new Error(`no recorded Git call for ${command} ${args.join(" ")}`);
+        }
+        const [call] = gitReplay.calls.splice(index, 1);
+        return { exitCode: call.exitCode, stdout: call.stdout, stderr: call.stderr };
+      }
+      if (configExit.code !== null && args[0] === "config") {
+        return { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" };
+      }
+      const result = real.execa(command, args, options);
+      gitReplay.forwards += 1;
+      if (gitReplay.record !== null) {
+        result.then(
+          (value) => {
+            gitReplay.record.push({
+              command,
+              args: [...args],
+              exitCode: value.exitCode,
+              stdout: value.stdout,
+              stderr: value.stderr,
+            });
+          },
+          () => {},
+        );
+      }
+      return result;
     },
   };
 });
@@ -117,9 +147,7 @@ import {
 
 const dirs = [];
 
-afterEach(async () => {
-  configExit.code = null;
-  configExit.signals.length = 0;
+function resetFailureState() {
   fsFailure.operation = null;
   fsFailure.stallReaddir = false;
   fsFailure.lstatDelayMs = 0;
@@ -132,6 +160,15 @@ afterEach(async () => {
   fsFailure.statResolved = false;
   fsFailure.handleCloses = 0;
   fsFailure.requests.length = 0;
+}
+
+afterEach(async () => {
+  configExit.code = null;
+  configExit.signals.length = 0;
+  resetFailureState();
+  gitReplay.calls = null;
+  gitReplay.record = null;
+  gitReplay.forwards = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
@@ -782,11 +819,18 @@ test("no hook file system request starts after the deadline", async () => {
 describe("hook read cancellation (#1858)", () => {
   const sharedDirs = [];
   let linked;
+  let replayCalls;
 
   beforeAll(async () => {
     const fixture = await createRepoWithLinkedWorkTree(sharedDirs);
     await writeFile(join(fixture.repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
     linked = fixture.linked;
+    gitReplay.record = [];
+    await readSharedGit(linked);
+    replayCalls = gitReplay.record;
+    gitReplay.record = null;
+    gitReplay.forwards = 0;
+    resetFailureState();
   });
 
   afterAll(async () => {
@@ -796,6 +840,7 @@ describe("hook read cancellation (#1858)", () => {
   // Usefulness: verifies "a canceled hook read closes a handle that open resolves after the cancel"
   // (issue #1858): a leaked handle outlives the turn.
   test("a cancel during open closes the handle that opens later", async () => {
+    gitReplay.calls = [...replayCalls];
     fsFailure.openDelayMs = 300;
     const controller = new AbortController();
     const read = readSharedGit(linked, { signal: controller.signal }).catch((err) => err);
@@ -806,11 +851,13 @@ describe("hook read cancellation (#1858)", () => {
     await fsFailure.delayedOpen;
     await pollUntil(() => (fsFailure.handleCloses > 0 ? true : undefined), 5_000);
     expect(fsFailure.handleCloses).toBe(1);
+    expect(gitReplay.forwards).toBe(0);
   });
 
   // Usefulness: verifies "a stalled native hook stat does not hold the cancel rejection" (issue
   // #1858): a queued close must not delay the canceled read.
   test("a stalled native stat does not hold the cancel rejection", async () => {
+    gitReplay.calls = [...replayCalls];
     let startDeadline;
     const statStarted = new Promise((resolve) => {
       startDeadline = resolve;
@@ -830,6 +877,7 @@ describe("hook read cancellation (#1858)", () => {
     await fsFailure.delayedStat;
     await pollUntil(() => (fsFailure.handleCloses > 0 ? true : undefined), 5_000);
     expect(fsFailure.handleCloses).toBe(1);
+    expect(gitReplay.forwards).toBe(0);
   }, 20_000);
 });
 
