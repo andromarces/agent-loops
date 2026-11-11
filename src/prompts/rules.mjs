@@ -108,7 +108,7 @@ export const SHELL_ONLY_LIMIT_SENTENCE =
  * own lead sentence and status-read exception.
  */
 export const REMOTE_WRITE_ACTIONS =
-  "do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state.";
+  "Do not create, edit, comment on, review, merge, push, or otherwise change an issue, a pull request, a branch, or any other remote state.";
 
 const CLI_PATH = fileURLToPath(new URL("../cli.mjs", import.meta.url));
 

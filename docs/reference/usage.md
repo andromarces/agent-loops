@@ -452,7 +452,7 @@ A waiting issue keeps the foreground command live until its blockers close or th
 
 ### Notifications
 
-On macOS and Windows the batch sends a desktop notification for a new pending decision, a required owner merge, and batch completion. Linux and other platforms spawn nothing.
+On macOS and Windows the batch sends a desktop notification for four events. The events are a new pending decision, a required owner merge, a state where only owner merges remain, and batch completion. Linux and other platforms spawn nothing.
 
 The notifier passes the text as an argument on macOS and as environment values on Windows. The text never enters a script. The notifier bounds the text, the process time, and its own child. A failure logs a warning and never fails the batch.
 

@@ -17,7 +17,7 @@ Reference sections list below names each file and when to read it.
 - The other exception is the copy-back of a target outside any Git repository
   after `finish`, as [A target outside any Git repository](orchestrator/target-outside-git.md) states.
 - The selection reads of [Selecting issues for a batch](#selecting-issues-for-a-batch) are a second status-read exception.
-- Never write to GitHub or any remote: do not create, edit, comment on, review,
+- Never write to GitHub or any remote. Do not create, edit, comment on, review,
   merge, push, or otherwise change an issue, a pull request, a branch, or any
   other remote state. A status read, such as `agent-loop role wait-checks`, is
   not a write. The runtime does not detect a remote write, so this rule is advisory.
@@ -548,6 +548,10 @@ Read a batch with `agent-loop batch status --batch <id>` and continue an interru
 A pending decision releases its slot once no recorded child process is live. `agent-loop batch answer --batch <id> --decision <id> --option <key>` records one listed option. A blocked issue waits on a poll and launches after its blockers close, so no new start command is needed. For a decision, run `batch resume` again after the answer.
 
 When the user asks for an audit of a project revision that produces issues, run one `agent-loop batch audit start` command. Pass the repository, one `--reviewer` per requested reviewer with its `--reviewer-model` or `--reviewer-effort`, the consolidation `--worker`, the base branch, the work-tree root, the setup command, the timeout, the reviewer sandbox, and the user's focus as `--focus <text>` or `--focus-file <path>` when the user gives one. The two focus flags are mutually exclusive, and an empty focus is refused. Show the resolved settings before it starts. Do not choose a revision or select issues. Read an audit with `agent-loop batch audit status --audit <id>`, which shows the stored focus. Retry a failed audit with `batch audit resume`, and run `batch audit approve` only on the user's explicit instruction; both reuse the stored focus and take no focus flag. An audit that stops as `needs-owner` is not retried; resolve the named work tree state, then run `batch audit resume`. When the user asks to remove a finished audit, run `agent-loop batch audit remove --audit <id>`; never delete an audit work tree or store by hand.
+
+After a batch ends, list each loop's `report.summary` items: `deferred`, `notDone`, `open`, and `notes`. List a `review-only` report's `findings` too. Name each loop whose `report.state` is not `read`, and name its `transcript`.
+
+Open no issue for one of these items unless the user asks. On that request, dispatch a worker to check each item for a duplicate issue before it opens one.
 
 ## Several runs at once
 
