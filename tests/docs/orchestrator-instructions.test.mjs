@@ -1570,10 +1570,10 @@ test("the core tells the parent to read the shellDenied rule after any worker or
   );
 });
 
-// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent
-// runs can both take, such as an ADR number, so the parent reserves a number per run before dispatch
-// and names the index-row conflict under `open` (#1176). The existing tracking-issue test does not
-// reach this rule.
+// Usefulness: verifies the shared-artifact rule covers a sequential identifier that two concurrent runs can both take, such as an ADR number (#1176).
+// The parent reserves a number per run before dispatch and names the index-row conflict under `open`.
+// The existing tracking-issue test does not reach this rule.
+// The rule also covers a changelog release version in a concurrent run (#1835).
 test("the shared-artifact rule covers a sequential identifier that concurrent runs can both take", async () => {
   const section = (
     await readFile(join(referenceSectionsDir, "shared-tracking-artifacts.md"), "utf8")
@@ -1589,6 +1589,10 @@ test("the shared-artifact rule covers a sequential identifier that concurrent ru
   );
   expectRule(section, /index row/i, /conflict at merge/i);
   expectRule(section, /finish summary/i, /`open`/);
+  // The changelog release version is the same kind of identifier (#1835).
+  expectRule(section, /changelog release version/i, /sequential identifier/i);
+  expectRule(section, /changelog entry/i, /reserve the version/i, /worker prompt/i);
+  expectRule(section, /existing unreleased heading/i);
   const core = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
   expectRule(core, /sequential identifier/i, /ADR number/);
   expect(core).toContain("](orchestrator/shared-tracking-artifacts.md)");
