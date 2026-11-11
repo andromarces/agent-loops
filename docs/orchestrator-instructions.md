@@ -496,8 +496,8 @@ of this file.
   dispatch several runs in one repository, before concurrent runs can edit one issue body, and
   when a run can create a shared tracking issue or take a sequential identifier such as an ADR
   number, and put its read-write-read rule in each worker prompt.
-- [Batch runs](orchestrator/batch-runs.md): read it when the user asks to work several items as one
-  batch, or when a run reports an audit or a batch decision.
+- [Batch runs](orchestrator/batch-runs.md): read it when the user asks for a batch of several
+  items, or when a run reports an audit or batch decision.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
   tree for a repository with no remote or for a run on an existing PR, and when
   `extensions.worktreeConfig` is on.
