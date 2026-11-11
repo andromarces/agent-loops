@@ -18,6 +18,14 @@ export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
 const LABEL_OR_VERDICT = [...REPORT_LABEL_NAMES, "Verdict"].join("|");
 
+// Compiles each label pattern once, so a parse never compiles one per call (issue #1858).
+const LABEL_PATTERN_BY_KEY = new Map(
+  [...REPORT_LABEL_NAMES, "Verdict"].map((label) => [
+    label.toLowerCase(),
+    new RegExp(`^${label}:\\s*(.*)$`, "i"),
+  ]),
+);
+
 // A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
 // Only the six report labels gain this form, so a bold lead with another name stays text (issue
 // #1483).
@@ -70,22 +78,23 @@ function fencedLines(lines) {
 }
 
 /**
- * Returns `text` with each column-0 bold report label normalized to its plain form. The forms are
- * `**Label:**` (issue #1483) and a line that holds only `**Label**` (issue #1585). A bold label
- * inside a fenced code block stays text. With `boldLabels` false, the text is unchanged, which
- * reads a bold label as origin/main did.
+ * Returns the lines of `text` with each column-0 bold report label normalized to its plain form.
+ * The forms are `**Label:**` (issue #1483) and a line that holds only `**Label**` (issue #1585).
+ * A bold label inside a fenced code block stays text. With `boldLabels` false, the lines are
+ * unchanged, which reads a bold label as origin/main did. The fenced flags come with the lines, so
+ * a caller never scans the fences twice (issue #1858).
  * @param {string} text
  * @param {boolean} [boldLabels]
- * @returns {string}
+ * @returns {{ lines: string[], fenced: boolean[] }}
  */
-function normalizeReportLabels(text, boldLabels = true) {
-  if (!boldLabels) {
-    return text;
-  }
-  const lines = text.split(/\r?\n/);
+function normalizedReportLines(text, boldLabels = true) {
+  const lines = boldLabels ? text.split(/\r?\n/) : text.split("\n");
   const fenced = fencedLines(lines);
-  return lines
-    .map((line, index) => {
+  if (!boldLabels) {
+    return { lines, fenced };
+  }
+  return {
+    lines: lines.map((line, index) => {
       const boldHeading = BOLD_HEADING_LABEL_LINE.test(line);
       if (!BOLD_LABEL_LINE.test(line) && !boldHeading) {
         return line;
@@ -96,8 +105,9 @@ function normalizeReportLabels(text, boldLabels = true) {
       return boldHeading
         ? line.replace(BOLD_HEADING_LABEL_LINE, "$1:")
         : line.replace(BOLD_LABEL_LINE, "$1:$2");
-    })
-    .join("\n");
+    }),
+    fenced,
+  };
 }
 
 // A report label that indentation or markdown decoration hides from the strict
@@ -238,7 +248,7 @@ export function hasClosingBlockAttempt(response) {
  */
 function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose = false } = {}) {
   // A bold label inside a fenced code block stays text (issue #1483).
-  const lines = normalizeReportLabels(response, boldLabels).split("\n");
+  const { lines, fenced } = normalizedReportLines(response, boldLabels);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (/^Conclusion:\s*/i.test(lines[i])) {
@@ -246,7 +256,7 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     }
   }
   if (start !== -1) {
-    return lines.slice(leadingRequiredLabelStart(lines, start));
+    return lines.slice(leadingRequiredLabelStart(lines, start, fenced));
   }
   if (!unlabeled) {
     return null;
@@ -287,13 +297,14 @@ const LEADING_LABEL_LINES = [
  * The index where the closing block starts: `start`, or the first lone required label or `Verdict:`
  * line above it. Only blank lines lie between that line and the block (issues #1592 and #1793).
  * A label line inside a fence stays out. A label that another unfenced line repeats stays out too.
- * So a quoted label neither starts nor extends the block.
+ * So a quoted label neither starts nor extends the block. `fenced` reuses the flags of an earlier
+ * scan, so a caller that normalized the lines never scans the fences twice (issue #1858).
  * @param {string[]} lines
  * @param {number} start
+ * @param {boolean[]} [fenced]
  * @returns {number}
  */
-export function leadingRequiredLabelStart(lines, start) {
-  const fenced = fencedLines(lines);
+export function leadingRequiredLabelStart(lines, start, fenced = fencedLines(lines)) {
   let first = start;
   for (;;) {
     let at = first - 1;
@@ -447,15 +458,18 @@ export function parsesOnlyWithBoldLabels(response) {
 
 /**
  * The report for one child result. A multi-part unidentified OpenCode report that parses only
- * through bold normalization is null.
+ * through bold normalization is null. The first parse passes through, so a multi-part response
+ * parses at most twice (issue #1858).
  * @param {string} response
  * @param {boolean} [multiPartUnidentified]
  * @returns {ReturnType<typeof parseReportBlock>}
  */
 export function reportForResult(response, multiPartUnidentified = false) {
-  return multiPartUnidentified && parsesOnlyWithBoldLabels(response)
-    ? null
-    : parseReportBlock(response);
+  const report = parseReportBlock(response);
+  if (!multiPartUnidentified || report === null) {
+    return report;
+  }
+  return parseReportBlock(response, { boldLabels: false }) === null ? null : report;
 }
 
 // A repaired value that carries no finding, for a label that the original response left out.
@@ -821,7 +835,8 @@ export function parseVerdict(response) {
 
 /** Last line in `lines` that opens `label`, with its value and index. */
 function lastLabeled(lines, label) {
-  const pattern = new RegExp(`^${label}:\\s*(.*)$`, "i");
+  const pattern =
+    LABEL_PATTERN_BY_KEY.get(label.toLowerCase()) ?? new RegExp(`^${label}:\\s*(.*)$`, "i");
   let found = null;
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(pattern);

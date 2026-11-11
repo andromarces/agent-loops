@@ -46,7 +46,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       fsFailure.operation === "readlink"
         ? { isSymbolicLink: () => true }
         : failing("lstat")(...args),
-    readFile: failing("readFile"),
+    open: failing("open"),
     readlink: failing("readlink"),
   };
 });
@@ -720,8 +720,8 @@ test("every git process of the read has ended when the read rejects at its deadl
 }, 20_000);
 
 // Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
-// that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
-// dispatch has reported its result and a late file system request would run past the end of the turn.
+// that ends after the deadline must not be followed by an `open` or by the next hook. The dispatch
+// has reported its result, so a late file system request would run past the end of the turn.
 test("no hook file system request starts after the deadline", async () => {
   const { repo, linked } = await createRepoWithLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
@@ -813,7 +813,7 @@ test("a reordered value list of one remote key is reported by remote name", asyn
 // review): a Node file system error carries the path, and a hook path or a symlink target can carry
 // a secret. The marker must stay out of the thrown error, its cause chain, and the text that the
 // worker-turn warning is built from.
-test.each(["readdir", "lstat", "readFile", "readlink"])(
+test.each(["readdir", "lstat", "open", "readlink"])(
   "a failed %s of the hooks directory never exposes the path",
   async (operation) => {
     const { repo, linked } = await createRepoWithLinkedWorkTree();

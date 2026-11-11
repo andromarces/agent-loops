@@ -1,4 +1,6 @@
-import { lstat, readdir, readFile, readlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { mapInBatches } from "../batches.mjs";
 import { errorCode } from "../error-message.mjs";
@@ -227,6 +229,33 @@ function whileNotAborted(signal, request) {
   });
 }
 
+// Hashes a regular hook file in chunks, so a large hook is never held whole (issue #1858). The
+// stream owns the opened handle and closes it on end, error, or abort. A cancel after the `lstat`
+// rejects with the read's canceled error, and a request already in flight is not interrupted.
+async function hashHookFile(path, signal) {
+  const handle = await whileNotAborted(signal, () => open(path, "r"));
+  let stream;
+  try {
+    if (signal?.aborted) throw canceled();
+    const { size } = await handle.stat();
+    // Bound the read to the size of the opened file, as the whole-file read did.
+    const range = size > 0 ? { start: 0, end: size - 1 } : {};
+    stream = createReadStream(path, { fd: handle, signal, ...range });
+  } catch (err) {
+    await handle.close();
+    throw err;
+  }
+  const hash = createHash("sha256");
+  try {
+    for await (const chunk of stream) hash.update(chunk);
+  } catch (err) {
+    // A cancel wins over a read error that follows it.
+    if (signal?.aborted) throw canceled();
+    throw err;
+  }
+  return hash.digest("hex");
+}
+
 // Hashes a hook file like `sha256File` does, but checks `signal` before each file system request, so
 // no request starts after an abort. A symlink hashes its link text, and a file that is absent or
 // neither a file nor a link reads as null.
@@ -243,7 +272,7 @@ async function hashHook(path, signal) {
   }
   if (!stat.isFile()) return null;
   try {
-    return sha256(await whileNotAborted(signal, () => readFile(path)));
+    return await hashHookFile(path, signal);
   } catch (err) {
     if (err.code === "ENOENT") return null;
     throw err;
