@@ -721,7 +721,7 @@ test("every git process of the read has ended when the read rejects at its deadl
 
 // Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
 // that ends after the deadline must not be followed by an `open` or by the next hook. The dispatch
-// has reported its result, so a late file system request would run past the end of the turn.
+// has reported its result, so a late file system request outlives the turn.
 test("no hook file system request starts after the deadline", async () => {
   const { repo, linked } = await createRepoWithLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
