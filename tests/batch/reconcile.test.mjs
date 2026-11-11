@@ -84,7 +84,6 @@ const openPull = {
   isCrossRepository: false,
   baseRefName: "main",
 };
-const openDetail = { number: 5, state: "OPEN", headRefOid: HEAD, mergeCommit: null };
 
 // Usefulness: one matching open pull request resumes through its required-check gate.
 test("a matching open pull request resumes with --pr and --require-ci", async () => {
@@ -92,7 +91,7 @@ test("a matching open pull request resumes with --pr and --require-ci", async ()
     loop: loop(),
     repo: "C:\\repo",
     base: "main",
-    gh: ghReplies({ pulls: [openPull], details: { 5: openDetail } }),
+    gh: ghReplies({ pulls: [openPull] }),
     deps: deps(baseGit()),
   });
   expect(result).toEqual({ status: "resume", reason: null, pr: 5, requireCi: 5 });
@@ -104,7 +103,7 @@ test("an open pull request with another head stops the loop", async () => {
     loop: loop(),
     repo: "C:\\repo",
     base: "main",
-    gh: ghReplies({ pulls: [openPull], details: { 5: { ...openDetail, headRefOid: OTHER } } }),
+    gh: ghReplies({ pulls: [{ ...openPull, headRefOid: OTHER }] }),
     deps: deps(baseGit()),
   });
   expect(result).toMatchObject({ status: "needs-owner" });
@@ -119,12 +118,49 @@ test("two open pull requests stop the loop", async () => {
     base: "main",
     gh: ghReplies({
       pulls: [openPull, { ...openPull, number: 6 }],
-      details: { 5: openDetail, 6: { ...openDetail, number: 6 } },
     }),
     deps: deps(baseGit()),
   });
   expect(result).toMatchObject({ status: "needs-owner" });
   expect(result.reason).toContain("more than one");
+});
+
+// Usefulness: one pull request list read resolves every pull request without a view per pull request.
+test("one pull request list read resolves every pull request", async () => {
+  let listReads = 0;
+  let viewReads = 0;
+  const gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "list") {
+      listReads += 1;
+      return {
+        status: 0,
+        stdout: JSON.stringify([openPull, { ...openPull, number: 6 }]),
+        stderr: "",
+      };
+    }
+    if (args[0] === "pr" && args[1] === "view") {
+      viewReads += 1;
+      return { status: 1, stdout: "", stderr: "unexpected pull request view" };
+    }
+    if (args[0] === "issue" && args[1] === "view") {
+      return {
+        status: 0,
+        stdout: JSON.stringify({ state: "OPEN", closedByPullRequestsReferences: [] }),
+        stderr: "",
+      };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  const result = await reconcileLoop({
+    loop: loop(),
+    repo: "C:\\repo",
+    base: "main",
+    gh,
+    deps: deps(baseGit()),
+  });
+  expect(result.reason).toContain("more than one");
+  expect(listReads).toBe(1);
+  expect(viewReads).toBe(0);
 });
 
 // Usefulness: a remote branch equal to the local head resumes without a pull request.
@@ -184,7 +220,6 @@ test("a closed-unmerged pull request stops the loop", async () => {
     base: "main",
     gh: ghReplies({
       pulls: [{ ...openPull, state: "CLOSED" }],
-      details: { 5: { ...openDetail, state: "CLOSED" } },
     }),
     deps: deps(baseGit()),
   });
@@ -225,8 +260,7 @@ test("a merged pull request with no local work beyond its head succeeds", async 
     base: "main",
     gh: ghReplies({
       issue: "CLOSED",
-      pulls: [{ ...openPull, state: "MERGED" }],
-      details: { 5: { ...openDetail, state: "MERGED", mergeCommit: { oid: "c".repeat(40) } } },
+      pulls: [{ ...openPull, state: "MERGED", mergeCommit: { oid: "c".repeat(40) } }],
     }),
     deps: deps(
       baseGit(HEAD, {
@@ -245,8 +279,7 @@ test("a merged pull request with extra local work stops the loop", async () => {
     base: "main",
     gh: ghReplies({
       issue: "CLOSED",
-      pulls: [{ ...openPull, state: "MERGED" }],
-      details: { 5: { ...openDetail, state: "MERGED", mergeCommit: { oid: "c".repeat(40) } } },
+      pulls: [{ ...openPull, state: "MERGED", mergeCommit: { oid: "c".repeat(40) } }],
     }),
     deps: deps(
       baseGit(HEAD, {
@@ -264,7 +297,7 @@ test("a closed issue with no merged pull request stops the loop", async () => {
     loop: loop(),
     repo: "C:\\repo",
     base: "main",
-    gh: ghReplies({ issue: "CLOSED", pulls: [openPull], details: { 5: openDetail } }),
+    gh: ghReplies({ issue: "CLOSED", pulls: [openPull] }),
     deps: deps(baseGit()),
   });
   expect(result).toMatchObject({ status: "needs-owner" });
@@ -277,7 +310,7 @@ test("a declared pull request that the read does not find stops the loop", async
     loop: loop({ pr: 9 }),
     repo: "C:\\repo",
     base: "main",
-    gh: ghReplies({ pulls: [openPull], details: { 5: openDetail } }),
+    gh: ghReplies({ pulls: [openPull] }),
     deps: deps(baseGit()),
   });
   expect(result).toMatchObject({ status: "needs-owner" });
@@ -290,7 +323,7 @@ test("a dirty work tree with an open pull request stops the loop", async () => {
     loop: loop(),
     repo: "C:\\repo",
     base: "main",
-    gh: ghReplies({ pulls: [openPull], details: { 5: openDetail } }),
+    gh: ghReplies({ pulls: [openPull] }),
     deps: deps(baseGit(HEAD, { '["status","--porcelain"]': [0, " M file.txt"] })),
   });
   expect(result).toMatchObject({ status: "needs-owner" });
@@ -319,7 +352,6 @@ test("a pull request from another branch that closes the issue stops the loop", 
     gh: ghReplies({
       issue: "CLOSED",
       pulls: [openPull],
-      details: { 5: openDetail },
       references: [{ number: 9 }],
     }),
     deps: deps(baseGit()),

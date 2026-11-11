@@ -77,10 +77,11 @@ export function hasStructuralMinimum(body) {
 /**
  * Reads every open pull request and the issues its body or commit messages close. Throws when a
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
- * commit read reached the API's 250-commit page. The caller then stops launching.
- * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null }>}
+ * commit read reached the API's 250-commit page. The caller then stops launching. `slug` is the
+ * repository name, read when it is null and returned for the next call.
+ * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, slug: string | null }>}
  */
-export async function readOpenPrClosures({ gh, repo }) {
+export async function readOpenPrClosures({ gh, repo, slug = null }) {
   const list = await readJson(
     gh,
     [
@@ -120,20 +121,23 @@ export async function readOpenPrClosures({ gh, repo }) {
       }
     }
   }
-  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources };
+  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources, slug };
 
-  const repository = await readJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
-  if (!isJsonObject(repository) || typeof repository.nameWithOwner !== "string") {
-    throw new Error("gh repo view returned no repository name");
+  let repositorySlug = slug;
+  if (repositorySlug === null) {
+    const repository = await readJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
+    if (!isJsonObject(repository) || typeof repository.nameWithOwner !== "string") {
+      throw new Error("gh repo view returned no repository name");
+    }
+    repositorySlug = repository.nameWithOwner;
   }
-  const slug = repository.nameWithOwner;
   let incompletePr = null;
   for (const entry of list) {
     let count = 0;
     for (let page = 1; page <= 3 && count < 250; page += 1) {
       const commits = await readJson(
         gh,
-        ["api", `repos/${slug}/pulls/${entry.number}/commits?per_page=100&page=${page}`],
+        ["api", `repos/${repositorySlug}/pulls/${entry.number}/commits?per_page=100&page=${page}`],
         repo,
       );
       if (!Array.isArray(commits)) throw new Error("the commit read returned no list");
@@ -157,7 +161,7 @@ export async function readOpenPrClosures({ gh, repo }) {
   }
   const first = [...closed].sort((a, b) => a - b)[0];
   const firstSource = first === undefined ? null : (sources.get(first)?.[0]?.number ?? null);
-  return { closed, pr: firstSource, incompletePr, sources };
+  return { closed, pr: firstSource, incompletePr, sources, slug: repositorySlug };
 }
 
 /**
@@ -197,26 +201,24 @@ export async function checkEligibility({
       evidence: `the pull request lookup failed: ${probe.detail}`,
     };
   }
-  let state;
+  let issueView;
   try {
-    state = await readJson(gh, ["issue", "view", String(issue), "--json", "state"], repo);
+    issueView = await readJson(
+      gh,
+      ["issue", "view", String(issue), "--json", "state,blockedBy,body"],
+      repo,
+    );
   } catch (err) {
     return unverified(err.message);
   }
-  if (!isJsonObject(state) || typeof state.state !== "string") {
+  if (!isJsonObject(issueView) || typeof issueView.state !== "string") {
     return unverified("the state reply named no state");
   }
-  if (!isOpen(state.state)) {
-    return { ok: false, reason: "closed", evidence: `the issue state is ${state.state}` };
+  if (!isOpen(issueView.state)) {
+    return { ok: false, reason: "closed", evidence: `the issue state is ${issueView.state}` };
   }
 
-  let blockers;
-  try {
-    blockers = await readJson(gh, ["issue", "view", String(issue), "--json", "blockedBy"], repo);
-  } catch (err) {
-    return unverified(err.message);
-  }
-  const nodes = blockedNumbers(isJsonObject(blockers) ? blockers.blockedBy : null);
+  const nodes = blockedNumbers(issueView.blockedBy);
   if (nodes === null) return unverified("the blockedBy reply is unreadable");
   const open = nodes
     .filter((node) => isJsonObject(node) && isOpen(node.state))
@@ -269,16 +271,10 @@ export async function checkEligibility({
 
   if (!requireSpecification) return { ok: true };
 
-  let body;
-  try {
-    body = await readJson(gh, ["issue", "view", String(issue), "--json", "body"], repo);
-  } catch (err) {
-    return unverified(err.message);
-  }
-  if (!isJsonObject(body) || typeof body.body !== "string") {
+  if (typeof issueView.body !== "string") {
     return unverified("the body reply named no body");
   }
-  if (!hasStructuralMinimum(body.body)) {
+  if (!hasStructuralMinimum(issueView.body)) {
     return {
       ok: false,
       reason: "not-specified",

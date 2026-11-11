@@ -55,6 +55,17 @@ function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
+      if (args.includes("state,blockedBy,body")) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: closed.has(Number(args[2])) ? "CLOSED" : "OPEN",
+            blockedBy: { nodes: blocked },
+            body: BODY,
+          }),
+          stderr: "",
+        };
+      }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: blocked } }), stderr: "" };
       }
@@ -461,6 +472,138 @@ describe("bounded batch reads", () => {
     expect(summary.status).toBe("interrupted");
     expect(process.listenerCount("SIGINT")).toBe(before);
     expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
+  });
+
+  // Usefulness: an interrupt during the second preflight keeps the refused and aborted entries.
+  test("an interrupt during the second preflight keeps both entries", async () => {
+    const four = {
+      ...prepared,
+      id: newBatchId(),
+      issues: [1, 2, 3, 4],
+      items: [1, 2, 3, 4].map((number) => ({
+        kind: "issue",
+        number,
+        key: number,
+        mode: "work-first",
+        task: null,
+      })),
+      loops: 4,
+    };
+    const abort = new AbortController();
+    const gh = (args, cwd, options = {}) => {
+      if (args[0] === "pr" && args[1] === "view") {
+        const number = Number(args[2]);
+        if (number === 2) {
+          setTimeout(() => abort.abort(new Error("stopped in preflight")), 10);
+          return replyOnAbort({ status: 0, stdout: JSON.stringify({ number }), stderr: "" })(
+            args,
+            cwd,
+            options,
+          );
+        }
+        return { status: 0, stdout: JSON.stringify({ number }), stderr: "" };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared: four,
+      runsRoot: runsRootFor("interrupt-second"),
+      gh,
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        signal: abort.signal,
+        ghTimeoutMs: 60_000,
+      },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(summary.loops).toHaveLength(2);
+    expect(summary.loops[0]).toMatchObject({ issue: 1, skipReason: "is-pull-request" });
+    expect(summary.loops[1]).toMatchObject({ issue: 2, skipReason: "eligibility-unverified" });
+  });
+
+  // Usefulness: out-of-order freeze replies keep the input item order.
+  test("out-of-order freeze replies keep the item order", async () => {
+    const prItems = [1, 2, 3].map((number) => ({
+      kind: "pr",
+      number,
+      key: `pr-${number}`,
+      mode: "review-first",
+      task: null,
+      head: null,
+    }));
+    const three = {
+      ...prepared,
+      id: newBatchId(),
+      issues: prItems.map((item) => item.key),
+      items: prItems,
+      loops: 3,
+    };
+    const gh = (args) =>
+      new Promise((resolve) => {
+        const number = Number(args[2]);
+        setTimeout(
+          () =>
+            resolve({
+              status: 0,
+              stdout: JSON.stringify({ state: "OPEN", headRefName: `branch-${number}` }),
+              stderr: "",
+            }),
+          (4 - number) * 20,
+        );
+      });
+    const { summary } = await runBatch({
+      prepared: three,
+      runsRoot: runsRootFor("freeze-order"),
+      gh,
+      deps: { notifier: noNotify, installSignal: false },
+    });
+    expect(summary.loops.map((loop) => loop.number)).toEqual([1, 2, 3]);
+  });
+
+  // Usefulness: a cancel during freeze returns the origin/main interrupted result.
+  test("a cancel during freeze returns the interrupted result", async () => {
+    const prItems = [1, 2, 3].map((number) => ({
+      kind: "pr",
+      number,
+      key: `pr-${number}`,
+      mode: "review-first",
+      task: null,
+      head: null,
+    }));
+    const three = {
+      ...prepared,
+      id: newBatchId(),
+      issues: prItems.map((item) => item.key),
+      items: prItems,
+      loops: 3,
+    };
+    const abort = new AbortController();
+    let started = 0;
+    const gh = (args, cwd, options = {}) => {
+      started += 1;
+      if (started === 1) setTimeout(() => abort.abort(new Error("stopped in freeze")), 10);
+      return replyOnAbort({
+        status: 0,
+        stdout: JSON.stringify({ state: "OPEN", headRefName: "branch" }),
+        stderr: "",
+      })(args, cwd, options);
+    };
+    const { exitCode, summary } = await runBatch({
+      prepared: three,
+      runsRoot: runsRootFor("freeze-cancel"),
+      gh,
+      deps: {
+        notifier: noNotify,
+        installSignal: false,
+        signal: abort.signal,
+        ghTimeoutMs: 60_000,
+      },
+    });
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(summary.loops).toEqual([]);
   });
 
   // Usefulness: a fetch failure removes the SIGINT and abort listeners before it rejects.
@@ -1040,6 +1183,56 @@ test("a transcript that exited 0 is not restarted on recovery", async () => {
     });
     expect(resumeChild.calls).toHaveLength(0);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: one resumed loop end reads its transcript once, so a late delete cannot hide a read.
+test("a resumed loop end reads its transcript once", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 3, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    const text = JSON.stringify({ ...data, exitCode: 0 });
+    let reads = 0;
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        readTranscript: async () => {
+          reads += 1;
+          await removePath(transcript);
+          return text;
+        },
+      },
+    });
+    expect(reads).toBe(1);
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+    expect(resumed.summary.loops[0].report.state).toBe("read");
   } finally {
     await cleanupRepo(repo);
   }
@@ -1918,6 +2111,13 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads <= 2 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
         if (args.includes("state,blockedBy")) {
           polls += 1;
           return {
@@ -1998,6 +2198,13 @@ test("a failed poll read retries on the next poll", async () => {
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
       }
       if (args.includes("body"))
@@ -2065,6 +2272,17 @@ test("a closed issue while waiting is skipped and not launched", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              body: BODY,
+            }),
+            stderr: "",
+          };
+        }
         return {
           status: 0,
           stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2131,6 +2349,17 @@ test("an abort during a poll wait exits 130", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              body: BODY,
+            }),
+            stderr: "",
+          };
+        }
         return {
           status: 0,
           stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2315,6 +2544,17 @@ test("a waiting issue sends a merge-required notification", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              body: BODY,
+            }),
+            stderr: "",
+          };
+        }
         return {
           status: 0,
           stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -2439,6 +2679,13 @@ test("a pending decision and a merge wait survive a resume", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         const open = openIssue1 && issue === 1 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
         return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
       }
       if (args.includes("body"))
@@ -2678,6 +2925,13 @@ describe("batch decisions and waits", () => {
         if (args.some((arg) => arg.includes("blockedBy"))) {
           blockedReads += issue === 203 ? 1 : 0;
           const open = issue === 203 && blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
+          if (args.includes("state,blockedBy,body")) {
+            return {
+              status: 0,
+              stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+              stderr: "",
+            };
+          }
           return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
         }
         if (args.includes("body"))
@@ -2984,6 +3238,17 @@ describe("batch decisions and waits", () => {
           };
         }
         if (args.some((arg) => arg.includes("blockedBy"))) {
+          if (args.includes("state,blockedBy,body")) {
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                state: "OPEN",
+                blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+                body: BODY,
+              }),
+              stderr: "",
+            };
+          }
           return {
             status: 0,
             stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -3052,6 +3317,17 @@ describe("batch decisions and waits", () => {
           };
         }
         if (args.some((arg) => arg.includes("blockedBy"))) {
+          if (args.includes("state,blockedBy,body")) {
+            return {
+              status: 0,
+              stdout: JSON.stringify({
+                state: "OPEN",
+                blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+                body: BODY,
+              }),
+              stderr: "",
+            };
+          }
           return {
             status: 0,
             stdout: JSON.stringify({ blockedBy: { nodes: [{ number: 9, state: "OPEN" }] } }),
@@ -3113,6 +3389,498 @@ describe("batch decisions and waits", () => {
     const { exitCode } = await run;
     expect(exitCode).toBe(130);
     expect(seen).toBe(reason);
+  });
+
+  // Usefulness: parallel wait reads keep the manifest order when the second read finishes first.
+  test("parallel wait reads keep the manifest order", async () => {
+    const prepared = prep([301, 302]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([301, 302]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (const issue of [301, 302]) {
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "waiting",
+        reason: null,
+        skipReason: "blocked",
+        blockingIssues: [],
+        pid: null,
+        startTime: null,
+      }));
+    }
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const events = [];
+    const controller = new AbortController();
+    const gh = async (args) => {
+      if (args[0] === "issue" && args[1] === "view" && args.includes("state,blockedBy")) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const issue = Number(args[2]);
+        await new Promise((resolve) => setTimeout(resolve, issue === 301 ? 60 : 10));
+        inFlight -= 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            state: "OPEN",
+            blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+          }),
+          stderr: "",
+        };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const result = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: async (event) => {
+          if (event.kind === "merge-required") events.push(event.text);
+          if (events.length === 2) controller.abort();
+          return { spawned: false, ok: true };
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 10,
+      },
+    });
+    expect(maxInFlight).toBe(2);
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain("issue 301");
+    expect(events[1]).toContain("issue 302");
+    expect(result.summary.status).toBe("interrupted");
+  });
+
+  // Usefulness: an abort during parallel wait reads keeps the cancel result and its reason.
+  test("an abort during parallel wait reads keeps the cancel result", async () => {
+    const prepared = prep([303, 304]);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([303, 304]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (const issue of [303, 304]) {
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "waiting",
+        reason: null,
+        skipReason: "blocked",
+        blockingIssues: [],
+        pid: null,
+        startTime: null,
+      }));
+    }
+    let started = 0;
+    let startedBeforeAbort = 0;
+    let seenReason = null;
+    const reason = { code: "operator-cancel" };
+    const controller = new AbortController();
+    const gh = (args, cwd, options) => {
+      if (args[0] === "issue" && args[1] === "view" && args.includes("state,blockedBy")) {
+        started += 1;
+        return new Promise((resolve) => {
+          const done = () => {
+            seenReason = options.signal.reason;
+            resolve({
+              status: 0,
+              stdout: JSON.stringify({
+                state: "OPEN",
+                blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+              }),
+              stderr: "",
+            });
+          };
+          if (options.signal.aborted) done();
+          else options.signal.addEventListener("abort", done, { once: true });
+        });
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const run = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 10,
+      },
+    });
+    for (let attempt = 0; attempt < 100 && started < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    startedBeforeAbort = started;
+    controller.abort(reason);
+    const { exitCode, summary } = await run;
+    expect(startedBeforeAbort).toBe(2);
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(seenReason).toBe(reason);
+  });
+
+  // Usefulness: one repository read serves every issue launch in a batch.
+  test("one repository read serves every issue launch", async () => {
+    const prepared = prep([305, 306]);
+    const runsRoot = runsFor(prepared);
+    let repositoryReads = 0;
+    const gh = (args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ number: 99, closingIssuesReferences: [], headRefName: "b" }]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        repositoryReads += 1;
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      if (args[0] === "api") return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      if (args[0] === "issue" && args[1] === "view") {
+        if (args.includes("state,blockedBy,body")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] }, body: BODY }),
+            stderr: "",
+          };
+        }
+        if (args.includes("title")) {
+          return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+        }
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
+      }
+      return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+    };
+    const result = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(repositoryReads).toBe(1);
+    expect(result.summary.loops).toHaveLength(2);
+  });
+
+  // Usefulness: a child result during a wait read keeps needs-owner and its stored answer.
+  test("a child result during a wait read keeps needs-owner", async () => {
+    const prepared = prep([401, 402]);
+    const runsRoot = runsFor(prepared);
+    const first = childDouble({ hold: true });
+    const second = childDouble();
+    const controller = new AbortController();
+    let triggered = false;
+    let waitReads = 0;
+    const gh = async (args) => {
+      if (args[0] === "issue" && args[1] === "view") {
+        if (args.includes("state,blockedBy,body")) {
+          const issue = Number(args[2]);
+          const blocked = issue === 402 ? [{ number: 9, state: "OPEN" }] : [];
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: blocked }, body: BODY }),
+            stderr: "",
+          };
+        }
+        if (args.includes("state,blockedBy")) {
+          waitReads += 1;
+          if (!triggered) {
+            triggered = true;
+            await first.calls[0].written;
+            const transcript = first.calls[0].transcript;
+            const data = JSON.parse(await readFile(transcript, "utf8"));
+            await writeFile(transcript, JSON.stringify({ ...data, exitCode: 130 }));
+            for (const pending of first.pending) pending.resolve({ exitCode: 4 });
+            for (let attempt = 0; attempt < 100; attempt += 1) {
+              const loop = await readLoop(runsRoot, prepared.id, 401);
+              if (loop?.status === "needs-owner" && typeof loop.decision === "string") break;
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return {
+            status: 0,
+            stdout: JSON.stringify({
+              state: "OPEN",
+              blockedBy: { nodes: [{ number: 9, state: "OPEN" }] },
+            }),
+            stderr: "",
+          };
+        }
+        if (args.includes("title")) {
+          return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+        }
+      }
+      if (args[0] === "pr" && args[1] === "list") {
+        return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+      }
+      if (args[0] === "repo" && args[1] === "view") {
+        return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          status: 1,
+          stdout: "",
+          stderr: "Could not resolve to a PullRequest with the number.",
+        };
+      }
+      throw new Error(`unexpected gh ${args.join(" ")}`);
+    };
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: (options) =>
+          first.calls.length === 0 ? first.spawn(options) : second.spawn(options),
+        installSignal: false,
+        signal: controller.signal,
+        pollIntervalMs: 20,
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 200 && first.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(first.calls).toHaveLength(1);
+      let loop = null;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        loop = await readLoop(runsRoot, prepared.id, 401);
+        if (loop?.status === "needs-owner" && typeof loop.decision === "string") break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(loop?.status).toBe("needs-owner");
+      for (let attempt = 0; attempt < 200 && waitReads < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(waitReads).toBeGreaterThanOrEqual(2);
+      const answered = await answerDecision({
+        runsRoot,
+        batchId: prepared.id,
+        decisionId: loop.decision,
+        option: "resume",
+      });
+      expect(answered.ok).toBe(true);
+      for (let attempt = 0; attempt < 200 && second.calls.length < 1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(second.calls).toHaveLength(1);
+    } finally {
+      controller.abort();
+      for (const pending of first.pending) pending.resolve({ exitCode: 130 });
+      await run;
+    }
+  });
+
+  // Usefulness: every malformed transcript refusal matches the origin text on an attempted loop.
+  test("malformed transcripts keep the origin refusal text", async () => {
+    const cases = [
+      ["missing", null, "the transcript is missing"],
+      ["empty", "", "the transcript is missing"],
+      ["invalid", "{", "the transcript is missing"],
+      ["null", "null", "the transcript is missing"],
+      ["non-object", "[]", "the transcript holds no event list"],
+      ["no-events", "{}", "the transcript holds no event list"],
+    ];
+    const issues = cases.map((_, index) => 501 + index);
+    const prepared = prep(issues);
+    const runsRoot = runsFor(prepared);
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set(issues) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (let index = 0; index < cases.length; index += 1) {
+      const issue = issues[index];
+      const transcript = batchPaths(runsRoot).transcript(prepared.id, issue);
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "interrupted",
+        reason: "interrupted",
+        skipReason: null,
+        attempts: 1,
+        transcript,
+        pid: null,
+        startTime: null,
+      }));
+      const content = cases[index][1];
+      if (content === null) await removePath(transcript);
+      else await writeFile(transcript, content);
+    }
+    await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    for (let index = 0; index < cases.length; index += 1) {
+      const loop = await readLoop(runsRoot, prepared.id, issues[index]);
+      expect(loop.status).toBe("needs-owner");
+      const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+      expect(decision?.ok).toBe(true);
+      expect(decision.decision.evidence).toBe(cases[index][2]);
+    }
+  });
+
+  // Usefulness: a normal child completion reads its transcript once for steps and report.
+  test("a normal loop end reads its transcript once", async () => {
+    const prepared = prep([601]);
+    const runsRoot = runsFor(prepared);
+    let reads = 0;
+    const child = childDouble();
+    const result = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        readTranscript: async () => {
+          reads += 1;
+          const transcript = child.calls[0].transcript;
+          const text = await readFile(transcript, "utf8");
+          await removePath(transcript);
+          return text;
+        },
+      },
+    });
+    expect(reads).toBe(1);
+    expect(result.summary.loops[0].status).toBe("succeeded");
+    expect(result.summary.loops[0].report.state).toBe("read");
+  });
+
+  // Usefulness: every read error stores the shared unreadable reason in the loop report.
+  test("a read error stores the shared unreadable reason", async () => {
+    const cases = [
+      ["ENOENT", "the transcript is missing"],
+      ["EACCES", "the transcript is unreadable"],
+      ["EISDIR", "the transcript is unreadable"],
+      ["EIO", "the transcript is unreadable"],
+    ];
+    for (let index = 0; index < cases.length; index += 1) {
+      const prepared = prep([701 + index]);
+      const runsRoot = runsFor(prepared);
+      const result = await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+          readTranscript: async () => {
+            const error = new Error(`${cases[index][0]}: synthetic read failure`);
+            error.code = cases[index][0];
+            throw error;
+          },
+        },
+      });
+      expect(result.summary.loops[0].report.transcriptRead).toMatchObject({
+        ok: false,
+        reason: cases[index][1],
+      });
+    }
+  });
+
+  // Usefulness: a read error on an attempted loop refuses with the origin missing text.
+  test("a read error on an attempted loop keeps the missing refusal", async () => {
+    const cases = ["ENOENT", "EACCES", "EISDIR", "EIO"];
+    for (let index = 0; index < cases.length; index += 1) {
+      const issue = 711 + index;
+      const prepared = prep([issue]);
+      const runsRoot = runsFor(prepared);
+      await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh({ closed: new Set([issue]) }),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+        },
+      });
+      const transcript = batchPaths(runsRoot).transcript(prepared.id, issue);
+      await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+        ...loop,
+        status: "interrupted",
+        reason: "interrupted",
+        skipReason: null,
+        attempts: 1,
+        transcript,
+        pid: null,
+        startTime: null,
+      }));
+      await runBatch({
+        prepared: { ...prepared, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+          readTranscript: async () => {
+            const error = new Error(`${cases[index]}: synthetic read failure`);
+            error.code = cases[index];
+            throw error;
+          },
+        },
+      });
+      const loop = await readLoop(runsRoot, prepared.id, issue);
+      expect(loop).toMatchObject({ status: "needs-owner", reason: "unverified-steps" });
+      const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+      expect(decision?.ok).toBe(true);
+      expect(decision.decision.evidence).toBe("the transcript is missing");
+    }
   });
 
   // Usefulness: a recorded live child holds its only slot until the process dies.
