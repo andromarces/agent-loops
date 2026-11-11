@@ -180,7 +180,7 @@ describe("batch decisions and waits", () => {
         if (args.some((arg) => arg.includes("blockedBy"))) {
           blockedReads += issue === 203 ? 1 : 0;
           const open = issue === 203 && blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
-          if (args.includes("state,blockedBy,body")) {
+          if (args.includes("state,blockedBy,body,title")) {
             return {
               status: 0,
               stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),

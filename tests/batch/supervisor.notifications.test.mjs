@@ -96,7 +96,7 @@ test("a waiting issue sends a merge-required notification", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({
@@ -185,7 +185,7 @@ test("a blocker that settles first still sends one owner-merge event", async () 
   });
   const gh = (args) => {
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         const open = args[2] === "2" ? [{ number: 9, state: "OPEN" }] : [];
         return {
           status: 0,
@@ -284,7 +284,7 @@ test("only waiting loops notify once on the default path and on resume", async (
   let waitReads = 0;
   const gh = (args) => {
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         const open = args[2] === "2" ? [{ number: 9, state: "OPEN" }] : [];
         return {
           status: 0,

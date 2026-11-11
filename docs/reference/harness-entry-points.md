@@ -149,7 +149,7 @@ A `codex exec` session in full access ran each check, in a throwaway Git reposit
 
 ## Parent guard: hard read-only for the parent session
 
-The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
+Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
 
 ## Local files in a linked work tree
 

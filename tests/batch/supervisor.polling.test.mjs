@@ -26,7 +26,7 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads <= 2 ? [{ number: 9, state: "OPEN" }] : [];
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
@@ -113,7 +113,7 @@ test("a failed poll read retries on the next poll", async () => {
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
@@ -187,7 +187,7 @@ test("a closed issue while waiting is skipped and not launched", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({
@@ -264,7 +264,7 @@ test("an abort during a poll wait exits 130", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({
@@ -353,7 +353,7 @@ test("a poll read carries a timeout and the abort signal", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({
@@ -432,7 +432,7 @@ test("a caller cancel keeps its reason identity", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({
@@ -674,7 +674,7 @@ test("one repository read serves every issue launch", async () => {
     }
     if (args[0] === "api") return { status: 0, stdout: JSON.stringify([]), stderr: "" };
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] }, body: BODY }),
@@ -720,7 +720,7 @@ test("a child result during a wait read keeps needs-owner", async () => {
   let waitReads = 0;
   const gh = async (args) => {
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         const issue = Number(args[2]);
         const blocked = issue === 402 ? [{ number: 9, state: "OPEN" }] : [];
         return {

@@ -29,7 +29,7 @@ function flagCapacityFailure(err) {
     .flatMap((line) => {
       const text = line.slice(AGY_ERROR_PREFIX.length);
       const payload = tryParseJson(text);
-      // A parsed `null` is the terminal line, as it was before `tryParseJson`. Only text that does
+      // A parsed `null` is the terminal line. Only text that does
       // not parse is dropped, so an earlier capacity line never becomes decisive.
       return payload === null && text.trim() !== "null" ? [] : [payload];
     });

@@ -687,15 +687,17 @@ test("the deadline aborts the git calls with the default abort reason", async ()
 // them running past the end of a canceled turn.
 test("every git process of the read has ended when the read rejects at its deadline", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
-  await withGitHangingAfter(0, async ({ shimDir }) => {
+  await withGitHangingAfter(0, async ({ shimDir, env }) => {
     let openDeadline;
     const deadlineGate = new Promise((resolve) => {
       openDeadline = resolve;
     });
     // The case waits out this 200 ms deadline because the deadline ending the hang is what it tests.
-    const read = readSharedGit(linked, { deadlineMs: 200, deadlineStart: deadlineGate }).catch(
-      (err) => err,
-    );
+    const read = readSharedGit(linked, {
+      deadlineMs: 200,
+      deadlineStart: deadlineGate,
+      env,
+    }).catch((err) => err);
     // The gate starts the deadline only after both hung calls recorded their start (issue #1465).
     await pollUntil(async () => {
       const found = await shimCallRecords(shimDir);

@@ -33,13 +33,14 @@ export function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({
             state: closed.has(Number(args[2])) ? "CLOSED" : "OPEN",
             blockedBy: { nodes: blocked },
             body: BODY,
+            title: "An issue title",
           }),
           stderr: "",
         };

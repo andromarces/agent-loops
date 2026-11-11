@@ -1,7 +1,7 @@
 // Atomic file writes: a private temp file in the target directory is renamed over the destination.
 import { randomUUID } from "node:crypto";
 import { readlinkSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { chmod, readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, link, readlink, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -31,6 +31,45 @@ export async function removeTemp(path) {
         return;
       }
       await delay(10);
+    }
+  }
+}
+
+// `link` is the atomic create primitive, but FAT/exFAT and some network mounts
+// have no hard links and report one of these codes. They fall back to an
+// exclusive create, where the pre-#176 create/write window returns.
+// EISDIR is the Windows mapping: libuv translates the ERROR_INVALID_FUNCTION
+// from CreateHardLinkW on FAT/exFAT to EISDIR (nodejs/node#65817).
+const LINK_UNSUPPORTED = new Set([
+  "EPERM",
+  "EACCES",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EINVAL",
+  "ENOSYS",
+  "EMLINK",
+  "EXDEV",
+  "EISDIR",
+]);
+
+/**
+ * Creates `file` from `tempFile` with a hard link, which fails with `EEXIST` when `file` exists.
+ * Where the filesystem has no hard links, the fallback writes `text` to `file` with `wx`.
+ * @returns {Promise<boolean>} false when `file` exists, true when this call created it.
+ */
+export async function linkExclusive(tempFile, file, text) {
+  try {
+    await link(tempFile, file);
+    return true;
+  } catch (err) {
+    if (err.code === "EEXIST") return false;
+    if (!LINK_UNSUPPORTED.has(err.code)) throw err;
+    try {
+      await writeFile(file, text, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch (openErr) {
+      if (openErr.code === "EEXIST") return false;
+      throw openErr;
     }
   }
 }

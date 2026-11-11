@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test } from "vite-plus/test";
+import { expect, inject, test } from "vite-plus/test";
 import { exists, removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createTempRepo, untrackedFilesGit } from "./git-helpers.mjs";
 
@@ -44,6 +44,21 @@ test("a temporary repository turns off automatic git maintenance", async () => {
       ).toBe("false");
       expect((await execa("git", ["config", "--get", "gc.auto"], { cwd: repo })).stdout).toBe("0");
     }
+  } finally {
+    await removePath(first);
+    await removePath(second);
+  }
+});
+
+// Usefulness: acceptance (#1854) — two copies use one provided template, and a write in one copy leaves the template unchanged.
+test("two temporary repositories copy from one provided template", async () => {
+  const template = inject("gitTemplate");
+  expect(typeof template).toBe("string");
+  const first = await createTempRepo();
+  const second = await createTempRepo();
+  try {
+    await writeFile(join(first, "extra.txt"), "x\n");
+    expect(await exists(join(template, "extra.txt"))).toBe(false);
   } finally {
     await removePath(first);
     await removePath(second);

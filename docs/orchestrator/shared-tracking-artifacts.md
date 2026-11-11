@@ -20,7 +20,8 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 ## Sequential identifiers
 
-- Before dispatch, name every sequentially numbered artifact that more than one run can create, such as an ADR or a migration.
+- Before dispatch, name every sequentially numbered artifact that more than one run can create, such as an ADR or a migration. A changelog release version counts as a sequential identifier too. So is any other next-number heading that a repository rule asks for.
 - Reserve a distinct number for each run in its worker prompt. Tell the worker to use that number and no other.
+- When a concurrent run's task can add a changelog entry, reserve the version in each worker prompt. As an alternative, tell each worker which existing unreleased heading to add to.
 - When a run needs one that was not foreseen, the parent assigns the number before the worker creates the file. Otherwise the worker reports the number that it took, and the parent checks it against the other active runs before the reviewer turn.
 - Two branches that each add an index row, for example in `adr/README.md`, still conflict at merge. Name that pair in the finish summary under `open`.

@@ -19,10 +19,10 @@ const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
  * The environment of this process without the names that turn on the debug log of `gh`, and
  * without the names in `dropEnv`.
  */
-function ghEnv(dropEnv) {
+function ghEnv(dropEnv, env = process.env) {
   const dropped = new Set([...GH_DEBUG_NAMES, ...dropEnv.map((name) => name.toUpperCase())]);
   return Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !dropped.has(name.toUpperCase())),
+    Object.entries({ ...process.env, ...env }).filter(([name]) => !dropped.has(name.toUpperCase())),
   );
 }
 
@@ -35,12 +35,13 @@ function ghEnv(dropEnv) {
  * this one call removes from the child environment, compared in upper case because Windows names
  * are case-blind.
  */
-export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [] } = {}) {
+export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [], env } = {}) {
   const result = await execBounded("gh", args, {
     cwd,
     timeoutMs,
     signal,
-    env: ghEnv(dropEnv),
+    // env overrides the inherited environment of the child.
+    env: ghEnv(dropEnv, env),
     extendEnv: false,
   });
   return {
@@ -140,6 +141,33 @@ export async function readPrList(read, argv, isEntry) {
     return { failure: "the gh pr list reply is not a list that names one PR" };
   }
   return { list };
+}
+
+/**
+ * Reads the open same-repository pull requests of `branch` in `cwd`, through `readPrList`. A `repo`
+ * slug pins the read to that repository, and null leaves it unpinned. A cross-repository entry is
+ * dropped from `list`. A failed read returns `{ failure }` with the reason text of `readPrList`.
+ * @param {{ branch: string, read: (argv: string[]) => Promise<object>, repo?: string | null,
+ *   fields: string, isEntry: (entry: unknown) => boolean }} options
+ * @returns {Promise<{ list: object[] } | { failure: string }>}
+ */
+export async function readOpenBranchPrs({ branch, read, repo = null, fields, isEntry }) {
+  const argv = [
+    "pr",
+    "list",
+    ...(repo === null ? [] : ["--repo", repo]),
+    "--head",
+    branch,
+    "--state",
+    "open",
+    "--json",
+    fields,
+    "--limit",
+    String(PR_LIST_LIMIT),
+  ];
+  const result = await readPrList(read, argv, isEntry);
+  if (result.failure) return { failure: result.failure };
+  return { list: result.list.filter((entry) => !entry.isCrossRepository) };
 }
 
 // The words that the network stack of `gh` writes for a transport failure, which carries no server

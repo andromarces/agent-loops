@@ -11,6 +11,7 @@ import {
   readWorkTreeGitState,
   removeWorkTree,
 } from "./git.mjs";
+import { readGhJson } from "./gh-read.mjs";
 import { readClaim, releaseClaim } from "./store.mjs";
 
 const keep = (reason) => ({ removed: false, reason });
@@ -20,14 +21,15 @@ async function prProof({ loop, repo, base, gh, head }) {
     return keep("the loop has no pushed proof (unpushed)");
   let view;
   try {
-    const reply = await gh(
+    view = await readGhJson(
+      gh,
       ["pr", "view", String(loop.pr), "--json", "state,headRefOid,mergeCommit"],
       repo,
     );
-    if (reply?.status !== 0) throw new Error((reply?.stderr ?? "").trim() || "no reply");
-    view = JSON.parse(reply.stdout);
   } catch (err) {
-    return keep(`the pull request read failed: ${err?.message ?? err}`);
+    const noReply =
+      err?.kind === "empty" || (err?.kind === "status" && (err.reply?.stderr ?? "").trim() === "");
+    return keep(`the pull request read failed: ${noReply ? "no reply" : (err?.message ?? err)}`);
   }
   if (view?.state !== "MERGED") return keep(`pull request ${loop.pr} is not merged (unpushed)`);
   if (!(await isAncestor(head, view.headRefOid, repo))) {

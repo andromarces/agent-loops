@@ -36,9 +36,13 @@ export function isFatalTurnError(err) {
  * and terminates the `git` child on expiry. A caller that owns a total
  * limit keeps that limit even when the probe hangs. A probe cut short by the
  * bound refuses, because a work tree it never confirmed is not a verified one.
- * `signal` ends the probe too, and the refusal then has `isCanceled` set.
+ * `signal` ends the probe too, and the refusal then has `isCanceled` set. `env` overrides the
+ * child environment of the probe.
  */
-export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, signal } = {}) {
+export async function assertGitWorkTree(
+  cwd,
+  { timeoutMs = GIT_READ_TIMEOUT_MS, signal, env } = {},
+) {
   const createError = (reason) =>
     new SnapshotError(
       reason === "canceled"
@@ -49,6 +53,7 @@ export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, 
   const result = await gitRead(cwd, ["rev-parse", "--is-inside-work-tree"], {
     timeoutMs,
     signal,
+    env,
     createError,
   });
 
@@ -100,10 +105,9 @@ export async function sha256File(path, { signal } = {}) {
     const handle = await open(path, "r");
     let stream;
     try {
-      // Bound the read to the size of the opened file, as the whole-file read did, so a file that
-      // grows during the read keeps the digest of its bytes at open. An empty file has no bound,
-      // as an unbounded stream reads to EOF. The stream owns the handle and closes it on end,
-      // error, or abort.
+      // Bound the read to the size of the opened file. A file that grows during the read then keeps
+      // the digest of its bytes at open. An empty file has no bound, as an unbounded stream reads to
+      // EOF. The stream owns the handle and closes it on end, error, or abort.
       const { size } = await handle.stat();
       const range = size > 0 ? { start: 0, end: size - 1 } : {};
       // An abort during the read destroys the stream, which closes the file handle and rejects the read.
@@ -175,7 +179,7 @@ function statusEntries(stdout) {
 
 /**
  * Hashes the files of `entries` in batches of `HASH_BATCH_SIZE`. Entries keep their order, and the
- * first failure in that order throws, as the sequential hashes did. `signal` stops a hash at the
+ * first failure in that order throws. `signal` stops a hash at the
  * caller's deadline.
  */
 const hashEntries = (root, entries, signal) =>
@@ -317,9 +321,9 @@ export async function withMutationCheck(
   cwd,
   role,
   fn,
-  { signal, forceSignal = forceCancelSignal(signal) } = {},
+  { signal, forceSignal = forceCancelSignal(signal), env } = {},
 ) {
-  const before = await snapshot(cwd, { signal });
+  const before = await snapshot(cwd, { signal, env });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
   let actionError;
@@ -335,7 +339,7 @@ export async function withMutationCheck(
   let after;
   const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    after = await snapshot(cwd, { signal: forceSignal });
+    after = await snapshot(cwd, { signal: forceSignal, env });
   } catch (snapErr) {
     if (snapErr?.isCanceled) {
       throw new SnapshotError(
