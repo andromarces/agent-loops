@@ -60,7 +60,7 @@ Andro Marces
 - [Pull request #1586](https://github.com/andromarces/agent-loops/pull/1586)
 - [Issue #1551](https://github.com/andromarces/agent-loops/issues/1551)
 - [Issue #1448](https://github.com/andromarces/agent-loops/issues/1448)
-- Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`, `diffMainWorkTreeInTurn` in `src/lib/main-work-tree-change.mjs`, and the evidence field in `src/lib/turn-evidence.mjs`
+- Implementation: `startMainWorkTreeWatch` in `src/lib/evidence/main-work-tree-watch.mjs`, `diffMainWorkTreeInTurn` in `src/lib/evidence/main-work-tree-change.mjs`, and the evidence field in `src/lib/evidence/turn-evidence.mjs`
 - Documented in the [orchestrator instructions](../docs/orchestrator-instructions.md) and the headless prompt in `src/prompts/orchestrator.mjs`
 - [ADR 0075](0075-report-a-copied-source-that-changed-inside-a-turn-window.md) reports the same window for a copied source
 - [ADR 0100](0100-arm-the-main-work-tree-watch-before-the-child-turn.md)

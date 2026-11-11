@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { runChild } from "../src/child-turn.mjs";
-import { changedInPackageStore, snapshotPackageStore } from "../src/lib/package-store-entries.mjs";
-import { failedTurnEvidence } from "../src/lib/turn-evidence.mjs";
+import {
+  changedInPackageStore,
+  snapshotPackageStore,
+} from "../src/lib/evidence/package-store-entries.mjs";
+import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
@@ -13,7 +16,7 @@ import { createTempRepo } from "./git-helpers.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
 // #1713).
-vi.mock("../src/lib/tmpdir-entries.mjs", async (importOriginal) => {
+vi.mock("../src/lib/evidence/tmpdir-entries.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return { ...real, literalTmpdirRoots: () => [] };
 });

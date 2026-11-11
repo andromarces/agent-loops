@@ -6,7 +6,7 @@ import { normalizeAgent } from "../agents/index.mjs";
 import { throwIfCanceled } from "../agents/shared.mjs";
 import { DEFAULT_MAX_STEPS, DEFAULT_TIMEOUT, readTaskFile, roleState } from "../lib/args.mjs";
 import { refuseHeldIds, refuseHeldSessions } from "../lib/command-line.mjs";
-import { MAX_ENTRIES, reportedPathNames } from "../lib/entry-report.mjs";
+import { MAX_ENTRIES, reportedPathNames } from "../lib/evidence/entry-report.mjs";
 import { readableErrorMessage, redactedText, readProp } from "../lib/error-message.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { findLocalFileChanges, hashCopiedLocalFiles } from "../lib/local-file-changes.mjs";
@@ -35,7 +35,7 @@ import {
   failedTurnEvidence,
   turnResultFields,
   TURN_EVIDENCE_FIELDS,
-} from "../lib/turn-evidence.mjs";
+} from "../lib/evidence/turn-evidence.mjs";
 import {
   normalizedLocalPaths,
   rejectInitFlagChanges,

@@ -7,7 +7,7 @@
 import { defaultAgents } from "../agents/index.mjs";
 import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
-import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/check-wait.mjs";
+import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/checks/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { withGitIdentityReads } from "../lib/git-read.mjs";

@@ -8,7 +8,7 @@ import {
   PR_LIST_LIMIT,
   readPrList,
   runGh,
-} from "./gh-api.mjs";
+} from "./checks/gh-api.mjs";
 import { gitRead } from "./git-read.mjs";
 
 const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;

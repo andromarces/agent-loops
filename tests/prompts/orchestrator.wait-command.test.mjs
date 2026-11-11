@@ -94,7 +94,7 @@ test.each([
   "the headless wait prompt follows a %i ms child-exit ceiling",
   async (ceilingMs, bound, word) => {
     vi.resetModules();
-    vi.doMock("../../src/lib/check-wait.mjs", async (importOriginal) => ({
+    vi.doMock("../../src/lib/checks/check-wait.mjs", async (importOriginal) => ({
       ...(await importOriginal()),
       CHILD_EXIT_CEILING_MS: ceilingMs,
     }));
@@ -115,7 +115,7 @@ test.each([
       expect(prompt).toContain(`${bound} seconds plus ${word}, before this turn ends`);
       expect(prompt).toContain(`${word}-second window expired`);
     } finally {
-      vi.doUnmock("../../src/lib/check-wait.mjs");
+      vi.doUnmock("../../src/lib/checks/check-wait.mjs");
       vi.resetModules();
     }
   },

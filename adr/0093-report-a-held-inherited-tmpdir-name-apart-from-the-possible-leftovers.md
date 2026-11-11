@@ -71,9 +71,9 @@ Andro Marces
 - [ADR 0081: Re-check the inherited temporary directory names before the finish summary](0081-re-check-the-inherited-tmpdir-names-before-the-finish-summary.md)
 - [ADR 0082: Wait for a reported inherited temporary directory name to vanish](0082-wait-for-a-reported-inherited-tmpdir-name-to-vanish.md)
 - Implementation:
-  - Probe and classification: `settleInheritedTmpdirNames` in `src/lib/tmpdir-entries.mjs`
+  - Probe and classification: `settleInheritedTmpdirNames` in `src/lib/evidence/tmpdir-entries.mjs`
   - Parent read: `recheck-tmpdir` in `src/role/index.mjs`
   - Headless prompt: `inheritedTmpdirSettled` in `src/runtime.mjs` and `src/prompts/orchestrator.mjs`
   - Docs: `docs/reference/role.md` and `docs/orchestrator/runtime-advisory-fields.md`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
 - [ADR Index](README.md)

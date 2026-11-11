@@ -48,7 +48,7 @@ Andro Marces
 - [Pull request #1586](https://github.com/andromarces/agent-loops/pull/1586)
 - [ADR 0080](0080-report-a-main-work-tree-change-inside-a-turn-window.md)
 - [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md) (decisions 2 and 5)
-- Implementation: `startMainWorkTreeWatch` in `src/lib/main-work-tree-watch.mjs`
+- Implementation: `startMainWorkTreeWatch` in `src/lib/evidence/main-work-tree-watch.mjs`
 - Documented in the [orchestrator instructions](../docs/orchestrator-instructions.md) and the headless prompt in `src/prompts/orchestrator.mjs`
 - [ADR Index](README.md)
 

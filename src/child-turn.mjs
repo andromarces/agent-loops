@@ -2,8 +2,8 @@ import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
 import { mapInBatches } from "./lib/batches.mjs";
 import { errorLine, firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
-import { readRequiredChecks } from "./lib/ci-gate.mjs";
-import { DEFAULT_READ_TIMEOUT_MS } from "./lib/gh-api.mjs";
+import { readRequiredChecks } from "./lib/checks/ci-gate.mjs";
+import { DEFAULT_READ_TIMEOUT_MS } from "./lib/checks/gh-api.mjs";
 import { clearGitIdentityReads } from "./lib/git-read.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
@@ -14,8 +14,12 @@ import {
 } from "./lib/report.mjs";
 import { isFatalTurnError, reviewedState, withMutationCheck } from "./lib/snapshot.mjs";
 import { reportLateChangedPaths, runTestCmd } from "./lib/test-cmd.mjs";
-import { carryTurnEvidence, failedTurnEvidence, pickTurnEvidence } from "./lib/turn-evidence.mjs";
-import { createTurnEvidence } from "./lib/turn-evidence-window.mjs";
+import {
+  carryTurnEvidence,
+  failedTurnEvidence,
+  pickTurnEvidence,
+} from "./lib/evidence/turn-evidence.mjs";
+import { createTurnEvidence } from "./lib/evidence/turn-evidence-window.mjs";
 import { reviewerPrompt } from "./prompts/reviewer.mjs";
 import { closingBlockRepairPrompt } from "./prompts/rules.mjs";
 import { workerPrompt } from "./prompts/worker.mjs";
@@ -106,7 +110,7 @@ export async function runProbeTurn({
   throwIfCanceled(signal, roleName);
 }
 
-/** @typedef {import("./lib/turn-evidence.mjs").TurnEvidence} TurnEvidence */
+/** @typedef {import("./lib/evidence/turn-evidence.mjs").TurnEvidence} TurnEvidence */
 
 /**
  * Run one worker or reviewer turn with the same guards as the headless loop:
@@ -117,7 +121,7 @@ export async function runProbeTurn({
  * A reviewer result also carries `reviewed` and `prChecks`. `reviewed` is the runtime-owned
  * identity of the work tree the reviewer saw. `prChecks` is the required-check status the
  * runtime read for a declared PR (#320).
- * The evidence fields listed in `lib/turn-evidence.mjs` join a result. A fatal error carries them
+ * The evidence fields listed in `lib/evidence/turn-evidence.mjs` join a result. A fatal error carries them
  * through `carryTurnEvidence` and `failedTurnEvidence`.
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null

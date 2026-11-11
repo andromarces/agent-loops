@@ -60,7 +60,7 @@ Andro Marces
 - [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md)
 - [ADR 0068: Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md)
 - Implementation:
-  - Source: `literalTmpdirRoots`, `snapshotInheritedTmpdir`, and `appearedInInheritedTmpdir` in `src/lib/tmpdir-entries.mjs`, `src/lib/turn-evidence-window.mjs`, `src/child-turn.mjs`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/child-turn.inherited-tmpdir.test.mjs`
+  - Source: `literalTmpdirRoots`, `snapshotInheritedTmpdir`, and `appearedInInheritedTmpdir` in `src/lib/evidence/tmpdir-entries.mjs`, `src/lib/evidence/turn-evidence-window.mjs`, `src/child-turn.mjs`
+  - Tests: `tests/lib/evidence/tmpdir-entries.test.mjs`, `tests/child-turn.inherited-tmpdir.test.mjs`
   - Docs: `docs/orchestrator-instructions.md`, `docs/orchestrator/runtime-advisory-fields.md`, `docs/reference/role.md`
 - [ADR Index](README.md)

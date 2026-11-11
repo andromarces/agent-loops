@@ -5,7 +5,7 @@ import {
   unresolvedCompareReason,
   WORKER_AFTER_REVIEW_ACCEPT_REFUSAL,
 } from "./lib/gate-refusal.mjs";
-import { checkCi, checkPrHead } from "./lib/ci-gate.mjs";
+import { checkCi, checkPrHead } from "./lib/checks/ci-gate.mjs";
 import { logError, logWarn } from "./lib/log.mjs";
 import { refusalPrompt } from "./prompts/orchestrator.mjs";
 

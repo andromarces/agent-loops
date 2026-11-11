@@ -24,7 +24,7 @@ const reads = vi.hoisted(() => ({
 }));
 // A synthetic changed dependency path, so a control character reaches the caller warning.
 const hostile = vi.hoisted(() => ({ path: null, calls: 0 }));
-vi.mock("../src/lib/lockfile-change.mjs", async (importOriginal) => {
+vi.mock("../src/lib/evidence/lockfile-change.mjs", async (importOriginal) => {
   const real = await importOriginal();
   return {
     ...real,

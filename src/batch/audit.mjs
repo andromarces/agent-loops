@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { defaultAgents } from "../agents/index.mjs";
 import { invoke } from "../child-turn.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/gh-api.mjs";
+import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/checks/gh-api.mjs";
 import { logError, logInfo } from "../lib/log.mjs";
 import { isFatalTurnError, withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";

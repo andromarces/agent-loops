@@ -46,7 +46,7 @@ Both envelopes named the new commit in `head` and held only its states. The wind
 
 A second run on the same PR produced a failing check. Commit `86de92b` (`86de92b711d65c85d7e00a73352bcec980486476`) added a test that always fails, and `ci (ubuntu-latest)` failed on it. On that head, both modes (`--head 86de92b… --timeout 60`, and the same with `--all`) returned `status: "ok"`, `timedOut: false`, exit 0, `head` `86de92b…`, a `checks` entry `{"name":"ci (ubuntu-latest)","state":"FAILURE","bucket":"fail"}`, and `"prFailures":[{"name":"ci (ubuntu-latest)","state":"FAILURE","bucket":"fail"}]`. The failure sat in both lists there because it was a state of `head` itself. Commit `24c94f3` (`24c94f31c4104a24e85fd9a54d28f53772cadab4`) then removed the test and was pushed. `gh pr checks 1009` printed `no checks reported on the 'verify/710-wait-checks-head-pinning' branch` at that moment, so it listed no failure of `86de92b`. Both modes started right after the push (`--head 24c94f3… --timeout 240`) and returned `timedOut: true`, exit 0, `head` `24c94f3…`, `checks` of `24c94f3` only (`ci (ubuntu-latest)` `SUCCESS`, the macos and windows checks `IN_PROGRESS`), and no `prFailures`. The earlier `FAILURE` of `86de92b` appeared nowhere in either envelope.
 
-The live case where `gh pr checks` still lists a failure of an earlier head for the PR was not reproduced: after the fix push, `gh pr checks` listed no check at all, so `prFailures` stayed absent. The `prFailures` placement for a failure that `checks` of `head` does not show is covered by `tests/lib/check-wait.test.mjs` only.
+The live case where `gh pr checks` still lists a failure of an earlier head for the PR was not reproduced: after the fix push, `gh pr checks` listed no check at all, so `prFailures` stayed absent. The `prFailures` placement for a failure that `checks` of `head` does not show is covered by `tests/lib/checks/check-wait.test.mjs` only.
 
 ## Alternatives
 
@@ -64,7 +64,7 @@ Andro Marces
 
 - [Issue #961: Name and pin the PR head that a wait-checks result describes](https://github.com/andromarces/agent-loops/issues/961)
 - [PR #968](https://github.com/andromarces/agent-loops/pull/968)
-- Implementation: `waitChecks` in `src/lib/check-wait.mjs`, and `requiredResolutionRefusal`, `matchingEntries`, and `evaluateContext` in `src/lib/ci-gate.mjs`. The `wait-checks` operation is in `src/role/index.mjs`, and the error envelope is in `src/role/envelope.mjs`. Tests are in `tests/lib/check-wait.test.mjs` and `tests/role/index.wait-checks.test.mjs`. Documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role).
+- Implementation: `waitChecks` in `src/lib/checks/check-wait.mjs`, and `requiredResolutionRefusal`, `matchingEntries`, and `evaluateContext` in `src/lib/checks/ci-gate.mjs`. The `wait-checks` operation is in `src/role/index.mjs`, and the error envelope is in `src/role/envelope.mjs`. Tests are in `tests/lib/checks/check-wait.test.mjs` and `tests/role/index.wait-checks.test.mjs`. Documented in `docs/orchestrator-instructions.md` and [Interactive child dispatch](../docs/reference/role.md#interactive-child-dispatch-agent-loop-role).
 - [ADR 0010: A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md)
 - [Issue #1125: Read the required check names once per check-wait poll](https://github.com/andromarces/agent-loops/issues/1125)
 - [PR #1150](https://github.com/andromarces/agent-loops/pull/1150)

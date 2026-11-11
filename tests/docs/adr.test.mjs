@@ -3,7 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
 
-const adrDir = fileURLToPath(new URL("../../adr/", import.meta.url));
+const adrDir = fileURLToPath(new URL("../../adr", import.meta.url));
 const repoRoot = resolve(adrDir, "..");
 const adr19 = "adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md";
 const readRepoFile = (path) => readFile(join(repoRoot, path), "utf8");
