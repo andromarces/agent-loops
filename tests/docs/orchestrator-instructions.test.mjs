@@ -819,7 +819,13 @@ test("the user docs state the remote-write limit", async () => {
   expect(readme).toContain(
     "A `danger-full-access` turn can post a connector comment, and a Codex reviewer with no sandbox runs in that mode",
   );
-  expect(readme).toContain("(issue #496)");
+  const connectorStart = readme.indexOf("A GitHub app connector on Codex.");
+  expect(connectorStart).toBeGreaterThanOrEqual(0);
+  const connectorParagraph = readme.slice(
+    connectorStart,
+    readme.indexOf("#### Denial probe", connectorStart),
+  );
+  expect(connectorParagraph).toContain("(issue #496)");
 });
 
 // The refused-`--cwd` rule that both parent paths state the same way. It is the decision, not a
