@@ -427,6 +427,21 @@ test("--require-accept follows the latest reviewer verdict", async () => {
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// Usefulness: verifies --require-accept accepts a reviewer Verdict line directly above Conclusion (issue #1793).
+test("--require-accept accepts a Verdict line above the closing block", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  await dispatchReviewer(
+    repo,
+    "Verdict: accept\n\nConclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test",
+  );
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
 // A `git` answer that reports a cancel for a call that carries an aborted signal, as execa does,
 // and answers as `cleanRepoGit` otherwise.
 const cancelAwareGit = (command, args, options) =>

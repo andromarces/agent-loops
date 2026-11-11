@@ -56,6 +56,47 @@ test("--require-accept refuses a finish until a reviewer accepts", async () => {
   }
 });
 
+// Usefulness: verifies a headless requireAccept run accepts a reviewer Verdict line directly above Conclusion (issue #1793).
+test("--require-accept accepts a reviewer Verdict line above the closing block", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const verdictAbove = [
+      "Verdict: accept",
+      "",
+      "Conclusion: the state passes.",
+      "Why: changes match the task.",
+      "Blockers: none.",
+      "Checks: npm test",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([verdictAbove]);
+
+    const result = await runLoop({
+      task: "Task 29a",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 // 30. Usefulness: verifies the gate treats a reviewer reject as not accepted, and
 // a later reviewer accept on the same state allows the finish (issue #234).
 test("--require-accept treats a reviewer reject as not accepted", async () => {

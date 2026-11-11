@@ -70,10 +70,12 @@ A bold-lead narration paragraph directly above the first label supplies no concl
 nearest plain prose line above that narration becomes `Conclusion` instead. All
 narration lines above the block stay out of the report.
 
-A lone required label line directly above `Conclusion:`, with only blank lines between, also joins
-the block, so `**Blockers:** none` in its own paragraph before `Conclusion:` still parses. The label must appear once in the response outside a fence. A label in earlier prose, in a
-blockquote, or in a fenced code block stays out and neither starts nor extends the block, and a
-required label repeated inside the block keeps its last occurrence.
+A lone required label line or a lone `Verdict:` line directly above `Conclusion:`, with only blank
+lines between, also joins the block. So `**Blockers:** none` in its own paragraph before
+`Conclusion:` still parses. That label must appear once in the response outside a fence. A label in
+earlier prose, in a blockquote, or in a fenced code block stays out and neither starts nor extends
+the block. A label repeated inside the block keeps its last occurrence. A `Verdict:` line inside the
+block still governs over one above it.
 
 A report that parses only because bold labels were normalized fails closed into `raw` when its
 OpenCode response has more than one unidentified part. The report is null in that case. A
