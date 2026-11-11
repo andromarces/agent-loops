@@ -770,7 +770,7 @@ test("a needs-owner loop owned by another resume reports paused", async () => {
   }
 });
 
-// Usefulness: a queued checkpoint trusts no replaced work tree; it stops as needs-owner.
+// Usefulness: a queued checkpoint trusts no replaced work tree. It stops as needs-owner.
 test("a queued checkpoint with a replaced work tree stops before launch", async () => {
   const repo = await batchRepo();
   const prepared = await preparedFor(repo, [1]);

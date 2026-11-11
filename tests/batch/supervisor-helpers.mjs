@@ -238,7 +238,7 @@ export async function waitForStatus(runsRoot, batchId, issue, status) {
 }
 
 // One immutable repository and bare remote for the file. Each case gets its own work-tree root
-// and batch id, so mutable state is per test and no case runs git init or an initial push.
+// and batch id. No case runs git init or an initial push, so mutable state is per test.
 export const roots = [];
 let sharedRepo;
 export async function batchRepo() {
