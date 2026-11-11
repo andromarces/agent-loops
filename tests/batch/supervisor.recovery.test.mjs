@@ -230,7 +230,7 @@ test("a resumed loop end reads its transcript once", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;

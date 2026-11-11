@@ -727,8 +727,9 @@ test("every git process of the read has ended when the read rejects at its deadl
 test("no hook file system request starts after the deadline", async () => {
   const { repo, linked } = await createRepoWithLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
-  fsFailure.lstatDelayMs = 800;
-  await expect(readSharedGit(linked, { deadlineMs: 2_000 })).rejects.toThrow(/2000 ms/);
+  // The delay and the deadline keep their ratio, so the ordering is the same at a lower cost.
+  fsFailure.lstatDelayMs = 200;
+  await expect(readSharedGit(linked, { deadlineMs: 500 })).rejects.toThrow(/500 ms/);
   const atDeadline = [...fsFailure.requests];
   expect(atDeadline).toContain("lstat");
   // The lstat in flight at the deadline is the last one that started.
