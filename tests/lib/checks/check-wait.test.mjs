@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../../src/lib/checks/check-wait.mjs";
-import { canceledError } from "../../../src/lib/checks/ci-gate.mjs";
+import { canceledError } from "../../../src/lib/sigint.mjs";
 import { pageStdout } from "../../gh-doubles.mjs";
 import {
   fakeClock,

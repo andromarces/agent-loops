@@ -1,15 +1,15 @@
 // Reads the required-check sources of a base branch: repository rulesets, classic branch
 // protection, and `gh pr checks`. It also reads the pull request state that the CI gate judges
-// (#218, #336). The judgment lives in `ci-gate.mjs`.
+// (#218, #336). The absence and resolution judgments live here.
 import {
   ghApiFailure,
   ghFailureText,
-  inOrder,
   isCleanServerError,
   isTransportFailure,
   pagedRead,
   readOne,
 } from "./gh-api.mjs";
+import { inOrder } from "./bounded-call.mjs";
 import { isJsonObject, tryParseJson } from "../json.mjs";
 
 // A source the caller cannot read answers 404 or 403, and the message names the
@@ -611,4 +611,85 @@ export async function requiredContexts(
         return left < right ? -1 : left > right ? 1 : 0;
       }),
   };
+}
+
+/**
+ * Whether the required contexts that `requiredContexts` resolved state an absence of a required
+ * check. The gate and the check wait share it, so one rule decides it (issue #1013).
+ *
+ * Returns `null` when a source names a required check, so there is no absence to decide, and the
+ * caller judges each named check. With no named check, returns `{ absent: true }` when both the
+ * rulesets and the classic protection stated they hold none. With no named check, returns
+ * `{ unproven }` when the listed sources did not state an absence. A parent can only fix a source
+ * it can see (issue #336).
+ * @param {{ unknown: string[], rulesetState: string, protectionState: string, contexts: object[] }} required
+ * @returns {{ absent: true } | { unproven: string[] } | null}
+ */
+export function requiredAbsence({ unknown, rulesetState, protectionState, contexts }) {
+  if (contexts.length > 0) {
+    return null;
+  }
+  // `classifyProtection` returns only `HAS_CONTEXTS` or `UNKNOWN`, and `ABSENT` comes from the
+  // exact-404 path in `readRequiredSource`, so an unreadable protection reply is already in
+  // `unknown`.
+  if (rulesetState === ABSENT && protectionState === ABSENT) {
+    return { absent: true };
+  }
+  // A source that settled nothing and a ruleset read that found no rule are both named.
+  const unproven = [...unknown];
+  // The protection source cannot be `EMPTY`: only the ruleset source returns it.
+  if (rulesetState === EMPTY) {
+    unproven.push(RULESETS);
+  }
+  return { unproven };
+}
+
+/**
+ * Why a failed read of the required names, or of a reply that cannot be parsed, leaves the
+ * required contexts unresolved. Returns null when neither applies. `requiredResolutionRefusal`
+ * and the wait on a no-required-checks answer share it.
+ * @param {{ unparsed: string[], namesRead: boolean }} required
+ * @param {number} pr
+ * @param {string} [where] text that ends the two reasons, for example the PR head
+ * @returns {string | null}
+ */
+export function requiredNamesRefusal({ unparsed, namesRead }, pr, where = "") {
+  if (unparsed.length > 0) {
+    return `${unparsed.join(" and ")} returned a reply that could not be parsed for PR ${pr}${where}`;
+  }
+  if (!namesRead) {
+    return `the required check names for PR ${pr} could not be read${where}`;
+  }
+  return null;
+}
+
+/**
+ * Why the required contexts that `requiredContexts` resolved cannot be judged, or null when
+ * they can. The status read and the check wait share it, so one rule decides it.
+ *
+ * - A reply that is not parseable JSON can hide a required context, so it is unresolved whatever
+ *   the other source names.
+ * - An unreadable 404 or 403 reply is not this case, because the gate accepts it too.
+ * - A failed names read can drop a required check that no other source names, so it is unresolved
+ *   whatever the rest of the union holds.
+ * - An empty union is no status to report.
+ * @param {{ unknown: string[], unparsed: string[], namesRead: boolean, contexts: object[] }} required
+ * @param {number} pr
+ * @param {string} [where] text that ends the two reply-failure reasons, for example the PR head
+ * @returns {string | null}
+ */
+export function requiredResolutionRefusal(
+  { unknown, unparsed, namesRead, contexts },
+  pr,
+  where = "",
+) {
+  const namesRefusal = requiredNamesRefusal({ unparsed, namesRead }, pr, where);
+  if (namesRefusal) {
+    return namesRefusal;
+  }
+  if (contexts.length === 0) {
+    const sources = unknown.length > 0 ? ` (${unknown.join(" and ")} settled nothing)` : "";
+    return `no required checks were found for PR ${pr}${sources}`;
+  }
+  return null;
 }

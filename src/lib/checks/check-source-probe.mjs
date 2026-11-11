@@ -1,7 +1,8 @@
 // The probe of the `--all` check wait that decides whether any source can report a check for a PR
 // head. It reads only, through the bounded `gh` runner of the wait (#1054).
 import { commitEntries } from "./commit-entries.mjs";
-import { ghApi, ghApiFailure, inOrder, pagedRead, readOne } from "./gh-api.mjs";
+import { ghApi, ghApiFailure, pagedRead, readOne } from "./gh-api.mjs";
+import { inOrder } from "./bounded-call.mjs";
 import { isFullSha } from "../git-sha.mjs";
 import { isJsonObject } from "../json.mjs";
 import { prEventsFilteredOut, prWorkflowMayRun, UNREADABLE_TEXT } from "./workflow-paths.mjs";

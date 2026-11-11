@@ -3,12 +3,12 @@
 import { repoSlug } from "./checks/ci-required-sources.mjs";
 import { oneLine, readableErrorText } from "./error-message.mjs";
 import {
-  boundedCall,
   DEFAULT_READ_TIMEOUT_MS,
   isPrListEntry,
   readOpenBranchPrs,
   runGh,
 } from "./checks/gh-api.mjs";
+import { boundedCall } from "./checks/bounded-call.mjs";
 import { gitRead, readHeadBranch } from "./git-read.mjs";
 import { isFullSha } from "./git-sha.mjs";
 import { logWarn } from "./log.mjs";
