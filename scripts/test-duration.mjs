@@ -84,15 +84,23 @@ function vpBinPath() {
   return join(dirname(require.resolve("vite-plus/package.json")), "bin", "vp");
 }
 
+/** Builds the Vitest arguments that keep console output and write a JSON report. */
+export function testArguments(reportPath) {
+  return [
+    vpBinPath(),
+    "test",
+    "run",
+    "--reporter=default",
+    "--reporter=json",
+    `--outputFile.json=${reportPath}`,
+  ];
+}
+
 function main() {
   const reportPath = join(tmpdir(), `agent-loops-test-duration-${process.pid}.json`);
   try {
     const started = performance.now();
-    const run = spawnSync(
-      process.execPath,
-      [vpBinPath(), "test", "run", "--reporter=json", `--outputFile=${reportPath}`],
-      { stdio: "inherit" },
-    );
+    const run = spawnSync(process.execPath, testArguments(reportPath), { stdio: "inherit" });
     const elapsedMs = performance.now() - started;
     if (run.error) throw run.error;
     if (run.signal) throw new Error(`Test run ended by signal ${run.signal}`);

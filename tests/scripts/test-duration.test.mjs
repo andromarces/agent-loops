@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import { formatSummary, readReport, summarizeReport } from "../../scripts/test-duration.mjs";
+import {
+  formatSummary,
+  readReport,
+  summarizeReport,
+  testArguments,
+} from "../../scripts/test-duration.mjs";
 
 /** Builds one Vitest JSON file result with its assertions. */
 function fileResult(name, startTime, endTime, assertions = []) {
@@ -13,6 +18,15 @@ function fileResult(name, startTime, endTime, assertions = []) {
 function assertion(fullName, duration) {
   return { fullName, duration, status: "passed" };
 }
+
+// Usefulness: verifies the runner keeps console failure output and still writes the JSON report.
+test("testArguments keeps the default reporter and writes the JSON report", () => {
+  const args = testArguments("report.json");
+
+  expect(args).toContain("--reporter=default");
+  expect(args).toContain("--reporter=json");
+  expect(args).toContain("--outputFile.json=report.json");
+});
 
 // Usefulness: verifies the printed total is the measured elapsed time passed by the runner.
 test("formatSummary prints the measured elapsed total", () => {
