@@ -350,9 +350,10 @@ test("a work-tree root inside another Git work tree is refused", async () => {
 // Usefulness: the merged refusal keeps the runs-root text, so a user reads which root is refused.
 test("the merged refusal names the runs root", async () => {
   const { main } = await sharedBatchRepo();
-  await expect(refuseRootInGitWorkTree(join(main, "runs"), "runs root")).rejects.toThrow(
-    "The runs root must lie outside every Git work tree.",
-  );
+  const gitRun = async () => main;
+  await expect(
+    refuseRootInGitWorkTree(join(main, "runs"), "runs root", { gitRun }),
+  ).rejects.toThrow("The runs root must lie outside every Git work tree.");
 });
 
 // Usefulness: the merged ancestor walk still refuses an existing file as the work-tree root.
