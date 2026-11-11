@@ -10,7 +10,7 @@
 // Antigravity command hooks, each of which supplies its own input mapping and
 // deny shape. Fail-open by design: the guard is optional defense for the
 // prompt-only parent rule, so unknown records never block a tool call.
-import { text } from "node:stream/consumers";
+import { buffer } from "node:stream/consumers";
 import { tryParseJson } from "../lib/json.mjs";
 import { TERMINAL_LIFECYCLES, readStatesForSession } from "../lib/runstate.mjs";
 
@@ -37,7 +37,7 @@ export async function decideParentGuard(sessionId, { lookup = readStatesForSessi
 }
 
 async function readHookInput() {
-  return tryParseJson(await text(process.stdin));
+  return tryParseJson((await buffer(process.stdin)).toString("utf8"));
 }
 
 /**

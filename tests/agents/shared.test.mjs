@@ -104,14 +104,12 @@ test("turnExecOptions maps turn options to exec options and omits an absent env 
   expect(bare.input).toBe("prompt");
 });
 
-// Usefulness: verifies one valid id repeated across values resolves, so the three adapters keep
-// their shared evidence rule.
+// Usefulness: one valid id repeated across values resolves, so the three adapters keep their shared rule.
 test("singleSessionId returns the one id every value names", () => {
   expect(singleSessionId(["sess-1", "sess-1"])).toBe("sess-1");
 });
 
-// Usefulness: verifies no evidence, a missing value, a malformed value, and two ids never resolve,
-// so an adapter cannot guess a session.
+// Usefulness: no evidence, a missing value, a malformed value, and two ids never resolve.
 test("singleSessionId refuses no id, an invalid id, and two ids", () => {
   expect(singleSessionId([])).toBeUndefined();
   expect(singleSessionId(["sess-1", undefined])).toBeUndefined();
