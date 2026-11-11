@@ -22,7 +22,7 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads <= 2 ? [{ number: 9, state: "OPEN" }] : [];
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
@@ -109,7 +109,7 @@ test("a failed poll read retries on the next poll", async () => {
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
         const open = blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
@@ -183,7 +183,7 @@ test("a closed issue while waiting is skipped and not launched", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         blockedReads += 1;
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({
@@ -260,7 +260,7 @@ test("an abort during a poll wait exits 130", async () => {
         };
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({

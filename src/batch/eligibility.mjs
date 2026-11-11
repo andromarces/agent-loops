@@ -2,18 +2,10 @@
 // these checks only skip one, and each skip names its evidence. A batch-wide read that fails
 // pauses the queue instead.
 import { isJsonObject } from "../lib/json.mjs";
+import { readGhJson } from "./gh-read.mjs";
 
 const CLOSING_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+\S/;
-
-async function readJson(gh, args, cwd) {
-  const reply = await gh(args, cwd);
-  if (reply === undefined || reply === null) throw new Error("the read returned nothing");
-  if (reply.status !== 0) {
-    throw new Error((reply.stderr ?? "").trim() || `exit ${reply.status}`);
-  }
-  return JSON.parse(reply.stdout);
-}
 
 function blockedNumbers(value) {
   if (Array.isArray(value)) return value;
@@ -31,24 +23,21 @@ const isOpen = (state) => String(state).toUpperCase() === "OPEN";
 const PR_NOT_FOUND = /could not resolve to a pull ?request/i;
 
 async function probePullRequest(gh, number, repo) {
-  let reply;
+  let value;
   try {
-    reply = await gh(["pr", "view", String(number), "--json", "number"], repo);
+    value = await readGhJson(gh, ["pr", "view", String(number), "--json", "number"], repo);
   } catch (err) {
-    return { kind: "failed", detail: err?.message ?? String(err) };
-  }
-  if (reply?.status === 0) {
-    try {
-      const value = JSON.parse(reply.stdout);
-      if (isJsonObject(value) && Number.isInteger(value.number)) return { kind: "pr" };
-    } catch {
-      // A successful reply that is not a number is a failed lookup.
+    if (err?.kind === undefined) return { kind: "failed", detail: err?.message ?? String(err) };
+    const reply = err.reply;
+    const text = `${reply?.stderr ?? ""} ${reply?.stdout ?? ""}`.trim();
+    if (err.kind === "status" && PR_NOT_FOUND.test(text)) return { kind: "none" };
+    if (err.kind === "json") {
+      return { kind: "failed", detail: "the reply named no pull request number" };
     }
-    return { kind: "failed", detail: "the reply named no pull request number" };
+    return { kind: "failed", detail: text || `exit ${reply?.status ?? "unknown"}` };
   }
-  const text = `${reply?.stderr ?? ""} ${reply?.stdout ?? ""}`.trim();
-  if (PR_NOT_FOUND.test(text)) return { kind: "none" };
-  return { kind: "failed", detail: text || `exit ${reply?.status ?? "unknown"}` };
+  if (isJsonObject(value) && Number.isInteger(value.number)) return { kind: "pr" };
+  return { kind: "failed", detail: "the reply named no pull request number" };
 }
 
 /** One `## Acceptance` heading with at least one list item, and a `## Problem` or `## Scope`. */
@@ -82,7 +71,7 @@ export function hasStructuralMinimum(body) {
  * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, slug: string | null }>}
  */
 export async function readOpenPrClosures({ gh, repo, slug = null }) {
-  const list = await readJson(
+  const list = await readGhJson(
     gh,
     [
       "pr",
@@ -125,7 +114,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
 
   let repositorySlug = slug;
   if (repositorySlug === null) {
-    const repository = await readJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
+    const repository = await readGhJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
     if (!isJsonObject(repository) || typeof repository.nameWithOwner !== "string") {
       throw new Error("gh repo view returned no repository name");
     }
@@ -135,7 +124,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
   for (const entry of list) {
     let count = 0;
     for (let page = 1; page <= 3 && count < 250; page += 1) {
-      const commits = await readJson(
+      const commits = await readGhJson(
         gh,
         ["api", `repos/${repositorySlug}/pulls/${entry.number}/commits?per_page=100&page=${page}`],
         repo,
@@ -168,7 +157,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
  * Applies the eligibility checks of decision 6 in order for one issue. `claim` is the result of
  * `readClaim`; `openPrClosures` is the result of `readOpenPrClosures`, or null while that read is
  * not needed.
- * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
+ * @returns {Promise<{ ok: true, title?: string } | { ok: false, reason: string, evidence: string }>}
  */
 export async function checkEligibility({
   issue,
@@ -203,9 +192,9 @@ export async function checkEligibility({
   }
   let issueView;
   try {
-    issueView = await readJson(
+    issueView = await readGhJson(
       gh,
-      ["issue", "view", String(issue), "--json", "state,blockedBy,body"],
+      ["issue", "view", String(issue), "--json", "state,blockedBy,body,title"],
       repo,
     );
   } catch (err) {
@@ -269,7 +258,7 @@ export async function checkEligibility({
     }
   }
 
-  if (!requireSpecification) return { ok: true };
+  if (!requireSpecification) return { ok: true, title: issueView.title };
 
   if (typeof issueView.body !== "string") {
     return unverified("the body reply named no body");
@@ -281,7 +270,7 @@ export async function checkEligibility({
       evidence: "no acceptance list, or no problem and no scope heading",
     };
   }
-  return { ok: true };
+  return { ok: true, title: issueView.title };
 }
 
 function claimSkip(claim, batchId) {
@@ -327,7 +316,7 @@ export async function preflightItemEligibility({ item, gh, repo, batchId = null 
 /**
  * Applies the eligibility checks of one item kind. An issue keeps its checks, a pull request
  * checks its state and frozen head, and a free-text task checks only its claim.
- * @returns {Promise<{ ok: true } | { ok: false, reason: string, evidence: string }>}
+ * @returns {Promise<{ ok: true, title?: string } | { ok: false, reason: string, evidence: string }>}
  */
 export async function checkItemEligibility(options) {
   const { item, gh, repo, batchId = null, claim } = options;
@@ -355,7 +344,7 @@ export async function checkItemEligibility(options) {
   });
   let view;
   try {
-    view = await readJson(
+    view = await readGhJson(
       gh,
       [
         "pr",

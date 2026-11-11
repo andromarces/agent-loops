@@ -6,6 +6,7 @@ import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/
 import { runBatch } from "../../src/batch/supervisor.mjs";
 import { childArguments } from "../../src/batch/worker.mjs";
 import {
+  BODY,
   batchRepo,
   childDouble,
   cleanupRepo,
@@ -338,6 +339,86 @@ test("a pending decision frees its only slot and the next issue launches", async
     expect(resumed.summary.loops[0].status).toBe("needs-owner");
     expect(resumed.summary.loops[0].decision).toBeTruthy();
     expect(resumed.summary.loops[1].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: one issue launch reads the title with its eligibility call, so it starts one fewer gh.
+test("one issue launch reads the title with its eligibility call", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1]);
+  const calls = [];
+  const base = fakeGh();
+  const gh = (args, cwd, options) => {
+    calls.push(args);
+    if (
+      args[0] === "issue" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("state,blockedBy,body"))
+    ) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          state: "OPEN",
+          blockedBy: { nodes: [] },
+          body: BODY,
+          title: "A title",
+        }),
+        stderr: "",
+      };
+    }
+    return base(args, cwd, options);
+  };
+  const child = childDouble();
+  try {
+    const { exitCode } = await runBatch({
+      prepared,
+      runsRoot: join(prepared.workTreeRoot, "runs"),
+      gh,
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    const issueViewCalls = calls.filter((args) => args[0] === "issue" && args[1] === "view");
+    expect(issueViewCalls).toHaveLength(1);
+    expect(issueViewCalls[0]).toContain("state,blockedBy,body,title");
+    const task = child.calls[0].args[child.calls[0].args.indexOf("--task") + 1];
+    expect(task).toContain("Work 1 A title on ");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a missing or blank eligibility title falls back to the issue number in the task.
+test("a missing or blank issue title falls back to the issue number", async () => {
+  const repo = await batchRepo();
+  try {
+    for (const title of [undefined, "   "]) {
+      const prepared = await preparedFor(repo, [1]);
+      const base = fakeGh();
+      const gh = (args, cwd, options) => {
+        if (
+          args[0] === "issue" &&
+          args[1] === "view" &&
+          args.some((arg) => arg.startsWith("state,blockedBy,body"))
+        ) {
+          const view = { state: "OPEN", blockedBy: { nodes: [] }, body: BODY };
+          if (title !== undefined) view.title = title;
+          return { status: 0, stdout: JSON.stringify(view), stderr: "" };
+        }
+        return base(args, cwd, options);
+      };
+      const child = childDouble();
+      const { exitCode } = await runBatch({
+        prepared,
+        runsRoot: join(prepared.workTreeRoot, "runs"),
+        gh,
+        deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+      });
+      expect(exitCode).toBe(0);
+      const task = child.calls[0].args[child.calls[0].args.indexOf("--task") + 1];
+      expect(task).toContain("Work 1 issue 1 on ");
+    }
   } finally {
     await cleanupRepo(repo);
   }
