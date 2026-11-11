@@ -96,10 +96,10 @@ function joinMessages(messages) {
 
 /**
  * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
- * block starts at the last `Conclusion:` line, or at a lone required label line above it (issue
- * #1592). A label line touches every part that holds one of its characters, so a label cut across
- * parts counts both. A line terminator or trailing space is no character of the line. Text before
- * the block and plain prose after it touch no label line.
+ * block starts at the last `Conclusion:` line, or at a lone required label line or `Verdict:`
+ * line above it (issues #1592 and #1793). A label line touches every part that holds one of its
+ * characters, so a label cut across parts counts both. A line terminator or trailing space is no
+ * character of the line. Text before the block and plain prose after it touch no label line.
  */
 function labelLinePartCount(parts) {
   const spans = [];
