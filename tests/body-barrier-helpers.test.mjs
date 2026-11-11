@@ -17,8 +17,8 @@ describe("createBodyBarrier", { shuffle: false }, () => {
     }),
   );
 
-  // Usefulness: verifies that a test starts only after an earlier timed-out body ended, so its late
-  // cleanup cannot change the spy calls or the exit code that this test reads (issue #935).
+  // Usefulness: a test starts only after an earlier timed-out body ended, so its late cleanup cannot
+  // change this test's spy calls or exit code (#935).
   test("a test starts after an earlier timed-out body has ended", () => {
     expect(lateCleanupDone).toBe(true);
   });
@@ -32,8 +32,8 @@ describe("createBodyBarrier with a body that never ends", () => {
     return () => vi.useRealTimers();
   });
 
-  // Usefulness: acceptance (#942) — the first wait ends at its bound and the error names the hung
-  // body, so the failed test shows which body blocked it.
+  // Usefulness: acceptance (#942) — the first wait ends at its bound and names the hung body, so the
+  // failed test shows the blocker.
   test("the first wait fails at its bound and names the hung body", async () => {
     const barrier = createBodyBarrier({ waitMs: WAIT_MS });
     barrier.run(hang, "hung body");
@@ -45,9 +45,9 @@ describe("createBodyBarrier with a body that never ends", () => {
     expect((await outcome)?.message).toMatch(/hung body/);
   });
 
-  // Usefulness: acceptance (#942) — a later wait for the same body fails at once and names it, so one
-  // hung body costs one bound across the suite. With fake timers no time passes, so a second wait
-  // would never settle.
+  // Usefulness: acceptance (#942) — a later wait for the same body fails at once and names it, so
+  // one hung body costs one bound suite-wide. With fake timers no time passes, so a second wait
+  // never settles.
   test("a later wait fails at once and names the abandoned body", async () => {
     const barrier = createBodyBarrier({ waitMs: WAIT_MS });
     barrier.run(hang, "hung body");
@@ -59,7 +59,7 @@ describe("createBodyBarrier with a body that never ends", () => {
   });
 
   // Usefulness: acceptance (#942) — the guarantee of #935 holds again once the abandoned body ends,
-  // so a late finish does not fail the rest of the suite.
+  // so a late finish does not fail other tests.
   test("waits succeed again after the abandoned body ends", async () => {
     const barrier = createBodyBarrier({ waitMs: WAIT_MS });
     let finish;
