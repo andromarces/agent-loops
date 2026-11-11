@@ -75,5 +75,5 @@ Andro Marces
   - Parent read: `recheck-tmpdir` in `src/role/index.mjs`
   - Headless prompt: `inheritedTmpdirSettled` in `src/runtime.mjs` and `src/prompts/orchestrator.mjs`
   - Docs: `docs/reference/role.md` and `docs/orchestrator/runtime-advisory-fields.md`
-  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role/index.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
+  - Tests: `tests/lib/tmpdir-entries.test.mjs`, `tests/role.recheck-tmpdir.test.mjs`, and `tests/runtime.inherited-tmpdir.test.mjs`
 - [ADR Index](README.md)
