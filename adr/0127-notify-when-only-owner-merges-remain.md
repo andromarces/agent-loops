@@ -49,6 +49,7 @@ The acceptance checks are these. When no loop is queued or running and at least 
 ## Links
 
 - [Issue #1828: Notify when only owner merges remain in a batch](https://github.com/andromarces/agent-loops/issues/1828)
+- [PR #1831: Notify when only owner merges remain in a batch](https://github.com/andromarces/agent-loops/pull/1831)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
 - [ADR 0117: State the held-lock paused rule and its precedence in batch resume](0117-state-the-held-lock-paused-rule-and-its-precedence.md)
