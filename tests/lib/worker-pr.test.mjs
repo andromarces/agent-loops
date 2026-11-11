@@ -53,14 +53,14 @@ const pr = (url) => ({
   url,
 });
 
-// An `ssh -G` double that answers `stdout`, and records each host it receives.
+// An `ssh -G` double that answers `stdout`, and records each argument vector it receives.
 function sshDouble(stdout, { status = 0 } = {}) {
-  const hosts = [];
+  const calls = [];
   const ssh = async (args) => {
-    hosts.push(args[1]);
+    calls.push(args);
     return { status, stdout, stderr: "", timedOut: false };
   };
-  ssh.hosts = hosts;
+  ssh.calls = calls;
   return ssh;
 }
 
@@ -71,8 +71,7 @@ afterEach(() => {
   gitDouble.answer = null;
 });
 
-// Usefulness: verifies acceptance 1, since an SSH host alias that resolves to github.com declares
-// the worker PR on that repository.
+// Usefulness: verifies acceptance 1, since an SSH host alias that resolves to github.com declares its PR.
 test("an SSH host alias that resolves to github.com declares the PR", async () => {
   const ssh = sshDouble("host github-work\nhostname github.com\nuser git\n");
 
@@ -84,11 +83,41 @@ test("an SSH host alias that resolves to github.com declares the PR", async () =
   });
 
   expect(result).toEqual({ pr: 42 });
-  expect(ssh.hosts).toEqual(["github-work", "github-work"]);
+  expect(ssh.calls).toEqual([
+    ["-G", "-l", "git", "github-work"],
+    ["-G", "-l", "git", "github-work"],
+  ]);
 });
 
-// Usefulness: verifies acceptance 2, since the same alias remote still refuses a PR in another
-// repository.
+// Usefulness: verifies the user reaches ssh, so a Match user alias resolves and the PR is declared.
+test("the remote user reaches the ssh read", async () => {
+  const calls = [];
+  const ssh = async (args) => {
+    calls.push(args);
+    const withUser = args.includes("-l") && args[args.indexOf("-l") + 1] === "git";
+    return {
+      status: 0,
+      stdout: withUser ? "hostname github.com\n" : "hostname github-work\n",
+      stderr: "",
+      timedOut: false,
+    };
+  };
+
+  const result = await resolveWorkerPr({
+    cwd: "/repo",
+    head: HEAD,
+    gh: listGh([pr("https://github.com/owner/repo/pull/42")]),
+    ssh,
+  });
+
+  expect(result).toEqual({ pr: 42 });
+  expect(calls).toEqual([
+    ["-G", "-l", "git", "github-work"],
+    ["-G", "-l", "git", "github-work"],
+  ]);
+});
+
+// Usefulness: verifies acceptance 2, since the same alias remote still refuses a PR in another repository.
 test("an SSH host alias remote refuses a PR in another repository", async () => {
   const result = await resolveWorkerPr({
     cwd: "/repo",
@@ -125,5 +154,5 @@ test("a host that starts with a dash never reaches the ssh argument list", async
   });
 
   expect(result).toEqual({ pr: null, reason: REASON });
-  expect(ssh.hosts).toEqual([]);
+  expect(ssh.calls).toEqual([]);
 });

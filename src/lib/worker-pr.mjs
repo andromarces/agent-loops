@@ -11,7 +11,7 @@ import {
 import { execBounded } from "./exec.mjs";
 import { gitRead, readHeadBranch } from "./git-read.mjs";
 
-const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;
+const SCP_REMOTE = /^([^@\s/]+)@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;
 
 /**
  * Runs `ssh -G` under the caller's bound. A non-zero exit, a timeout, or a cancel is data, not a
@@ -28,15 +28,15 @@ async function runSsh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
 }
 
 /**
- * The canonical host that the SSH configuration gives for `host`, or null. `ssh -G` contacts no
- * host. A host that starts with `-` never reaches the argument list. A failed, timed-out, canceled,
- * or hostless read gives null.
+ * The canonical host that the SSH configuration gives for `host` with `user`, or null. `ssh -G`
+ * contacts no host. A host or user that starts with `-` never reaches the argument list. A failed,
+ * timed-out, canceled, or hostless read gives null.
  */
-async function resolvedSshHost(host, { ssh, cwd, signal, timeoutMs }) {
-  if (host.startsWith("-")) return null;
+async function resolvedSshHost(host, { user, ssh, cwd, signal, timeoutMs }) {
+  if (host.startsWith("-") || (user && user.startsWith("-"))) return null;
   let result;
   try {
-    result = await ssh(["-G", host], cwd, { signal, timeoutMs });
+    result = await ssh(user ? ["-G", "-l", user, host] : ["-G", host], cwd, { signal, timeoutMs });
   } catch {
     return null;
   }
@@ -51,17 +51,18 @@ async function resolvedSshHost(host, { ssh, cwd, signal, timeoutMs }) {
 /**
  * The lowercase `host/owner/repo` identity of a GitHub repository URL, or null. A remote takes the
  * `https`, `http`, `ssh`, and `git` URL forms and the scp form `git@host:owner/repo`. For the scp
- * and `ssh:` forms the host resolves through `ssh -G`, and a failed read keeps the literal host. A
- * PR URL (`pull`, the PR number) takes the form `https://host/owner/repo/pull/<number>`, and its
- * last segment must equal that number.
+ * and `ssh:` forms the host resolves through `ssh -G` with the remote user, and a failed read keeps
+ * the literal host. A PR URL (`pull`, the PR number) takes the form
+ * `https://host/owner/repo/pull/<number>`, and its last segment must equal that number.
  */
 async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, timeoutMs } = {}) {
   const scp = pull === null ? SCP_REMOTE.exec(text) : null;
+  let user;
   let host;
   let segments;
   let sshRemote = false;
   if (scp) {
-    [, host, ...segments] = scp;
+    [, user, host, ...segments] = scp;
     sshRemote = true;
   } else {
     let url;
@@ -75,6 +76,7 @@ async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, time
     ) {
       return null;
     }
+    user = url.username;
     host = url.hostname;
     sshRemote = pull === null && url.protocol === "ssh:";
     segments = url.pathname.split("/").filter(Boolean);
@@ -86,14 +88,14 @@ async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, time
   const name = repo.replace(/\.git$/, "");
   const resolved =
     sshRemote && host
-      ? ((await resolvedSshHost(host, { ssh, cwd, signal, timeoutMs })) ?? host)
+      ? ((await resolvedSshHost(host, { user, ssh, cwd, signal, timeoutMs })) ?? host)
       : host;
   return resolved && owner && name ? `${resolved}/${owner}/${name}`.toLowerCase() : null;
 }
 
 /**
- * Reads the Git state that the PR match depends on: the checked-out branch, the branch remote, the
- * identity of the remote repository, and the work tree head. A field that cannot be read is null.
+ * Reads the Git state for the PR match: the branch, the branch remote, the remote repository
+ * identity, and the work tree head. A field that cannot be read is null.
  * The resolver reads it before and after the `gh` read and compares the two. The remote host
  * resolves through `ssh`.
  */
