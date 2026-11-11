@@ -583,7 +583,9 @@ test("a worker turn that writes nothing carries no in-turn field", async () => {
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
 // window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read changes no state,
 // size, modification time, or change time, so the envelope must carry no in-turn field. Each file
-// gets an old access time before the turn, so a read inside the turn moves only that time.
+// gets an old access time before the turn, so a read inside the turn moves only that time. The
+// watch unit test in `tests/lib/evidence/main-work-tree-watch.test.mjs` delivers the Windows
+// access event, so this case needs no event wait.
 test("a worker turn that only reads a main work tree file carries no in-turn field", async () => {
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   const files = [];
@@ -593,41 +595,9 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
     await utimes(file, old, old);
     files.push(file);
   }
-  let watchHandle;
-  let seen;
-  const result = await turn(
-    async () => {
-      if (process.platform === "win32") {
-        let next = 0;
-        // A read stays inside each retry, so a read after the watch is ready reports an event.
-        seen = await vi
-          .waitFor(
-            async () => {
-              await readFile(files[Math.min(next++, files.length - 1)]);
-              expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
-            },
-            { timeout: 5_000 },
-          )
-          .then(
-            () => true,
-            () => false,
-          );
-        return;
-      }
-      // Off Windows the case reads the files and ends without a wait.
-      for (const file of files) await readFile(file);
-    },
-    tree.linked,
-    (handle) => {
-      watchHandle = handle;
-    },
-  );
-  // The wait outcome is asserted here, because a rejection inside the act becomes an error result.
-  if (process.platform === "win32") {
-    expect(seen).toBe(true);
-  } else {
-    expect(seen).toBeUndefined();
-  }
+  const result = await turn(async () => {
+    for (const file of files) await readFile(file);
+  });
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
