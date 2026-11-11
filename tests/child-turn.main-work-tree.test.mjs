@@ -26,6 +26,7 @@ import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";
+import { REPORT } from "./role/helpers.mjs";
 
 // The main work tree resolution fails or stalls only in the tests that set these flags.
 const resolution = vi.hoisted(() => ({ fail: false, stall: false }));
@@ -597,7 +598,9 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
   }
   const result = await turn(async () => {
     for (const file of files) await readFile(file);
+    return REPORT;
   });
+  expect(result).toMatchObject({ status: "ok" });
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });
