@@ -7,7 +7,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { isLocalHuskyHooksPath } from "./husky-path.mjs";
 
 const { CI, NODE_ENV, VP_GIT_HOOKS } = process.env;
 if (CI === "true" || NODE_ENV === "production" || VP_GIT_HOOKS === "0") process.exit(0);
@@ -29,6 +28,8 @@ const git = (step, okStatuses, ...args) => {
 };
 
 try {
+  // A missing or broken helper takes the warning path below, not a load failure.
+  const { isLocalHuskyHooksPath } = await import("./husky-path.mjs");
   let manifest;
   try {
     manifest = import.meta.resolve("vite-plus/package.json");
