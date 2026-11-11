@@ -105,6 +105,28 @@ export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } 
 }
 
 /**
+ * Reads the orchestrator abort that ended a run. An `abort` action stops the loop at exit 1, and the
+ * CLI records only a `gate` event after it. The last action before that gate names the decision. A
+ * later action, result, or continuation proves the run went past the abort.
+ * @param {unknown} data the parsed transcript
+ * @param {number | null} exitCode the recorded exit code
+ * @returns {{ reason: string } | null} the first line of the abort reason, or `null`
+ */
+export function transcriptAbortFromData(data, exitCode) {
+  if (exitCode !== 1 || !isJsonObject(data) || !Array.isArray(data.events)) return null;
+  let index = data.events.length - 1;
+  while (index >= 0 && isJsonObject(data.events[index]) && data.events[index].type === "gate") {
+    index -= 1;
+  }
+  const last = index < 0 ? null : data.events[index];
+  if (!isJsonObject(last) || last.type !== "action" || last.action?.action !== "abort") {
+    return null;
+  }
+  const text = typeof last.action.reason === "string" ? last.action.reason : "";
+  return { reason: text.split("\n")[0].trim() };
+}
+
+/**
  * Reads the recorded exit code of a parsed transcript. `ok` is false for a malformed record, which
  * proves nothing about the last attempt. `proven` is true when the run ended with its `gate` event,
  * or when a nonzero exit carries an error text. The default `exitCode: 1` of a transcript written

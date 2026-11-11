@@ -135,6 +135,7 @@ export function childDouble({
   error = null,
   warnings = [],
   failedTurnTest = null,
+  abort = null,
   beforeWrite = null,
 } = {}) {
   const calls = [];
@@ -177,6 +178,9 @@ export function childDouble({
           ...nextEvents,
           ...(pr === null ? [] : [{ type: "pr-declared", pr }]),
           ...(summary === null ? [] : [{ type: "action", action: { action: "finish", summary } }]),
+          ...(abort === null
+            ? []
+            : [{ type: "action", action: { action: "abort", reason: abort } }]),
           ...(failedTurnTest === null
             ? []
             : [{ type: "test-run", fatal: true, testRun: failedTurnTest }]),
