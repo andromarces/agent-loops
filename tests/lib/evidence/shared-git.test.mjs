@@ -1,7 +1,7 @@
 import { inspect } from "node:util";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 // Makes the named `node:fs/promises` function throw an error whose message and path carry
 // `FS_MARKER`, as a Node file system error carries the path, while `fsFailure.operation` is set.
@@ -13,6 +13,13 @@ const fsFailure = vi.hoisted(() => ({
   stallReaddir: false,
   lstatDelayMs: 0,
   delayedLstat: Promise.resolve(),
+  openDelayMs: 0,
+  statDelayMs: 0,
+  delayedOpen: Promise.resolve(),
+  delayedStat: Promise.resolve(),
+  onStat: null,
+  statResolved: false,
+  handleCloses: 0,
   requests: [],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -46,9 +53,79 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       fsFailure.operation === "readlink"
         ? { isSymbolicLink: () => true }
         : failing("lstat")(...args),
-    readFile: failing("readFile"),
+    open: async (...args) => {
+      const request = failing("open")(...args);
+      if (!String(args[0]).includes("hook-")) return request;
+      if (fsFailure.openDelayMs > 0) {
+        fsFailure.delayedOpen = new Promise((resolve) =>
+          setTimeout(resolve, fsFailure.openDelayMs),
+        );
+        await fsFailure.delayedOpen;
+      }
+      const handle = await request;
+      if (fsFailure.statDelayMs > 0) {
+        const stat = handle.stat.bind(handle);
+        handle.stat = async () => {
+          fsFailure.onStat?.();
+          const result = await stat();
+          fsFailure.delayedStat = new Promise((resolve) =>
+            setTimeout(resolve, fsFailure.statDelayMs),
+          );
+          await fsFailure.delayedStat;
+          fsFailure.statResolved = true;
+          return result;
+        };
+      }
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        fsFailure.handleCloses += 1;
+        // A queued close waits behind the pending native request, as a FileHandle close does.
+        if (fsFailure.statDelayMs > 0 && !fsFailure.statResolved) await fsFailure.delayedStat;
+        return close();
+      };
+      return handle;
+    },
     readlink: failing("readlink"),
   };
+});
+// Replays recorded Git results in-process, so a test case starts no Git process. A missing call
+// throws, so a replay never hides a changed call. The key holds the command, arguments, cwd, and
+// five Git scope environment values.
+const gitReplay = vi.hoisted(() => {
+  const scopeNames = [
+    "GIT_DIR",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+  ];
+  const normalize = (value) => {
+    if (typeof value !== "string" || value === "") return value;
+    let path = value.replaceAll("\\", "/");
+    if (process.platform === "win32") path = path.toLowerCase();
+    return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  };
+  const keyOf = (command, args, options) => {
+    const env = options?.env ?? {};
+    return JSON.stringify([
+      command,
+      args,
+      normalize(options?.cwd),
+      scopeNames.map((name) => [name, normalize(env[name])]),
+    ]);
+  };
+  const state = { calls: null, record: null, forwards: 0, keyOf };
+  state.take = (command, args, options) => {
+    const key = keyOf(command, args, options);
+    const index = state.calls.findIndex((call) => call.key === key);
+    if (index === -1) {
+      throw new Error(
+        `no recorded Git call for ${command} ${args.join(" ")} in ${options?.cwd ?? "no cwd"}`,
+      );
+    }
+    return state.calls.splice(index, 1)[0];
+  };
+  return state;
 });
 // Makes every `git config` call exit with `configExit.code` when set; other calls reach real git.
 const configExit = vi.hoisted(() => ({ code: null, signals: [] }));
@@ -58,9 +135,31 @@ vi.mock("execa", async (importOriginal) => {
     ...real,
     execa: (command, args, options) => {
       if (options?.cancelSignal) configExit.signals.push(options.cancelSignal);
-      return configExit.code !== null && args[0] === "config"
-        ? { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" }
-        : real.execa(command, args, options);
+      if (gitReplay.calls !== null) {
+        const call = gitReplay.take(command, args, options);
+        return { exitCode: call.exitCode, stdout: call.stdout, stderr: call.stderr };
+      }
+      if (configExit.code !== null && args[0] === "config") {
+        return { exitCode: configExit.code, stdout: "", stderr: "fatal: bad config line 1" };
+      }
+      const result = real.execa(command, args, options);
+      gitReplay.forwards += 1;
+      if (gitReplay.record !== null) {
+        result.then(
+          (value) => {
+            gitReplay.record.push({
+              key: gitReplay.keyOf(command, args, options),
+              command,
+              args: [...args],
+              exitCode: value.exitCode,
+              stdout: value.stdout,
+              stderr: value.stderr,
+            });
+          },
+          () => {},
+        );
+      }
+      return result;
     },
   };
 });
@@ -79,23 +178,37 @@ import {
 
 const dirs = [];
 
-afterEach(async () => {
-  configExit.code = null;
-  configExit.signals.length = 0;
+function resetFailureState() {
   fsFailure.operation = null;
   fsFailure.stallReaddir = false;
   fsFailure.lstatDelayMs = 0;
   fsFailure.delayedLstat = Promise.resolve();
+  fsFailure.openDelayMs = 0;
+  fsFailure.statDelayMs = 0;
+  fsFailure.delayedOpen = Promise.resolve();
+  fsFailure.delayedStat = Promise.resolve();
+  fsFailure.onStat = null;
+  fsFailure.statResolved = false;
+  fsFailure.handleCloses = 0;
   fsFailure.requests.length = 0;
+}
+
+afterEach(async () => {
+  configExit.code = null;
+  configExit.signals.length = 0;
+  resetFailureState();
+  gitReplay.calls = null;
+  gitReplay.record = null;
+  gitReplay.forwards = 0;
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
 // Real Git: the shared state read must match what Git reports for a linked work tree.
 // A repository and a linked work tree of it, so the shared state sits in the common directory.
-async function createRepoWithLinkedWorkTree() {
+async function createRepoWithLinkedWorkTree(store = dirs) {
   const repo = await createTempRepo();
-  dirs.push(repo);
-  const parent = await trackedTempDir("agent-loops-shared-git-", dirs);
+  store.push(repo);
+  const parent = await trackedTempDir("agent-loops-shared-git-", store);
   const linked = join(parent, "linked");
   // A real `git worktree add`: the linked work tree's `.git` file holds an absolute path, so each
   // case needs its own.
@@ -721,9 +834,8 @@ test("every git process of the read has ended when the read rejects at its deadl
   });
 }, 20_000);
 
-// Usefulness: verifies requirement "the read stops at the deadline" (issue #1224): a hook `lstat`
-// that ends after the deadline must not be followed by a `readFile` or by the next hook, because the
-// dispatch has reported its result and a late file system request would run past the end of the turn.
+// Usefulness: verifies "the read stops at the deadline" (issue #1224): a late hook `lstat` gets no
+// `open` and no next hook. The dispatch has reported its result, so a late request outlives the turn.
 test("no hook file system request starts after the deadline", async () => {
   const { repo, linked } = await createRepoWithLinkedWorkTree();
   for (let i = 0; i < 8; i += 1) await writeFile(join(repo, ".git", "hooks", `hook-${i}`), `#${i}`);
@@ -737,6 +849,71 @@ test("no hook file system request starts after the deadline", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   expect(fsFailure.requests).toEqual(atDeadline);
 }, 20_000);
+
+describe("hook read cancellation (#1858)", () => {
+  const sharedDirs = [];
+  let linked;
+  let replayCalls;
+
+  beforeAll(async () => {
+    const fixture = await createRepoWithLinkedWorkTree(sharedDirs);
+    await writeFile(join(fixture.repo, ".git", "hooks", "hook-1"), "#!/bin/sh\nexit 0\n");
+    linked = fixture.linked;
+    gitReplay.record = [];
+    await readSharedGit(linked);
+    replayCalls = gitReplay.record;
+    gitReplay.record = null;
+    gitReplay.forwards = 0;
+    resetFailureState();
+  });
+
+  afterAll(async () => {
+    for (const dir of sharedDirs.splice(0)) await removePath(dir);
+  });
+
+  // Usefulness: verifies "a canceled hook read closes a handle that open resolves after the cancel"
+  // (issue #1858): a leaked handle outlives the turn.
+  test("a cancel during open closes the handle that opens later", async () => {
+    gitReplay.calls = [...replayCalls];
+    fsFailure.openDelayMs = 300;
+    const controller = new AbortController();
+    const read = readSharedGit(linked, { signal: controller.signal }).catch((err) => err);
+    await pollUntil(() => (fsFailure.requests.includes("open") ? true : undefined), 5_000);
+    controller.abort();
+    const failure = await read;
+    expect(failure).toMatchObject({ isCanceled: true });
+    await fsFailure.delayedOpen;
+    await pollUntil(() => (fsFailure.handleCloses > 0 ? true : undefined), 5_000);
+    expect(fsFailure.handleCloses).toBe(1);
+    expect(gitReplay.forwards).toBe(0);
+  });
+
+  // Usefulness: verifies "a stalled native hook stat does not hold the cancel rejection" (issue
+  // #1858): a queued close must not delay the canceled read.
+  test("a stalled native stat does not hold the cancel rejection", async () => {
+    gitReplay.calls = [...replayCalls];
+    let startDeadline;
+    const statStarted = new Promise((resolve) => {
+      startDeadline = resolve;
+    });
+    fsFailure.statDelayMs = 800;
+    fsFailure.onStat = () => startDeadline();
+    let rejectedBeforeStatResolved = false;
+    const failure = await readSharedGit(linked, {
+      deadlineMs: 200,
+      deadlineStart: statStarted,
+    }).catch((err) => {
+      rejectedBeforeStatResolved = !fsFailure.statResolved;
+      return err;
+    });
+    expect(failure.message).toMatch(/200 ms/);
+    expect(rejectedBeforeStatResolved).toBe(true);
+    await fsFailure.delayedStat;
+    await pollUntil(() => (fsFailure.handleCloses > 0 ? true : undefined), 5_000);
+    expect(fsFailure.handleCloses).toBe(1);
+    expect(gitReplay.forwards).toBe(0);
+  }, 20_000);
+});
 
 // Usefulness: verifies requirement "a turn signal and a deadline both stop the read" (issue #1224):
 // passing both must not drop the turn signal.
@@ -816,7 +993,7 @@ test("a reordered value list of one remote key is reported by remote name", asyn
 // review): a Node file system error carries the path, and a hook path or a symlink target can carry
 // a secret. The marker must stay out of the thrown error, its cause chain, and the text that the
 // worker-turn warning is built from.
-test.each(["readdir", "lstat", "readFile", "readlink"])(
+test.each(["readdir", "lstat", "open", "readlink"])(
   "a failed %s of the hooks directory never exposes the path",
   async (operation) => {
     const { repo, linked } = await createRepoWithLinkedWorkTree();

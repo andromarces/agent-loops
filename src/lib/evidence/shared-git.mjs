@@ -1,4 +1,6 @@
-import { lstat, readdir, readFile, readlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { mapInBatches } from "../batches.mjs";
 import { errorCode } from "../error-message.mjs";
@@ -227,6 +229,40 @@ function whileNotAborted(signal, request) {
   });
 }
 
+// Hashes a regular hook file in chunks, so a large hook is never held whole (issue #1858). The
+// stream owns the opened handle and closes it on end, error, or abort. A handle that resolves after
+// a cancel is closed in the background, and every request waits on the signal.
+async function hashHookFile(path, signal) {
+  let pendingOpen = null;
+  let handle;
+  try {
+    handle = await whileNotAborted(signal, () => (pendingOpen = open(path, "r")));
+  } catch (err) {
+    // The open request cannot be stopped, so a handle that arrives after the cancel is closed here.
+    pendingOpen?.then(
+      (late) => late.close().catch(() => {}),
+      () => {},
+    );
+    throw err;
+  }
+  try {
+    return await whileNotAborted(signal, async () => {
+      const { size } = await handle.stat();
+      // Bound the read to the size of the opened file, as the whole-file read did.
+      const range = size > 0 ? { start: 0, end: size - 1 } : {};
+      const stream = createReadStream(path, { fd: handle, signal, ...range });
+      const hash = createHash("sha256");
+      for await (const chunk of stream) hash.update(chunk);
+      return hash.digest("hex");
+    });
+  } catch (err) {
+    // A close that waits on a pending native request or a stream destroy stays off the rejection.
+    handle.close().catch(() => {});
+    if (signal?.aborted) throw canceled();
+    throw err;
+  }
+}
+
 // Hashes a hook file like `sha256File` does, but checks `signal` before each file system request, so
 // no request starts after an abort. A symlink hashes its link text, and a file that is absent or
 // neither a file nor a link reads as null.
@@ -243,7 +279,7 @@ async function hashHook(path, signal) {
   }
   if (!stat.isFile()) return null;
   try {
-    return sha256(await whileNotAborted(signal, () => readFile(path)));
+    return await hashHookFile(path, signal);
   } catch (err) {
     if (err.code === "ENOENT") return null;
     throw err;

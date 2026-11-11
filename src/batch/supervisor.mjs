@@ -1716,9 +1716,13 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
   };
   const syncFromDisk = async () => {
+    const results = await mapInBatches(manifest.issues, READ_BATCH_SIZE, (issue) =>
+      readLoop(runsRoot, id, issue),
+    );
     const reads = new Map();
-    for (const issue of manifest.issues) {
-      const current = await readLoop(runsRoot, id, issue);
+    for (let index = 0; index < manifest.issues.length; index++) {
+      const issue = manifest.issues[index];
+      const current = results[index];
       reads.set(issue, current);
       if (current !== null) loops.set(issue, current);
     }

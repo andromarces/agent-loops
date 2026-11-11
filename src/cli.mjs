@@ -21,37 +21,10 @@ import {
   REVIEW_ONLY_COMPARE_HEAD_REFUSAL,
   REVIEW_ONLY_GATE_REFUSAL,
 } from "./lib/gate-refusal.mjs";
-import {
-  declaredPrFromTranscript,
-  refuseDeclaredPrConflict,
-  gateFromTranscript,
-} from "./lib/gate.mjs";
-import {
-  carryEarlierEvents,
-  earlierReviewerSandbox,
-  readContinuation,
-  restoreSessions,
-  verifyResolvedModels,
-} from "./lib/continuation.mjs";
-import { refuseHeldSessions } from "./lib/command-line.mjs";
 import { isEntryPoint } from "./lib/entrypoint.mjs";
-import { samePath } from "./lib/canonical-path.mjs";
-import { cancelOnSigInt, SIGINT_MESSAGE } from "./lib/sigint.mjs";
 import { readProp, redactedText } from "./lib/error-message.mjs";
-import { runHarnessCheckCommand } from "./harness-check.mjs";
-import { runInstallCommand, runUninstallCommand } from "./install/commands.mjs";
 import { setVerbose } from "./lib/log.mjs";
-import { resolveWriteTarget } from "./lib/atomic-write.mjs";
-import { assertGitWorkTree } from "./lib/snapshot.mjs";
-import { runTestSlot } from "./lib/test-slot-cli.mjs";
-import { createTranscriptWriter } from "./lib/transcript.mjs";
-import { withRunWarnings } from "./lib/run-warnings.mjs";
-import { runGh } from "./lib/checks/gh-api.mjs";
 import { printHelp } from "./help.mjs";
-import { runProbeTurn } from "./child-turn.mjs";
-import { runLoop, UNRESOLVED_COMPARE_EXIT } from "./runtime.mjs";
-import { main as runRoleMain } from "./role/index.mjs";
-import { runBatchMain } from "./batch/cli.mjs";
 
 const ROLE_FLAGS = roleFlags(ROLES);
 const noForceExitWrite = () => {};
@@ -175,6 +148,10 @@ function assertTask(task) {
 
 // Compares the write targets, so a file symlink and its target count as one file (#658).
 async function sameFile(a, b) {
+  const [{ resolveWriteTarget }, { samePath }] = await Promise.all([
+    import("./lib/atomic-write.mjs"),
+    import("./lib/canonical-path.mjs"),
+  ]);
   const [left, right] = await Promise.all([resolveWriteTarget(a), resolveWriteTarget(b)]);
   return samePath(left, right);
 }
@@ -198,6 +175,23 @@ function formatSummary(summary) {
  *   `null` after printing the refusal and setting `process.exitCode`.
  */
 async function loadContinuation({ options, roles, events, agents, signal, reviewerSandbox }) {
+  const [
+    {
+      carryEarlierEvents,
+      earlierReviewerSandbox,
+      readContinuation,
+      restoreSessions,
+      verifyResolvedModels,
+    },
+    { declaredPrFromTranscript, refuseDeclaredPrConflict, gateFromTranscript },
+    { refuseHeldSessions },
+    { runProbeTurn },
+  ] = await Promise.all([
+    import("./lib/continuation.mjs"),
+    import("./lib/gate.mjs"),
+    import("./lib/command-line.mjs"),
+    import("./child-turn.mjs"),
+  ]);
   try {
     const earlier = await readContinuation(options.continueFrom);
     // Before any session check or probe turn, so a refusal runs no child.
@@ -300,31 +294,43 @@ export async function main(
   }
 
   if (argv[0] === "role") {
+    const [{ main: runRoleMain }, { runGh }] = await Promise.all([
+      import("./role/index.mjs"),
+      import("./lib/checks/gh-api.mjs"),
+    ]);
     await runRoleMain(argv.slice(1), { agents, gh: gh ?? runGh });
     return;
   }
 
   if (argv[0] === "install") {
+    const { runInstallCommand } = await import("./install/commands.mjs");
     await runInstallCommand(argv.slice(1));
     return;
   }
 
   if (argv[0] === "uninstall") {
+    const { runUninstallCommand } = await import("./install/commands.mjs");
     await runUninstallCommand(argv.slice(1));
     return;
   }
 
   if (argv[0] === "test-slot") {
+    const { runTestSlot } = await import("./lib/test-slot-cli.mjs");
     process.exitCode = await runTestSlot(argv.slice(1));
     return;
   }
 
   if (argv[0] === "batch") {
+    const { runBatchMain } = await import("./batch/cli.mjs");
     process.exitCode = await runBatchMain(argv.slice(1));
     return;
   }
 
   if (argv[0] === "harness-check") {
+    const [{ runHarnessCheckCommand }, { cancelOnSigInt }] = await Promise.all([
+      import("./harness-check.mjs"),
+      import("./lib/sigint.mjs"),
+    ]);
     const controller = new AbortController();
     const removeSigIntListener = cancelOnSigInt(controller);
     try {
@@ -349,6 +355,21 @@ export async function main(
   }
 
   setVerbose(options.verbose);
+
+  const [
+    { assertGitWorkTree },
+    { createTranscriptWriter },
+    { withRunWarnings },
+    { runLoop, UNRESOLVED_COMPARE_EXIT },
+    { cancelOnSigInt, SIGINT_MESSAGE },
+  ] = await Promise.all([
+    import("./lib/snapshot.mjs"),
+    import("./lib/transcript.mjs"),
+    import("./lib/run-warnings.mjs"),
+    import("./runtime.mjs"),
+    import("./lib/sigint.mjs"),
+  ]);
+  const ghCall = gh ?? (await import("./lib/checks/gh-api.mjs")).runGh;
 
   const events = [];
   const roles = {};
@@ -456,7 +477,7 @@ export async function main(
           continued: Boolean(options.continueFrom),
           earlierGate,
           earlierPr,
-          gh,
+          gh: ghCall,
           copyLocalFiles: options.copyLocalFiles,
           // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
           // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
