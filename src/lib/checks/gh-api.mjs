@@ -147,17 +147,10 @@ export async function readPrList(read, argv, isEntry) {
  * slug pins the read to that repository, and null leaves it unpinned. A cross-repository entry is
  * dropped from `list`. A failed read returns `{ failure }` with the reason text of `readPrList`.
  * @param {{ branch: string, read: (argv: string[]) => Promise<object>, repo?: string | null,
- *   fields: string, isEntry: (entry: unknown) => boolean, limit?: number }} options
+ *   fields: string, isEntry: (entry: unknown) => boolean }} options
  * @returns {Promise<{ list: object[] } | { failure: string }>}
  */
-export async function readOpenBranchPrs({
-  branch,
-  read,
-  repo = null,
-  fields,
-  isEntry,
-  limit = PR_LIST_LIMIT,
-}) {
+export async function readOpenBranchPrs({ branch, read, repo = null, fields, isEntry }) {
   const argv = [
     "pr",
     "list",
@@ -169,7 +162,7 @@ export async function readOpenBranchPrs({
     "--json",
     fields,
     "--limit",
-    String(limit),
+    String(PR_LIST_LIMIT),
   ];
   const result = await readPrList(read, argv, isEntry);
   if (result.failure) return { failure: result.failure };
