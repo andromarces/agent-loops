@@ -32,8 +32,9 @@ test.concurrent(
 );
 
 // Usefulness: acceptance (#670) — cleanup after a failed kill check must end the shim child and free
-// its directory, and must not return while the shim lives, without a signal to a pid that a file supplied. A pid that a file names can belong to
-// an unrelated process once the shim exits, so a SIGKILL read from the record is the defect.
+// its directory. It must not return while the shim lives, and it must not signal a pid that a file
+// supplied. A pid that a file names can belong to an unrelated process once the shim exits.
+// A SIGKILL read from the record is therefore the defect.
 test.concurrent(
   "expectBoundKillsShim ends a surviving shim without signalling a recorded pid",
   async () => {
@@ -71,8 +72,9 @@ test.concurrent(
 );
 
 // Usefulness: acceptance (#670 review) — a shim must end when its stop request is deleted while its
-// directory stays, as a Windows lock on a file inside the directory leaves it. The call under test
-// deletes the keep file and nothing else, so the helper passes only if the shim exits on its own.
+// directory stays. A Windows lock on a file inside the directory leaves it in that state.
+// The call under test deletes the keep file and nothing else, so the helper passes only if the shim
+// exits on its own.
 test.concurrent(
   "expectBoundKillsShim sees a shim end when its keep file is deleted and its directory stays",
   async () => {
@@ -91,8 +93,9 @@ test.concurrent(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
-// Starts a shim whose `keep` file is replaced by a directory: the shim stays alive, cleanup cannot
-// remove the keep file, and the shim cannot acknowledge an exit. `after` runs in the call under test.
+// Starts a shim whose `keep` file is replaced by a directory, so the shim stays alive.
+// Cleanup cannot remove the keep file, and the shim cannot acknowledge an exit.
+// `after` runs in the call under test.
 async function blockedShimFailure(after) {
   let shimDir;
   const failure = await expectBoundKillsShim(
@@ -156,8 +159,8 @@ test.concurrent(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
-// Usefulness: acceptance (#670 review) — a pid record that is missing is not proof that the shim
-// ended, so the cleanup reports an unconfirmed exit instead of passing silently.
+// Usefulness: acceptance (#670 review) — a missing pid record is not proof that the shim ended.
+// The cleanup reports an unconfirmed exit instead of passing silently.
 test.concurrent(
   "expectBoundKillsShim reports an unconfirmed exit when the pid record is missing",
   async () => {
@@ -178,8 +181,8 @@ test.concurrent(
 );
 
 // Usefulness: acceptance (#670 review) — a shim that ends on its own ceiling was not killed by the
-// code under test, so the kill check must fail instead of accepting the exit as a kill. The call
-// under test never kills the shim and returns only after the shim has gone.
+// code under test. The kill check must fail instead of accepting the exit as a kill.
+// The call under test never kills the shim and returns only after the shim has gone.
 test.concurrent(
   "expectBoundKillsShim fails when the shim exits on its ceiling instead of being killed",
   async () => {
@@ -206,9 +209,10 @@ test.concurrent(
 
 const CEILING_MS = 500;
 const HARD_DEADLINE_MS = 8000;
-// Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not exit
-// silently, or the kill check reads its ceiling exit as a kill. The marker path is a directory, so
-// the write fails; the shim must stay alive past its ceiling and the helper must report it.
+// Usefulness: acceptance (#670 review) — a shim whose ceiling marker cannot be written must not
+// exit silently. Otherwise the kill check reads its ceiling exit as a kill.
+// The marker path is a directory, so the write fails.
+// The shim must stay alive past its ceiling and the helper must report it.
 test.concurrent(
   "expectBoundKillsShim fails when the ceiling marker cannot be written",
   async () => {
@@ -235,8 +239,9 @@ test.concurrent(
 );
 
 // Usefulness: acceptance (#670 review) — a shim that keeps failing to write its ceiling marker must
-// still end on its own, or a survivor lives without limit. The marker path is a directory, so the
-// write never succeeds; the shim must still exit at its hard deadline, never before its ceiling.
+// still end on its own. Otherwise a survivor lives without limit.
+// The marker path is a directory, so the write never succeeds.
+// The shim must still exit at its hard deadline, never before its ceiling.
 test.concurrent(
   "a shim whose ceiling marker cannot be written still ends at its hard deadline",
   async () => {
@@ -261,9 +266,9 @@ test.concurrent(
   BOUND_KILL_TEST_TIMEOUT_MS,
 );
 
-// Usefulness: acceptance (#670 review) — an exit that is not proven to precede the shim's ceiling must
-// not pass as a kill. The marker path is a directory, so a hard-deadline exit leaves no marker, and
-// the call returns only after that exit, as a delayed record read or a paused parent would.
+// Usefulness: acceptance (#670 review) — an exit that is not proven to precede the shim's ceiling
+// must not pass as a kill. The marker path is a directory, so a hard-deadline exit leaves no marker.
+// The call returns only after that exit, as a delayed record read or a paused parent does.
 test.concurrent(
   "expectBoundKillsShim fails when the shim exit is first observed after its ceiling",
   async () => {

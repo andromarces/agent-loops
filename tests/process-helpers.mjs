@@ -340,24 +340,24 @@ function shimEnv(dir) {
 /**
  * Checks that a time bound kills a real hanging `command` child. `run(boundMs,
  * { env, shimDir })` starts the bounded call and resolves when it returns, with
- * the shim on PATH in `env`. The call must return
- * within `boundMs` plus CALL_CEILING_MS, and the node process the shim recorded
- * must be gone within the force-kill delay plus the teardown margin after that.
- * The child must have started before the call returned, or the test fails: a
- * child that never ran proves nothing about the kill, so `boundMs` must leave the
- * shim time to start on a loaded machine. That value is not what is under test
- * here. Pass BOUND_KILL_TEST_TIMEOUT_MS as the test timeout. Returns the call
- * result. `options.ceilingMs` shortens the shim's wall-clock ceiling for a test of the
- * ceiling check itself.
+ * the shim on PATH in `env`. The call must return within `boundMs` plus
+ * CALL_CEILING_MS. The recorded shim child must be gone within the force-kill
+ * delay plus the teardown margin after that return. The child must have started
+ * before the call returned, or the test fails. A child that never ran proves
+ * nothing, so `boundMs` must leave time to start on a loaded machine, and that
+ * value is not under test.
  */
 export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, options = {}) {
+  // Callers pass BOUND_KILL_TEST_TIMEOUT_MS as the test timeout.
   const dir = await mkdtemp(join(tmpdir(), `hang-${command}-`));
+  // options.ceilingMs shortens the shim's wall-clock ceiling for a test of the ceiling check.
   const ceilingMs =
     options.ceilingMs ??
     boundMs + CALL_CEILING_MS + RECORD_VISIBLE_MS + FORCE_KILL_AFTER_DELAY_MS + TEARDOWN_MARGIN_MS;
   // The ceiling-marker test extends the hard exit bound, so the helper watches the failed write.
   const hardDeadline = options.hardDeadlineMs ?? hardDeadlineMs(ceilingMs);
-  // The test can shorten the cleanup wait; the default is the production ceiling (issue #1465).
+  // The test can shorten the cleanup wait. The default is the production ceiling (issue #1465).
+  // The method returns the call result.
   return runWithShimCleanup(
     dir,
     ceilingMs,
@@ -494,10 +494,10 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
 }
 
 /**
- * POSIX only. Ends `pid` with SIGKILL only when its command line holds `marker`, a value that no
- * other process carries, so a stale or reused pid is never signaled. Returns true when it sent the
- * signal. The `ps` read ends after `timeoutMs` (default 3 s), and a read that ends that way signals
- * nothing. `env` overrides the child environment of the read.
+ * POSIX only. Ends `pid` with SIGKILL only when its command line holds `marker`.
+ * `marker` is a value that no other process carries, so a stale or reused pid is never signaled.
+ * Returns true when it sent the signal. The `ps` read ends after `timeoutMs` (default 3 s), and a
+ * read that ends that way signals nothing. `env` overrides the child environment of the read.
  */
 export async function endOwnedProcess(pid, marker, { timeoutMs = 3000, env } = {}) {
   // Loaded on use, so a test file that mocks `execa` or `exec.mjs` sees its mock first.

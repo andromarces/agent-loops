@@ -102,7 +102,7 @@ test.skipIf(process.platform === "win32")(
 // when the bound expires, on Windows and on macOS. A real process is the only way
 // to check that a slow `git` cannot add its own time to a caller's total limit,
 // because every other test uses a real fast `git` (issue #329).
-test(
+test.concurrent(
   "assertGitWorkTree refuses a probe that outlasts its bound",
   async () => {
     // Termination only: the bound value is proved in spawn-bounds.test.mjs, so the
@@ -118,7 +118,7 @@ test(
 
 // Usefulness: verifies a cancel ends a hung work-tree probe and marks the refusal as a cancel, so
 // `role dispatch` and the headless run keep exit 130 instead of exit 1 (#729).
-test(
+test.concurrent(
   "assertGitWorkTree ends a hung probe on cancel and reports a cancel",
   async () => {
     const error = await expectAbortKillsShim(
@@ -134,7 +134,7 @@ test(
 
 // Usefulness: verifies a hung `git` read in the snapshot ends at its bound with a SnapshotError, so
 // a stuck child cannot hang the turn (#729).
-test(
+test.concurrent(
   "snapshot refuses a git read that outlasts its bound",
   async () => {
     const error = await expectBoundKillsShim("git", (timeoutMs, { env }) =>
@@ -148,7 +148,7 @@ test(
 
 // Usefulness: verifies a cancel ends a hung `git` read in the snapshot and marks the error as a
 // cancel, which the caller maps to exit 130 (#729).
-test(
+test.concurrent(
   "snapshot ends a hung git read on cancel and reports a cancel",
   async () => {
     const error = await expectAbortKillsShim(

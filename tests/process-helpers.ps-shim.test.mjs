@@ -25,7 +25,9 @@ import { within } from "./wait-helpers.mjs";
 const OS_PID_CEILING = 2 ** 22;
 const INT32_MAX = 2 ** 31 - 1;
 
-// Usefulness: acceptance (#546, #557) — the dead owner is a valid pid above every OS pid limit, so a reusable pid of an exited process, `undefined`, or an out-of-range value fails here while `pidAlive` alone reads them as dead.
+// Usefulness: acceptance (#546, #557) — the dead owner is a valid pid above every OS pid limit.
+// A reusable pid of an exited process fails here, and so do `undefined` and an out-of-range value.
+// `pidAlive` alone reads all of them as dead.
 test.concurrent("deadPid is a valid pid that no OS assigns and the production liveness check reads as dead", async () => {
   const pid = await deadPid();
   expect(pid).not.toBe(process.pid);
@@ -52,7 +54,7 @@ test.concurrent("createPsShim.ready accepts only a complete newline-terminated h
 
 // Process: the case runs the shim as a child script, so its ceiling end and exit code are read here.
 // Usefulness: the shim must end by itself at its wall-clock ceiling, so a failed test cannot leave
-// it running, and the helper must tell an early end from a run to the ceiling without a signal.
+// it running. The helper must also tell an early end from a run to the ceiling without a signal.
 // The test owns the child handle and ends it through that handle if the shim does not exit.
 test.concurrent.skipIf(process.platform === "win32")(
   "createPsShim stalls only until its ceiling and reports how it ended",
@@ -76,8 +78,9 @@ test.concurrent.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: #986 — a start read and a ceiling read that straddle a second boundary must still leave
-// one heartbeat, or `ready()` times out on a shim that already ended. The body replaces `date` so the
-// first read is 100 and every later read is 101, which is that straddle with no real clock.
+// one heartbeat. Otherwise `ready()` times out on a shim that already ended.
+// The body replaces `date` so the first read is 100 and every later read is 101, which is that
+// straddle with no real clock.
 test.concurrent.skipIf(process.platform === "win32")(
   "createPsShim writes a heartbeat even when its first two clock reads differ by the ceiling",
   async () => {
@@ -107,8 +110,8 @@ test.concurrent.skipIf(process.platform === "win32")(
   30_000,
 );
 
-// Usefulness: verifies the cleanup helper signals only the process that carries its marker, so a
-// stale or reused pid of another process is never killed by a test cleanup (#729).
+// Usefulness: verifies the cleanup helper signals only the process that carries its marker.
+// A stale or reused pid of another process is never killed by a test cleanup (#729).
 test.concurrent.skipIf(process.platform === "win32")(
   "endOwnedProcess ends a process with the marker and leaves another process alone",
   async () => {
@@ -129,8 +132,8 @@ test.concurrent.skipIf(process.platform === "win32")(
   },
 );
 
-// Usefulness: verifies the cleanup helper reads the process table under a short bound, so a hung
-// `ps` ends the cleanup at the bound and signals nothing (#729).
+// Usefulness: verifies the cleanup helper reads the process table under a short bound.
+// A hung `ps` ends the cleanup at the bound and signals nothing (#729).
 test.concurrent.skipIf(process.platform === "win32")(
   "endOwnedProcess ends a hung process-table read at its bound and signals nothing",
   async () => {

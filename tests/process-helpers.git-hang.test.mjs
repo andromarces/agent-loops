@@ -11,8 +11,9 @@ import {
 } from "./process-helpers.mjs";
 import { pollUntil } from "./wait-helpers.mjs";
 
-// Usefulness: verifies each shim call leaves a record with its claimed number and pid, so a
-// failed run can say how many calls never reached the shim (issue #1258); no other test reads it.
+// Usefulness: verifies each shim call leaves a record with its claimed number and pid.
+// A failed run can then say how many calls never reached the shim (issue #1258).
+// No other test reads this record.
 test.concurrent.skipIf(process.platform === "win32")(
   "withGitHangingAfter records the claimed number and pid of each call",
   async () => {
@@ -125,9 +126,10 @@ test.concurrent.skipIf(process.platform === "win32")(
 );
 
 // Usefulness: verifies the shim of withGitHangingAfter lets exactly `passes` calls through when
-// calls start at once, as the concurrent reads of one snapshot do. A call counter that is not
-// atomic loses updates and can read a half-written count, so a snapshot read that must pass hangs,
-// or one that must hang passes (the CI failure of "a second cancel ends a hung evidence snapshot").
+// calls start at once, as the concurrent reads of one snapshot do.
+// A call counter that is not atomic loses updates and can read a half-written count.
+// A snapshot read that must pass then hangs, or one that must hang passes.
+// That is the CI failure of "a second cancel ends a hung evidence snapshot".
 test.concurrent.skipIf(process.platform === "win32")(
   "withGitHangingAfter passes exactly the requested number of concurrent calls",
   async () => {
@@ -187,8 +189,8 @@ test.concurrent.skipIf(process.platform === "win32")(
           return `${index}:${pids[index]}:exit ${codes[index]}:marker ${marker}:trace ${trace}:steps ${reached}`;
         });
       const message = records
-        ? `call-* directories: ${claimed}; call-* directories without a record: ${claimed - records.length}; start markers: ${markers?.length}; step records: ${steps?.size}; claims logged: ${loggedClaims}; calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]; exit codes: ${codes.join(",")}`
-        : `the shim records or directory were unreadable; exit codes: ${codes.join(",")}`;
+        ? `call-* directories: ${claimed}. call-* directories without a record: ${claimed - records.length}. start markers: ${markers?.length}. step records: ${steps?.size}. claims logged: ${loggedClaims}. calls without a shim record: ${unrecorded.length} [${unrecorded.join(" ")}]. exit codes: ${codes.join(",")}.`
+        : `the shim records or directory were unreadable. exit codes: ${codes.join(",")}.`;
       expect(
         calls.filter((call) => call.exitCode === 0),
         message,

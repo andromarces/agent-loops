@@ -150,7 +150,7 @@ describe("the gh runner against the installed execa", () => {
 // (issue #329). Termination only: the bound value is proved in
 // spawn-bounds.test.mjs, so the waits here are ceilings that load cannot reach
 // (issue #373).
-test(
+test.concurrent(
   "runGh terminates the gh child when its bound expires",
   async () => {
     const result = await expectBoundKillsShim("gh", (timeoutMs, { env }) =>
@@ -165,7 +165,7 @@ test(
 // signal fires, which is how the read cancels a call it no longer waits for.
 // The bound is off and the abort follows the shim's start, so only the signal
 // can stop the child (issue #320 review).
-test(
+test.concurrent(
   "runGh terminates the gh child when its abort signal fires",
   async () => {
     const result = await expectAbortKillsShim(

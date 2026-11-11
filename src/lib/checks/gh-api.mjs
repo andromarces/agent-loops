@@ -33,13 +33,14 @@ function ghEnv(dropEnv, env = process.env) {
  * `SIGKILL` after `forceKillAfterDelay`, and on Windows it is `taskkill /T /F` over the process
  * tree. No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that
  * this one call removes from the child environment, compared in upper case because Windows names
- * are case-blind. `env` overrides the inherited environment of the child.
+ * are case-blind.
  */
 export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [], env } = {}) {
   const result = await execBounded("gh", args, {
     cwd,
     timeoutMs,
     signal,
+    // env overrides the inherited environment of the child.
     env: ghEnv(dropEnv, env),
     extendEnv: false,
   });
