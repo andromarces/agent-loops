@@ -97,41 +97,14 @@ function isExactReply(stderr, text) {
 /**
  * One required-check configuration source, classified by what its reply proved.
  *
- * The classification is an allowlist, so it fails closed. `ABSENT` is the only
- * answer that lets a finish pass, and each source is allowed exactly one reply
- * shape to produce it:
- *
- * - Repository rulesets: a successful reply whose body is a JSON array in which
- *   every entry is a well-formed rule (an object carrying a string `type`) and no
- *   entry is a `required_status_checks` rule. That is the read of a branch with
- *   no required-status-check rule (#336).
- * - Classic branch protection: the exact `Branch not protected` (404), which the
- *   endpoint writes only to a caller that can read protection, and which names an
- *   unprotected branch (#280, #295).
- *
- * `HAS_CONTEXTS` is a reply that named at least one required check, so the
- * per-check pass runs. Every other reply is `UNKNOWN`, which settles nothing and
- * keeps the empty-union refusal:
- *
- * - any non-zero exit other than the exact `Branch not protected` 404, including
- *   `Not Found` (404), both `Resource not accessible` 403s, and the Free-plan
- *   403, which names the plan and not the branch;
- * - a body that is empty, is not JSON, is JSON that is not the array or object
- *   this endpoint returns, or is an array carrying an entry that is not a
- *   well-formed rule;
- * - a `required_status_checks` rule that names no check, which states neither an
- *   absence nor a context to enforce.
- *
- * A non-zero reply that is not an unreadable shape still throws, which fails the
- * run rather than reaching the gate (issue #280).
+ * The classification is an allowlist, so it fails closed, and `ABSENT` is the only answer that lets
+ * a finish pass. `ABSENT` comes only from a ruleset reply with no `required_status_checks` rule, or
+ * the exact `Branch not protected` (404) of classic protection (#280, #295, #336).
  * @param {object} options
- * @param {(stderr: string) => boolean} options.absentOnError the one non-zero
- *   reply that proves this source holds no required check, compared whole: the exact
- *   `Branch not protected` 404 for classic protection, and a predicate that never matches
- *   for repository rulesets, whose endpoint does not write it.
- * @param {(data: unknown) => boolean} [options.malformed] whether a parsed body has a
- *   shape the classification cannot interpret; only the readers that refuse on `unparsed`
- *   (the status read and the check wait) act on it.
+ * @param {(stderr: string) => boolean} options.absentOnError the one non-zero reply that proves
+ *   this source holds no required check, compared whole
+ * @param {(data: unknown) => boolean} [options.malformed] whether a parsed body has a shape the
+ *   classification cannot interpret
  * @param {(data: unknown) => ({ state: string, contexts: object[] })} options.classify
  *   the classification of a successful reply body.
  * @returns {Promise<{ state: string, contexts: { name: string, appId: number | null }[], unparsed?: boolean }>}
@@ -148,15 +121,24 @@ async function readRequiredSource(
     if (unreadable) {
       return { state: UNKNOWN, contexts: [], unparsed: true };
     }
+    // Each source allows exactly one reply shape to produce `ABSENT`.
+    // The classic endpoint writes the 404 only to a caller that can read protection, and it names
+    // an unprotected branch.
     if (absentOnError(stderr)) {
       return { state: ABSENT, contexts: [] };
     }
+    // Every non-zero exit other than the exact 404 is `UNKNOWN`.
+    // `Not Found` (404), both `Resource not accessible` 403s, and the Free-plan 403 are `UNKNOWN` too.
+    // The Free-plan reply names the plan and not the branch.
+    // `UNKNOWN` settles nothing and keeps the empty-union refusal.
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
+    // A non-zero reply that is not an unreadable shape still throws, which fails the run instead of the gate (#280).
     throw ghApiFailure(args[0], reply);
   }
   const text = stdout.trim();
+  // An empty body, no JSON, and a body that is not this endpoint's shape are `UNKNOWN` and unparsed.
   if (text === "") {
     return { state: UNKNOWN, contexts: [], unparsed: true };
   }
@@ -165,10 +147,12 @@ async function readRequiredSource(
     return { state: UNKNOWN, contexts: [], unparsed: true };
   }
   const { state, contexts } = classify(body);
+  // `HAS_CONTEXTS` names at least one required check, so the per-check pass runs, and every other
+  // reply is `UNKNOWN`, which settles nothing.
   // `unparsed` marks a successful reply that is not the JSON object or array the
   // endpoint returns, or whose shape `malformed` cannot interpret. The gate
   // ignores it. The status read and the check wait refuse on it, because that
-  // reply may hide a required context (issue #349).
+  // reply can hide a required context (issue #349).
   return {
     state,
     contexts,
@@ -229,13 +213,12 @@ export const RULESETS = "repository rulesets";
 const PROTECTION = "classic branch protection";
 
 /**
- * Classifies a successful repository rulesets read. `ABSENT` needs a JSON array
- * whose entries are all well-formed rules and none of them a
- * `required_status_checks` rule, because that is the only shape in which the
- * read states that no required-status-check rule applies to the branch. A
- * malformed entry makes the whole read unknown rather than skipped: an entry the
- * gate cannot read may be a required-status-check rule it never enforced
- * (issue #336).
+ * Classifies a successful repository rulesets read.
+ * `ABSENT` needs a JSON array whose entries are all well-formed rules, and none of them a
+ * `required_status_checks` rule. That is the only shape in which the read states that no
+ * required-status-check rule applies to the branch. A malformed entry makes the whole read unknown
+ * rather than skipped. An entry the gate cannot read can be a required-status-check rule that it
+ * never enforced (issue #336).
  * @param {unknown} data the parsed body.
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
@@ -274,6 +257,7 @@ export function classifyRulesets(data) {
     if (!isJsonObject(rule)) {
       return { state: UNKNOWN, contexts: [] };
     }
+    // A well-formed rule is an object that carries a string `type`.
     if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
       // A type the gate does not know may be a required-status-check rule under a
       // name this list does not carry, so it is unknown rather than skipped
@@ -328,16 +312,13 @@ function protectionContexts(required) {
 }
 
 /**
- * Classifies a successful classic branch-protection read. No body proves an
- * absence for this source: the only reply that states the branch is unprotected
- * is the exact `Branch not protected` (404), handled on the error path, so a
- * successful body reaches `ABSENT` never. A body that is not the object
- * `repos/{slug}/branches/{base}/protection` returns, or whose
- * `required_status_checks` is present but not an object, is unknown. A body that
- * was read and carries no `required_status_checks` names no context but does not
- * say the branch is unprotected, because a classic-protected branch can require
- * reviews or a signed-off push without requiring a check, so it is unknown too
- * (issue #336).
+ * Classifies a successful classic branch-protection read, and no body proves an absence for this
+ * source. The reply that states it is the exact `Branch not protected` (404) on the error path, so
+ * a successful body never reaches `ABSENT`. A body that is not the endpoint object, or whose
+ * `required_status_checks` is present but not an object, is unknown. A body with no
+ * `required_status_checks` names no context, but it does not say the branch is unprotected. A
+ * classic-protected branch can require reviews or a signed-off push without requiring a check, so
+ * that body is unknown too (issue #336).
  * @param {unknown} data the parsed body.
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
@@ -375,7 +356,7 @@ function isProtectionMalformed(data) {
  * Reads the PR fields the gate judges: `headRefOid`, `baseRefName`, `mergeStateStatus`,
  * `potentialMergeCommit`, and `state`.
  * @returns {Promise<object>} the parsed `gh pr view` stdout, with no shape check
- * @throws {Error} on a non-zero exit; stdout that is not JSON throws a raw `SyntaxError`
+ * @throws {Error} on a non-zero exit, and stdout that is not JSON throws a raw `SyntaxError`
  */
 export async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
@@ -486,6 +467,7 @@ function addContext(contexts, name, appId = null) {
 // URL, and a body the gate cannot account for every page of is unknown or an error (issue #336
 // review, #1033).
 function readRulesets(gh, slug, base, cwd) {
+  // Its absentOnError predicate never matches, because that endpoint does not write the 404.
   return readRequiredSource(pagedRead(gh), [`repos/${slug}/rules/branches/${base}`], cwd, {
     absentOnError: () => false,
     classify: classifyRulesets,
@@ -494,6 +476,7 @@ function readRulesets(gh, slug, base, cwd) {
 
 // The classic branch-protection source of `base`, classified. With `retryable`, the read is a
 // status-classified `--include` read (#1091).
+// Classic protection proves an absence only with the exact `Branch not protected` 404.
 function readProtection(gh, slug, base, cwd, retryable = false) {
   return readRequiredSource(
     retryable ? (args, readCwd) => readOne(gh, args[1], readCwd) : gh,
@@ -508,17 +491,18 @@ function readProtection(gh, slug, base, cwd, retryable = false) {
 }
 
 /**
- * The ruleset state of `base`, the one answer a caller that judges nothing else needs, with the
- * result of `requiredContexts` and none of its reads that cannot change it. The ruleset and
- * protection reads start together, as in `requiredContexts`, so both fit one deadline as they did
- * there. A ruleset state that settled something (not `UNKNOWN`) is the answer whatever the protection
- * read does: a protection read that fails throws, which a caller treats as no answer, and one that
- * succeeds adds nothing. The protection read is then canceled. Only an `UNKNOWN` state waits for it,
- * because a failed read of it throws and then no refusal stands. The names read of
- * `gh pr checks --required` never decides the answer, so it is not made (#1182).
+ * The ruleset state of `base` is the one answer a caller that judges nothing else needs.
+ * It holds the result of `requiredContexts` and none of its reads that cannot change it.
+ * The ruleset and protection reads start together, as in `requiredContexts`, so both fit one deadline.
+ * A ruleset state that settled something (not `UNKNOWN`) is the answer whatever the protection
+ * read does. A failed protection read throws, so a caller treats it as no answer, and a successful
+ * one adds nothing.
  * @returns {Promise<string>} `ABSENT`, `EMPTY`, `UNKNOWN`, or the state of a source that names a context
  */
 export async function readRulesetState(gh, slug, base, cwd) {
+  // The protection read is canceled once the ruleset state settles.
+  // Only an `UNKNOWN` state waits for the protection read, because a failed read leaves no refusal standing.
+  // The names read of `gh pr checks --required` never decides the answer, so it is not made (#1182).
   const [rules] = await inOrder(
     gh,
     [
@@ -532,30 +516,13 @@ export async function readRulesetState(gh, slug, base, cwd) {
 
 /**
  * Required status contexts from every source: repository rulesets, classic branch
- * protection, and `gh pr checks --required`.
- * Deduplicated by name and app qualifier. `unknown` names every configuration
- * source whose reply settled nothing, because such a source may hold a required
- * check this caller never saw. An empty union is then a refusal, naming each
- * source that settled nothing; an empty union over sources that each stated they
- * hold no required check is an established absence the gate records (issue #336).
- * `gh pr checks --required` contributes names and nothing else, so it never
- * appears among the sources that settled nothing and never establishes an
- * absence. It lists only the checks that already reported, so it can name a
- * required check and it cannot prove one is absent: on a base branch with no
- * required check it prints nothing, which is the same silence as a read failure.
- *
- * With `retryable`, the protection read is a status-classified `--include` read like the paged
- * rules read, so a failed read of either source with a retryable status carries `transient`
- * and a caller can retry it on its next poll (#1091). The default reads stay as the gate pins them.
- *
- * With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is
- * not repeated (#1125).
- *
- * With `sourceCache`, a Map the caller owns, a ruleset or protection result that was read cleanly is
- * kept per base branch and reused by later calls with the same Map, so a repeated caller reads each
- * source once (#1267). Only a result that settled a class other than `UNKNOWN` is kept: an unknown,
- * unreadable, unparsed, or failed read is read again by the next call. A change to the rules after
- * the first read is not seen through the same Map.
+ * protection, and `gh pr checks --required`. The union is deduplicated by name and app qualifier.
+ * `unknown` names every configuration source whose reply settled nothing, because such a source
+ * can hold a required check that this caller never saw. An empty union is then a refusal that names
+ * each source that settled nothing. An empty union over sources that each stated they hold no
+ * required check is an established absence that the gate records (issue #336).
+ * `gh pr checks --required` contributes names and nothing else, so it never appears among those
+ * sources and never establishes an absence.
  */
 export async function requiredContexts(
   gh,
@@ -568,6 +535,12 @@ export async function requiredContexts(
   const contexts = new Map();
   const unknown = [];
   const unparsed = [];
+  // With `retryable`, the protection read is a status-classified `--include` read like the paged rules read (#1091).
+  // A failed read of either source with a retryable status then carries `transient` for the next poll.
+  // The default reads stay as the gate pins them.
+  // With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is not repeated (#1125).
+  // `sourceCache` is a Map the caller owns, and a clean ruleset or protection result is kept per base branch (#1267).
+  // A repeated caller then reads each source once through the same Map.
 
   const cached = async (kind, read) => {
     const key = `${kind}\0${base}`;
@@ -575,6 +548,9 @@ export async function requiredContexts(
       return sourceCache.get(key);
     }
     const source = await read();
+    // Only a result that settled a class other than `UNKNOWN` is kept.
+    // An unknown, unreadable, unparsed, or failed read is read again by the next call.
+    // A change to the rules after the first read is not seen through the same Map.
     if (sourceCache && source.state !== UNKNOWN && !source.unparsed) {
       sourceCache.set(key, source);
     }
@@ -600,6 +576,8 @@ export async function requiredContexts(
     }
   }
 
+  // It lists only the checks that already reported, so it can name a required check and cannot prove one absent.
+  // On a base branch with no required check it prints nothing, which is the same silence as a read failure.
   for (const name of listed.names) {
     addContext(contexts, name);
   }

@@ -62,48 +62,24 @@ function replaceRuns(text, runs, markerOf) {
 }
 
 /**
- * Replaces every occurrence of the value of a secret-named environment variable,
- * in its raw form and in its JSON-escaped form, because a serialized error holds the
- * escaped text and a decoder recovers the value from it. An escaped form that holds the raw
- * form, as for a value that starts with a quote or a backslash or ends with a backslash, adds
- * no match: the raw match leaves the escape backslash in place, as the replacement of one
- * value after the other did.
- *
- * Each round finds every occurrence on the current text, merges the overlapping ones, and
- * replaces each merged run in one pass. A round is a linear scan for each value. The first
- * two rounds use `[redacted:NAME]`, with one marker for each distinct marker text of the
- * variables in the run. A variable whose marker would hold a value gets `[*]`. The marker
- * holds the name as the environment reports it. The second round exists because a marker
- * next to text can form a value, and it names the variable as the earlier replacement did.
- * Later rounds use `[*]`, which is shorter than the match that it replaces.
- * After at most 5 rounds, text that still holds a value becomes `[*]`, so the cost is bound
- * for any input.
- *
- * The result holds no complete value in either form. A second call on the result returns it
- * unchanged. With `shrink`, every marker is `[*]`, so the result is never longer than `text`.
- * Two variables with one value share one match, named for the first variable in the environment.
- *
- * Guarantee: no complete value survives in the result, raw or escaped. Every occurrence of a
- * value that the input holds, and every occurrence that a round forms from a marker and the text
- * next to it, is replaced in full, so no part of an occurrence stays. Two exceptions: the escape
- * backslash that the raw match leaves for an escaped form that holds the raw form, and text
- * that holds only a piece of a value, which stays as it is.
- *
- * Parity with the earlier replacement of one value after the other, tested for one
- * secret-named variable: the result is byte-identical when the occurrences of its value, raw and
- * escaped, do not overlap, and the earlier result holds no complete value, in a marker or across
- * a marker and the text next to it. With several values, a value that occurs in marker text,
- * or an occurrence that overlaps another, the result can differ from the earlier result. The
- * differences are not a closed list. The tests pin examples.
- *
- * Exact-value match only: a secret that the command derives, encodes, or reads from
- * a file is not found. A later change of the result, such as a cut, removal of control
- * characters, or serialization, can form a value again, so a caller redacts after it.
+ * Replaces every occurrence of a secret-named environment variable value, raw and JSON-escaped,
+ * so a decoded error leaks nothing. Each round finds every occurrence, merges the overlapping ones,
+ * and replaces each merged run in one pass, as a linear scan per value. The first two rounds use
+ * `[redacted:NAME]`, and a marker that contains a value becomes `[*]`. Later rounds use `[*]`, and
+ * after 5 rounds text that still holds a value becomes `[*]`, so the cost is bound for any input.
+ * The result holds no complete value in either form, a second call returns it unchanged, and
+ * `shrink` makes every marker `[*]`. Exact-value match only, and a later change of the result can
+ * form a value again, so a caller redacts after it.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} env
  * @param {{ shrink?: boolean }} [options]
  */
 export function redactEnvSecrets(text, env = process.env, { shrink = false } = {}) {
+  // A serialized error holds the escaped text, and a decoder recovers the value from it.
+  // An escaped form that holds the raw form adds no match, because the raw match leaves the escape backslash.
+  // That shape comes from a value that starts with a quote or a backslash, or ends with a backslash.
+  // Guarantee: no complete value survives in the result, raw or escaped.
+  // Every occurrence of an input value, or one that a round forms, is replaced in full.
   // Keyed by form text: the first variable in the environment owns a form that two variables share.
   const owners = new Map();
   for (const [name, value] of Object.entries(env)) {
@@ -133,13 +109,24 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   const markers = new Map();
   const markerFor = (name) => {
     if (!markers.has(name)) {
+      // The marker holds the name as the environment reports it.
       const named = `[redacted:${name}]`;
       markers.set(name, holdsForm(named) ? SHRINK_MARKER : named);
     }
     return markers.get(name);
   };
+  // With `shrink`, every marker is `[*]`, so the result is never longer than `text`.
+  // The second round runs because a marker next to text can form a value.
+  // It names the variable as the earlier replacement did, and `[*]` is shorter than the match it replaces.
+  // Each distinct marker text of the variables in the run gets one marker.
   const named = (run) => [...new Set([...run.names].map(markerFor))].join("");
 
+  // Parity with the earlier replacement, tested for one secret-named variable: the result is byte-identical when the raw and escaped occurrences do not overlap.
+  // It also needs the earlier result to hold no complete value, in a marker or across a marker and its text.
+  // With several values, marker text or an overlap can make the result differ, the differences are not a closed list, and the tests pin examples.
+  // Two variables with one value share one match, named for the first variable in the environment.
+  // Exact-value match only: a secret that the command derives, encodes, or reads from a file is not found.
+  // A later change of the result is a cut, a removal of control characters, or a serialization.
   let out = text;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const runs = findRuns(out, patterns);
@@ -148,6 +135,7 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
     }
     out = replaceRuns(out, runs, round < NAMED_ROUNDS && !shrink ? named : () => SHRINK_MARKER);
   }
+  // Two exceptions: the escape backslash of a raw match, and text that holds only a piece of a value.
   return findRuns(out, patterns).length === 0 ? out : SHRINK_MARKER;
 }
 
@@ -163,8 +151,8 @@ function stripControl(text) {
 }
 
 /**
- * Redaction runs before and after the cleanup: a secret can hold a control character that the first
- * pass must match, and the cleanup can join the text around a removed character into a value.
+ * Redaction runs before and after the cleanup. A secret can hold a control character that the
+ * first pass must match. The cleanup can also join the text around a removed character into a value.
  */
 export function redactAndClean(text) {
   return redactEnvSecrets(stripControl(redactEnvSecrets(text)));

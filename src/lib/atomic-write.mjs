@@ -18,8 +18,8 @@ const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 
 /**
  * A transient unlink failure clears once the holder lets go, so a failed removal
- * is retried once. A persistent failure is swallowed: this runs on the way out
- * of an already-failed operation, and the leftover temp is a lesser problem than
+ * is retried once. A persistent failure is swallowed, because this runs on the way out
+ * of an already-failed operation. The leftover temp is a lesser problem than
  * replacing the error the caller must act on (#353).
  */
 export async function removeTemp(path) {
@@ -47,6 +47,7 @@ const SYNC_FS = { realpath: realpathSync.native, readlink: readlinkSync };
 // step as `{ op, path }`. The driver runs the step and sends back the result, or throws the error
 // into the generator, so only the fs calls differ between the async and the sync resolver.
 function* traverseWriteTarget(file) {
+  // A rename over a link replaces the link instead of the file it names (#658).
   let current = resolve(file);
   for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
     let dir;
@@ -67,18 +68,18 @@ function* traverseWriteTarget(file) {
     }
     current = isAbsolute(target) ? target : `${dir}${sep}${target}`;
   }
+  // A loop fails with `ELOOP`.
   throw Object.assign(new Error(`Too many levels of symbolic links: ${file}`), { code: "ELOOP" });
 }
 
 /**
- * The path that a write to `file` lands at: the final target of a chain of file symlinks, which a
- * rename over a link would replace instead (#658). Each hop resolves the real directory of the link
- * first, and joins a relative target to it without normalizing, so the next hop resolves the
- * directory part of the target with `realpath`. A directory link that the target passes through
- * then applies before a `..` that follows it, as the OS applies it. `readlink` works on a dangling
- * link, where `realpath` fails. A path that is no link or does not exist resolves to itself. Every
- * guard that judges where a write lands must use this path, so the guard and the writer agree. A
- * loop fails with `ELOOP`.
+ * The path that a write to `file` lands at: the final target of a chain of file symlinks.
+ * Each hop resolves the real directory of the link first, and joins a relative target to it
+ * without normalizing. The next hop then resolves the directory part of the target with `realpath`.
+ * A directory link that the target passes through applies before a `..` that follows it, as the OS
+ * applies it. `readlink` works on a dangling link, where `realpath` fails, and a path that is no link
+ * or does not exist resolves to itself. Every guard that judges where a write lands must use this
+ * path, so the guard and the writer agree.
  */
 export async function resolveWriteTarget(file) {
   const steps = traverseWriteTarget(file);
@@ -95,29 +96,27 @@ export async function resolveWriteTarget(file) {
 
 /**
  * Writes `text` to `file` atomically: a private temp file in the same directory
- * is renamed over the destination, so a concurrent reader sees the old content
+ * is renamed over the destination. A concurrent reader then sees the old content
  * or the new content, never a partial write. Node rename replaces an existing
- * destination on Windows and POSIX. A file symlink keeps its link: the write
- * goes to the final target, with the temp beside it (#658). A failed write or
+ * destination on Windows and POSIX, and a file symlink keeps its link. The write
+ * then goes to the final target, with the temp beside it (#658). A failed write or
  * rename removes the temp on a best-effort basis and rethrows the original error
- * (#353). `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and
- * suppresses a cleanup failure that persists, so the temp can remain. With `mode`, the temp is
- * created with those permission bits and chmod-ed to them before the rename, so the destination is
- * never briefly more open. Without it, the file gets the default mode of a new file. `mode` can be a
- * function that receives the resolved destination and returns the mode or `undefined`, so a caller
- * reads the mode of the file that the rename replaces, not of a path that a link can retarget. The default
- * temp name is `<pid>.<counter>` and an existing file of that name is overwritten. With
- * `exclusive`, the temp name carries a random token and is created with `wx`: a name that is
- * somehow taken fails the write with `EEXIST`, and the cleanup leaves that file alone, because this
- * call did not create it.
+ * (#353). With `mode`, the temp is created with those permission bits and chmod-ed
+ * to them before the rename, so the destination is never briefly more open.
  */
 export async function writeFileAtomic(file, text, { mode, exclusive = false } = {}) {
   const destination = await resolveWriteTarget(file);
+  // `mode` as a function receives the resolved destination, so a caller reads the mode of the
+  // replaced file. The mode is not read from a path that a link can retarget, and the function
+  // returns the mode or `undefined`.
   const targetMode = typeof mode === "function" ? await mode(destination) : mode;
+  // The default temp name is `<pid>.<counter>`, and an existing file of that name is overwritten.
+  // `exclusive` adds a random token and creates the temp with `wx`, so a taken name fails with `EEXIST`.
   const temp = exclusive
     ? `${destination}.${process.pid}.${randomUUID()}.tmp`
     : `${destination}.${process.pid}.${stateTempCounter++}.tmp`;
   try {
+    // Without `mode`, the file gets the default mode of a new file.
     await writeFile(temp, text, {
       encoding: "utf8",
       mode: targetMode,
@@ -128,9 +127,11 @@ export async function writeFileAtomic(file, text, { mode, exclusive = false } = 
     }
     await renameWithRetry(temp, destination);
   } catch (err) {
+    // `removeTemp` retries once on `EPERM`, `EACCES`, and `EBUSY`, and it can leave the temp in place.
     if (!(exclusive && err.code === "EEXIST" && err.syscall === "open")) {
       await removeTemp(temp);
     }
+    // The cleanup leaves a taken `exclusive` name alone, because this call did not create it.
     throw err;
   }
 }

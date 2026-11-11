@@ -12,6 +12,7 @@ export const DEFAULT_READ_TIMEOUT_MS = 60_000;
 
 // `gh` reads these two names and then writes a debug log to stderr, which breaks the exact stderr
 // match of the protection read (#1047). Compared in upper case, because Windows names are case-blind.
+// Every call also drops `GH_DEBUG` and `DEBUG` (#1047), and the rest of the environment stays.
 const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
 
 /**
@@ -26,15 +27,13 @@ function ghEnv(dropEnv) {
 }
 
 /**
- * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`;
- * a non-zero exit is data, not a throw. `timeoutMs` bounds the call and
- * terminates the `gh` child when it expires, so a hung `gh` cannot outlast a
- * caller bound. On POSIX systems the kill is `SIGTERM`, then `SIGKILL` after
- * `forceKillAfterDelay`. On Windows it is `taskkill /T /F` over the process tree.
- * No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that this
- * one call removes from the child environment, compared in upper case because Windows names are
- * case-blind. Every call also drops `GH_DEBUG` and `DEBUG` (#1047), and the rest of the
- * environment stays.
+ * Runs `gh` with `args` in `cwd`. Returns `{ status, stdout, stderr, timedOut }`, and a non-zero
+ * exit is data, not a throw. `timeoutMs` bounds the call and terminates the `gh` child when it
+ * expires, so a hung `gh` cannot outlast a caller bound. On POSIX the kill is `SIGTERM`, then
+ * `SIGKILL` after `forceKillAfterDelay`, and on Windows it is `taskkill /T /F` over the process
+ * tree. No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that
+ * this one call removes from the child environment, compared in upper case because Windows names
+ * are case-blind.
  */
 export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv = [] } = {}) {
   const result = await execBounded("gh", args, {
@@ -55,9 +54,9 @@ export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv =
 /**
  * The text a failed `gh` call reports: its trimmed stderr, or its exit status when stderr is empty.
  * With `stdout` of a `gh api --include` read and an empty stderr, the text is `HTTP <status>` from the
- * first line of that stdout, with no exit status, or `exit <status>, no HTTP status line` when that
- * line is no status line (#1242). Only that number is named, never body text, which carries
- * server-supplied text.
+ * first line of that stdout. That form names no exit status, and a first line that is no status line
+ * gives `exit <status>, no HTTP status line` (#1242). Only that number is named, never body text,
+ * which carries server-supplied text.
  */
 export function ghFailureText({ status, stderr, stdout }) {
   const text = stderr.trim();
@@ -187,7 +186,7 @@ export function isTransportFailure({ stdout, stderr }) {
 /**
  * Runs `gh api` with `args` (the `"api"` word is added here) and parses stdout as JSON.
  * @returns {Promise<unknown>} the parsed body, or null when stdout is empty
- * @throws {Error} on a non-zero exit, with `transient` set when the reply was a retryable failure;
+ * @throws {Error} on a non-zero exit, with `transient` set when the reply was a retryable failure
  *   stdout that is not JSON throws a raw `SyntaxError`
  */
 export async function ghApi(gh, args, cwd) {
@@ -211,9 +210,9 @@ const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 const RETRYABLE_BODY_CLASSES = new Set(["empty", "JSON", "truncated JSON"]);
 
 /**
- * Whether the stderr of a failed `gh pr` read names a retryable server error. `gh` words it
- * `HTTP <status>: <message> (<url>)` and the status opens the text, so only that opening counts: a
- * status in later text or inside a 4xx message never makes a retry (#1121).
+ * Whether the stderr of a failed `gh pr` read names a retryable server error.
+ * `gh` words it `HTTP <status>: <message> (<url>)`, and the status opens the text, so only that
+ * opening counts. A status in later text or inside a 4xx message never makes a retry (#1121).
  */
 function isServerErrorText(stderr) {
   const status = /^HTTP (\d{3})\b/.exec(stderr.trimStart());
@@ -268,10 +267,10 @@ function parseReply(stdout) {
 const TOKEN_NAMES = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 /**
- * The host that `gh api` sends a request to when `GH_HOST` is unset, from the parsed stdout of
- * `gh auth status --json hosts` run without `TOKEN_NAMES`, or null when the reply states none.
+ * The host that `gh api` sends a request to when `GH_HOST` is unset, or null when the reply states
+ * none. It comes from the parsed stdout of `gh auth status --json hosts`, run without `TOKEN_NAMES`.
  * Observed with `gh` 2.103.1: the default host is the one host of the configuration, and github.com
- * for none or several, and that listing then holds the configured hosts only. A reply that is not
+ * for none or several. That listing then holds the configured hosts only. A reply that is not
  * the documented shape states no host, so it never widens the accepted hosts.
  * @param {unknown} reply
  */
@@ -372,9 +371,9 @@ function isEmptyOrJson(body) {
 
 /**
  * The class of a reply body: `empty`, `JSON`, `truncated JSON`, `unparseable JSON`, or `other text`.
- * A truncated body opens one JSON object or array whose closing bracket is missing, so a cut reply
- * is told from a complete value followed by text. Only the class is reported, never a body byte
- * (#1519).
+ * A truncated body opens one JSON object or array whose closing bracket is missing.
+ * A cut reply is then told from a complete value followed by text. Only the class is reported,
+ * never a body byte (#1519).
  */
 export function bodyClassOf(body) {
   const text = body.trim();
@@ -423,30 +422,34 @@ function openJsonValue(text) {
 
 /** A refusal about the shape of a reply: a read the runtime cannot account for, as no `gh` failure. */
 const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true });
+// A refusal carries `unreadable`, so the ruleset source reads as unknown and the gate reads throw.
+// A foreign `Link` target is no `unreadable` refusal, so every read throws on it.
 
 /**
- * One `gh api --include` request, judged as the pager judges every page, and the one place that
- * judges it, so a single read and a paged read cannot drift apart. The `Link` header of every reply
- * is judged before its status, so a failure that is retryable by its status is still terminal when a
- * target names another host. The request host is resolved once per read (`state.hosts`), and only
- * for a reply that carries a `Link` target. It returns `{ end, reply }` for a failure or a refusal,
- * where `end` is the `gh`-shaped result and `reply` the parsed reply, or null with no status block,
- * and `{ reply, json }` for a 2xx reply whose body is exactly one JSON value. Both carry `targets`, the
- * `Link` targets of the reply, so a caller does not parse the headers again.
+ * One `gh api --include` request, judged as the pager judges every page, in the one place that
+ * judges it. The `Link` header of every reply is judged before its status, so a status-retryable
+ * failure is still terminal on a foreign target. The request host is resolved once per read
+ * (`state.hosts`), and only for a reply that carries a `Link` target. A failure or refusal returns
+ * `{ end, reply }`, where `end` is the `gh`-shaped result and `reply` is the parsed reply. `reply` is
+ * null with no status block, and a 2xx reply with one JSON value returns `{ reply, json }`.
  * @param {Function} read
  * @param {string[]} args the `gh` arguments of the request
  * @param {string} cwd
  * @param {{ hosts?: Set<string> }} state
  */
 async function readReply(read, args, cwd, state) {
+  // A single read and a paged read share this judgment, so they cannot drift apart.
   const result = await read(args, cwd);
   const reply = parseReply(result.stdout);
+  // Both forms carry `targets`, so a caller does not parse the headers again.
   const targets = reply === null ? [] : linkTargets(reply.headers);
   if (targets.length > 0) {
     state.hosts ??= await requestHosts(read, cwd);
   }
   const foreign = targets.length > 0 ? foreignTarget(targets, state.hosts) : null;
   if (foreign !== null) {
+    // A foreign target is an error on a failed reply too, and it is never `transient`.
+    // The read never requests that target, and it ends instead of returning steered pages.
     return {
       reply,
       targets,
@@ -464,6 +467,8 @@ async function readReply(read, args, cwd, state) {
     // only retryable form (#1312). A reply with a status block keeps the 5xx rule.
     const transport = reply === null && isTransportFailure(result);
     const bodyClass = reply === null ? null : bodyClassOf(reply.body);
+    // `transient` is set for a first-line status of 500, 502, 503, or 504 with an empty, JSON,
+    // or truncated JSON body (#1519). A transport failure with no status block is transient too.
     const transient =
       reply === null
         ? transport
@@ -491,29 +496,21 @@ async function readReply(read, args, cwd, state) {
 }
 
 /**
- * Reads every page of the list endpoint `endpoint` with one `gh api --include` request per page,
- * by documented page number and never by the `Link` header, so no request goes to a target that a
- * reply named. It returns a `gh`-shaped result whose stdout is the pages as one JSON array.
- * `field` names the list in an object reply (`check_runs`, `statuses`);
- * with `null`, each page is the list itself. Every page that the read received is in the result, an
- * empty page included, so a classifier sees the whole sequence. For a reply with `total_count`, the
- * read ends only when the collected count equals it, and a count that changes between pages, a
- * collected count above it, and a short or empty page with the count unmet are errors. For a reply
- * with no `total_count`, the first page of fewer than `PAGE_SIZE` items ends the read. The page cap is
- * an error. A `Link` header that names a host other than the request host (see `requestHosts`) is an error too, on a failed reply
- * with a retryable status as on a successful one, and never `transient`: the read
- * never requests that target, and it ends rather than return pages that a reply could have steered.
- * A refusal about the shape of a reply carries `unreadable`, so the ruleset source reads as unknown
- * and the gate reads throw; a foreign `Link` target is no `unreadable` refusal, so every read throws
- * on it. `transient` is set on a failed result for a first-line status of 500, 502, 503, or 504
- * with a body that is empty, JSON, or truncated JSON. It is also set for a transport failure with
- * no status block (#1312).
+ * Reads every page of the list endpoint `endpoint`, with one `gh api --include` request per
+ * documented page number. The result is `gh`-shaped, and its stdout holds the pages as one JSON
+ * array. `field` names the list in an object reply (`check_runs`, `statuses`), and with `null` each
+ * page is the list itself. A `total_count` reply ends only at the collected count, and a short or
+ * empty page with the count unmet is an error. A foreign `Link` target is an error, never
+ * `transient`, and a shape refusal carries `unreadable`.
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
- * @param {string} endpoint the endpoint with no query
+ * @param {string} endpoint
  * @param {string} cwd
  * @param {string | null} field
  */
 async function readPages(read, endpoint, cwd, field) {
+  // `endpoint` carries no query.
+  // Each request uses the documented page number, never the `Link` header, so no request goes to
+  // a target that a reply named. An empty page is kept, so a classifier sees the whole sequence.
   const pages = [];
   let collected = 0;
   let expected;
@@ -534,9 +531,11 @@ async function readPages(read, endpoint, cwd, field) {
       Number.isInteger(json?.total_count) && json.total_count >= 0 ? json.total_count : null;
     expected ??= { total };
     if (total !== expected.total) {
+      // A count that changes between pages is an error.
       return refusal("the total_count of the reply changed between pages");
     }
     const done = () => ({ status: 0, stdout: JSON.stringify(pages), stderr: "" });
+    // Every page that arrived is kept, so a classifier sees the whole sequence.
     pages.push(json);
     collected += items;
     if (total === null) {
@@ -545,6 +544,7 @@ async function readPages(read, endpoint, cwd, field) {
         return done();
       }
     } else if (collected > total) {
+      // A collected count above the total is an error.
       return refusal("the pages hold more items than the total_count of the reply");
     } else if (collected === total) {
       return done();
@@ -553,12 +553,13 @@ async function readPages(read, endpoint, cwd, field) {
       return refusal("the read ended before the total_count of the reply");
     }
   }
+  // The page cap is an error.
   return refusal(`the read has more than ${MAX_PAGES} pages`);
 }
 
 /**
- * A `gh` runner whose `api <endpoint>` call reads every page of `endpoint` through `readPages`,
- * so a caller of `ghApi` or `readRequiredSource` never uses `gh --paginate` (#1033).
+ * A `gh` runner whose `api <endpoint>` call reads every page of `endpoint` through `readPages`.
+ * A caller of `ghApi` or `readRequiredSource` then never uses `gh --paginate` (#1033).
  * @param {Function} gh
  * @param {string | null} field see `readPages`
  */
@@ -573,22 +574,22 @@ export const pagedRead =
     );
 
 /**
- * Reads one endpoint that is no list with `gh api --include`, and judges the reply with the one
- * validation of the pager (`readReply`): the `Link` host check of every reply (#1033), the first-line
- * status, a 2xx status block, and a body that is exactly one JSON value, and the 5xx retry
- * classification of a failed reply (#1025, #1519), so `transient` is set as the pager sets it. A success
- * returns a `gh`-shaped result whose stdout is that body. A `Link` target of the request host on a
- * success is a refusal too, because it says the reply is one page of a longer list that this read
- * would take as complete. A refusal about the shape of a reply carries `unreadable`. `notFound` is
- * set on a failed result only for the exact absence reply: a 404 status line, exactly
- * `gh: Not Found (HTTP 404)` on stderr, a body that is one JSON value, and no `Link` target.
+ * Reads one endpoint that is no list with `gh api --include`.
+ * It applies the pager's one validation (`readReply`): the `Link` host check of every reply (#1033)
+ * and a body of one JSON value. A success returns a `gh`-shaped result whose stdout is the reply
+ * body. A `Link` target of the request host on a success is a refusal, because the reply is one
+ * page of a longer list. `notFound` is set on a failed result only for the exact absence reply.
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
- * @param {string} endpoint the endpoint with its query
+ * @param {string} endpoint
  * @param {string} cwd
  */
 export async function readOne(read, endpoint, cwd) {
+  // `transient` is set as the pager sets it (#1025, #1519), and `endpoint` carries its query.
+  // That validation also checks the first-line status and the 2xx status block (#1025, #1519).
+  // A success that names a longer list is a refusal, so this read never takes one page as complete.
   const { reply, end, targets } = await readReply(read, ["api", endpoint, "--include"], cwd, {});
   if (end) {
+    // The exact absence reply: a 404 line, `gh: Not Found (HTTP 404)`, one JSON body, and no `Link` target.
     const exact =
       end.status !== 0 &&
       reply?.status === 404 &&
@@ -599,6 +600,8 @@ export async function readOne(read, endpoint, cwd) {
     return { ...end, ...(exact ? { notFound: true } : {}) };
   }
   if (targets.length > 0) {
+    // A refusal about the shape of a reply carries `unreadable`.
+    // The 5xx retry classification of a failed reply is the pager's too (#1025, #1519).
     return refusal("the reply carries a Link header, so it may be one page of a longer list");
   }
   return { status: 0, stdout: reply.body, stderr: "" };
@@ -621,8 +624,8 @@ export const readTimeout = (timeoutMs) =>
  * A runner for one gate call: every `gh` call ends when `timeoutMs` expires or `signal` aborts, and
  * `timeoutMs` also bounds each child. `deadline` is the deadline signal alone, so a caller tells a
  * timeout from a caller cancel. A reply that the runner marks `timedOut`, or that arrives after the
- * deadline expired, throws `readTimeout` and never reaches the caller as data, so a gate cannot pass
- * on a read that its bound cut short.
+ * deadline expired, throws `readTimeout` and never reaches the caller as data. A gate then cannot
+ * pass on a read that its bound cut short.
  * @param {Function} gh
  * @param {number} timeoutMs
  * @param {AbortSignal | null} [signal]
@@ -705,15 +708,12 @@ export class ReadFailure {
 export const failureOf = (err) => (err instanceof ReadFailure ? err.cause : err);
 
 /**
- * Runs independent reads together. Each maker receives a runner that the group
- * can cancel. The reads are awaited in list order, so the first failure in that
- * order throws as soon as it is reached, the error the same reads run in sequence
- * surfaced. A later sibling that is slow or stalled never delays that error. On a
- * failure the remaining reads are cancelled and settled before the throw, so no
- * `gh` child outlives the caller. `stopWhen(value)` ends the group early, as a
- * sequential caller that returns at that value would: the later reads are
- * cancelled and settled, their failures are never surfaced, and the values read
- * so far are returned.
+ * Runs independent reads together, and each maker receives a runner that the group can cancel.
+ * The reads are awaited in list order, so the first failure throws as soon as it is reached, with
+ * the error a sequential run surfaces. A later sibling that is slow or stalled never delays that
+ * error. On a failure the remaining reads are cancelled and settled before the throw, so no `gh`
+ * child outlives the caller. `stopWhen(value)` ends the group early, as a sequential caller that
+ * returns at that value does, and the later reads are then cancelled and settled.
  */
 export async function inOrder(gh, makers, stopWhen = () => false) {
   const group = new AbortController();
@@ -730,6 +730,7 @@ export async function inOrder(gh, makers, stopWhen = () => false) {
       if (stopWhen(value)) {
         group.abort();
         await Promise.allSettled(reads);
+        // Their failures are never surfaced, and the values read so far are returned.
         break;
       }
     }

@@ -181,12 +181,11 @@ function compareTime(a, b) {
 }
 
 /**
- * The most recent entry: the later of the first present timestamp in `fields`,
- * then the larger numeric id when times tie. Null when a group of several entries
- * holds an entry with a non-numeric id or a missing or unparseable timestamp.
- * The order is then unknown, and the caller must not pass the group. A single
- * entry needs no order and is returned as is. GitHub evaluates the latest run for
- * a name. An earlier failing run that a later run replaces does not fail the gate.
+ * The most recent entry is the later of the first present timestamp in `fields`, then the larger
+ * numeric id when times tie. Null when a group of several entries holds an entry with a
+ * non-numeric id or a missing or unparseable timestamp. The order is then unknown, so the caller
+ * must not pass the group. A single entry needs no order and is returned as is. GitHub evaluates the
+ * latest run for a name. An earlier failing run that a later run replaces does not fail the gate.
  */
 export function latestBy(entries, fields) {
   if (entries.length === 1) {
