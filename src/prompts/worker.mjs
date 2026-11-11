@@ -73,7 +73,7 @@ const workTreeEditRule =
 // A worker whose edit landed in another checkout restored the files there, which can discard an
 // uncommitted change of the user, and its own envelope then named no path (issue #1551).
 const foreignCheckoutEditRule =
-  "If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there, because a restore can discard an uncommitted change of the user.";
+  "If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there. A restore can discard an uncommitted change of the user.";
 
 // Every turn runs with a private temporary directory that the runtime removes (ADR 0047, ADR 0068).
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
@@ -84,7 +84,7 @@ const foreignCheckoutEditRule =
 // `literal-tmp/` entry when the inherited directory is another path (issue #1713).
 const tmpdirRule = tempPathRule(
   "work tree",
-  ", such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory, because another run can hold the same name",
+  ", such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory. Another run can hold the same name",
 );
 
 // A Claude worker moved its suite to a background shell task when it could outlive the foreground
@@ -162,12 +162,12 @@ Your role:
 - ${prTurnRules.join("\n- ")}
 - For PR work, before the closing block, \`git status --porcelain\` must be empty, ignored files aside. Commit or discard every change, and name in Notes any change that you keep on purpose.
 - The work tree this turn runs in belongs to the parent. Never remove, move, or
-  switch it, and leave it in place after the push, because every later turn of
+  switch it, and leave it in place after the push. Every later turn of
   this run targets the same \`--cwd\`.
 - ${workTreeEditRule}
 - ${foreignCheckoutEditRule}
 - Report what changed, what was verified, and state any disagreements with evidence.
-- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states. Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.
+- State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it. The closing-block rule below states it. Never refer to any other text outside the block, for example "the decisions above". The parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - ${tmpdirRule}
 - ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.")}

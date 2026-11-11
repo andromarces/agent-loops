@@ -182,8 +182,8 @@ uncommitted state (it is exhaustive only when `exact` is true; ignored files are
 out of scope).
 
 A task is PR work when its change is delivered on a pull request. For PR work,
-name the PR branch in the worker prompt: the worker commits its change on that
-branch and pushes it, and the reviewed head is the PR head. The run supplies the PR number, and the head commit comes from that PR. A headless run names the PR number in its task.
+name the PR branch in the worker prompt: the worker commits and pushes there,
+and the reviewed head is that head. The run supplies the PR number, and the head commit comes from that PR.
 
 After each push, when the branch has an open PR, the worker
 updates the PR body in place so that it describes the pushed head. It adds no
@@ -292,21 +292,22 @@ Apply these parent rules:
   - The field redacts each path like the other path fields, names at most 20 paths, and keeps a
     fixed root lockfile name byte-identical.
 - A reviewer envelope carries `inheritedTmpdirEntries` only when entries appeared directly in the
-  inherited temporary directory or in a literal system temporary directory during the turn. A
-  worker envelope carries it only for a literal system temporary directory, because a worker may
-  legitimately write in the inherited one. One example is a probe directory that a turn created
-  there. The field names the entries, redacted like the test command output, and never their
-  content, at most 20. It is a diagnostic: the directories are shared with other processes, the
-  runtime cannot attribute an entry to the turn, and it does not delete one. The runtime reads
-  them once after the turn, with no re-read and no wait. The field creates no `open` item by
-  itself, and it never refuses a finish. Field rules:
+  inherited temporary directory or a literal system temporary directory during the turn. A
+  worker envelope carries it only for a literal system temporary directory. A worker turn can
+  write in the inherited directory. One example is a probe directory that a turn created
+  there. Field rules:
   [Runtime advisory fields](orchestrator/runtime-advisory-fields.md).
-  - The literal system temporary directories are `/tmp` and `/private/tmp` on POSIX, and none on
+- The field names the entries, redacted like the test command output, and never their
+  content, at most 20. It is a diagnostic. The directories are shared with other processes.
+  The runtime cannot attribute an entry to the turn, and it does not delete one. The runtime reads
+  them once after the turn, with no re-read and no wait. The field creates no `open` item by
+  itself, and it never refuses a finish.
+  - The literal system temporary directories are `/tmp` and `/private/tmp` on POSIX. There are none on
     Windows, where a Git Bash `/tmp` resolves to the inherited directory. The runtime leaves out a
-    literal root that resolves to the inherited directory while it reads that directory too; a root
-    that holds the inherited directory is read, so a write directly in it is still seen. When the
-    inherited directory is itself a literal root, a worker turn reports a new entry there too,
-    because the two writes cannot be told apart.
+    literal root that resolves to the inherited directory while it reads that directory too. A root
+    that holds the inherited directory is read, and a write directly in it is still seen. When the
+    inherited directory is itself a literal root, a worker turn reports a new entry there too.
+    The two writes cannot be told apart.
   - A name with the prefix `literal-tmp/` is an entry of a literal system temporary directory, such
     as `/tmp/x` on macOS. The prompt forbids that write, and the field names it after the turn. The
     entry is unattributed like every other entry, and a turn that reports its own leftover makes it
@@ -532,7 +533,9 @@ When the user asks to work several items as one batch, the skill resolves the re
 
 A batch item is a GitHub issue, a GitHub pull request, or a free-text task. The selection is explicit `--issue <n>` entries in launch order, one `--from-audit <audit id>` for the frozen issue set of a finished audit, or one `--items-file <path>` JSON list. The runtime adds no selector such as "all open pull requests": the skill lists the pull requests itself and turns each one into a `pr` item. Each item carries `work-first`, `review-first`, or `review-only`; the default is `work-first` for an issue and a task, and `review-first` for a pull request. An item may carry its own `task` text, which replaces the template for that item only.
 
-Turn a mixed request such as "work on every item of my local list, and review every open PR" into one `--items-file` list. Give each local item `{ "kind": "task", "text": "<the task>", "id": "<short-slug>" }`. Give each pull request `{ "kind": "pr", "number": <n>, "mode": "review-only" }` when the request is a review, or leave the default `review-first` when worker corrections may be needed. Keep a GitHub issue as `{ "kind": "issue", "number": <n> }`. A task item needs a unique slug id, because its branch, work tree, claim, checkpoint, and resume identity use it.
+Turn a mixed request such as "work on every item of my local list, and review every open PR" into one `--items-file` list. Give each local item `{ "kind": "task", "text": "<the task>", "id": "<short-slug>" }`. Give each pull request `{ "kind": "pr", "number": <n>, "mode": "review-only" }` when the request is a review. Otherwise leave the default `review-first` when worker corrections are needed. Keep a GitHub issue as `{ "kind": "issue", "number": <n> }`.
+
+A task item needs a unique slug id. Its branch, work tree, claim, checkpoint, and resume identity use it.
 
 When the user asks to work the issues of a finished audit, read the audit with `agent-loop batch audit status --audit <id>` and pass `--from-audit <id>` instead of `--issue` or `--items-file`. Run it only when the status is `created`; a paused or `needs-owner` audit is refused, and the audit command never starts a batch.
 
@@ -580,22 +583,16 @@ remove it.
 Dispatch a remote-only worker edit, such as a checklist item, before the final
 reviewer turn. A worker turn after the review resets the reviewed state.
 
-Both paths name the mode with `--mode <mode>`, with the same three values: on the
-`role` init call and on the headless `agent-loop` command. A `review-only` run
-dispatches no worker, so it takes none of `--pr`, `--require-accept`, and
-`--require-ci`.
+Name the mode with `--mode <mode>` on the `role` init call, with the values
+`work-first`, `review-first`, or `review-only`. A `review-only` run dispatches no
+worker, so it takes none of `--pr`, `--require-accept`, and `--require-ci`.
 
-`--pr <pr>` on either path declares the run PR work, so that run can only end
+`--pr <pr>` on the init call declares the run PR work, so that run can only end
 through the gate for the same PR. The reviewer turn is the one that satisfies the gate.
 A worker turn resets the reviewed state to none. A worker turn is needed first only
 when the condition is about the change. An interactive
 `role finish` records the `unresolvedCompare` marker in its envelope and the state
 file instead of a transcript event.
-
-The rules that only a headless run acts on are in
-[Loop policy and actions](reference/usage.md#loop-policy-and-actions): the default of
-`--mode`, the headless gate and its `--max-steps` budget, the action keys, and the
-headless `--compare-head` and undeclared-PR cases.
 
 ## Completion
 
@@ -618,9 +615,9 @@ Map the child report fields into the finish summary:
   leaves the list when a later worker turn reports it done and a later reviewer
   `accept` covers that state; record it in `changed`. The items that remain at
   `finish` go into `deferred`.
-- A reviewer `accept` can leave a criterion unverified, because the reviewer
-  turn cannot run its check, for example a live run against a production
-  service, a device, or a manual step. Its `Checks` line reports the criterion as
+- A reviewer `accept` can leave a criterion unverified. The reviewer turn cannot
+  run that check, for example a live run against a production service, a device,
+  or a manual step. Its `Checks` line reports the criterion as
   unverified, and its `Deferred` line lists it. Carry it into `deferred`, and
   name the unrun check in `verified` as not verified. Do not dispatch another
   turn to run that check, unless the task states that the check must pass in

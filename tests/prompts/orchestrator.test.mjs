@@ -362,7 +362,7 @@ test("initialPrompt states the completion rule and its mode mapping", () => {
   // whatever the verdict, and record that verdict in verified.
   expectRule(prompt, /worker/i, /review-only/i, /\bfinish\b/i);
   expectRule(prompt, /record[^.!?]{0,40}verified/i, /verdict/i);
-  expect(prompt).toContain("loop policy");
+  expect(prompt).toContain("This headless loop chooses its own action order");
 });
 
 // Usefulness: verifies a review-only headless run states the mapping the mode
@@ -406,7 +406,7 @@ test("a review-only run states the review-only mapping", () => {
 // unchanged (issue #337).
 test("a run with no mode keeps the mode-free prompt", () => {
   expect(initialPrompt({ task: "T", maxSteps: 10 })).toContain(
-    "- The loop policy (work-first, review-first, review-only ordering) is governed by the interactive agent-loop role mode. This headless loop chooses its own action order and still applies the completion rule above.",
+    "- This headless loop chooses its own action order and still applies the completion rule above.",
   );
 });
 
@@ -441,8 +441,13 @@ test("initialPrompt states the --require-ci gate when enabled", () => {
 // the runtime supplies the status and the reviewer's own read is only a fallback.
 // A gate-only run gets the same clauses for the gated PR (#320, #350).
 test("the headless prompt adds the declaration rule and nothing else", () => {
-  const block =
-    "- This run declares PR #42. Finish it through --require-ci 42 for that same PR. The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed. At start, the runtime read the required-check sources of PR #42 once and refused a run whose repository rulesets it could not read, for example a private Free-plan repository, because the gate would refuse every finish of such a run; the recovery is to omit --pr and pass --compare-head 42 to the headless command, which compares the PR head without reading a required-check source, or to finish with unresolvedCompare. A read that failed for another reason, such as a transport failure, warned and let the run start, so the gate can still refuse at finish.";
+  const block = [
+    "- This run declares PR #42. Finish it through --require-ci 42 for that same PR.",
+    "- The runtime refuses a finish that has no gate, a gate for another PR, or unresolvedCompare. A gate for another PR is not read. A matching gate still applies its own conditions. One refusal names every condition that failed.",
+    "- At start, the runtime read the required-check sources of PR #42 once. It refused a run whose repository rulesets were unreadable, for example a private Free-plan repository. The gate refuses every finish of such a run.",
+    "- The recovery is to omit --pr and pass --compare-head 42 to the headless command. That command compares the PR head without reading a required-check source. The other recovery is to finish with unresolvedCompare.",
+    "- A read that failed for another reason, such as a transport failure, warned and let the run start. The gate can still refuse at finish.",
+  ].join("\n");
   const supplied =
     " This run names PR #42, so the runtime reads the required-check status for that PR head and supplies it to every reviewer prompt. That status is advisory evidence, in place of the reviewer reading the checks: the reviewer reports it, keeps its own read as the fallback, and reads the checks itself when the supplied status is unresolved. The --require-ci finish gate re-reads GitHub and enforces the condition. The runtime reports the status it read beside the reviewer result, so compare it with the reviewer Checks line.";
   const advisory = " The advisory status read above reports to the reviewer and never enforces.";
@@ -458,10 +463,10 @@ test("the headless prompt adds the declaration rule and nothing else", () => {
   // to distinguish from the enforcing one. Matched as a prefix: the line also
   // carries the advisory clause and the pending-check rule that follow it.
   const reworded =
-    "- The --require-ci finish gate is the only check read in this run that enforces anything,";
+    "- The --require-ci finish gate is the only check read in this run that enforces anything.";
   // The declared prompt carries the block, the supplied-read clause, and the
   // reworded gate line.
-  expect(withPrAndGate.split("\n")).toContain(block);
+  expect(withPrAndGate).toContain(block);
   expect(withPrAndGate.split("\n").some((line) => line.startsWith(reworded))).toBe(true);
   expect(withPrAndGate).toContain(supplied.trim());
   // A gate-only run carries the same clauses, but no declaration block, because
@@ -666,10 +671,15 @@ test("a run with no read-only network on either role names the gate as the only 
   expect(cannotWait).not.toMatch(/--watch/);
   expect(prompt).not.toMatch(/reviewer turn reads/i);
 
-  const gateLine = lines.find((line) => /--require-ci/.test(line) && /only check read/i.test(line));
-  expect(gateLine).toMatch(/refusal[^.]*no step/i);
-  expect(gateLine).toMatch(/reviewer dispatch[^.]*step/i);
-  expect(gateLine).toMatch(/abort/i);
+  const gateIndex = lines.findIndex(
+    (line) => /--require-ci/.test(line) && /only check read/i.test(line),
+  );
+  const gateLine = lines[gateIndex];
+  // The pending-check rule follows as its own nested item.
+  const gateBlock = lines.slice(gateIndex, gateIndex + 2).join(" ");
+  expect(gateBlock).toMatch(/refusal[^.]*no step/i);
+  expect(gateBlock).toMatch(/reviewer dispatch[^.]*step/i);
+  expect(gateBlock).toMatch(/abort/i);
   expect(gateLine).not.toMatch(/notDone/);
 });
 
@@ -1406,7 +1416,7 @@ describe("a shared prompt rule keeps one wording on every surface", () => {
     const surfaces = [gated("codex", "codex"), gated("copilot", "codex")];
     const wordings = unique(
       surfaces,
-      /A required check still pending is not a finish condition: [^.]*\.[^.]*\./g,
+      /A required check still pending is not a finish condition\.[\s\S]*?Dispatch the reviewer when the gate refuses, or abort with the pending check named in the reason\./g,
     );
     expect(wordings).toHaveLength(1);
   });

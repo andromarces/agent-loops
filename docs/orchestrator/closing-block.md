@@ -6,10 +6,6 @@ A child turn whose successful string response parses to a null report takes one 
 
 A report that parses but lacks the reviewer `Checks` line or the `Verdict` line takes no repair. `acceptanceFailure` rejects that report: a missing `Verdict` yields `verdict`, and an accept without a `Checks` line yields `checks`. The repair handles only a null report.
 
-## Triage a parser report
-
-Keep a parser fix for a regression on the documented format, a dropped finding, or an incorrect acceptance. A report of an unsupported format is covered only after the repair ships and handles that case; close it as covered when it does. A repeated repair failure stays actionable.
-
 Each value of `report.notes` and `report.deferred` is one line, the label plain at column 0. A `- `
 list or an ordered `N. ` list (a `-` or a number and a period at column 0, exactly one space U+0020, then the item) that directly follows a report
 label line is that label's value, or joins the value that line already holds:
@@ -36,7 +32,7 @@ empty `Notes:` reads `a`. The list takes dash or ordered items. Two blank lines 
 label before the list stay unparseable.
 
 The second shape has prose. A blank line follows the label line (or its folded list). One prose line
-comes next, and a `- ` list directly under it folds too. The list takes dash items only, because an
+comes next, and a `- ` list directly under it folds too. The list takes dash items only. An
 ordered list there stays unparseable.
 
 The prose and its list join the value of the label just above, as `; <prose>: <items>`. The prose

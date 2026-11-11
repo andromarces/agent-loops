@@ -508,6 +508,11 @@ function originalLabelTokens(response) {
   return sections;
 }
 
+// Maintainer triage of a parser report: keep a parser fix for a regression on the documented
+// format, a dropped finding, or an incorrect acceptance. A report of an unsupported format stays
+// covered only after the repair ships and handles that case. A repeated repair failure stays
+// actionable.
+
 /**
  * True when a repaired report restates only what the original response already held (issue #1615).
  * The repair is untrusted: each label keeps the normalized content of the original, whatever list

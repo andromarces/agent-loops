@@ -151,7 +151,7 @@ test("first worker turn reports an edit that landed in another checkout and neve
     "If an edit lands in another checkout, report the paths in the closing block and stop.",
   );
   expect(prompt).toContain(
-    "Never restore or discard a file there, because a restore can discard an uncommitted change of the user.",
+    "Never restore or discard a file there. A restore can discard an uncommitted change of the user.",
   );
 });
 
@@ -253,10 +253,10 @@ test("first worker turn reconciles quoted text with the inside-the-block rule", 
     "State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line.",
   );
   expect(prompt).toContain(
-    "The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it, as the closing-block rule below states.",
+    "The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it. The closing-block rule below states it.",
   );
   expect(prompt).toContain(
-    'Never refer to any other text outside the block, for example "the decisions above", because the parent reads only the block.',
+    'Never refer to any other text outside the block, for example "the decisions above". The parent reads only the block.',
   );
   expect(prompt).not.toContain("Never refer to text outside the block");
 });
@@ -461,7 +461,7 @@ test("first worker turn tells the worker to remove temporary files it created ou
 test("first worker turn bars a literal path to the system temporary directory", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory, because another run can hold the same name. The runtime can remove the directory that those variables name after this turn. It cannot remove a path outside it. When none is set, use the temporary directory that the platform reports.",
+    "Build a temporary path outside the work tree from the directory that TMPDIR, TEMP, or TMP names, when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory. Another run can hold the same name. The runtime can remove the directory that those variables name after this turn, but not a path outside it. When none is set, use the temporary directory that the platform reports.",
   );
 });
 
@@ -521,10 +521,10 @@ test("first worker turn bars linking another checkout node_modules into the work
 test("first worker turn tells a probe copy to link the work tree node_modules and run no install", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy, with a junction on Windows or a symlink elsewhere, and run no dependency install, repair, or update there.",
+    "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy. Use a junction on Windows or a symlink elsewhere. Run no dependency install, repair, or update there.",
   );
   expect(prompt).toContain(
-    "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`, and every work tree that links the store sees that write.",
+    "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`. Every work tree that links the store sees that write.",
   );
 });
 
@@ -533,7 +533,7 @@ test("first worker turn tells a probe copy to link the work tree node_modules an
 test("first worker turn tells a probe copy to avoid the pnpm dependency check install", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly, because pnpm installs from its dependency check by default.",
+    "Before `pnpm run` or `pnpm exec` in a probe copy, set `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` in the environment of that command, or call the installed binary directly. pnpm installs from its dependency check by default.",
   );
 });
 

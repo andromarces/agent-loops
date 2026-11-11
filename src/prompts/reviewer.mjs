@@ -24,7 +24,7 @@ import {
 // Deferred excludes the reviewer's own blockers and read-only rule (issue #1102).
 const reviewerReportBlock = `${reportBlock}
 
-State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above", because the reader sees only the block.
+State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above". The reader sees only the block.
 
 Deferred never holds your own blockers or the fact that you apply no fix. An unfixed blocker stays only in Blockers.
 
@@ -85,7 +85,7 @@ function testRunLines(testRun) {
   const lines = [
     "Test command evidence, supplied by the runtime:",
     `- The runtime ran the operator's test command in the work tree before this turn, outside your sandbox: ${testRun.command}. Result: ${testRun.summary}. This is advisory evidence for this turn, not a verdict. Report it in Checks as a result the runtime read, and compare it with anything you ran yourself.`,
-    "- A timed-out result is neither a pass nor a failure. Report it as unresolved in Checks. A slot-timeout result means that the command did not run, because no machine-wide test slot was free: report it as unresolved in Checks too. A failed command is evidence of a failure, so report the failing tests as a blocker only when the output names them.",
+    "- A timed-out result is neither a pass nor a failure. Report it as unresolved in Checks. A slot-timeout result means that the command did not run. No machine-wide test slot was free: report it as unresolved in Checks too. A failed command is evidence of a failure, so report the failing tests as a blocker only when the output names them.",
   ];
   if (testRun.workTreeChanged) {
     const shown = pathList(testRun.changedPaths);
@@ -140,7 +140,7 @@ const scratchPlacement = (scratchDir) =>
 const ignoredPathRemoval = (scratchDir) =>
   scratchDir === null
     ? "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. Name in Notes any entry that you cannot remove."
-    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository, except the scratch folder. Name in Notes any entry that you cannot remove. Do not delete the scratch folder, because the runtime removes it.";
+    : "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. The scratch folder is the one exception. Name in Notes any entry that you cannot remove. Do not delete the scratch folder. The runtime removes it.";
 
 // A tool writes its own cache to a default location whatever the scratch folder is, and the removal
 // rules above read that cache as turn output. A Codex reviewer then runs a delete that automatic
@@ -158,7 +158,7 @@ const toolCacheItems = (scratchDir) => [
   "Leave it in place, even when it sits under an ignored path inside the repository or in a temporary directory.",
   "Do not report it in Notes.",
   chosenPathOutput(scratchDir),
-  "Never delete an entry that you cannot show this turn created, because a shared directory can hold entries that existed before this turn.",
+  "Never delete an entry that you cannot show this turn created. A shared directory can hold entries that existed before this turn.",
 ];
 
 // Each item holds at most six sentences, so the rendered prompt stays within the style limits.

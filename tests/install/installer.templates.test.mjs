@@ -72,6 +72,21 @@ test("the Claude skill reads the instructions core in full, continues a capped r
   );
 });
 
+// Usefulness: verifies the Codex and Antigravity skills carry the capped-read retry and reference-file rules.
+test("the Codex and Antigravity skills continue a capped read and name the reference files", async () => {
+  const home = await makeHome();
+  for (const harness of ["codex", "antigravity"]) {
+    const targets = await targetPaths(harness, home);
+    const skill = targets.files
+      .find((file) => file.path.endsWith("SKILL.md"))
+      .content.replace(/\s+/g, " ");
+    expect(skill, harness).toMatch(
+      /expected to fit in one read\. When a read is capped, read again with an offset until the end of the file/,
+    );
+    expect(skill, harness).toContain("names reference files to read when their conditions hold");
+  }
+});
+
 // Usefulness: verifies the OpenCode acceptance — OpenCode discovers both
 // ~/.claude/skills and ~/.agents/skills and lists each shared skill to the
 // model, so the model auto-invoked it for an /agent-loop request instead of the

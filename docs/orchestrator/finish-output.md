@@ -19,9 +19,7 @@ reviewer status and verdict in `verified`, including an error or a missing
 report.
 
 - `agent-loop role finish` applies no reviewer-turn rule of its own.
-- Neither path takes `--require-accept` in this mode. `role finish` refuses the
-  flag at `finish`, and the headless command refuses it before the run starts.
-  Both give this error:
+- `role finish` refuses `--require-accept` in this mode. It gives this error:
   `--require-accept and --require-ci apply only to work-first and review-first; review-only accepts any verdict.`
 
 Record what the run did not cover in `notDone` and `open`.
