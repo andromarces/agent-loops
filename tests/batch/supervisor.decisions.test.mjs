@@ -180,7 +180,7 @@ describe("batch decisions and waits", () => {
         if (args.some((arg) => arg.includes("blockedBy"))) {
           blockedReads += issue === 203 ? 1 : 0;
           const open = issue === 203 && blockedReads === 1 ? [{ number: 9, state: "OPEN" }] : [];
-          if (args.includes("state,blockedBy,body")) {
+          if (args.includes("state,blockedBy,body,title")) {
             return {
               status: 0,
               stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
@@ -493,7 +493,7 @@ describe("batch decisions and waits", () => {
           };
         }
         if (args.some((arg) => arg.includes("blockedBy"))) {
-          if (args.includes("state,blockedBy,body")) {
+          if (args.includes("state,blockedBy,body,title")) {
             return {
               status: 0,
               stdout: JSON.stringify({
@@ -572,7 +572,7 @@ describe("batch decisions and waits", () => {
           };
         }
         if (args.some((arg) => arg.includes("blockedBy"))) {
-          if (args.includes("state,blockedBy,body")) {
+          if (args.includes("state,blockedBy,body,title")) {
             return {
               status: 0,
               stdout: JSON.stringify({
@@ -814,7 +814,7 @@ describe("batch decisions and waits", () => {
       }
       if (args[0] === "api") return { status: 0, stdout: JSON.stringify([]), stderr: "" };
       if (args[0] === "issue" && args[1] === "view") {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: [] }, body: BODY }),
@@ -860,7 +860,7 @@ describe("batch decisions and waits", () => {
     let waitReads = 0;
     const gh = async (args) => {
       if (args[0] === "issue" && args[1] === "view") {
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           const issue = Number(args[2]);
           const blocked = issue === 402 ? [{ number: 9, state: "OPEN" }] : [];
           return {

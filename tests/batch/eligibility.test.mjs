@@ -17,7 +17,7 @@ function issueReply(state, { body = BODY_OK, blocked = [] } = {}) {
       };
     }
     if (args[0] === "issue" && args[1] === "view") {
-      if (args.includes("state,blockedBy,body")) {
+      if (args.includes("state,blockedBy,body,title")) {
         return {
           status: 0,
           stdout: JSON.stringify({ state, blockedBy: { nodes: blocked }, body }),
@@ -75,7 +75,7 @@ test("one eligibility check reads the issue once", async () => {
   expect(result.ok).toBe(true);
   const issueReads = calls.filter((args) => args[0] === "issue" && args[1] === "view");
   expect(issueReads).toHaveLength(1);
-  expect(issueReads[0]).toContain("state,blockedBy,body");
+  expect(issueReads[0]).toContain("state,blockedBy,body,title");
 });
 
 // Usefulness: a cached repository slug skips the repo view on the next closure read.

@@ -10,6 +10,7 @@ import { tryStateLock } from "../lib/state-lock.mjs";
 import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
 import { logError, logInfo, logWarn } from "../lib/log.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
+import { readGhJson } from "./gh-read.mjs";
 import {
   ABANDON_REASON,
   DECISION_OPTIONS,
@@ -249,7 +250,8 @@ async function freezePullRequestItems(items, { gh, repo }) {
   return mapInBatches(items, READ_BATCH_SIZE, async (item) => {
     if (item.kind !== "pr") return item;
     try {
-      const reply = await gh(
+      const view = await readGhJson(
+        gh,
         [
           "pr",
           "view",
@@ -259,10 +261,6 @@ async function freezePullRequestItems(items, { gh, repo }) {
         ],
         repo,
       );
-      if (reply?.status !== 0) {
-        return { ...item, head: null, headRefName: null, foreign: false };
-      }
-      const view = JSON.parse(reply.stdout);
       if (typeof view?.headRefOid !== "string") {
         return { ...item, head: null, headRefName: null, foreign: false };
       }
@@ -945,6 +943,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       headRefName: loop.headRefName ?? null,
       foreign: loop.foreign === true,
     };
+    let itemTitle = null;
     if (recovery === null) {
       let closures = null;
       if (item.kind === "issue") {
@@ -1012,6 +1011,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         progress(`issue ${issue}: skipped (${eligibility.reason}: ${eligibility.evidence})`);
         return;
       }
+      itemTitle = eligibility.title ?? null;
       if (item.kind === "pr") {
         try {
           await planTree({
@@ -1069,21 +1069,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       if (item.kind === "pr" && typeof loop.prTitle === "string" && loop.prTitle.trim() !== "") {
         title = loop.prTitle;
       }
-      if (item.kind === "issue") {
-        try {
-          const reply = await gh(
-            ["issue", "view", String(item.number), "--json", "title"],
-            prepared.repo,
-          );
-          if (reply?.status === 0) {
-            const parsed = JSON.parse(reply.stdout);
-            if (typeof parsed?.title === "string" && parsed.title.trim() !== "") {
-              title = parsed.title;
-            }
-          }
-        } catch {
-          // A missing title keeps the issue number in the task.
-        }
+      if (item.kind === "issue" && typeof itemTitle === "string" && itemTitle.trim() !== "") {
+        title = itemTitle;
       }
       const task = taskTextFor({
         item,
@@ -1600,16 +1587,18 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     return null;
   };
   const readWaitState = async (issue) => {
-    const reply = await gh(
-      ["issue", "view", String(issue), "--json", "state,blockedBy"],
-      prepared.repo,
-      { signal: controller.signal, timeoutMs: POLL_READ_TIMEOUT_MS },
-    );
-    if (reply?.timedOut) throw new Error("the read reached its bound");
-    if (reply?.status !== 0) {
-      throw new Error((reply?.stderr ?? "").trim() || `exit ${reply?.status ?? "unknown"}`);
+    let value;
+    try {
+      value = await readGhJson(
+        gh,
+        ["issue", "view", String(issue), "--json", "state,blockedBy"],
+        prepared.repo,
+        { signal: controller.signal, timeoutMs: POLL_READ_TIMEOUT_MS },
+      );
+    } catch (err) {
+      if (err?.kind === "empty") throw new Error("exit unknown");
+      throw err;
     }
-    const value = JSON.parse(reply.stdout);
     const nodes = Array.isArray(value?.blockedBy)
       ? value.blockedBy
       : Array.isArray(value?.blockedBy?.nodes)
