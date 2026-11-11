@@ -319,6 +319,50 @@ test("a review-only report keeps findings, blockers, notes, and deferred apart",
   expect(report.reviewerDeferred).toEqual(["a live run"]);
 });
 
+// Usefulness: a runtime-capped list uses its source total to name the dropped entries.
+test("a failed-turn test list uses the source count for its overflow", () => {
+  const changedPaths = Array.from({ length: 20 }, (_, index) => `path ${index}`);
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "test-run",
+          fatal: true,
+          testRun: { changedPaths, changedCount: 25 },
+        },
+        { type: "gate" },
+      ],
+      exitCode: 1,
+      error: "the turn failed",
+    },
+    { attempts: 1 },
+  );
+  expect(report.failedTurnTest.changedPaths).toHaveLength(20);
+  expect(report.failedTurnTest.changedPathsOverflow).toBe(5);
+});
+
+// Usefulness: an invalid source count falls back to the local cap count and never goes negative.
+test("a failed-turn test list keeps a non-negative overflow from a bad source count", () => {
+  const changedPaths = Array.from({ length: 22 }, (_, index) => `path ${index}`);
+  const report = buildLoopReport(
+    {
+      events: [
+        {
+          type: "test-run",
+          fatal: true,
+          testRun: { changedPaths, changedCount: -1 },
+        },
+        { type: "gate" },
+      ],
+      exitCode: 1,
+      error: "the turn failed",
+    },
+    { attempts: 1 },
+  );
+  expect(report.failedTurnTest.changedPaths).toHaveLength(20);
+  expect(report.failedTurnTest.changedPathsOverflow).toBe(2);
+});
+
 // Usefulness: a capped reviewer list names its dropped count, so a reader does not take it as full.
 test("a reviewer findings list of 21 or more keeps 20 entries and counts the rest", () => {
   const findings = Array.from({ length: 25 }, (_, index) => `finding ${index}`);

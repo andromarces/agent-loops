@@ -23,7 +23,7 @@ A `review-only` loop report merged the reviewer findings, blockers, notes, and d
 1. A `review-only` report keeps the reviewer verdict in `verdict`. The four reviewer item lists stay in `reviewerFindings`, `reviewerBlockers`, `reviewerNotes`, and `reviewerDeferred`.
 2. These names differ from every finish `summary` key: `changed`, `verified`, `deferred`, `notDone`, `open`, and `notes`.
 3. A reviewer value that is absent, blank, or `none` stays null.
-4. In `redactValue`, a capped array keeps its first 20 entries and reports its dropped count.
+4. In `redactValue`, a capped array keeps its first 20 entries and reports its dropped count. A source total, such as `changedCount` beside `changedPaths`, replaces the local cap count. A missing or invalid total falls back to the local cap count. The count is never negative.
 5. A count sits beside its array as `<field>Overflow`, such as `reviewerFindingsOverflow`. An array of 20 entries or fewer reports `0`.
 6. A nested array inside `failedTurnTest` gets the same count beside it, such as `commandOverflow`.
 7. `warnings` keeps its `warningsOverflow` field.
@@ -34,7 +34,7 @@ A `review-only` loop report merged the reviewer findings, blockers, notes, and d
 - A reader tells a blocker from a note or a deferred item.
 - A capped list names the entries it dropped, so a partial list never reads as complete.
 - An uncapped array reports no overflow.
-- An unread record keeps null reviewer fields.
+- An unread or missing record carries no reviewer field.
 - The report shape gains four reviewer fields and one count per capped array.
 
 ## Alternatives

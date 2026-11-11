@@ -51,6 +51,18 @@ function unreadReport(reason) {
 
 // A copied array keeps its first 20 entries. A count beside it names the rest.
 const MAX_LIST_ITEMS = 20;
+// A source list can name its own total under a different key.
+const LIST_TOTAL_KEYS = { changedPaths: "changedCount" };
+
+/**
+ * Returns the dropped count of one array. A valid source total wins over the local cap count.
+ * @returns {number}
+ */
+function listOverflow(source, key, entry) {
+  const total = source[LIST_TOTAL_KEYS[key] ?? `${key}Count`];
+  if (!Number.isInteger(total) || total < 0) return entry.overflow;
+  return Math.max(0, total - entry.value.length);
+}
 
 /**
  * Redacts one copied value. An array keeps its first 20 entries and returns the dropped count.
@@ -67,7 +79,7 @@ function redactEntry(value) {
     for (const [key, item] of Object.entries(value)) {
       const entry = redactEntry(item);
       redacted[key] = entry.value;
-      if (Array.isArray(item)) redacted[`${key}Overflow`] = entry.overflow;
+      if (Array.isArray(item)) redacted[`${key}Overflow`] = listOverflow(value, key, entry);
     }
     return { value: redacted, overflow: 0 };
   }
