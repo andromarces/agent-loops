@@ -18,8 +18,8 @@ function templatePath() {
 
 /**
  * Creates a temporary git repository with one initial commit (`init.txt`). Copies the template
- * that the global setup provides. Side effect: leaves a directory in the OS temp dir; callers
- * must remove it with `removePath`.
+ * that the global setup provides. Side effect: leaves a directory in the OS temp dir.
+ * Callers must remove it with `removePath`.
  */
 export async function createTempRepo() {
   const template = templatePath();
