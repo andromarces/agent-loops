@@ -44,20 +44,7 @@ them as flags. The runtime validates those values and never reads a request, inf
 setting, or prompts an operator. A missing required value is a usage refusal, not a
 question.
 
-Live check (issue #710, PR #1059): on 2026-10-25, Claude Code 2.1.310 on Windows 11 ran
-`/agent-loop` from the installed user-scope skill. The parent read
-`docs/orchestrator-instructions.md` (719 lines) in one read of the read tool, with no cap, and
-reached the last line before the init call. A capped read with an offset did not occur, so that
-path was not exercised.
-
-Live check (issue #144): on 2026-10-10, two checks ran on macOS 27.2 with Node v26.11.1.
-The tools were codex-cli 0.163.0-alpha.5 and GitHub Copilot CLI 1.0.96-2.
-A `codex exec` session in full access ran each check, in a throwaway Git repository outside this work tree.
-`CODEX_THREAD_ID` was set in both checks, and `COPILOT_CLI` in the second.
-
-- `harness-check copilot` from the Codex shell exited 3 with `nearest harness ancestor is codex, not copilot`.
-- `harness-check codex` from the shell of a Copilot session that the Codex shell started exited 3 with `nearest harness ancestor is copilot, not codex`.
-  The Copilot session ran as `copilot -p` with model `gpt-5-mini`.
+The read step is verified on Windows 11, and a capped read with an offset is not verified (issue #710). The nearest-ancestor refusal is verified on Windows and macOS, and Linux is not verified (issue #144).
 
 - The `~/.agents/skills` directory is shared. Copilot CLI and OpenCode also
   discover personal skills there, so the installed Codex skill appears in both.
@@ -149,7 +136,7 @@ A `codex exec` session in full access ran each check, in a throwaway Git reposit
 
 ## Parent guard: hard read-only for the parent session
 
-The parent rule ("the orchestrator never edits files") is prompt-only, so a drifting parent session can still edit. Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
+Five harnesses add a hard guard for the file-edit tools, and all share the decision logic in `src/hook/decision.mjs`. See [Parent guard details](parent-guard.md) for the per-harness matchers, the session-field mapping, and the pre-tool hook availability survey.
 
 ## Local files in a linked work tree
 

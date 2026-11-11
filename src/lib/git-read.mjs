@@ -27,6 +27,15 @@ export class SnapshotError extends Error {
  */
 export const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
 
+/**
+ * The short name of the checked-out branch of `cwd`, or "" for a detached head. `git` is a
+ * `gitRead`-shaped reader.
+ */
+export async function readHeadBranch(git, cwd, { signal } = {}) {
+  const result = await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
+  return result.exitCode === 0 ? result.stdout.trim() : "";
+}
+
 // The settled identity reads of one command, keyed by read kind and the exact `cwd` string.
 const identityReads = new AsyncLocalStorage();
 

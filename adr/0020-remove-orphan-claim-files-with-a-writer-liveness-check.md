@@ -194,6 +194,20 @@ running process. It also asks to check a reported PID-reuse window.
 - A writer whose temp file an outside process deleted reads as dead. Only this module
   creates and removes those files.
 
+### Windows start-time stamp measurement
+
+Moved from `docs/reference/role.md` on 2026-11-12 (issues #511 and #709).
+
+- The measurement ran on 2026-10-23 on Windows 11 Pro 10.0.26220 with 16 CPUs.
+- It used Windows PowerShell 5.1.26100.9739 (Desktop edition) and Node v26.8.1.
+- Other runs loaded the host: CPU load was 21% before the samples and 63% after them.
+- About 45 `node` processes ran at that time.
+- Fifteen fresh Node processes each read their own stamp.
+- The median was 804 ms and the range was 763 to 1207 ms.
+- Every read returned a valid stamp.
+- A bare Node start took a median of 64 ms on the same host.
+- A cold start after a reboot and an idle host were not measured.
+
 ## Alternatives
 
 1. **Heartbeat (the owner touches the file on a timer)**: rejected. A running owner

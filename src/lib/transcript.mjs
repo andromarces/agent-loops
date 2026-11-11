@@ -10,6 +10,7 @@ import {
   writeSessionRecord,
 } from "./session-record.mjs";
 import { boundedWarnings } from "./run-warnings.mjs";
+import { SIGINT_MESSAGE } from "./sigint.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
 import { redactAndClean } from "./redact.mjs";
 
@@ -101,7 +102,7 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
   const writeOnForceExit = () => {
     if (!options.transcript) return;
     transcriptData.exitCode = 130;
-    transcriptData.error = "Interrupted by SIGINT";
+    transcriptData.error = SIGINT_MESSAGE;
     writeFileAtomicSync(options.transcript, transcriptText());
   };
 

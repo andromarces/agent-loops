@@ -230,7 +230,7 @@ test("a resumed loop end reads its transcript once", async () => {
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await waitForLaunch(child);
     controller.abort();
     await run;
     const transcript = child.calls[0].transcript;
@@ -876,7 +876,7 @@ test("a pending decision and a merge wait survive a resume", async () => {
       }
       if (args.some((arg) => arg.includes("blockedBy"))) {
         const open = openIssue1 && issue === 1 ? [{ number: 9, state: "OPEN" }] : [];
-        if (args.includes("state,blockedBy,body")) {
+        if (args.includes("state,blockedBy,body,title")) {
           return {
             status: 0,
             stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),

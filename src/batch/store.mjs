@@ -2,9 +2,9 @@
 // item, and one checkpoint per batch and loop. Nothing here writes to GitHub, and every write
 // is skipped when the stored value does not change.
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { removeTemp, writeFileAtomic } from "../lib/atomic-write.mjs";
+import { linkExclusive, removeTemp, writeFileAtomic } from "../lib/atomic-write.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { ownerAlive } from "../lib/process-identity.mjs";
 import { withStateLock } from "../lib/state-lock.mjs";
@@ -28,18 +28,6 @@ function serialized(key, fn) {
   chains.set(key, tail);
   return run;
 }
-
-const LINK_UNSUPPORTED = new Set([
-  "EPERM",
-  "EACCES",
-  "ENOTSUP",
-  "EOPNOTSUPP",
-  "EINVAL",
-  "ENOSYS",
-  "EMLINK",
-  "EXDEV",
-  "EISDIR",
-]);
 
 /** The paths of the batch store under one runs root. */
 export function batchPaths(runsRoot) {
@@ -229,20 +217,7 @@ export async function createExclusive(file, text) {
   const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(temp, text, "utf8");
-    try {
-      await link(temp, file);
-      return true;
-    } catch (err) {
-      if (err.code === "EEXIST") return false;
-      if (!LINK_UNSUPPORTED.has(err.code)) throw err;
-      try {
-        await writeFile(file, text, { encoding: "utf8", flag: "wx" });
-        return true;
-      } catch (openErr) {
-        if (openErr.code === "EEXIST") return false;
-        throw openErr;
-      }
-    }
+    return await linkExclusive(temp, file, text);
   } finally {
     await removeTemp(temp);
   }

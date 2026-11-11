@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   bodyClassOf,
-  boundedRunner,
   ghApiFailure,
   ghReadError,
   isCleanServerError,
   isTransportFailure,
 } from "../../../src/lib/checks/gh-api.mjs";
+import { boundedRunner } from "../../../src/lib/checks/bounded-call.mjs";
 
 const failed = (stderr, stdout = "") => ({ status: 1, stdout, stderr });
 

@@ -6,7 +6,7 @@ import {
   prChecksArgs,
   prViewArgs,
   REPO_VIEW_ARGS,
-} from "../gh-doubles.mjs";
+} from "../../gh-doubles.mjs";
 
 export const HEAD = "1111111111111111111111111111111111111111";
 
@@ -72,20 +72,15 @@ const pageRoute = (endpoint, page = 1) => pagedApiArgs(endpoint, page).join(" ")
 
 // Routes a `gh` call by the leading elements of its argument array, so a call
 // that merges arguments into one element gets no reply. A paged route answers a success with one
-// page behind a `200` status block, as `gh api --include` writes it. A `hidden` value answers
-// with the 404 a token without repository admin receives, a `forbidden` value
-// with the 403 a `GITHUB_TOKEN` receives, a `pat forbidden` value with the 403 a
-// fine-grained PAT without the Administration permission receives, a
-// `rate limited` value with a 403 that is not an unreadable-source answer. A
-// `stderr: <text>` value fails with that exact stderr, which covers the Free-plan
-// 403 and every other reply shape a named value does not. An unmatched call is
-// an error so a test never passes on a missing fixture. `null` is the admin
-// reply for a branch with no classic protection, which is also unreadable but
-// says so differently.
+// page behind a `200` status block, as `gh api --include` writes it. `hidden` gives the 404 of a
+// token without repository admin, `forbidden` the 403 of a `GITHUB_TOKEN`. `pat forbidden` gives
+// the 403 of a fine-grained PAT without Administration permission. `rate limited` gives a 403
+// that is not an unreadable-source answer. A `stderr: <text>` value fails with that exact stderr.
 export function fakeGh(routes) {
   return async (args) => {
     for (const [match, value] of routes) {
       if (equalsArgs(args, match.split(" "))) {
+        // `null` is the admin reply for a branch with no classic protection, unreadable in a different way.
         if (value === null) {
           return { status: 1, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" };
         }
@@ -109,6 +104,7 @@ export function fakeGh(routes) {
         if (value === "rate limited") {
           return { status: 1, stdout: "", stderr: "gh: API rate limit exceeded (HTTP 403)" };
         }
+        // This covers the Free-plan 403 and every other reply shape that no named value covers.
         if (typeof value === "string" && value.startsWith("stderr: ")) {
           return { status: 1, stdout: "", stderr: value.slice("stderr: ".length) };
         }
@@ -120,12 +116,13 @@ export function fakeGh(routes) {
         };
       }
     }
+    // An unmatched call is an error, so a test cannot pass on a missing fixture.
     return { status: 1, stdout: "", stderr: `unmatched gh call: ${JSON.stringify(args)}` };
   };
 }
 
-// The `gh` calls the gate makes, each as the exact argument elements it passes, so
-// a call that merges two elements into one gets no route (issue #538).
+// The `gh` calls the gate makes, each as the exact argument elements it passes, so a
+// call merging two elements gets no route (issue #538).
 export const PR_VIEW = prViewArgs(42).join(" ");
 
 export const PR_CHECKS = prChecksArgs(42).join(" ");
@@ -142,9 +139,9 @@ export const HEAD_CHECK_RUNS = pageRoute(`repos/${SLUG}/commits/${HEAD}/check-ru
 
 const HEAD_STATUS = pageRoute(`repos/${SLUG}/commits/${HEAD}/status`);
 
-// The routes of a commit status read that spans pages: page `k` lists `pages[k - 1]`, and every
-// page but the last is padded with filler statuses to the 100 a full page holds, so the read goes on.
-// `total_count` is the padded total, as the endpoint reports it.
+// The routes of a commit status read that spans pages: page `k` lists `pages[k - 1]`.
+// Every page but the last is padded with filler statuses to the 100 a full page holds, so the read
+// goes on. `total_count` is the padded total, as the endpoint reports it.
 function statusPageRoutes(commit, pages) {
   const full = pages.map((statuses, i) =>
     i === pages.length - 1
@@ -222,8 +219,8 @@ export const pairOptions = (kind, failing, passing) =>
         ],
       };
 
-// Holds each call of a group until every call of that group has started, and
-// fails the held call when the rest of the group does not start within `waitMs`.
+// Holds each call of a group until every call of that group starts.
+// Fails the held call when the rest of the group does not start within `waitMs`.
 // A gate that starts its independent reads one after another never reaches the
 // last call of a group while the first is held.
 export function barrierGh(inner, groups, waitMs = 1000) {
@@ -261,8 +258,8 @@ export const INDEPENDENT_GROUPS = [
 ];
 
 // A gh double that counts the calls still running. A call whose key is in `stalled`
-// never replies and ends only when its abort signal fires, as a hung `gh` child
-// ends when the runner kills it.
+// never replies and ends only when its abort signal fires. This models a hung `gh` child that the
+// runner kills.
 export function stallingGh(inner, stalled, abortDelayMs = 0) {
   const live = { active: 0 };
   const gh = async (args, cwd, options = {}) => {

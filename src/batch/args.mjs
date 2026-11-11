@@ -6,10 +6,15 @@ import { basename, dirname, join, resolve } from "node:path";
 import { supportedAgents } from "../agents/index.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import {
+  DEFAULT_SETUP_TIMEOUT,
   DEFAULT_TIMEOUT,
   initRefusal,
+  readNonNegativeInt,
+  readPositiveInt,
+  REVIEWER_SANDBOX_FLAG_MODES,
   ROLE_KINDS,
   roleFlags,
+  setReviewerSandbox,
   STOP_FLAG_WALK,
   walkFlags,
 } from "../lib/args.mjs";
@@ -23,7 +28,6 @@ import { normalizeItems } from "./items.mjs";
 const ROLE_FLAGS = roleFlags(ROLE_KINDS);
 const PLACEHOLDERS = new Set(["issue", "title", "branch", "repo"]);
 const MAX_LOOPS = 64;
-const DEFAULT_SETUP_TIMEOUT = 600;
 
 // The model and effort values that a supported CLI accepts. The adapters pass these through, so a
 // value outside the set logs a warning. The agent CLI refuses a bad value at launch.
@@ -58,13 +62,35 @@ export const DEFAULT_PR_TASK_TEMPLATE = [
 /** A usage error, so the CLI exits with code 2. */
 export const usage = (message) => Object.assign(new Error(message), { usage: true });
 
-/** The flag value as a positive integer, or a usage error. */
-export function positiveInt(flag, value) {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number < 1) {
-    throw usage(`${flag} must be a positive integer.`);
+/**
+ * Applies the `--timeout` and reviewer sandbox flags shared by both batch parsers to `options`.
+ * Returns false for any other flag, so each parser keeps its own cases. Refusals are usage errors.
+ * `inline` is the parsed inline form of `flag`.
+ */
+export function applyBatchFlag(options, flag, read, inline) {
+  switch (flag) {
+    case "--timeout": {
+      const seconds = readNonNegativeInt(flag, read(flag), usage);
+      options.timeout = seconds === 0 ? null : seconds;
+      return true;
+    }
+    case "--reviewer-sandbox": {
+      const value = read(flag);
+      if (!REVIEWER_SANDBOX_FLAG_MODES.includes(value)) {
+        throw usage(
+          `--reviewer-sandbox must be one of ${REVIEWER_SANDBOX_FLAG_MODES.join(", ")}, got: ${value}`,
+        );
+      }
+      setReviewerSandbox(options, value, false, usage);
+      return true;
+    }
+    case "--reviewer-workspace-write":
+      if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
+      setReviewerSandbox(options, "workspace-write", true, usage);
+      return true;
+    default:
+      return false;
   }
-  return number;
 }
 
 function loopCount(value) {
@@ -112,7 +138,6 @@ export function parseBatchArgs(argv) {
     reviewerSandbox: null,
     loops: null,
     maxSteps: null,
-    mode: null,
   };
   for (const role of ROLE_KINDS) {
     options[role] = null;
@@ -129,6 +154,7 @@ export function parseBatchArgs(argv) {
         help = true;
         return STOP_FLAG_WALK;
       }
+      if (applyBatchFlag(options, flag, read, inline)) return true;
       const readPath = (name) => resolve(read(name));
       if (Object.hasOwn(ROLE_FLAGS, flag)) {
         options[ROLE_FLAGS[flag]] = read(flag);
@@ -139,7 +165,7 @@ export function parseBatchArgs(argv) {
           options.repo = readPath(flag);
           break;
         case "--issue": {
-          const number = positiveInt(flag, read(flag));
+          const number = readPositiveInt(flag, read(flag), usage);
           if (options.issues.includes(number)) throw usage(`Duplicate --issue: ${number}.`);
           options.issues.push(number);
           break;
@@ -148,7 +174,6 @@ export function parseBatchArgs(argv) {
           options.itemsFile = readPath(flag);
           break;
         case "--require-specification":
-          if (inline !== null) throw usage("--require-specification does not take a value.");
           options.requireSpecification = true;
           break;
         case "--from-audit":
@@ -158,7 +183,7 @@ export function parseBatchArgs(argv) {
           options.loops = loopCount(read(flag));
           break;
         case "--max-steps":
-          options.maxSteps = positiveInt(flag, read(flag));
+          options.maxSteps = readPositiveInt(flag, read(flag), usage);
           break;
         case "--base":
           options.base = read(flag);
@@ -173,35 +198,13 @@ export function parseBatchArgs(argv) {
           options.setupCmd = read(flag);
           break;
         case "--setup-timeout":
-          options.setupTimeout = positiveInt(flag, read(flag));
+          options.setupTimeout = readPositiveInt(flag, read(flag), usage);
           break;
         case "--test-cmd":
           options.testCmd = read(flag);
           break;
         case "--test-cmd-timeout":
-          options.testCmdTimeout = positiveInt(flag, read(flag));
-          break;
-        case "--timeout": {
-          const seconds = Number(read(flag));
-          if (!Number.isSafeInteger(seconds) || seconds < 0) {
-            throw usage("--timeout must be a non-negative integer.");
-          }
-          options.timeout = seconds === 0 ? null : seconds;
-          break;
-        }
-        case "--reviewer-sandbox": {
-          const value = read(flag);
-          if (!["read-only", "workspace-write"].includes(value)) {
-            throw usage(
-              `--reviewer-sandbox must be one of read-only, workspace-write, got: ${value}`,
-            );
-          }
-          setReviewerSandbox(options, value, false);
-          break;
-        }
-        case "--reviewer-workspace-write":
-          if (inline !== null) throw usage("--reviewer-workspace-write does not take a value.");
-          setReviewerSandbox(options, "workspace-write", true);
+          options.testCmdTimeout = readPositiveInt(flag, read(flag), usage);
           break;
         default:
           return false;
@@ -268,24 +271,6 @@ export function parseBatchArgs(argv) {
     (options.items ?? []).some((item) => item.kind === "issue" && item.task === null);
   validateTemplate(options.taskTemplate, { requireIssue: needsIssuePlaceholder });
   return options;
-}
-
-// The parsed option objects that used the `--reviewer-workspace-write` alias, for the conflict text.
-const aliasUsers = new WeakSet();
-
-function setReviewerSandbox(options, value, viaAlias) {
-  const earlier = options.reviewerSandbox;
-  if (earlier !== null && earlier !== value) {
-    const alias = viaAlias || aliasUsers.has(options);
-    const shown = viaAlias ? earlier : value;
-    throw usage(
-      alias
-        ? `--reviewer-workspace-write conflicts with --reviewer-sandbox ${shown}.`
-        : `--reviewer-sandbox ${value} conflicts with --reviewer-sandbox ${earlier}.`,
-    );
-  }
-  if (viaAlias) aliasUsers.add(options);
-  options.reviewerSandbox = value;
 }
 
 /**

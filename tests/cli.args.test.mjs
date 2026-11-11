@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createBodyBarrier } from "./body-barrier.mjs";
+import { createBodyBarrier } from "./body-barrier-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";

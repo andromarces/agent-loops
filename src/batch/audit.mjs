@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { defaultAgents } from "../agents/index.mjs";
 import { invoke } from "../child-turn.mjs";
-import { DEFAULT_READ_TIMEOUT_MS, boundedRunner } from "../lib/checks/gh-api.mjs";
+import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
+import { boundedRunner } from "../lib/checks/bounded-call.mjs";
 import { logError, logInfo } from "../lib/log.mjs";
 import { isFatalTurnError, withMutationCheck } from "../lib/snapshot.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
@@ -27,6 +28,7 @@ import {
   parseFindings,
   validateConsolidation,
 } from "./audit-prompts.mjs";
+import { readGhJson } from "./gh-read.mjs";
 import { identityEqual, pathIdentity } from "./git.mjs";
 import { progress } from "./supervisor.mjs";
 import { runSetup } from "./worker.mjs";
@@ -204,9 +206,10 @@ async function defaultRunTurn({
 }
 
 async function readIssueList({ gh, repo, withBody = false }) {
-  let reply;
+  let parsed;
   try {
-    reply = await gh(
+    parsed = await readGhJson(
+      gh,
       [
         "issue",
         "list",
@@ -220,16 +223,13 @@ async function readIssueList({ gh, repo, withBody = false }) {
       repo,
     );
   } catch (err) {
+    if (err?.kind === "json") {
+      throw new Pause("issue-read-failed", "the issue read returned an unreadable value");
+    }
+    if (err?.kind === "empty" || err?.kind === "timeout" || err?.kind === "status") {
+      throw new Pause("issue-read-failed", "the issue read failed");
+    }
     throw new Pause("issue-read-failed", `the issue read failed: ${err.message}`);
-  }
-  if (reply?.status !== 0) {
-    throw new Pause("issue-read-failed", "the issue read failed");
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(reply.stdout);
-  } catch {
-    throw new Pause("issue-read-failed", "the issue read returned an unreadable value");
   }
   if (!Array.isArray(parsed)) {
     throw new Pause("issue-read-failed", "the issue read returned an unreadable value");

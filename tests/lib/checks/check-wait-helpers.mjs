@@ -1,8 +1,8 @@
 // Doubles for the check wait: a scripted `gh`, a fake clock, and the shared fixtures and wait runners of
 // the `check-wait` and `role wait-checks` tests.
-import { waitChecks } from "../../src/lib/checks/check-wait.mjs";
-import { ok } from "../agent-doubles.mjs";
-import { equalsArgs, isPagedRead, pageStdout, startsWithArgs } from "../gh-doubles.mjs";
+import { waitChecks } from "../../../src/lib/checks/check-wait.mjs";
+import { ok } from "../../agent-doubles.mjs";
+import { equalsArgs, isPagedRead, pageStdout, startsWithArgs } from "../../gh-doubles.mjs";
 
 // True when `args` is exactly the wait's read, `gh pr checks <pr> --required --json
 // name,state,bucket`, so a missing, extra, or merged argument does not match. With
@@ -162,8 +162,8 @@ export function scriptedGh(
         timedOut: false,
       };
     }
-    // The reads of the Actions hold: a base branch with no workflow file and a PR with no file, so a
-    // test that scripts no workflow never holds for a run.
+    // The reads of the Actions hold: a base branch with no workflow file and a PR with no changed
+    // files. So a test that scripts no workflow never holds for a run.
     const endpoint = args[0] === "api" ? args[1] : "";
     if (endpoint === "repos/owner/repo/commits/main") {
       return ok(pageStdout({ sha: "c".repeat(40) }));
@@ -275,16 +275,15 @@ export function pinned({
   });
 }
 
-// A poll reads the check runs and the commit statuses together, so a wait that does not retry a failed
-// read makes exactly these two commit reads.
+// A poll reads check runs and commit statuses together, so a wait that does not retry a failed read
+// makes exactly two commit reads.
 export const COMMIT_READS_PER_POLL = 2;
 
 /**
  * A `gh` whose commit reads fail as `fail(n)` says, for the nth such read. A failure is the whole
- * result of the failed `gh api --paginate --include` read: `{ status, stdout, stderr }`, with the
- * status block of the reply on stdout. A reply with status 0 is a read that exits 0 with that
- * stdout. Every other read passes through. `commitReads` lists the endpoint of each commit read
- * and `readArgs` its arguments.
+ * failed `gh api --paginate --include` result: `{ status, stdout, stderr }`, with the reply's status
+ * block on stdout. A reply with status 0 is a read that exits 0 with that stdout. Every other read
+ * passes through. `commitReads` lists the endpoint of each commit read and `readArgs` its arguments.
  */
 export function failingCommitGh(fail, { all = false, heads } = {}) {
   const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], {
@@ -346,8 +345,8 @@ export const runEntry = (id, name, conclusion, minute) => ({
 
 /**
  * A `gh` whose check-run endpoint answers page `n` with `pages[n - 1]`, a JSON value or a raw
- * stdout string, and fails a page that no entry names. Every other read passes through.
- * `requests` lists the page numbers asked for.
+ * stdout string, and fails an unnamed page. Every other read passes through. `requests` lists the
+ * page numbers asked for.
  */
 export function pagedCheckRunsGh(pages, { all = false } = {}) {
   const inner = scriptedGh([{ status: 0, checks: [PASSED_ITEM] }], { all });

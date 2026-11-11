@@ -26,6 +26,7 @@ import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { CLEAN_REPO_HEAD, createLinkedWorkTree } from "./git-helpers.mjs";
+import { REPORT } from "./role/helpers.mjs";
 
 // The main work tree resolution fails or stalls only in the tests that set these flags.
 const resolution = vi.hoisted(() => ({ fail: false, stall: false }));
@@ -583,7 +584,9 @@ test("a worker turn that writes nothing carries no in-turn field", async () => {
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
 // window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read changes no state,
 // size, modification time, or change time, so the envelope must carry no in-turn field. Each file
-// gets an old access time before the turn, so a read inside the turn moves only that time.
+// gets an old access time before the turn, so a read inside the turn moves only that time. The
+// watch unit test in `tests/lib/evidence/main-work-tree-watch.test.mjs` delivers the Windows
+// access event, so this case needs no event wait.
 test("a worker turn that only reads a main work tree file carries no in-turn field", async () => {
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   const files = [];
@@ -593,23 +596,11 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
     await utimes(file, old, old);
     files.push(file);
   }
-  let watchHandle;
-  let next = 0;
-  const result = await turn(
-    async () => {
-      await vi.waitFor(
-        async () => {
-          await readFile(files[Math.min(next++, files.length - 1)]);
-          expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
-        },
-        { timeout: 5_000 },
-      );
-    },
-    tree.linked,
-    (handle) => {
-      watchHandle = handle;
-    },
-  );
+  const result = await turn(async () => {
+    for (const file of files) await readFile(file);
+    return REPORT;
+  });
+  expect(result).toMatchObject({ status: "ok" });
   expect(result).not.toHaveProperty("mainWorkTreeChangedInTurn");
   expect(result).not.toHaveProperty("mainWorkTreeChanged");
 });

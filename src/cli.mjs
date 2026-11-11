@@ -361,7 +361,7 @@ export async function main(
     { createTranscriptWriter },
     { withRunWarnings },
     { runLoop, UNRESOLVED_COMPARE_EXIT },
-    { cancelOnSigInt },
+    { cancelOnSigInt, SIGINT_MESSAGE },
   ] = await Promise.all([
     import("./lib/snapshot.mjs"),
     import("./lib/transcript.mjs"),
@@ -516,7 +516,7 @@ export async function main(
         const reason = message == null ? "" : redactedText(message);
         await finish({
           exitCode: 130,
-          error: new Error(reason ? `Interrupted by SIGINT: ${reason}` : "Interrupted by SIGINT"),
+          error: new Error(reason ? `${SIGINT_MESSAGE}: ${reason}` : SIGINT_MESSAGE),
           failed: true,
         });
       } else {

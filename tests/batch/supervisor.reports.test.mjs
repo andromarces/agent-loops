@@ -2,8 +2,9 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
+import { readDecision } from "../../src/batch/decisions.mjs";
 import { readBatchStatus } from "../../src/batch/status.mjs";
-import { updateLoop } from "../../src/batch/store.mjs";
+import { batchPaths, readLoop, updateLoop } from "../../src/batch/store.mjs";
 import { newBatchId, runBatch } from "../../src/batch/supervisor.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import {
@@ -316,4 +317,120 @@ test("a skipped loop with no attempt reports the no-attempt state", async () => 
   expect(report.state).toBe("no-attempt");
   expect(report.warnings).toEqual([]);
   expect(report.warningsOverflow).toBe(0);
+});
+
+// Usefulness: a normal child completion reads its transcript once for steps and report.
+test("a normal loop end reads its transcript once", async () => {
+  const prepared = await waitPrepared([601]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  let reads = 0;
+  const child = childDouble();
+  const result = await runBatch({
+    prepared,
+    runsRoot,
+    gh: fakeGh(),
+    deps: {
+      ...fakeGitDeps,
+      notifier: noNotify,
+      spawn: child.spawn,
+      installSignal: false,
+      readTranscript: async () => {
+        reads += 1;
+        const transcript = child.calls[0].transcript;
+        const text = await readFile(transcript, "utf8");
+        await removePath(transcript);
+        return text;
+      },
+    },
+  });
+  expect(reads).toBe(1);
+  expect(result.summary.loops[0].status).toBe("succeeded");
+  expect(result.summary.loops[0].report.state).toBe("read");
+});
+
+// Usefulness: every read error stores the shared unreadable reason in the loop report.
+test("a read error stores the shared unreadable reason", async () => {
+  const cases = [
+    ["ENOENT", "the transcript is missing"],
+    ["EACCES", "the transcript is unreadable"],
+    ["EISDIR", "the transcript is unreadable"],
+    ["EIO", "the transcript is unreadable"],
+  ];
+  for (let index = 0; index < cases.length; index += 1) {
+    const prepared = await waitPrepared([701 + index]);
+    const runsRoot = join(prepared.workTreeRoot, "runs");
+    const result = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        readTranscript: async () => {
+          const error = new Error(`${cases[index][0]}: synthetic read failure`);
+          error.code = cases[index][0];
+          throw error;
+        },
+      },
+    });
+    expect(result.summary.loops[0].report.transcriptRead).toMatchObject({
+      ok: false,
+      reason: cases[index][1],
+    });
+  }
+});
+
+// Usefulness: a read error on an attempted loop refuses with the origin missing text.
+test("a read error on an attempted loop keeps the missing refusal", async () => {
+  const cases = ["ENOENT", "EACCES", "EISDIR", "EIO"];
+  for (let index = 0; index < cases.length; index += 1) {
+    const issue = 711 + index;
+    const prepared = await waitPrepared([issue]);
+    const runsRoot = join(prepared.workTreeRoot, "runs");
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ closed: new Set([issue]) }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    const transcript = batchPaths(runsRoot).transcript(prepared.id, issue);
+    await updateLoop(runsRoot, prepared.id, issue, (loop) => ({
+      ...loop,
+      status: "interrupted",
+      reason: "interrupted",
+      skipReason: null,
+      attempts: 1,
+      transcript,
+      pid: null,
+      startTime: null,
+    }));
+    await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        readTranscript: async () => {
+          const error = new Error(`${cases[index]}: synthetic read failure`);
+          error.code = cases[index];
+          throw error;
+        },
+      },
+    });
+    const loop = await readLoop(runsRoot, prepared.id, issue);
+    expect(loop).toMatchObject({ status: "needs-owner", reason: "unverified-steps" });
+    const decision = await readDecision(runsRoot, prepared.id, loop.decision);
+    expect(decision?.ok).toBe(true);
+    expect(decision.decision.evidence).toBe("the transcript is missing");
+  }
 });

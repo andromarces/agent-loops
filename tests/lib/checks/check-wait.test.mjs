@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../../src/lib/checks/check-wait.mjs";
-import { canceledError } from "../../../src/lib/checks/ci-gate.mjs";
+import { canceledError } from "../../../src/lib/sigint.mjs";
 import { pageStdout } from "../../gh-doubles.mjs";
 import {
   fakeClock,
@@ -17,7 +17,7 @@ import {
   replyOf,
   FORBIDDEN,
   NOT_FOUND,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 // Usefulness: verifies the wait returns the required check states and no timeout
 // once nothing is pending, and that it keeps polling past a read that reported no

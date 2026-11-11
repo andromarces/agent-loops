@@ -12,7 +12,7 @@ import {
   waitOn,
   runEntry,
   pagedCheckRunsGh,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 // Usefulness: verifies the envelope names the PR head that its checks describe,
 // so a parent can compare it with the commit it expects (issue #961).

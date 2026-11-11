@@ -171,6 +171,8 @@ export async function runTestCmd({
   forceSignal = forceCancelSignal(signal),
   // Injectable so a test can shorten the settle bound; production keeps 10 s (issue #1465).
   killGraceMs = KILL_GRACE_MS,
+  // Overrides the child environment of the command and of its snapshots.
+  env,
 }) {
   const { slot, testRun: notStarted } = await holdSlotFor(command, signal);
   if (notStarted) {
@@ -183,7 +185,8 @@ export async function runTestCmd({
       cwd,
       signal,
       forceSignal,
-      env: slot.env,
+      slotEnv: slot.env,
+      env,
       killGraceMs,
     });
   } finally {
@@ -195,14 +198,23 @@ export async function runTestCmd({
   }
 }
 
-async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, env, killGraceMs }) {
-  const before = await snapshot(cwd, { signal });
+async function runInSlot({
+  command,
+  timeoutSeconds,
+  cwd,
+  signal,
+  forceSignal,
+  slotEnv,
+  env,
+  killGraceMs,
+}) {
+  const before = await snapshot(cwd, { signal, env });
   const startedAt = Date.now();
   logInfo(`test command started (bound ${timeoutSeconds}s)`);
 
   const subprocess = execBounded(command, [], {
     cwd,
-    env,
+    env: env === undefined ? slotEnv : { ...slotEnv, ...env },
     shell: true,
     stdin: "ignore",
     all: true,
@@ -262,7 +274,7 @@ async function runInSlot({ command, timeoutSeconds, cwd, signal, forceSignal, en
   let finalSnapshot = null;
   const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    finalSnapshot = await snapshot(cwd, { signal: forceSignal });
+    finalSnapshot = await snapshot(cwd, { signal: forceSignal, env });
     changed = diffSnapshots(before, finalSnapshot);
   } catch (err) {
     if (!err?.isCanceled) {

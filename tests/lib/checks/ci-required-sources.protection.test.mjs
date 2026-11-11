@@ -2,7 +2,7 @@
 // is unknown and unparsed, never read element by element as check names.
 import { expect, test } from "vite-plus/test";
 import { requiredContexts, UNKNOWN } from "../../../src/lib/checks/ci-required-sources.mjs";
-import { SLUG } from "../ci-gate-helpers.mjs";
+import { SLUG } from "./ci-gate-helpers.mjs";
 
 const PROTECTION = `repos/${SLUG}/branches/main/protection`;
 

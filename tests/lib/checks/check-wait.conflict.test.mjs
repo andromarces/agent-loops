@@ -8,7 +8,7 @@ import {
   PASSED_ITEM,
   PENDING_ITEM,
   scriptedGh,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 /** Runs one wait over the scripted reads and merge states, on a fake clock. */
 function conflictWait({

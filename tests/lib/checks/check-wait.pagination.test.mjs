@@ -10,7 +10,7 @@ import {
   waitOn,
   runEntry,
   pagedCheckRunsGh,
-} from "../check-wait-helpers.mjs";
+} from "./check-wait-helpers.mjs";
 
 // Usefulness: verifies each commit page is its own `gh api --include` request for a documented page
 // number, with no `--paginate`, so one `gh` output holds exactly one exchange and the first line of

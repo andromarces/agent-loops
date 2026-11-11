@@ -1,9 +1,9 @@
 // Exclusive state lock and the owner liveness checks behind it (#173, ADR 0020). One lock file
 // guards one read-modify-write of a state file or a manifest.
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { removeTemp } from "./atomic-write.mjs";
+import { linkExclusive, removeTemp } from "./atomic-write.mjs";
 import { sha256 } from "./hash.mjs";
 import { tryParseJson } from "./json.mjs";
 import { logWarn } from "./log.mjs";
@@ -102,23 +102,6 @@ function busyError(message) {
 // did not create.
 const LOCK_TEMP_TOKEN = randomUUID().replaceAll("-", "");
 let lockTempCounter = 0;
-
-// `link` is the atomic create primitive, but FAT/exFAT and some network mounts
-// have no hard links and report one of these codes. They fall back to an
-// exclusive create, where the pre-#176 create/write window returns.
-// EISDIR is the Windows mapping: libuv translates the ERROR_INVALID_FUNCTION
-// from CreateHardLinkW on FAT/exFAT to EISDIR (nodejs/node#65817).
-const LINK_UNSUPPORTED = new Set([
-  "EPERM",
-  "EACCES",
-  "ENOTSUP",
-  "EOPNOTSUPP",
-  "EINVAL",
-  "ENOSYS",
-  "EMLINK",
-  "EXDEV",
-  "EISDIR",
-]);
 
 // Nesting bound for dead stale-removal claims; a deeper chain fails closed.
 const MAX_CLAIM_DEPTH = 3;
@@ -357,7 +340,7 @@ async function createLock(lockFile) {
   // by the running process, so nothing else would clean it (#353).
   try {
     await writeFile(tempFile, owner, "utf8");
-    const created = await linkLock(tempFile, lockFile, owner);
+    const created = await linkExclusive(tempFile, lockFile, owner);
     await removeTemp(tempFile);
     return created ? nonce : null;
   } catch (err) {
@@ -366,29 +349,6 @@ async function createLock(lockFile) {
     // act on (#353).
     await removeTemp(tempFile);
     throw err;
-  }
-}
-
-async function linkLock(tempFile, lockFile, owner) {
-  try {
-    await link(tempFile, lockFile);
-    return true;
-  } catch (err) {
-    if (err.code === "EEXIST") {
-      return false;
-    }
-    if (!LINK_UNSUPPORTED.has(err.code)) {
-      throw err;
-    }
-    try {
-      await writeFile(lockFile, owner, { encoding: "utf8", flag: "wx" });
-      return true;
-    } catch (openErr) {
-      if (openErr.code === "EEXIST") {
-        return false;
-      }
-      throw openErr;
-    }
   }
 }
 

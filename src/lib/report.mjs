@@ -81,8 +81,8 @@ function fencedLines(lines) {
  * Returns the lines of `text` with each column-0 bold report label normalized to its plain form.
  * The forms are `**Label:**` (issue #1483) and a line that holds only `**Label**` (issue #1585).
  * A bold label inside a fenced code block stays text. With `boldLabels` false, the lines are
- * unchanged, which reads a bold label as origin/main did. The fenced flags come with the lines, so
- * a caller never scans the fences twice (issue #1858).
+ * unchanged. The fenced flags come with the lines, so a caller never scans the fences twice
+ * (issue #1858).
  * @param {string} text
  * @param {boolean} [boldLabels]
  * @returns {{ lines: string[], fenced: boolean[] }}
@@ -168,46 +168,9 @@ function hasTablePair(lines) {
   return false;
 }
 
-// An emphasis run at line start, for example `*emphasis* note`.
-// - A leading `*` is also a spaceless bullet marker (`*item`, issue #243).
-// - A `*` pair whose close a letter precedes is ordinary prose when a non-word,
-//   non-`*` character or the line end follows. It does not blank the block
-//   (issues #259 and #264).
-// - A letter before the close tells a real emphasis run from a spaceless bullet.
-//   That bullet's later `*` is a wildcard or multiplication (`*glob src/*.mjs`,
-//   `*use 2* 3`). Without the letter requirement, the item drops with no `raw` signal.
-// - The letter requirement also keeps a spaceless bullet with a later ` * ` a list.
-// - The close must not be glued to a following token that carries a letter or an
-//   ASCII digit. A spaceless bullet whose later `*` a letter precedes and a
-//   filename or glob continues (`*file*.mjs`, `*glob src/a*.mjs`) counts as a
-//   list too (issue #267).
-// - The cost is wider than a glued word (`*self*-hosted`). Any following token
-//   that carries a letter or an ASCII digit flags as well, for example
-//   `*Claude*'s review`, `*emph*—then more`, `*a*/b`, `*Note*:x`, and `*emph*.2`.
-// - A non-ASCII digit (`*emph*.٢`, `*file*.٢`) carries no `\d`, so it does not flag.
-// - The cost is not only a reporting loss. A null block has no Checks line, so
-//   the `--require-accept` gate also refuses. `acceptGateReason` in
-//   src/role/finish.mjs returns "the accepted review has no Checks line", and
-//   `acceptanceFailure` in this file returns "checks". Both directions fail closed,
-//   but the report loses its text to `raw`, and the `acceptGateReason` refusal
-//   names the wrong cause.
-//
-// known-limit: a `*` line whose closing `*` a letter precedes, where the
-// character right after the close is not a word character or `*`, and where
-// nothing glued from that character on is a letter or an ASCII digit (`*file*`,
-// `*glob src/a*`, `*use a* b`, `*glob src/a*, b`), reads as an emphasis run, so
-// the block still parses and the line is dropped with no `raw` signal (issue
-// #275, accepted gap). The two checks are separate, so `*emph*._` stays exempt
-// while `*emph*_` and `*a*_.b` blank the block. The same line is a valid
-// spaceless bullet, and no pattern on the line tells the two apart; the rest of
-// the block carries no signal either, so the line is the only evidence there is.
-// Ceiling: every matching line in the block drops this way, under any label.
-// That is no new class of loss, because any line that is neither a label nor a
-// list already drops the same way (`Notes:` then `file a is stale`). Every
-// other `*` line either is a list and blanks the block (`*item`, `* item`,
-// `*file*.mjs`) or is not a list and drops as prose (`**bold** note`). Upgrade
-// path: drop this exemption and read every `*` opener as a list, which loses the
-// emphasis shapes above into `raw` and makes that loss loud.
+// An emphasis run at line start needs a letter before the closing `*`. Right after the close, no
+// word character or `*` follows, and no letter or ASCII digit is glued after that character. A
+// leading `*` is also a spaceless bullet marker, whose accepted gap is in issue #275.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
 // A report label name or `Verdict`, in any case, anywhere in the text, followed by optional
@@ -526,10 +489,9 @@ function originalLabelTokens(response) {
   return sections;
 }
 
-// Maintainer triage of a parser report: keep a parser fix for a regression on the documented
-// format, a dropped finding, or an incorrect acceptance. A report of an unsupported format stays
-// covered only after the repair ships and handles that case. A repeated repair failure stays
-// actionable.
+// Maintainer triage: keep a parser fix for a regression, a dropped finding, or an incorrect
+// acceptance. Leave an unsupported format uncovered until the repair ships, and keep a repeated
+// repair failure actionable (issue #1615).
 
 /**
  * True when a repaired report restates only what the original response already held (issue #1615).
@@ -667,7 +629,7 @@ function isFoldableItem(line, pattern) {
 /** True when the line is a `- ` or `N. ` sub-item at the parent text column, unless an ordered item reads as a Verdict line. */
 function isFoldableSubitem(line, marker) {
   // An ordered sub-item that reads as a Verdict line never folds, so a rejection stays visible.
-  // A dash sub-item keeps the origin/main fold.
+  // A dash sub-item folds.
   const hiddenVerdict = orderedSubitem(marker).test(line) && readsAsVerdictLine(line);
   return foldableSubitem(marker).test(line) && isListLine(line) && !hiddenVerdict;
 }

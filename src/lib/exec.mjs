@@ -228,7 +228,7 @@ export class ExecError extends Error {
     this.isTerminated = Boolean(isTerminated);
     this.isMaxBuffer = Boolean(isMaxBuffer);
     // The signal name or description, for a caller that reports the termination cause. It travels as
-    // a field, not in the message, so every adapter keeps the message `exec` has always built.
+    // a field, not in the message, so every adapter keeps the message `exec` builds.
     this.signal = signal ?? null;
   }
 }

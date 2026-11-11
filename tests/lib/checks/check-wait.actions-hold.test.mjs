@@ -1,13 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { waitChecks } from "../../../src/lib/checks/check-wait.mjs";
-import {
-  fakeClock,
-  fileReply,
-  HEAD_A,
-  HEAD_B,
-  readOk,
-  scriptedGh,
-} from "../check-wait-helpers.mjs";
+import { fakeClock, fileReply, HEAD_A, HEAD_B, readOk, scriptedGh } from "./check-wait-helpers.mjs";
 
 // The `--all` wait holds a pass while a `pull_request` workflow of the base branch can run for the PR
 // and the head has no check run from GitHub Actions (issue #1228). The scripted `gh` answers the
