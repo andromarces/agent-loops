@@ -169,7 +169,7 @@ export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } 
     }
     if (process.platform === "darwin") {
       // `ps -o lstart=` runs under TZ=UTC and LC_ALL=C.
-      // The kernel stores the start time (`p_starttime`) once at creation, so a later clock step does not change it.
+      // The kernel stores the start time (`p_starttime`) once at creation and `ps` formats it, so a later clock step does not change it.
       // From the XNU source, and not exercised here, because the test machine cannot step its clock.
       const time = parseLstart(
         await queryOutput("ps", ["-o", "lstart=", "-p", String(pid)], timeoutMs),
@@ -177,7 +177,7 @@ export async function processStartTime(pid, { timeoutMs = START_TIME_QUERY_MS } 
       return time === null ? null : `darwin-lstart:${time}`;
     }
     if (process.platform === "win32") {
-      // The creation FILETIME that Windows stores at creation, and likewise not exercised under a clock step.
+      // The PowerShell `Process.StartTime` reads the creation FILETIME, and a clock step is likewise not exercised here.
       const text = await queryOutput(
         "powershell.exe",
         [
@@ -325,8 +325,9 @@ export async function ownerAlive(owner, cache) {
     // A differing namespace means the recorded pid belongs to another namespace, such as a container
     // that shares the runs root.
     // `pidAlive` cannot say whether that owner runs, so the read stays alive.
-    // An unreadable reader namespace keeps the lock, because the reader cannot tell whose stamp it is.
-    // Other stamp kinds skip this step.
+    // An unreadable reader namespace keeps the lock, because the reader cannot tell whose stamp it is, and other stamp kinds skip this step.
+    // A crashed owner of another namespace keeps the lock, and so does a crashed owner here when the reader cannot read its namespace.
+    // A person then checks that the owner is gone and removes the lock file, plus any `.reap.<digest>` claim beside it.
     return true;
   }
   if (!pidAlive(owner.pid)) {
@@ -351,9 +352,5 @@ export async function ownerAlive(owner, cache) {
   } else {
     current = await processStartTime(owner.pid);
   }
-  // known-limit: step 1 never takes a lock over, even when its owner is dead.
-  // A crashed owner of another namespace keeps the lock until a person checks that it is gone.
-  // So does a crashed owner of this namespace when the reader cannot read its own PID namespace.
-  // The person then removes the lock file, plus any `.reap.<digest>` claim beside it.
   return current === null || !startTimesDiffer(owner.startTime, current);
 }

@@ -127,8 +127,9 @@ async function readRequiredSource(
     if (absentOnError(stderr)) {
       return { state: ABSENT, contexts: [] };
     }
-    // Every non-zero exit other than the exact 404 is `UNKNOWN`: `Not Found` (404), both
-    // `Resource not accessible` 403s, and the Free-plan 403, which names the plan and not the branch.
+    // Every non-zero exit other than the exact 404 is `UNKNOWN`.
+    // `Not Found` (404), both `Resource not accessible` 403s, and the Free-plan 403 are `UNKNOWN` too.
+    // The Free-plan reply names the plan and not the branch.
     // `UNKNOWN` settles nothing and keeps the empty-union refusal.
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
@@ -151,7 +152,7 @@ async function readRequiredSource(
   // `unparsed` marks a successful reply that is not the JSON object or array the
   // endpoint returns, or whose shape `malformed` cannot interpret. The gate
   // ignores it. The status read and the check wait refuse on it, because that
-  // reply may hide a required context (issue #349).
+  // reply can hide a required context (issue #349).
   return {
     state,
     contexts,
@@ -256,6 +257,7 @@ export function classifyRulesets(data) {
     if (!isJsonObject(rule)) {
       return { state: UNKNOWN, contexts: [] };
     }
+    // A well-formed rule is an object that carries a string `type`.
     if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
       // A type the gate does not know may be a required-status-check rule under a
       // name this list does not carry, so it is unknown rather than skipped

@@ -46,8 +46,8 @@ const SYNC_FS = { realpath: realpathSync.native, readlink: readlinkSync };
 // The one traversal behind `resolveWriteTarget` and `resolveWriteTargetSync`. It yields each fs
 // step as `{ op, path }`. The driver runs the step and sends back the result, or throws the error
 // into the generator, so only the fs calls differ between the async and the sync resolver.
-// A rename over a link replaces the link instead of the file it names (#658).
 function* traverseWriteTarget(file) {
+  // A rename over a link replaces the link instead of the file it names (#658).
   let current = resolve(file);
   for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
     let dir;

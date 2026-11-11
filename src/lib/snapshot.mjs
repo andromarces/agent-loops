@@ -104,10 +104,10 @@ export async function sha256File(path, { signal } = {}) {
       // grows during the read keeps the digest of its bytes at open. An empty file has no bound,
       // as an unbounded stream reads to EOF. The stream owns the handle and closes it on end,
       // error, or abort.
-      // An abort during the read destroys the stream, which closes the file handle and rejects the read.
-      // An `fs` request already in flight is not interrupted, so the destroy waits for it to return.
       const { size } = await handle.stat();
       const range = size > 0 ? { start: 0, end: size - 1 } : {};
+      // An abort during the read destroys the stream, which closes the file handle and rejects the read.
+      // An `fs` request already in flight is not interrupted, so the destroy waits for it to return.
       stream = createReadStream(path, { fd: handle, signal, ...range });
     } catch (err) {
       await handle.close();
