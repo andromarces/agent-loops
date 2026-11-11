@@ -655,15 +655,8 @@ describe("bounded batch reads", () => {
     expect(getEventListeners(signal, "abort")).toHaveLength(0);
   });
 
-  // Usefulness: a throw with one live child forwards SIGINT, records interrupted, and a resume
-  // continues that loop from its transcript.
-  test("a throw with a live child stops it and a resume continues it", async () => {
-    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
-    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
-    const makeTree = async ({ workTree, branch }) => {
-      await mkdir(workTree, { recursive: true });
-      return { path: workTree, canonicalPath: workTree, dev: "1", ino: "1", branch };
-    };
+  // Seeds two queued loops, with a recorded work tree on issue 2, so a resume stops there.
+  async function seedThrowState(two, runsRoot) {
     await runBatch({
       prepared: two,
       runsRoot,
@@ -694,6 +687,19 @@ describe("bounded batch reads", () => {
         cleanup: null,
       }));
     }
+    return recorded;
+  }
+
+  // Usefulness: a throw with one live child forwards SIGINT, records interrupted, and a resume
+  // continues that loop from its transcript.
+  test("a throw with a live child stops it and a resume continues it", async () => {
+    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    const makeTree = async ({ workTree, branch }) => {
+      await mkdir(workTree, { recursive: true });
+      return { path: workTree, canonicalPath: workTree, dev: "1", ino: "1", branch };
+    };
+    await seedThrowState(two, runsRoot);
     const child = childDouble({ steps: 3, hold: true });
     const stops = [];
     const spawn = async (options) => {
@@ -761,6 +767,91 @@ describe("bounded batch reads", () => {
     expect(childResume.calls[0].transcript).toBe(loop.transcript);
     expect(childResume.calls[0].maxSteps).toBe("7");
     expect(resumed.summary.loops[0].status).toBe("succeeded");
+  });
+
+  // Usefulness: a throw at the PID checkpoint write stops that unregistered child and marks its loop.
+  test("a throw at the PID checkpoint write stops the unregistered child", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [1], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    const child = childDouble({ hold: true });
+    const stops = [];
+    const failure = new Error("the pid checkpoint write failed");
+    const spawn = async (options) => {
+      const started = await child.spawn(options);
+      return {
+        ...started,
+        pid: {
+          toJSON() {
+            throw failure;
+          },
+        },
+        kill: (signal) => {
+          stops.push(signal);
+          started.kill(signal);
+        },
+      };
+    };
+    const run = runBatch({
+      prepared: one,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    await expect(run).rejects.toBe(failure);
+    expect(stops).toEqual(["SIGINT"]);
+    const loop = await readLoop(runsRoot, one.id, 1);
+    expect(loop.status).toBe("interrupted");
+    expect(loop.reason).toBe("interrupted");
+  });
+
+  // Usefulness: a second SIGINT during the throw cleanup ends the wait and still rethrows the error.
+  test("a second SIGINT during the throw cleanup ends the wait", async () => {
+    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    await seedThrowState(two, runsRoot);
+    const stops = [];
+    const sigintSeen = deferred();
+    const never = new Promise(() => {});
+    const spawn = async () => ({
+      pid: process.pid,
+      startTime: null,
+      done: never,
+      kill: (signal) => {
+        stops.push(signal);
+        sigintSeen.resolve();
+      },
+      hardKill: () => {
+        stops.push("SIGKILL");
+      },
+      close: () => {},
+    });
+    const failure = new Error("the git fetch failed");
+    const before = new Set(getEventListeners(process, "SIGINT"));
+    try {
+      const run = runBatch({
+        prepared: { ...two, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn,
+          verifyWorkTree: async (loop) => {
+            if (loop.issue === 2) throw failure;
+            return null;
+          },
+        },
+      });
+      await sigintSeen.promise;
+      process.emit("SIGINT");
+      await expect(run).rejects.toBe(failure);
+      expect(stops).toEqual(["SIGINT", "SIGKILL"]);
+      expect(process.listenerCount("SIGINT")).toBe(before.size + 1);
+    } finally {
+      for (const listener of getEventListeners(process, "SIGINT")) {
+        if (!before.has(listener)) process.removeListener("SIGINT", listener);
+      }
+    }
   });
 
   // Usefulness: a throw with no live child adds no checkpoint, manifest, or log write.
