@@ -35,6 +35,30 @@ import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { pollUntil, within } from "../wait-helpers.mjs";
 
+// A test arms one checkpoint write failure by file suffix. Every other write runs as before.
+const checkpointWrite = vi.hoisted(() => ({ suffix: null, error: null, fired: false }));
+
+vi.mock("../../src/lib/atomic-write.mjs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    writeFileAtomic: async (file, text, options) => {
+      const armed = checkpointWrite.suffix;
+      if (!checkpointWrite.fired && armed !== null && String(file).endsWith(armed)) {
+        checkpointWrite.fired = true;
+        throw checkpointWrite.error;
+      }
+      return actual.writeFileAtomic(file, text, options);
+    },
+  };
+});
+
+function failCheckpointWrite(suffix, error) {
+  checkpointWrite.suffix = suffix;
+  checkpointWrite.error = error;
+  checkpointWrite.fired = false;
+}
+
 const BODY = ["## Problem", "Missing.", "", "## Acceptance", "", "- one check", ""].join("\n");
 const SUMMARY = {
   changed: "a",
@@ -655,10 +679,8 @@ describe("bounded batch reads", () => {
     expect(getEventListeners(signal, "abort")).toHaveLength(0);
   });
 
-  // Usefulness: a throw with a live child rejects at once and keeps its listeners for a later abort.
-  test("a throw with a live child keeps its listeners", async () => {
-    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
-    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+  // Seeds two queued loops, with a recorded work tree on issue 2, so a resume stops there.
+  async function seedThrowState(two, runsRoot) {
     await runBatch({
       prepared: two,
       runsRoot,
@@ -689,7 +711,20 @@ describe("bounded batch reads", () => {
         cleanup: null,
       }));
     }
-    const child = childDouble({ hold: true });
+    return recorded;
+  }
+
+  // Usefulness: a throw with one live child forwards SIGINT, records interrupted, and a resume
+  // continues that loop from its transcript.
+  test("a throw with a live child stops it and a resume continues it", async () => {
+    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    const makeTree = async ({ workTree, branch }) => {
+      await mkdir(workTree, { recursive: true });
+      return { path: workTree, canonicalPath: workTree, dev: "1", ino: "1", branch };
+    };
+    await seedThrowState(two, runsRoot);
+    const child = childDouble({ steps: 3, hold: true });
     const stops = [];
     const spawn = async (options) => {
       const started = await child.spawn(options);
@@ -702,6 +737,7 @@ describe("bounded batch reads", () => {
       };
     };
     const abort = new AbortController();
+    const failure = new Error("the git fetch failed");
     const before = process.listenerCount("SIGINT");
     const run = runBatch({
       prepared: { ...two, resume: true },
@@ -712,23 +748,291 @@ describe("bounded batch reads", () => {
         notifier: noNotify,
         spawn,
         signal: abort.signal,
-        reconcileLoop: async () => {
-          throw new Error("the git fetch failed");
+        createWorkTree: makeTree,
+        verifyWorkTree: async (loop) => {
+          if (loop.issue === 2) throw failure;
+          return null;
         },
       },
     });
-    await expect(run).rejects.toThrow("the git fetch failed");
-    expect(stops).toEqual([]);
-    expect((await readLoop(runsRoot, two.id, 1)).status).toBe("running");
-    expect(process.listenerCount("SIGINT")).toBe(before + 1);
-    abort.abort(new Error("stop the child now"));
-    expect(stops).toContain("SIGINT");
-    let loop = await readLoop(runsRoot, two.id, 1);
-    for (let attempt = 0; attempt < 100 && loop?.status === "running"; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      loop = await readLoop(runsRoot, two.id, 1);
-    }
+    await expect(run).rejects.toBe(failure);
+    expect(stops).toEqual(["SIGINT"]);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
+    const loop = await readLoop(runsRoot, two.id, 1);
     expect(loop.status).toBe("interrupted");
+    expect(loop.reason).toBe("interrupted");
+    expect((await readManifest(runsRoot, two.id)).status).toBe("interrupted");
+    expect((await stat(loop.workTree.path)).isDirectory()).toBe(true);
+    const claim = batchPaths(runsRoot).claim(two.repoKey, 1);
+    expect((await stat(claim)).isFile()).toBe(true);
+
+    await updateLoop(runsRoot, two.id, 2, (current) => ({
+      ...current,
+      status: "skipped",
+      skipReason: "test",
+      reason: null,
+    }));
+    const childResume = childDouble({ steps: 2 });
+    const resumed = await runBatch({
+      prepared: { ...two, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childResume.spawn,
+        installSignal: false,
+      },
+    });
+    expect(childResume.calls).toHaveLength(1);
+    expect(childResume.calls[0].args).toContain("--continue-from");
+    expect(valueAfter(childResume.calls[0].args, "--continue-from")).toBe(loop.transcript);
+    expect(childResume.calls[0].transcript).toBe(loop.transcript);
+    expect(childResume.calls[0].maxSteps).toBe("7");
+    expect(resumed.summary.loops[0].status).toBe("succeeded");
+  });
+
+  // Usefulness: a throw at the PID checkpoint write stops that unregistered child and marks its loop.
+  test("a throw at the PID checkpoint write stops the unregistered child", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [1], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    const child = childDouble({ hold: true });
+    const stops = [];
+    const failure = new Error("the pid checkpoint write failed");
+    const spawn = async (options) => {
+      const started = await child.spawn(options);
+      return {
+        ...started,
+        pid: {
+          toJSON() {
+            throw failure;
+          },
+        },
+        kill: (signal) => {
+          stops.push(signal);
+          started.kill(signal);
+        },
+      };
+    };
+    const run = runBatch({
+      prepared: one,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    await expect(run).rejects.toBe(failure);
+    expect(stops).toEqual(["SIGINT"]);
+    const loop = await readLoop(runsRoot, one.id, 1);
+    expect(loop.status).toBe("interrupted");
+    expect(loop.reason).toBe("interrupted");
+  });
+
+  // Usefulness: a second SIGINT during the throw cleanup ends the wait and still rethrows the error.
+  test("a second SIGINT during the throw cleanup ends the wait", async () => {
+    const two = { ...prepared, id: newBatchId(), issues: [1, 2], loops: 2 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${two.id}`);
+    await seedThrowState(two, runsRoot);
+    const stops = [];
+    const sigintSeen = deferred();
+    const never = new Promise(() => {});
+    const spawn = async () => ({
+      pid: process.pid,
+      startTime: null,
+      done: never,
+      kill: (signal) => {
+        stops.push(signal);
+        sigintSeen.resolve();
+      },
+      hardKill: () => {
+        stops.push("SIGKILL");
+      },
+      close: () => {},
+    });
+    const failure = new Error("the git fetch failed");
+    const before = new Set(getEventListeners(process, "SIGINT"));
+    try {
+      const run = runBatch({
+        prepared: { ...two, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn,
+          verifyWorkTree: async (loop) => {
+            if (loop.issue === 2) throw failure;
+            return null;
+          },
+        },
+      });
+      await sigintSeen.promise;
+      process.emit("SIGINT");
+      await expect(run).rejects.toBe(failure);
+      expect(stops).toEqual(["SIGINT", "SIGKILL"]);
+      expect(process.listenerCount("SIGINT")).toBe(before.size + 1);
+    } finally {
+      for (const listener of getEventListeners(process, "SIGINT")) {
+        if (!before.has(listener)) process.removeListener("SIGINT", listener);
+      }
+    }
+  });
+
+  // Usefulness: a failed settle checkpoint write leaves no unhandled rejection and the loop running.
+  test("a settle checkpoint write failure is handled", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [901], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    const child = childDouble({ hold: true });
+    const failure = Object.assign(new Error("the checkpoint write failed"), { code: "EPERM" });
+    const unhandled = [];
+    const onUnhandled = (err) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const run = runBatch({
+        prepared: one,
+        runsRoot,
+        gh: fakeGh(),
+        deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+      });
+      await waitForLaunch(child);
+      await pollUntil(async () => {
+        const loop = await readLoop(runsRoot, one.id, 901);
+        return loop?.pid != null ? loop : undefined;
+      }, 10_000);
+      failCheckpointWrite("issue-901.json", failure);
+      child.pending[0].resolve({ exitCode: 0 });
+      await expect(run).rejects.toBe(failure);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      const loop = await readLoop(runsRoot, one.id, 901);
+      expect(loop.status).toBe("running");
+    } finally {
+      checkpointWrite.suffix = null;
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  // Usefulness: a late settle write failure after a second SIGINT is logged once.
+  test("a late settle write failure after a second SIGINT is logged once", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [902], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    const stops = [];
+    const sigintSeen = deferred();
+    const gate = deferred();
+    const pidFailure = Object.assign(new Error("the pid checkpoint write failed"), {
+      code: "EPERM",
+    });
+    const writeFailure = Object.assign(new Error("the checkpoint write failed"), {
+      code: "EPERM",
+    });
+    const spawn = async () => ({
+      pid: {
+        toJSON() {
+          throw pidFailure;
+        },
+      },
+      startTime: null,
+      done: gate.promise,
+      kill: (signal) => {
+        stops.push(signal);
+        sigintSeen.resolve();
+      },
+      hardKill: () => {
+        stops.push("SIGKILL");
+      },
+      close: () => {},
+    });
+    const lines = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      lines.push(args.map(String).join(" "));
+    });
+    const before = new Set(getEventListeners(process, "SIGINT"));
+    try {
+      const run = runBatch({
+        prepared: one,
+        runsRoot,
+        gh: fakeGh(),
+        deps: { ...fakeGitDeps, notifier: noNotify, spawn },
+      });
+      await sigintSeen.promise;
+      process.emit("SIGINT");
+      await expect(run).rejects.toBe(pidFailure);
+      expect(stops).toEqual(["SIGINT", "SIGKILL"]);
+      failCheckpointWrite("issue-902.json", writeFailure);
+      gate.resolve({ exitCode: 0 });
+      await pollUntil(() => {
+        const text = lines.join("\n");
+        return text.includes("error") && text.includes(writeFailure.message) ? true : undefined;
+      }, 10_000);
+      await new Promise((resolve) => setImmediate(resolve));
+      const errorLines = lines.filter(
+        (line) => line.includes("error") && line.includes(writeFailure.message),
+      );
+      expect(errorLines).toHaveLength(1);
+    } finally {
+      checkpointWrite.suffix = null;
+      spy.mockRestore();
+      for (const listener of getEventListeners(process, "SIGINT")) {
+        if (!before.has(listener)) process.removeListener("SIGINT", listener);
+      }
+    }
+  });
+
+  // Usefulness: a throw with no live child adds no checkpoint, manifest, or log write.
+  test("a throw with no live child writes no extra state", async () => {
+    const one = { ...prepared, id: newBatchId(), issues: [1], loops: 1 };
+    const runsRoot = join(prepared.workTreeRoot, `runs-${one.id}`);
+    await runBatch({
+      prepared: one,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    await removePath(batchPaths(runsRoot).transcript(one.id, 1));
+    await updateLoop(runsRoot, one.id, 1, (loop) => ({
+      ...loop,
+      status: "queued",
+      attempts: 0,
+      cleanup: null,
+    }));
+    const file = batchPaths(runsRoot).loop(one.id, 1);
+    const before = await stat(file, { bigint: true });
+    const lines = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      lines.push(String(chunk));
+      return true;
+    });
+    try {
+      const failure = new Error("the work tree check failed");
+      const run = runBatch({
+        prepared: { ...one, resume: true },
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          installSignal: false,
+          verifyWorkTree: async () => {
+            throw failure;
+          },
+        },
+      });
+      await expect(run).rejects.toBe(failure);
+      const manifest = await readManifest(runsRoot, one.id);
+      expect(manifest.status).toBe("running");
+      const loop = await readLoop(runsRoot, one.id, 1);
+      expect(loop.status).toBe("queued");
+      const after = await stat(file, { bigint: true });
+      expect(after.mtimeNs).toBe(before.mtimeNs);
+      expect(lines.some((line) => /interrupt|cleanup failed/i.test(line))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

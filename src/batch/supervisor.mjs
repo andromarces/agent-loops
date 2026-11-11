@@ -426,11 +426,17 @@ function taskTextFor({ item, loop, prepared, title, branch }) {
  * event; a quiet interval writes nothing.
  */
 export async function runBatch(options) {
-  const run = { stopListening: () => {}, hasLiveChildren: () => false };
+  const run = {
+    stopListening: () => {},
+    hasLiveChildren: () => false,
+    stopAfterThrow: async () => {},
+  };
   let keepListeners = false;
   try {
     return await runBatchWithListeners(options, run);
   } catch (err) {
+    // A throw ends live children the same way the first SIGINT does, then rethrows it.
+    await run.stopAfterThrow();
     // A live child keeps its listeners so a later interrupt still reaches it.
     keepListeners = run.hasLiveChildren();
     throw err;
@@ -451,6 +457,11 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   let start = true;
   let interrupted = false;
   let hard = false;
+  // A second SIGINT releases the throw cleanup from its wait, as decision 9 requires.
+  let releaseHard = () => {};
+  const hardStop = new Promise((resolve) => {
+    releaseHard = resolve;
+  });
   const lockSkipped = new Set();
   let pausedReason = null;
   const notifier = deps.notifier ?? defaultNotify;
@@ -483,19 +494,24 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     controller.abort(reason);
     forward("SIGINT");
   };
+  // The first interrupt, from a signal or a throw, arms the hard-kill bound of every live child.
+  const beginStop = () => {
+    if (interrupted) return;
+    interrupt();
+    for (const [issue, child] of children) {
+      const timer = setTimeout(() => {
+        if (children.has(issue)) child.hardKill?.();
+      }, INTERRUPT_WAIT_MS);
+      timer.unref?.();
+    }
+  };
   const onSigInt = () => {
-    if (!interrupted) {
-      interrupt();
-      for (const [issue, child] of children) {
-        const timer = setTimeout(() => {
-          if (children.has(issue)) child.hardKill?.();
-        }, INTERRUPT_WAIT_MS);
-        timer.unref?.();
-      }
-    } else if (!hard) {
+    if (!interrupted) beginStop();
+    else if (!hard) {
       hard = true;
       progress("second interrupt: ending the child trees now");
       forward("SIGKILL");
+      releaseHard();
     }
   };
   const onExternalAbort = () => interrupt(deps.signal.reason);
@@ -565,6 +581,32 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         new Map((manifest.skipped ?? []).map((loop) => [loop.key, loop])),
       ),
     };
+  };
+
+  // A throw with no live child writes nothing, as before. Otherwise it stops every live child,
+  // waits for its finish path, and marks the batch interrupted. A cleanup failure is logged and
+  // never replaces the original error.
+  run.stopAfterThrow = async () => {
+    if (children.size === 0) return;
+    try {
+      beginStop();
+      const pending = [];
+      for (const [issue, child] of children) {
+        const registered = active.get(issue);
+        if (registered !== undefined) {
+          pending.push(registered);
+          continue;
+        }
+        const settling = settleChild(issue, child, () => true);
+        // The handler logs a failure that arrives before or after a second SIGINT ends the wait.
+        settling.catch((err) => logError(`the child cleanup failed: ${err?.message ?? err}`));
+        pending.push(settling);
+      }
+      await Promise.race([Promise.allSettled(pending), hardStop.then(() => null)]);
+      await finalizeBatch();
+    } catch (err) {
+      logError(`the throw cleanup failed: ${err?.message ?? err}`);
+    }
   };
 
   if (prepared.resume) {
@@ -1326,14 +1368,17 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     await changeLoop(issue, { pid: child.pid ?? null, startTime: child.startTime ?? null });
     progress(`issue ${issue}: attempt ${attempt} started (pid ${child.pid ?? "unknown"})`);
     const promise = (async () => {
-      const { exitCode } = await child.done;
-      child.close?.();
-      children.delete(issue);
-      slots.delete(issue);
-      await finishChild(issue, exitCode, { interrupted: interrupted || hard });
+      await settleChild(issue, child, () => interrupted || hard);
     })();
     active.set(issue, promise);
-    promise.finally(() => active.delete(issue));
+    // Both handlers keep the settle chain handled, and a failed checkpoint write is logged.
+    promise.then(
+      () => active.delete(issue),
+      (err) => {
+        active.delete(issue);
+        logError(`the child settle failed: ${err?.message ?? err}`);
+      },
+    );
   };
 
   const finishChild = async (issue, exitCode, { interrupted: wasInterrupted }) => {
@@ -1402,6 +1447,16 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     );
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
     logError(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
+  };
+
+  // Waits for one spawned child, releases its slot, and writes its checkpoint. The interruption
+  // flag is read after the child settles, so a stop that arrives during the wait is recorded.
+  const settleChild = async (issue, child, interruptedNow) => {
+    const { exitCode } = await child.done;
+    child.close?.();
+    children.delete(issue);
+    slots.delete(issue);
+    await finishChild(issue, exitCode, { interrupted: interruptedNow() });
   };
 
   // One transcript read result: `{ ok: true, data }`, or a refusal that names the cause.
