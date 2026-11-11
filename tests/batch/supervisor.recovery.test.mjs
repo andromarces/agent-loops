@@ -684,8 +684,7 @@ test("a fatal exit without a gate event is not retried", async () => {
 
 // Usefulness: a resumed transcript that ended in an abort keeps the aborted reason and names it.
 test("a transcript that ended in an abort is aborted on recovery", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const child = childDouble({ steps: 1, hold: true });
   const controller = new AbortController();
@@ -737,7 +736,7 @@ test("a transcript that ended in an abort is aborted on recovery", async () => {
     expect(failures[0]).toContain("the issue is already done");
   } finally {
     errorSpy.mockRestore();
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
