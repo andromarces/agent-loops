@@ -169,9 +169,9 @@ function reviewerSandboxError(reviewerSandbox, reviewerKind) {
 const aliasUsers = new WeakSet();
 
 /**
- * Sets the reviewer sandbox of `args`, refusing a disagreeing second value. The text names the
- * later value, except that the alias path names the earlier one when the alias already ran.
- * `error` builds the refusal, so each parser keeps its own error type.
+ * Sets the reviewer sandbox of `args`, refusing a disagreeing second value. The alias call names
+ * the earlier value, since the alias arrives second. A `--reviewer-sandbox` call names the later
+ * value. `error` builds the refusal, so each parser keeps its own error type.
  */
 export function setReviewerSandbox(args, value, viaAlias, error = defaultError) {
   const earlier = args.reviewerSandbox;
