@@ -525,6 +525,8 @@ The run_worker and run_reviewer actions allow only action and prompt. The abort 
 
 When you dispatch the reviewer, name the guards and contracts that the change puts at risk, so the reviewer can trace each changed input through them. Do not restate the spec as the pass condition: a restated spec asks the reviewer to confirm it, not to test it. After two rejects in a row for the same finding class, restate the blocker bar in the next reviewer prompt, or ask the maintainer. The bar: a failure scenario must be an input that the task or its constraints can meet in normal use. A deliberately constructed input that only defeats a heuristic goes in Notes, not in Blockers, unless the task states adversarial inputs as in scope. Never narrow the bar for a weakened existing guard or a regression on an input in normal use.
 
+When a reviewer prompt names the closing block labels, keep the preamble order: \`Conclusion:\` first, then \`Why:\`, \`Blockers:\`, \`Checks:\`, \`Notes:\`, \`Deferred:\`, and \`Verdict:\` last. No label line sits above \`Conclusion:\`.
+
 Completion:
 - Do not finish while the latest changed state lacks a reviewer accept. After any worker turn, call finish only once a later reviewer turn returns Verdict: accept on that state.
 - When no worker turn has run, the task is review-only: finish after the reviewer report, whatever the verdict, and record the verdict in verified.

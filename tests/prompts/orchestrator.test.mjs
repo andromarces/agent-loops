@@ -177,6 +177,19 @@ test("initialPrompt states the reviewer-prompt guard and contract rule", () => {
   expectRule(prompt, /do not restate[^.!?]{0,40}spec/i, /pass condition/i);
 });
 
+// Usefulness: verifies every orchestrator kind renders the reviewer label order, Conclusion first and Verdict last (issue #1816).
+test("every orchestrator kind states the reviewer label order", () => {
+  const rule =
+    "When a reviewer prompt names the closing block labels, keep the preamble order: `Conclusion:` first, then `Why:`, `Blockers:`, `Checks:`, `Notes:`, `Deferred:`, and `Verdict:` last. No label line sits above `Conclusion:`.";
+  for (const orchestratorKind of ["claude", "codex", "agy", "opencode", "copilot", null]) {
+    const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10, orchestratorKind });
+    expect(prompt, String(orchestratorKind)).toContain(rule);
+    expect(prompt.indexOf("Conclusion:"), String(orchestratorKind)).toBeLessThan(
+      prompt.indexOf("Verdict:"),
+    );
+  }
+});
+
 // The headless prompt also states that every child turn reports the line. The
 // interactive instructions state that rule on `report.checks` instead, so this
 // pattern guards the headless prompt only. The subject stays open (`every`,
