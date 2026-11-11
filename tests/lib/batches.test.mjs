@@ -43,7 +43,7 @@ test("mapInBatches starts no later batch after a failure", async () => {
   expect(started).toEqual([0, 1]);
 });
 
-// Usefulness: a fixed thunk list runs together and keeps result order, so a replacement adds no wait.
+// Usefulness: a fixed thunk list runs together and keeps result order, so replacing a mapInBatches call adds no serial wait.
 test("settleInOrder starts every thunk at once and returns results in order", async () => {
   let flying = 0;
   let max = 0;
@@ -62,7 +62,7 @@ test("settleInOrder starts every thunk at once and returns results in order", as
   expect(max).toBe(3);
 });
 
-// Usefulness: the first failure in thunk order throws after every thunk settles, as mapInBatches does.
+// Usefulness: the first failure in thunk order throws after every thunk settles, as mapInBatches does for one batch.
 test("settleInOrder throws the first failure in order after all thunks settle", async () => {
   const settled = [];
   const failure = await settleInOrder([

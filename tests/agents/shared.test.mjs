@@ -109,7 +109,7 @@ test("singleSessionId returns the one id every value names", () => {
   expect(singleSessionId(["sess-1", "sess-1"])).toBe("sess-1");
 });
 
-// Usefulness: no evidence, a missing value, a malformed value, and two ids never resolve.
+// Usefulness: no evidence, a missing value, a malformed value, and two ids never resolve, so an adapter cannot guess a session.
 test("singleSessionId refuses no id, an invalid id, and two ids", () => {
   expect(singleSessionId([])).toBeUndefined();
   expect(singleSessionId(["sess-1", undefined])).toBeUndefined();
