@@ -164,6 +164,7 @@ The implementation adds:
 - [Issue #1733: Remove a finished batch audit work tree and store](https://github.com/andromarces/agent-loops/issues/1733)
 - [PR #1747: Remove a finished batch audit work tree and store](https://github.com/andromarces/agent-loops/pull/1747)
 - [Implementation: audit supervisor](../src/batch/audit.mjs)
+- [Implementation: audit store](../src/batch/audit-store.mjs)
 - [Implementation: batch command](../src/batch/cli.mjs)
 - [Tests: audit coordination](../tests/batch/audit.test.mjs)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md) (decision 13 is the model)

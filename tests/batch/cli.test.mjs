@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { expect, test, vi } from "vite-plus/test";
 import { runBatchMain } from "../../src/batch/cli.mjs";
-import { writeAudit } from "../../src/batch/audit.mjs";
+import { writeAudit } from "../../src/batch/audit-store.mjs";
 import { setLogsToStderr } from "../../src/lib/log.mjs";
 import { git } from "../../src/batch/git.mjs";
 import { createTempRepo } from "../git-helpers.mjs";

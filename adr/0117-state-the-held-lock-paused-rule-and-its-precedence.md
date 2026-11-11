@@ -80,5 +80,6 @@ asks for the rule and the precedence in an accepted ADR.
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: batch status](../src/batch/status.mjs)
 - [Tests: batch supervisor](../tests/batch/supervisor.test.mjs)
 - [ADR Index](README.md)

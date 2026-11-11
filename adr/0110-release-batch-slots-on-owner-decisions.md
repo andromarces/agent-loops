@@ -303,6 +303,7 @@ Andro Marces
 - [ADR 0104: Accept a test-slot command as an argument vector](0104-accept-a-test-slot-command-as-an-argument-vector.md)
 - [Issue #1710: Coordinate reviewer audits and issue creation](https://github.com/andromarces/agent-loops/issues/1710)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: batch status](../src/batch/status.mjs)
 - [Implementation: batch decisions](../src/batch/decisions.mjs)
 - [Implementation: batch notifier](../src/batch/notifier.mjs)
 - [ADR Index](README.md)
