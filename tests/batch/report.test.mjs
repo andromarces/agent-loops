@@ -127,6 +127,155 @@ test("a loop with no finish shows a null summary and its error", () => {
   expect(report.error).toBe("stopped");
 });
 
+const childResult = (role, report) => ({ type: "result", role, result: { status: "ok", report } });
+
+const TURN_REPORT = {
+  conclusion: "the turn ended",
+  why: "the reason",
+  blockers: "the owner decision",
+  checks: null,
+  notes: "a later check",
+  deferred: "the follow-up work",
+};
+
+// Usefulness: a failed loop with no finish keeps the last child turn items beside a null summary.
+test("a failed loop with no finish keeps the last child turn items", () => {
+  const report = buildLoopReport(
+    {
+      events: [
+        { type: "action", action: { action: "run_worker" } },
+        childResult("worker", TURN_REPORT),
+        { type: "gate" },
+      ],
+      exitCode: 1,
+      error: "the turn failed",
+    },
+    { attempts: 1 },
+  );
+  expect(report.summary).toBeNull();
+  expect(report.lastTurnItems).toEqual({
+    role: "worker",
+    deferred: "the follow-up work",
+    notes: "a later check",
+    blockers: "the owner decision",
+    reason: null,
+  });
+});
+
+// Usefulness: an interrupted loop with no finish keeps the last child turn items.
+test("an interrupted loop with no finish keeps the last child turn items", () => {
+  const report = buildLoopReport(
+    {
+      events: [childResult("worker", TURN_REPORT)],
+      exitCode: 130,
+      error: "the run was interrupted",
+    },
+    { attempts: 1 },
+  );
+  expect(report.summary).toBeNull();
+  expect(report.lastTurnItems.notes).toBe("a later check");
+  expect(report.lastTurnItems.deferred).toBe("the follow-up work");
+});
+
+// Usefulness: a needs-owner loop with no finish keeps the last child turn items.
+test("a needs-owner loop with no finish keeps the last child turn items", () => {
+  const report = buildLoopReport(
+    { events: [childResult("worker", TURN_REPORT)], exitCode: 4, error: null },
+    { attempts: 1 },
+  );
+  expect(report.summary).toBeNull();
+  expect(report.lastTurnItems.blockers).toBe("the owner decision");
+});
+
+// Usefulness: a finish summary keeps the current report shape and gains no last-turn field.
+test("a finished loop report gains no last-turn items field", () => {
+  const report = buildLoopReport(
+    {
+      events: [childResult("worker", TURN_REPORT), finishEvent(SUMMARY)],
+      exitCode: 0,
+      error: null,
+    },
+    { attempts: 1 },
+  );
+  expect(report.summary).toEqual({ ...SUMMARY, notes: null });
+  expect(report).not.toHaveProperty("lastTurnItems");
+});
+
+// Usefulness: a no-finish report redacts a secret-named environment value in the copied items.
+test("last-turn items redact a secret-named environment value", () => {
+  const name = "AGENT_LOOP_REPORT_TEST_TOKEN";
+  const secret = "a-very-secret-value";
+  const before = process.env[name];
+  process.env[name] = secret;
+  try {
+    const report = buildLoopReport(
+      {
+        events: [
+          childResult("worker", {
+            ...TURN_REPORT,
+            notes: `the note ${secret}`,
+            deferred: `the work ${secret}`,
+            blockers: `the blocker ${secret}`,
+          }),
+        ],
+        exitCode: 1,
+      },
+      { attempts: 1 },
+    );
+    const copied = JSON.stringify(report.lastTurnItems);
+    expect(copied).not.toContain(secret);
+    expect(report.lastTurnItems.notes).toContain("[redacted:");
+  } finally {
+    if (before === undefined) delete process.env[name];
+    else process.env[name] = before;
+  }
+});
+
+// Usefulness: a last child result without a parsed report states that and leaves every item null.
+test("a last child turn without a parsed report states the missing report", () => {
+  const report = buildLoopReport(
+    {
+      events: [{ type: "result", role: "worker", result: { status: "ok", report: null } }],
+      exitCode: 1,
+    },
+    { attempts: 1 },
+  );
+  expect(report.lastTurnItems).toEqual({
+    role: "worker",
+    deferred: null,
+    notes: null,
+    blockers: null,
+    reason: "the last child turn has no parsed report",
+  });
+});
+
+// Usefulness: a last attempt without a child result states that and leaves every item null.
+test("a last attempt without a child result states the missing result", () => {
+  const report = buildLoopReport(
+    { events: [{ type: "action", action: { action: "abort" } }], exitCode: 1 },
+    { attempts: 1 },
+  );
+  expect(report.lastTurnItems).toEqual({
+    role: null,
+    deferred: null,
+    notes: null,
+    blockers: null,
+    reason: "the last attempt holds no child result",
+  });
+});
+
+// Usefulness: an unread report fails closed and gains no last-turn items field.
+test("an unread report gains no last-turn items field", () => {
+  const report = buildLoopReport({ events: [{ type: "result" }, "broken"] }, { attempts: 1 });
+  expect(report.state).toBe("unread");
+  expect(report).not.toHaveProperty("lastTurnItems");
+});
+
+// Usefulness: a missing report fails closed and gains no last-turn items field.
+test("a missing report gains no last-turn items field", () => {
+  expect(missingLoopReport()).not.toHaveProperty("lastTurnItems");
+});
+
 // Usefulness: a loop with no attempt and no transcript has an empty report instead of a failure.
 test("a missing transcript of a loop with no attempt reads as an empty report", async () => {
   const dir = await tempDir();
