@@ -597,19 +597,25 @@ test("a worker turn that only reads a main work tree file carries no in-turn fie
   let seen;
   const result = await turn(
     async () => {
-      for (const file of files) await readFile(file);
-      // A read reports a watch event only on Windows, where the access time moves.
       if (process.platform === "win32") {
-        // A miss throws, so the wait retries, and a 5000 ms timeout rejects.
+        let next = 0;
+        // A read stays inside each retry, so a read after the watch is ready reports an event.
         seen = await vi
-          .waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0), {
-            timeout: 5_000,
-          })
+          .waitFor(
+            async () => {
+              await readFile(files[Math.min(next++, files.length - 1)]);
+              expect(watchHandle.seenFileCount()).toBeGreaterThan(0);
+            },
+            { timeout: 5_000 },
+          )
           .then(
             () => true,
             () => false,
           );
+        return;
       }
+      // Off Windows the case reads the files and ends without a wait.
+      for (const file of files) await readFile(file);
     },
     tree.linked,
     (handle) => {
