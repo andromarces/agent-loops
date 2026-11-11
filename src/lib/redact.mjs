@@ -78,17 +78,9 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   // A serialized error holds the escaped text, and a decoder recovers the value from it.
   // An escaped form that holds the raw form adds no match, because the raw match leaves the escape backslash.
   // That shape comes from a value that starts with a quote or a backslash, or ends with a backslash.
-  // A secret that the command derives, encodes, or reads from a file is not found.
-  // A later change is a cut, a removal of control characters, or a serialization.
   // Guarantee: no complete value survives in the result, raw or escaped.
   // Every occurrence of an input value, or one that a round forms, is replaced in full.
-  // Two exceptions: the escape backslash of a raw match, and text that holds only a piece of a value.
-  // Parity with the earlier replacement: the result is byte-identical when the raw and escaped occurrences do not overlap.
-  // It also needs the earlier result to hold no complete value, in a marker or across a marker and its text.
-  // With several values, marker text or an overlap can make the result differ from the earlier result.
-  // The differences are not a closed list, and the tests pin examples.
   // Keyed by form text: the first variable in the environment owns a form that two variables share.
-  // Two variables with one value share one match, named for the first variable in the environment.
   const owners = new Map();
   for (const [name, value] of Object.entries(env)) {
     if (SECRET_NAME.test(name) && typeof value === "string" && value.length >= MIN_SECRET_LENGTH) {
@@ -129,6 +121,12 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
   // Each distinct marker text of the variables in the run gets one marker.
   const named = (run) => [...new Set([...run.names].map(markerFor))].join("");
 
+  // Parity with the earlier replacement, tested for one secret-named variable: the result is byte-identical when the raw and escaped occurrences do not overlap.
+  // It also needs the earlier result to hold no complete value, in a marker or across a marker and its text.
+  // With several values, marker text or an overlap can make the result differ, the differences are not a closed list, and the tests pin examples.
+  // Two variables with one value share one match, named for the first variable in the environment.
+  // Exact-value match only: a secret that the command derives, encodes, or reads from a file is not found.
+  // A later change of the result is a cut, a removal of control characters, or a serialization.
   let out = text;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const runs = findRuns(out, patterns);
@@ -137,6 +135,7 @@ export function redactEnvSecrets(text, env = process.env, { shrink = false } = {
     }
     out = replaceRuns(out, runs, round < NAMED_ROUNDS && !shrink ? named : () => SHRINK_MARKER);
   }
+  // Two exceptions: the escape backslash of a raw match, and text that holds only a piece of a value.
   return findRuns(out, patterns).length === 0 ? out : SHRINK_MARKER;
 }
 

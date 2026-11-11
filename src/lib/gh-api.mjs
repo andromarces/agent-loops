@@ -427,18 +427,18 @@ const refusal = (stderr) => ({ status: 1, stdout: "", stderr, unreadable: true }
 
 /**
  * One `gh api --include` request, judged as the pager judges every page, in the one place that
- * judges it. A single read and a paged read therefore cannot drift apart. The `Link` header of every
- * reply is judged before its status, so a status-retryable failure is still terminal on a foreign
- * target. The request host is resolved once per read (`state.hosts`), and only for a reply that
- * carries a `Link` target. A failure or refusal returns `{ end, reply }`, where `end` is the
- * `gh`-shaped result and `reply` is the parsed reply. `reply` is null with no status block, and a 2xx
- * reply with one JSON value returns `{ reply, json }`.
+ * judges it. The `Link` header of every reply is judged before its status, so a status-retryable
+ * failure is still terminal on a foreign target. The request host is resolved once per read
+ * (`state.hosts`), and only for a reply that carries a `Link` target. A failure or refusal returns
+ * `{ end, reply }`, where `end` is the `gh`-shaped result and `reply` is the parsed reply. `reply` is
+ * null with no status block, and a 2xx reply with one JSON value returns `{ reply, json }`.
  * @param {Function} read
  * @param {string[]} args the `gh` arguments of the request
  * @param {string} cwd
  * @param {{ hosts?: Set<string> }} state
  */
 async function readReply(read, args, cwd, state) {
+  // A single read and a paged read share this judgment, so they cannot drift apart.
   const result = await read(args, cwd);
   const reply = parseReply(result.stdout);
   // Both forms carry `targets`, so a caller does not parse the headers again.
@@ -496,19 +496,21 @@ async function readReply(read, args, cwd, state) {
 }
 
 /**
- * Reads every page of the list endpoint `endpoint`, with one `gh api --include` request per page.
- * Each request uses the documented page number, never the `Link` header, so the read requests no
- * target that a reply named. The result is `gh`-shaped, and its stdout holds the pages as one JSON
- * array, an empty page included. `field` names the list in an object reply (`check_runs`,
- * `statuses`), and with `null` each page is the list itself. A `total_count` reply ends only at the
- * collected count, and a short or empty page with the count unmet is an error. A foreign `Link`
- * target is an error, never `transient`, and a shape refusal carries `unreadable`.
+ * Reads every page of the list endpoint `endpoint`, with one `gh api --include` request per
+ * documented page number. The result is `gh`-shaped, and its stdout holds the pages as one JSON
+ * array. `field` names the list in an object reply (`check_runs`, `statuses`), and with `null` each
+ * page is the list itself. A `total_count` reply ends only at the collected count, and a short or
+ * empty page with the count unmet is an error. A foreign `Link` target is an error, never
+ * `transient`, and a shape refusal carries `unreadable`.
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
- * @param {string} endpoint the endpoint with no query
+ * @param {string} endpoint
  * @param {string} cwd
  * @param {string | null} field
  */
 async function readPages(read, endpoint, cwd, field) {
+  // `endpoint` carries no query.
+  // Each request uses the documented page number, never the `Link` header, so no request goes to
+  // a target that a reply named. An empty page is kept, so a classifier sees the whole sequence.
   const pages = [];
   let collected = 0;
   let expected;
@@ -573,16 +575,18 @@ export const pagedRead =
 
 /**
  * Reads one endpoint that is no list with `gh api --include`.
- * It applies the pager's one validation (`readReply`), so `transient` is set as the pager sets it
- * (#1025, #1519). That validation covers the `Link` host check of every reply (#1033), the status
- * block, and a body of one JSON value. A success returns a `gh`-shaped result whose stdout is the
- * reply body. A `Link` target of the request host on a success is a refusal, because it marks one
+ * It applies the pager's one validation (`readReply`): the `Link` host check of every reply (#1033)
+ * and a body of one JSON value. A success returns a `gh`-shaped result whose stdout is the reply
+ * body. A `Link` target of the request host on a success is a refusal, because the reply is one
  * page of a longer list. `notFound` is set on a failed result only for the exact absence reply.
  * @param {Function} read one `gh` read, as `(args, cwd) => result`
- * @param {string} endpoint the endpoint with its query
+ * @param {string} endpoint
  * @param {string} cwd
  */
 export async function readOne(read, endpoint, cwd) {
+  // `transient` is set as the pager sets it (#1025, #1519), and `endpoint` carries its query.
+  // That validation also checks the first-line status and the 2xx status block (#1025, #1519).
+  // A success that names a longer list is a refusal, so this read never takes one page as complete.
   const { reply, end, targets } = await readReply(read, ["api", endpoint, "--include"], cwd, {});
   if (end) {
     // The exact absence reply: a 404 line, `gh: Not Found (HTTP 404)`, one JSON body, and no `Link` target.

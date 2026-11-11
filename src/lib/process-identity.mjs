@@ -336,16 +336,13 @@ export async function ownerAlive(owner, cache) {
     return false;
   }
   if (typeof owner.startTime !== "string") {
-    // No recorded stamp can come from an older version or an owner that could not read its own.
+    // An older version, or an owner with no readable stamp of its own, leaves no recorded stamp.
     return true;
   }
   // Without a cache, the own stamp is memoized after a good read, so a lock of this process needs
   // no query per check. A memoized failure still probes, so a recovered source frees the lock.
   // The pid was reused only when both stamps are valid, of one kind, and differ (see `startTimesDiffer`).
   // A null current read comes from a failed, timed-out, empty, or unparseable read, and reads as alive.
-  // A crashed owner of another namespace keeps the lock until a person checks that it is gone.
-  // So does a crashed owner of this namespace when the reader cannot read its own PID namespace.
-  // The person then removes the lock file, plus any `.reap.<digest>` claim beside it.
   let current;
   if (owner.pid === process.pid && cache === undefined) {
     current = (await ownStartTime()) ?? (await processStartTime(process.pid));
@@ -354,5 +351,9 @@ export async function ownerAlive(owner, cache) {
   } else {
     current = await processStartTime(owner.pid);
   }
+  // known-limit: step 1 never takes a lock over, even when its owner is dead.
+  // A crashed owner of another namespace keeps the lock until a person checks that it is gone.
+  // So does a crashed owner of this namespace when the reader cannot read its own PID namespace.
+  // The person then removes the lock file, plus any `.reap.<digest>` claim beside it.
   return current === null || !startTimesDiffer(owner.startTime, current);
 }
