@@ -166,8 +166,8 @@ test.skipIf(!posix)("readProcessTable lists pid, parent pid, and name", async ()
 test.skipIf(!posix)(
   "readProcessTable ends a hung read at its bound and names no output",
   async () => {
-    const error = await expectBoundKillsShim("ps", (timeoutMs) =>
-      readProcessTable({ timeout: timeoutMs / 1000 }).catch((err) => err),
+    const error = await expectBoundKillsShim("ps", (timeoutMs, { env }) =>
+      readProcessTable({ timeout: timeoutMs / 1000, env }).catch((err) => err),
     );
     expect(error).toMatchObject({ name: "ProcessReadError", isCanceled: false });
     expect(error.reason).toMatch(/^timed out after /);

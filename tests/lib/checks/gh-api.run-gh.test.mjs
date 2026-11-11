@@ -153,8 +153,8 @@ describe("the gh runner against the installed execa", () => {
 test(
   "runGh terminates the gh child when its bound expires",
   async () => {
-    const result = await expectBoundKillsShim("gh", (timeoutMs) =>
-      runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs }),
+    const result = await expectBoundKillsShim("gh", (timeoutMs, { env }) =>
+      runGh(["pr", "checks", "42", "--required"], tmpdir(), { timeoutMs, env }),
     );
     expect(result.timedOut).toBe(true);
   },
@@ -170,7 +170,7 @@ test(
   async () => {
     const result = await expectAbortKillsShim(
       "gh",
-      (signal) => runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal }),
+      (signal, { env }) => runGh(["pr", "checks", "42", "--required"], tmpdir(), { signal, env }),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(result.status).not.toBe(0);

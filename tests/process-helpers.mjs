@@ -330,19 +330,17 @@ async function runWithShimCleanup(
   throw errors.length === 1 ? errors[0] : new AggregateError(errors, "the shim helper failed");
 }
 
-async function withShimOnPath(dir, body) {
-  const path = process.env.PATH;
-  try {
-    process.env.PATH = `${dir}${delimiter}${path}`;
-    return await body();
-  } finally {
-    process.env.PATH = path;
-  }
+// The child environment of a call that must resolve `command` in `dir`. The PATH key keeps its
+// inherited spelling, because a Windows environment is case-insensitive and often holds `Path`.
+function shimEnv(dir) {
+  const key = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+  return { ...process.env, [key]: `${dir}${delimiter}${process.env[key] ?? ""}` };
 }
 
 /**
- * Checks that a time bound kills a real hanging `command` child. `run(boundMs)`
- * starts the bounded call and resolves when it returns. The call must return
+ * Checks that a time bound kills a real hanging `command` child. `run(boundMs,
+ * { env, shimDir })` starts the bounded call and resolves when it returns, with
+ * the shim on PATH in `env`. The call must return
  * within `boundMs` plus CALL_CEILING_MS, and the node process the shim recorded
  * must be gone within the force-kill delay plus the teardown margin after that.
  * The child must have started before the call returned, or the test fails: a
@@ -365,20 +363,18 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
     ceilingMs,
     async (markGone) => {
       const shim = await writeHangingShim(dir, command, ceilingMs, hardDeadline);
-      return withShimOnPath(dir, async () => {
-        const result = await returnsWithin(
-          run(boundMs),
-          boundMs + CALL_CEILING_MS,
-          "the call did not return after its bound",
-        );
-        // The record was written before the bound expired, so a short wait only
-        // covers file visibility.
-        const record = await waitForRecord(shim.started, RECORD_VISIBLE_MS);
-        assert.notEqual(record, null, `the shim did not start within the ${boundMs} ms bound`);
-        await assertGone(record, FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
-        markGone();
-        return result;
-      });
+      const result = await returnsWithin(
+        run(boundMs, { env: shimEnv(dir), shimDir: dir }),
+        boundMs + CALL_CEILING_MS,
+        "the call did not return after its bound",
+      );
+      // The record was written before the bound expired, so a short wait only
+      // covers file visibility.
+      const record = await waitForRecord(shim.started, RECORD_VISIBLE_MS);
+      assert.notEqual(record, null, `the shim did not start within the ${boundMs} ms bound`);
+      await assertGone(record, FORCE_KILL_AFTER_DELAY_MS, dir, ceilingMs);
+      markGone();
+      return result;
     },
     options.shimExitWaitMs,
     hardDeadline,
@@ -386,8 +382,9 @@ export async function expectBoundKillsShim(command, run, boundMs = BOUND_MS, opt
 }
 
 /**
- * Checks that an abort signal kills a real hanging `command` child. `start(signal)`
- * starts the call without a time bound and returns its promise. The test aborts
+ * Checks that an abort signal kills a real hanging `command` child. `start(signal,
+ * { env, shimDir })` starts the call without a time bound and returns its promise,
+ * with the shim on PATH in `env`. The test aborts
  * only after the shim recorded its pid, so a slow start cannot make the abort
  * precede the child. The child must be gone within execa's default force-kill
  * delay plus the teardown margin after the call returns. Pass
@@ -405,21 +402,19 @@ export async function expectAbortKillsShim(command, start, options = {}) {
     ceilingMs,
     async (markGone) => {
       const shim = await writeHangingShim(dir, command, ceilingMs);
-      return withShimOnPath(dir, async () => {
-        const controller = new AbortController();
-        const pending = start(controller.signal);
-        const record = await waitForRecord(shim.started, START_WAIT_MS);
-        assert.notEqual(record, null, "the shim never started");
-        controller.abort();
-        const result = await returnsWithin(
-          pending,
-          CALL_CEILING_MS,
-          "the call did not return after the abort",
-        );
-        await assertGone(record, abortForceKillAfterDelayMs, dir, ceilingMs);
-        markGone();
-        return result;
-      });
+      const controller = new AbortController();
+      const pending = start(controller.signal, { env: shimEnv(dir), shimDir: dir });
+      const record = await waitForRecord(shim.started, START_WAIT_MS);
+      assert.notEqual(record, null, "the shim never started");
+      controller.abort();
+      const result = await returnsWithin(
+        pending,
+        CALL_CEILING_MS,
+        "the call did not return after the abort",
+      );
+      await assertGone(record, abortForceKillAfterDelayMs, dir, ceilingMs);
+      markGone();
+      return result;
     },
     options.shimExitWaitMs,
   );
@@ -502,12 +497,12 @@ export async function createPsShim(body, { ceilingSeconds = 10 } = {}) {
  * POSIX only. Ends `pid` with SIGKILL only when its command line holds `marker`, a value that no
  * other process carries, so a stale or reused pid is never signaled. Returns true when it sent the
  * signal. The `ps` read ends after `timeoutMs` (default 3 s), and a read that ends that way signals
- * nothing.
+ * nothing. `env` overrides the child environment of the read.
  */
-export async function endOwnedProcess(pid, marker, { timeoutMs = 3000 } = {}) {
+export async function endOwnedProcess(pid, marker, { timeoutMs = 3000, env } = {}) {
   // Loaded on use, so a test file that mocks `execa` or `exec.mjs` sees its mock first.
   const { execBounded } = await import("../src/lib/exec.mjs");
-  const read = await execBounded("ps", ["-o", "command=", "-p", String(pid)], { timeoutMs });
+  const read = await execBounded("ps", ["-o", "command=", "-p", String(pid)], { timeoutMs, env });
   if (read.timedOut || !(read.stdout ?? "").includes(marker)) {
     return false;
   }
@@ -636,7 +631,8 @@ export async function withGitHangingAfter(passes, run) {
       return /^\d+\n$/.test(text) ? Number(text) : undefined;
     }, 20_000);
   try {
-    return await withShimOnPath(dir, () => run({ hungPid, shimDir: dir }));
+    // The shim path reaches the child env only, so concurrent tests keep one parent PATH.
+    return await run({ hungPid, shimDir: dir, env: shimEnv(dir) });
   } finally {
     const text = await readFile(pidFile, "utf8").catch(() => "");
     if (/^\d+\n$/.test(text) && process.platform !== "win32") {

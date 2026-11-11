@@ -36,9 +36,13 @@ export function isFatalTurnError(err) {
  * and terminates the `git` child on expiry. A caller that owns a total
  * limit keeps that limit even when the probe hangs. A probe cut short by the
  * bound refuses, because a work tree it never confirmed is not a verified one.
- * `signal` ends the probe too, and the refusal then has `isCanceled` set.
+ * `signal` ends the probe too, and the refusal then has `isCanceled` set. `env` overrides the
+ * child environment of the probe.
  */
-export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, signal } = {}) {
+export async function assertGitWorkTree(
+  cwd,
+  { timeoutMs = GIT_READ_TIMEOUT_MS, signal, env } = {},
+) {
   const createError = (reason) =>
     new SnapshotError(
       reason === "canceled"
@@ -49,6 +53,7 @@ export async function assertGitWorkTree(cwd, { timeoutMs = GIT_READ_TIMEOUT_MS, 
   const result = await gitRead(cwd, ["rev-parse", "--is-inside-work-tree"], {
     timeoutMs,
     signal,
+    env,
     createError,
   });
 
@@ -317,9 +322,9 @@ export async function withMutationCheck(
   cwd,
   role,
   fn,
-  { signal, forceSignal = forceCancelSignal(signal) } = {},
+  { signal, forceSignal = forceCancelSignal(signal), env } = {},
 ) {
-  const before = await snapshot(cwd, { signal });
+  const before = await snapshot(cwd, { signal, env });
   logDebug(`snapshot before ${role} turn taken (${before.workTree.length} work tree entries)`);
   let threw = false;
   let actionError;
@@ -335,7 +340,7 @@ export async function withMutationCheck(
   let after;
   const endEvidenceRead = beginEvidenceRead(forceSignal);
   try {
-    after = await snapshot(cwd, { signal: forceSignal });
+    after = await snapshot(cwd, { signal: forceSignal, env });
   } catch (snapErr) {
     if (snapErr?.isCanceled) {
       throw new SnapshotError(

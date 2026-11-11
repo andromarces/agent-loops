@@ -107,8 +107,8 @@ test(
   async () => {
     // Termination only: the bound value is proved in spawn-bounds.test.mjs, so the
     // waits here are ceilings that load cannot reach (issue #373).
-    await expectBoundKillsShim("git", (timeoutMs) =>
-      expect(assertGitWorkTree(tmpdir(), { timeoutMs })).rejects.toThrow(
+    await expectBoundKillsShim("git", (timeoutMs, { env }) =>
+      expect(assertGitWorkTree(tmpdir(), { timeoutMs, env })).rejects.toThrow(
         /validation did not complete within its bound/,
       ),
     );
@@ -123,7 +123,7 @@ test(
   async () => {
     const error = await expectAbortKillsShim(
       "git",
-      (signal) => assertGitWorkTree(tmpdir(), { signal }).catch((err) => err),
+      (signal, { env }) => assertGitWorkTree(tmpdir(), { signal, env }).catch((err) => err),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(error).toBeInstanceOf(SnapshotError);
@@ -137,8 +137,8 @@ test(
 test(
   "snapshot refuses a git read that outlasts its bound",
   async () => {
-    const error = await expectBoundKillsShim("git", (timeoutMs) =>
-      snapshot(tmpdir(), { timeoutMs }).catch((err) => err),
+    const error = await expectBoundKillsShim("git", (timeoutMs, { env }) =>
+      snapshot(tmpdir(), { timeoutMs, env }).catch((err) => err),
     );
     expect(error).toBeInstanceOf(SnapshotError);
     expect(error.message).toMatch(/timed out/);
@@ -153,7 +153,7 @@ test(
   async () => {
     const error = await expectAbortKillsShim(
       "git",
-      (signal) => snapshot(tmpdir(), { signal }).catch((err) => err),
+      (signal, { env }) => snapshot(tmpdir(), { signal, env }).catch((err) => err),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(error).toBeInstanceOf(SnapshotError);
@@ -191,7 +191,7 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const repo = await createTempRepo();
     try {
-      await withGitHangingAfter(4, async ({ hungPid }) => {
+      await withGitHangingAfter(4, async ({ hungPid, env }) => {
         const first = new AbortController();
         const second = new AbortController();
         const pending = withMutationCheck(
@@ -200,7 +200,7 @@ test.skipIf(process.platform === "win32")(
           async () => {
             first.abort();
           },
-          { signal: first.signal, forceSignal: second.signal },
+          { signal: first.signal, forceSignal: second.signal, env },
         ).catch((err) => err);
         const pid = await hungPid();
         // The first cancel alone does not end the evidence snapshot.
@@ -236,14 +236,14 @@ test.skipIf(process.platform === "win32")(
     const controller = new AbortController();
     const remove = cancelOnSigInt(controller);
     try {
-      await withGitHangingAfter(4, async ({ hungPid }) => {
+      await withGitHangingAfter(4, async ({ hungPid, env }) => {
         const pending = withMutationCheck(
           repo,
           "worker",
           async () => {
             process.emit("SIGINT");
           },
-          { signal: controller.signal },
+          { signal: controller.signal, env },
         ).catch((err) => err);
         await hungPid();
         process.emit("SIGINT");

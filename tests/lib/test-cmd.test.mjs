@@ -252,7 +252,8 @@ test(
   async () => {
     const error = await expectAbortKillsShim(
       "git",
-      (signal) => runTestCmd({ command: node(""), cwd: tmpdir(), signal }).catch((err) => err),
+      (signal, { env }) =>
+        runTestCmd({ command: node(""), cwd: tmpdir(), signal, env }).catch((err) => err),
       { abortForceKillAfterDelayMs: 500 },
     );
     expect(error.isCanceled).toBe(true);
@@ -267,9 +268,9 @@ test.skipIf(process.platform === "win32")(
   "a second cancel after a finished command reports its result and the change as not captured",
   async () => {
     const cwd = await repo();
-    await withGitHangingAfter(4, async ({ hungPid }) => {
+    await withGitHangingAfter(4, async ({ hungPid, env }) => {
       const second = new AbortController();
-      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal });
+      const pending = runTestCmd({ command: node(""), cwd, forceSignal: second.signal, env });
       const pid = await hungPid();
       second.abort();
       const testRun = await pending;
