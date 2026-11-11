@@ -1346,18 +1346,31 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
     const common = { stepsUsed, remainingSteps, pid: null, startTime: null };
+    // One read of the declared pull request serves every exit path. An unreadable
+    // declaration keeps the needs-owner handling of the exit 4 path (#1791).
+    let declaredPr = loop.pr;
+    try {
+      declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
+    } catch (err) {
+      await markNeedsOwner(
+        issue,
+        `the transcript declares an unreadable pull request: ${err.message}`,
+        { evidence: err.message, extra: common },
+      );
+      return;
+    }
 
     if (wasInterrupted || exitCode === 130) {
       await changeLoop(
         issue,
-        { ...common, status: "interrupted", reason: "interrupted" },
+        { ...common, status: "interrupted", reason: "interrupted", pr: declaredPr },
         { transcript },
       );
       progress(`issue ${issue}: interrupted`);
       return;
     }
     if (exitCode === 0) {
-      await changeLoop(issue, { ...common, status: "succeeded" }, { transcript });
+      await changeLoop(issue, { ...common, status: "succeeded", pr: declaredPr }, { transcript });
       loop = loops.get(issue);
       const cleanup = await cleanupWorkTree({
         manifest,
@@ -1373,17 +1386,6 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       return;
     }
     if (exitCode === 4) {
-      let declaredPr = loop.pr;
-      try {
-        declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
-      } catch (err) {
-        await markNeedsOwner(
-          issue,
-          `the transcript declares an unreadable pull request: ${err.message}`,
-          { evidence: err.message, extra: common },
-        );
-        return;
-      }
       await markPrHeadUnresolved(issue, loop, { ...common, pr: declaredPr, transcript });
       progress(`issue ${issue}: needs-owner (pr-head-unresolved)`);
       return;
@@ -1394,6 +1396,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         ...common,
         status: "failed",
         reason: `exit-${exitCode ?? "unknown"}`,
+        pr: declaredPr,
       },
       { transcript },
     );
