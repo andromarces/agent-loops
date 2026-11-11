@@ -110,6 +110,7 @@ test("waitChecks returns within the bound plus the child-exit ceiling", async ()
   try {
     const signals = [];
     const started = Date.now();
+    let settled = false;
     const pending = waitChecks({
       pr: 42,
       cwd: ".",
@@ -120,10 +121,20 @@ test("waitChecks returns within the bound plus the child-exit ceiling", async ()
         return new Promise(() => {});
       },
     });
+    pending.then(
+      () => {
+        settled = true;
+      },
+      () => {},
+    );
     // The bound fires, then the read is given the production child-exit ceiling.
     await vi.advanceTimersByTimeAsync(200);
-    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(4999);
+    // The default ceiling holds the result until its 5000 ms pass.
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
     const result = await pending;
+    expect(settled).toBe(true);
     expect(result.timedOut).toBe(true);
     const elapsed = Date.now() - started;
     // The ceiling is spent, and the total stays inside the stated bound.
