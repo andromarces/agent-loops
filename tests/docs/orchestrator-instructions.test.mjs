@@ -1391,11 +1391,10 @@ const REVIEWER_SCOPE =
   "must not change a tracked file, an unignored untracked file (a cache included), or Git state; writes only to ignored paths or temporary files outside the repository are allowed";
 
 // Usefulness: verifies requirement "every surface that states the reviewer file-change rule states
-// the scoped rule, not a blanket ban" (issue #837). A reviewer or an operator reading the README,
-// the architecture reference, or the orchestrator role list is then not told that a test run with
-// ignored output is forbidden. A restored blanket phrase fails here.
+// the scoped rule, not a blanket ban" (issue #837). An operator reading the architecture reference or
+// the orchestrator role list is then not told that a test run with ignored output is forbidden. A
+// restored blanket phrase fails here.
 test.each([
-  ["README.md", () => readRepoFile("README.md")],
   ["docs/reference/architecture.md", () => readRepoFile("docs/reference/architecture.md")],
   [
     "the headless orchestrator prompt",
@@ -1404,6 +1403,12 @@ test.each([
 ])("%s states the scoped reviewer file-change rule", async (_name, load) => {
   const text = (await load()).replace(/\s+/g, " ");
   expect(text).toContain(REVIEWER_SCOPE);
+});
+
+// Usefulness: verifies README links to the page that states the scoped reviewer rule, so the rule stays reachable (issue #1850).
+test("README links to the scoped reviewer file-change rule", async () => {
+  const text = await readRepoFile("README.md");
+  expect(text).toContain("](docs/reference/architecture.md#architecture)");
 });
 
 // Usefulness: verifies no reviewed surface restates the reviewer rule as a blanket file ban
@@ -1656,7 +1661,6 @@ const SHARED_SENTENCES_THAT_LIVE_IN_REFERENCE_FILES = [
   ["waiting-for-checks.md", "The hold covers no workflow that runs only on push"],
   ["reviewer-evidence.md", "The runtime reads the required-check status for that PR head"],
   ["reviewer-evidence.md", "The runtime reports the status it read beside the reviewer result"],
-  ["reviewer-sandbox.md", "Output under a path that the reviewer chose"],
   ["waiting-for-checks.md", "A check that a third-party app registers late"],
 ];
 
