@@ -14,7 +14,7 @@ This ADR partially supersedes [ADR 0022: Run the dev toolchain and Git hooks thr
 
 ## Context
 
-`pnpm-workspace.yaml` held only `virtualStoreType` and `overrides`. pnpm turns `trustPolicy` off by default, so an install accepts a package version with less trust than an earlier one.
+`pnpm-workspace.yaml` held only `virtualStoreType` and `overrides`. pnpm turns `trustPolicy` off by default, so a resolution can select a package version with less trust than an earlier one.
 
 The publish job in `.github/workflows/release.yml` ran Node 24. Node 24 is in Maintenance LTS since 2026-10-20. Node 26 is the Active LTS line, and Node 26.13.0 bundles npm 11.20.0, which meets the npm 11.15.0 gate (issue #1839).
 
@@ -26,14 +26,14 @@ The publish job in `.github/workflows/release.yml` ran Node 24. Node 24 is in Ma
 
 ## Consequences
 
-- A package version with less trust than an earlier version fails the install.
+- pnpm selects the newest matching version that is not a trust downgrade. The install fails when no matching version meets the policy.
 - A frozen-lockfile install verifies the lockfile against the supply-chain policy. The check passed with 169 entries.
 - A Node 26 runner with a cached older 26.x still fails the npm version gate when its npm is below 11.15.0.
 - Node 24 stays a supported line for the package, and the CI matrix keeps its Node 24 jobs.
 
 ## Alternatives
 
-1. **Leave `trustPolicy` off.** Not taken. The default accepts a trust downgrade.
+1. **Leave `trustPolicy` off.** Not taken. The default runs no trust check.
 2. **Publish on Node 24.** Not taken. Node 24 is in Maintenance LTS, and Node 26.13.0 bundles npm 11.20.0.
 
 ## Authors

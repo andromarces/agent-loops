@@ -1,7 +1,8 @@
 # Share one virtual store across projects on this machine.
 virtualStoreType: global
 
-# Fail the install when a package version has less trust than an earlier one.
+# Resolve the newest matching version that is not a trust downgrade. The
+# install fails when no matching version meets the policy.
 trustPolicy: no-downgrade
 
 # Route the Vite and Vitest copies that Vite+ uses to one version each. Both
