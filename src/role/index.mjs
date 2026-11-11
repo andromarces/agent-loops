@@ -244,7 +244,7 @@ async function declarePr(args, { gh, signal } = {}) {
  * The call needs the stored parent session id on a non-terminal run, and a child role cannot run it.
  * The path must be one that init copied, with a stored hash.
  * The copy must still equal that hash, so a turn edit is refused and stays reported as a breach.
- * Other paths keep their stored hashes. The envelope names the path only, never content or a hash.
+ * Other paths keep their stored hashes, and the envelope names the path only, never content or a hash.
  */
 async function refreshLocal(args, { signal } = {}) {
   rejectMisplacedFlags(args, "refresh-local");
