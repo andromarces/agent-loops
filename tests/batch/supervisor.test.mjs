@@ -1438,6 +1438,198 @@ test("a child that exits 1 is failed on the normal path", async () => {
   }
 });
 
+// Usefulness: an exit 0 loop reports the runtime pull request in the summary and in batch status.
+test("an exit 0 loop records the pull request its runtime declared", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ pr: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a failed loop reports the runtime pull request in the summary and in batch status.
+test("a failed loop records the pull request its runtime declared", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 1, pr: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1", pr: 42 });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({ status: "failed", reason: "exit-1", pr: 42 });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: an exit 0 loop with no declaration keeps pr null in the summary and in batch status.
+test("an exit 0 loop without a declaration records no pull request", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({ status: "succeeded", pr: null });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({ status: "succeeded", pr: null });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a malformed declared pull request stops a failed loop needs-owner, not failed.
+test("a failed loop with an unreadable declaration stops needs-owner", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 1, pr: "unreadable" }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({ status: "needs-owner", pr: null });
+    expect(summary.loops[0].reason).toContain("unreadable pull request");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a cancel exit records the runtime pull request in the summary and in batch status.
+test("an interrupted loop records the pull request its runtime declared", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ pr: 42, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(child);
+    controller.abort();
+    const { summary } = await run;
+    expect(summary.loops[0]).toMatchObject({ status: "interrupted", pr: 42 });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({ status: "interrupted", pr: 42 });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a two-link continuation chain ends once and reports its single declared pull request.
+test("a two-link continuation chain reports the declared pull request once", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ steps: 1, hold: true });
+  const second = childDouble({ steps: 1, hold: true });
+  const third = childDouble({ steps: 1, pr: 42 });
+  try {
+    const firstController = new AbortController();
+    const firstRun = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: first.spawn,
+        installSignal: false,
+        signal: firstController.signal,
+      },
+    });
+    await waitForLaunch(first);
+    firstController.abort();
+    await firstRun;
+
+    const secondController = new AbortController();
+    const secondRun = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: second.spawn,
+        installSignal: false,
+        signal: secondController.signal,
+      },
+    });
+    await waitForLaunch(second);
+    expect(second.calls[0].args).toContain("--continue-from");
+    secondController.abort();
+    await secondRun;
+
+    const final = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: third.spawn,
+        installSignal: false,
+      },
+    });
+    expect(third.calls).toHaveLength(1);
+    expect(third.calls[0].args).toContain("--continue-from");
+    const data = JSON.parse(await readFile(third.calls[0].transcript, "utf8"));
+    expect(data.events.filter((event) => event.type === "continued")).toHaveLength(2);
+    expect(data.events.filter((event) => event.type === "pr-declared")).toHaveLength(1);
+    expect(final.summary.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: a proven transcript exit 4 stops needs-owner on recovery and reuses its decision.
 test("a transcript that exited 4 stops needs-owner on recovery", async () => {
   const prepared = await waitPrepared([1]);
