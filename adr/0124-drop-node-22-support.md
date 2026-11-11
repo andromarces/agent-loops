@@ -47,6 +47,7 @@ Andro Marces
 ## Links
 
 - [Issue #1812](https://github.com/andromarces/agent-loops/issues/1812)
+- [PR #1820](https://github.com/andromarces/agent-loops/pull/1820)
 - [ADR 0022: Run the dev toolchain and Git hooks through Vite+](0022-vite-plus-toolchain-and-npm-distribution.md)
 - [CI workflow](../.github/workflows/ci.yml)
 - [Install probe workflow](../.github/workflows/install-probe.yml)
