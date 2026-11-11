@@ -4,52 +4,25 @@ import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
-import { afterAll, vi } from "vite-plus/test";
+import { inject, vi } from "vite-plus/test";
 import { removePath } from "./fs-helpers.mjs";
+import { TEMPLATE_KEY } from "./git-template-setup.mjs";
 
-// One seeded repository per test file, copied for each case. Vitest isolates modules per
-// file, so a module-level template gives one seed per file. A copy holds its own `.git`,
-// with no alternates file and no path to the template. A change in a copy therefore
-// reaches neither the template nor another copy. The file's `afterAll` removes the
-// template.
-let templatePromise;
-const templateDirs = [];
-
-function templateRepo() {
-  templatePromise ??= seedTemplate();
-  return templatePromise;
+// One immutable repository per run, seeded by the global setup and provided to every test file.
+// Each case copies it, so the copy holds its own `.git`, with no alternates file and no path to
+// the template. A change in a copy therefore reaches neither the template nor another copy.
+// The global teardown removes the template.
+function templatePath() {
+  return inject(TEMPLATE_KEY);
 }
-
-async function seedTemplate() {
-  const dir = await mkdtemp(join(tmpdir(), "runtime-test-template-"));
-  templateDirs.push(dir);
-  await execa("git", ["init"], { cwd: dir });
-  // A commit must not start automatic maintenance, because its lock file can vanish
-  // during the recursive copy of the template (issue #1458).
-  await execa("git", ["config", "maintenance.auto", "false"], { cwd: dir });
-  await execa("git", ["config", "gc.auto", "0"], { cwd: dir });
-  await execa("git", ["config", "user.name", "Tester"], { cwd: dir });
-  await execa("git", ["config", "user.email", "test@example.com"], { cwd: dir });
-  await writeFile(join(dir, "init.txt"), "hello\n");
-  await execa("git", ["add", "init.txt"], { cwd: dir });
-  await execa("git", ["commit", "-m", "init"], { cwd: dir });
-  return dir;
-}
-
-afterAll(async () => {
-  templatePromise = undefined;
-  for (const dir of templateDirs.splice(0)) {
-    await removePath(dir);
-  }
-});
 
 /**
- * Creates a temporary git repository with one initial commit (`init.txt`). Copies the
- * seeded template of this test file. Side effect: leaves a directory in the OS temp dir;
- * callers must remove it with `removePath`.
+ * Creates a temporary git repository with one initial commit (`init.txt`). Copies the template
+ * that the global setup provides. Side effect: leaves a directory in the OS temp dir; callers
+ * must remove it with `removePath`.
  */
 export async function createTempRepo() {
-  const template = await templateRepo();
+  const template = templatePath();
   const dir = await mkdtemp(join(tmpdir(), "runtime-test-repo-"));
   await cp(template, dir, { recursive: true });
   return dir;
@@ -57,8 +30,8 @@ export async function createTempRepo() {
 
 /**
  * Creates a main work tree with one commit and a linked work tree on a new
- * branch `run`, both under one temp directory. Copies the seeded template of this
- * test file, then adds the linked work tree per case, because its `.git` file holds an
+ * branch `run`, both under one temp directory. Copies the template that the global setup
+ * provides, then adds the linked work tree per case, because its `.git` file holds an
  * absolute path. `ignore` lines go to the shared `.git/info/exclude`. `seed(main)` runs
  * after the first commit and before the linked work tree exists. `mainName` and
  * `linkedName` name the two directories. Callers remove `base` with `removePath`.
@@ -70,7 +43,7 @@ export async function createLinkedWorkTree({
   linkedName = "linked",
   linkedWorkTree = true,
 } = {}) {
-  const template = await templateRepo();
+  const template = templatePath();
   const base = await mkdtemp(join(tmpdir(), "linked-test-"));
   const main = join(base, mainName);
   const linked = join(base, linkedName);
