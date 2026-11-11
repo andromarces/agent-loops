@@ -189,6 +189,7 @@ Andro Marces
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [Issue #709: Verification checklist: Windows](https://github.com/andromarces/agent-loops/issues/709)
 - [Implementation: audit store and frozen set](../src/batch/audit.mjs)
+- [Implementation: audit store](../src/batch/audit-store.mjs)
 - [Implementation: batch command](../src/batch/cli.mjs)
 - [Tests: audit coordination](../tests/batch/audit.test.mjs)
 - [ADR Index](README.md)

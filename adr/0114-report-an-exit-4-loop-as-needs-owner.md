@@ -84,6 +84,7 @@ The implementation updates `docs/reference/usage.md`, `docs/reference/architectu
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: headless worker](../src/batch/worker.mjs)
 - [Implementation: batch decisions](../src/batch/decisions.mjs)
 - [Implementation: batch help](../src/batch/cli.mjs)
 - [ADR Index](README.md)

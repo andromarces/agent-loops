@@ -23,14 +23,9 @@ import {
   newDecisionId,
   readDecision,
 } from "../../src/batch/decisions.mjs";
-import {
-  childArguments,
-  newBatchId,
-  readBatchStatus,
-  runBatch,
-  runSetup,
-  spawnHeadless,
-} from "../../src/batch/supervisor.mjs";
+import { newBatchId, runBatch } from "../../src/batch/supervisor.mjs";
+import { readBatchStatus } from "../../src/batch/status.mjs";
+import { childArguments } from "../../src/batch/worker.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { pollUntil, within } from "../wait-helpers.mjs";
@@ -351,23 +346,6 @@ async function pushLoop(prepared, issue = 1) {
 // The shared repository and remote are removed once for the file. Each case removes only the
 // work-tree root it created, at `afterAll`, so no case depends on another case's teardown.
 async function cleanupRepo() {}
-
-// Usefulness: the real headless child writes its output to the log file (the one end-to-end run of this entry point).
-test("the real headless child writes its output to the log file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "batch-spawn-"));
-  const logPath = join(root, "child.log");
-  try {
-    await writeFile(logPath, "batch-spawn-earlier\n");
-    const child = await spawnHeadless({ args: ["--help"], cwd: root, logPath });
-    const { exitCode } = await child.done;
-    expect(exitCode).toBe(0);
-    const log = await readFile(logPath, "utf8");
-    expect(log).toContain("batch-spawn-earlier\n");
-    expect(log).toContain("Usage:");
-  } finally {
-    await removePath(root);
-  }
-});
 
 // Usefulness: a real spawn failure fails the loop with its code and no started line.
 test("a real spawn failure fails the loop with its code and no started line", async () => {
@@ -2167,31 +2145,6 @@ test("a live recorded process with no start stamp is not restarted", async () =>
   } finally {
     await cleanupRepo(repo);
   }
-});
-
-// Usefulness: an interrupted setup stops promptly and runs no child.
-test("an aborted setup returns without waiting for the timeout", async () => {
-  const controller = new AbortController();
-  const started = Date.now();
-  const run = runSetup({
-    command: "setup",
-    workTree: process.cwd(),
-    timeoutSeconds: 60,
-    signal: controller.signal,
-    deps: {
-      notifier: noNotify,
-      execBounded: async (file, args, options) => {
-        await new Promise((resolve) => {
-          options.signal.addEventListener("abort", resolve, { once: true });
-        });
-        return { exitCode: 130 };
-      },
-    },
-  });
-  setTimeout(() => controller.abort(), 20);
-  const ok = await run;
-  expect(ok).toBe(false);
-  expect(Date.now() - started).toBeLessThan(2000);
 });
 
 // Usefulness: a PR declared by the earlier transcript is imported before recovery, so the resumed

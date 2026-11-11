@@ -260,6 +260,7 @@ Andro Marces
 - [ADR 0119: Start a batch from the frozen issue set of a finished audit](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md)
 - [Implementation: batch item identity](../src/batch/items.mjs)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: headless worker](../src/batch/worker.mjs)
 - [Implementation: batch eligibility](../src/batch/eligibility.mjs)
 - [Implementation: batch command and settings](../src/batch/cli.mjs)
 - [ADR Index](README.md)

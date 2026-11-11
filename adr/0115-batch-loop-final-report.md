@@ -55,6 +55,7 @@ Reviewer `Notes` reach only `open`, and a note then reads as an unresolved findi
 - [adr/0106-foreground-batch-scheduling.md](0106-foreground-batch-scheduling.md)
 - [Implementation: batch loop report](../src/batch/report.mjs)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: batch status](../src/batch/status.mjs)
 - [Implementation: finish summary contract](../src/contracts/orchestrator-action.mjs)
 - [Implementation: headless SUMMARY block](../src/cli.mjs)
 - [Implementation: transcript warnings](../src/lib/transcript.mjs)

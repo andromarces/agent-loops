@@ -6,20 +6,20 @@ import { setLogsToStderr, logError } from "../lib/log.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { parseBatchArgs, prepareBatch, refuseRunsRootInGitWorkTree, usage } from "./args.mjs";
+import { parseAuditArgs, prepareAudit } from "./audit-args.mjs";
 import {
   listAuditStatus,
   newAuditId,
-  parseAuditArgs,
-  prepareAudit,
   readAudit,
   readAuditStatus,
   readFrozenIssueSet,
   removeAudit,
-  runAudit,
-} from "./audit.mjs";
+} from "./audit-store.mjs";
+import { runAudit } from "./audit.mjs";
 import { runGh } from "../lib/gh-api.mjs";
 import { answerDecision } from "./decisions.mjs";
-import { newBatchId, readBatchStatus, runBatch } from "./supervisor.mjs";
+import { readBatchStatus } from "./status.mjs";
+import { newBatchId, runBatch } from "./supervisor.mjs";
 import { listBatches, readManifest } from "./store.mjs";
 
 const BATCH_USAGE = `

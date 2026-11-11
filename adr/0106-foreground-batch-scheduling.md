@@ -668,6 +668,8 @@ Andro Marces
 - [PR #1730: Report paused when a held lock skips a needs-owner loop](https://github.com/andromarces/agent-loops/pull/1730)
 - [Issue #1735: State the held-lock paused rule of batch resume in the ADR and link PR #1730](https://github.com/andromarces/agent-loops/issues/1735)
 - [Implementation: batch supervisor](../src/batch/supervisor.mjs)
+- [Implementation: headless worker](../src/batch/worker.mjs)
+- [Implementation: batch status](../src/batch/status.mjs)
 - [Implementation: batch command and settings](../src/batch/cli.mjs)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - [ADR 0018: Copy untracked local files into a linked run work tree](0018-copy-local-files-into-a-linked-run-work-tree.md)
