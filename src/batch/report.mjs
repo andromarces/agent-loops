@@ -95,6 +95,36 @@ function finishSummary(events) {
   return found;
 }
 
+/**
+ * The Deferred, Notes, and Blockers of the last child result in one transcript segment, beside the
+ * role of that turn. A segment without a result, or a result without a parsed report, reads null
+ * items and a reason, so no absent value reads as "none".
+ * @param {Array<object>} events
+ */
+function lastTurnItems(events) {
+  let found = null;
+  for (const event of events) {
+    if (event.type === "result") found = event;
+  }
+  const role = typeof found?.role === "string" ? found.role : null;
+  const items = { role, deferred: null, notes: null, blockers: null };
+  if (found === null) {
+    return { ...items, reason: "the last attempt holds no child result" };
+  }
+  if (!isJsonObject(found.result?.report)) {
+    return { ...items, reason: "the last child turn has no parsed report" };
+  }
+  const report = found.result.report;
+  const item = (value) => (typeof value === "string" ? redactAndClean(value) : null);
+  return {
+    ...items,
+    deferred: item(report.deferred),
+    notes: item(report.notes),
+    blockers: item(report.blockers),
+    reason: null,
+  };
+}
+
 function failedTurnTest(events) {
   let found = null;
   for (const event of events) {
@@ -212,6 +242,7 @@ export function buildLoopReport(data, { attempts = 0, reviewOnly = false } = {})
     warnings: bounded.warnings,
     warningsOverflow: bounded.warningsOverflow,
     transcriptRead: { ok: true },
+    ...(summary === null ? { lastTurnItems: lastTurnItems(lastEvents) } : {}),
     ...(reviewOnly
       ? { verdict: reviewer?.verdict ?? "unknown", findings: reviewer?.findings ?? null }
       : {}),

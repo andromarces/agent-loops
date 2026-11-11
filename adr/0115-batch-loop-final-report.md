@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [adr/0125-keep-the-last-child-turn-items-in-a-batch-loop-report.md](0125-keep-the-last-child-turn-items-in-a-batch-loop-report.md). The replaced part is decision 2's report field list. Decision 2 now adds `lastTurnItems` to a read report with no finish summary. Every other decision, consequence, and acceptance check stays in force, and a read report with a finish summary keeps its shape.
 
 ## Supersedes
 
