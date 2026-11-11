@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { git } from "../../src/batch/git.mjs";
 import { answerDecision, readDecision } from "../../src/batch/decisions.mjs";
 import { batchPaths, readLoop, updateLoop } from "../../src/batch/store.mjs";
@@ -679,6 +679,64 @@ test("a fatal exit without a gate event is not retried", async () => {
     expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "exit-1" });
   } finally {
     await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a resumed transcript that ended in an abort keeps the aborted reason and names it.
+test("a transcript that ended in an abort is aborted on recovery", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 1, hold: true });
+  const controller = new AbortController();
+  const lines = [];
+  const errorSpy = vi
+    .spyOn(console, "error")
+    .mockImplementation((line) => lines.push(String(line)));
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(child);
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(
+      transcript,
+      JSON.stringify({
+        ...data,
+        exitCode: 1,
+        error: "the issue is already done",
+        events: [
+          ...data.events.filter((event) => event.type !== "gate"),
+          { type: "action", action: { action: "abort", reason: "the issue is already done" } },
+        ],
+      }),
+    );
+    const resumeChild = childDouble();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+    });
+    expect(resumeChild.calls).toHaveLength(0);
+    expect(resumed.summary.loops[0]).toMatchObject({ status: "failed", reason: "aborted" });
+    const failures = lines.filter((line) => line.includes("failed (aborted"));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("the issue is already done");
+  } finally {
+    errorSpy.mockRestore();
+    await cleanupRepo();
   }
 });
 

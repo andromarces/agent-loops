@@ -8,22 +8,75 @@ import {
   readOpenBranchPrs,
   runGh,
 } from "./checks/gh-api.mjs";
+import { execBounded } from "./exec.mjs";
 import { gitRead, readHeadBranch } from "./git-read.mjs";
 
-const SCP_REMOTE = /^[^@\s/]+@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;
+const SCP_REMOTE = /^([^@\s/]+)@([^:\s/]+):([^/\s]+)\/([^/\s]+)$/;
+
+/**
+ * Runs `ssh -G` under the caller's bound. A non-zero exit, a timeout, or a cancel is data, not a
+ * throw.
+ */
+async function runSsh(args, cwd, { timeoutMs = 0, signal = null } = {}) {
+  const result = await execBounded("ssh", args, { cwd, timeoutMs, signal });
+  return {
+    status: result.exitCode,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    timedOut: Boolean(result.timedOut),
+  };
+}
+
+/**
+ * The canonical host that the SSH configuration gives for `host` with `user`, or null. `ssh -G`
+ * contacts no host. An `ssh:` URL user is percent-decoded, and a malformed value gives null. A host
+ * or user that starts with `-` never reaches the argument list. A failed, timed-out, canceled, or
+ * hostless read gives null.
+ */
+async function resolvedSshHost(host, { user, decodeUser = false, ssh, cwd, signal, timeoutMs }) {
+  let login = user;
+  if (decodeUser && login) {
+    try {
+      login = decodeURIComponent(login);
+    } catch {
+      return null;
+    }
+  }
+  if (host.startsWith("-") || (login && login.startsWith("-"))) return null;
+  let result;
+  try {
+    result = await ssh(login ? ["-G", "-l", login, host] : ["-G", host], cwd, {
+      signal,
+      timeoutMs,
+    });
+  } catch {
+    return null;
+  }
+  if (!result || result.status !== 0 || result.timedOut) return null;
+  for (const line of String(result.stdout).split("\n")) {
+    const [key, value] = line.trim().split(/\s+/);
+    if (key === "hostname" && value) return value;
+  }
+  return null;
+}
 
 /**
  * The lowercase `host/owner/repo` identity of a GitHub repository URL, or null. A remote takes the
- * `https`, `http`, `ssh`, and `git` URL forms and the scp form `git@host:owner/repo`. A PR URL
- * (`pull`, the PR number) takes the form `https://host/owner/repo/pull/<number>`, and its last
- * segment must equal that number.
+ * `https`, `http`, `ssh`, and `git` URL forms and the scp form `git@host:owner/repo`. For the scp
+ * and `ssh:` forms the host resolves through `ssh -G` with the remote user, and a failed read keeps
+ * the literal host. A PR URL (`pull`, the PR number) takes the form
+ * `https://host/owner/repo/pull/<number>`, and its last segment must equal that number.
  */
-function repoIdentity(text, { pull = null } = {}) {
+async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, timeoutMs } = {}) {
   const scp = pull === null ? SCP_REMOTE.exec(text) : null;
+  let user;
   let host;
   let segments;
+  let sshRemote = false;
+  let decodeUser = false;
   if (scp) {
-    [, host, ...segments] = scp;
+    [, user, host, ...segments] = scp;
+    sshRemote = true;
   } else {
     let url;
     try {
@@ -36,7 +89,10 @@ function repoIdentity(text, { pull = null } = {}) {
     ) {
       return null;
     }
+    user = url.username;
     host = url.hostname;
+    sshRemote = pull === null && url.protocol === "ssh:";
+    decodeUser = sshRemote;
     segments = url.pathname.split("/").filter(Boolean);
     if (segments.length !== (pull !== null ? 4 : 2)) return null;
     if (pull !== null && (segments[2] !== "pull" || segments[3] !== String(pull))) return null;
@@ -44,15 +100,20 @@ function repoIdentity(text, { pull = null } = {}) {
   }
   const [owner, repo] = segments;
   const name = repo.replace(/\.git$/, "");
-  return host && owner && name ? `${host}/${owner}/${name}`.toLowerCase() : null;
+  const resolved =
+    sshRemote && host
+      ? ((await resolvedSshHost(host, { user, decodeUser, ssh, cwd, signal, timeoutMs })) ?? host)
+      : host;
+  return resolved && owner && name ? `${resolved}/${owner}/${name}`.toLowerCase() : null;
 }
 
 /**
- * Reads the Git state that the PR match depends on: the checked-out branch, the branch remote, the
- * identity of the remote repository, and the work tree head. A field that cannot be read is null.
- * The resolver reads it before and after the `gh` read and compares the two.
+ * Reads the Git state for the PR match: the branch, the branch remote, the remote repository
+ * identity, and the work tree head. A field that cannot be read is null.
+ * The resolver reads it before and after the `gh` read and compares the two. The remote host
+ * resolves through `ssh`.
  */
-async function readRunState(cwd, signal) {
+async function readRunState(cwd, signal, { ssh = runSsh, timeoutMs } = {}) {
   // The head read does not depend on the branch chain, so it runs beside it. A failure of the chain
   // throws first, as in sequential reads, and the head read settles before the throw.
   const headRead = gitRead(cwd, ["rev-parse", "--verify", "-q", "HEAD"], { signal });
@@ -66,7 +127,10 @@ async function readRunState(cwd, signal) {
     const configured = remoteRead.exitCode === 0 ? remoteRead.stdout.trim() : "";
     const remote = configured === "" || configured === "." ? "origin" : configured;
     const urlRead = await gitRead(cwd, ["remote", "get-url", remote], { signal });
-    const repo = urlRead.exitCode === 0 ? repoIdentity(urlRead.stdout.trim()) : null;
+    const repo =
+      urlRead.exitCode === 0
+        ? await repoIdentity(urlRead.stdout.trim(), { ssh, cwd, signal, timeoutMs })
+        : null;
     const head = (await headRead).exitCode === 0 ? (await headRead).stdout.trim() : null;
     return { branch, remote, repo, head };
   } finally {
@@ -79,31 +143,24 @@ const isListEntry = (entry) =>
   isPrListEntry(entry) && typeof entry.headRefName === "string" && typeof entry.url === "string";
 
 /**
- * Finds the one open PR whose head branch is the checked-out branch of `cwd`, whose base
- * repository is the repository of the remote of that branch, and whose head commit is `head`, the
- * work tree head that the runtime read after the worker turn. The work tree head must equal `head`
- * before the `gh` read and after it. The branch and the remote repository must be unchanged by the
- * `gh` read.
- * The branch remote is `branch.<branch>.remote`, or `origin` when none is set. `GH_REPO` can point
- * `gh` at another repository, so the base repository comes from the PR URL and is compared with the
- * remote URL, never with another `gh` answer.
- * Every other state leaves the run undeclared: a detached or unreadable branch, a remote that names
- * no GitHub repository, a failed or unparseable `gh` read, any malformed entry, no match, several
- * matches, a PR from a fork, a PR for another base repository, a PR head that differs from `head`,
- * a PR URL that does not end in the PR number, and a head that differs from `head` before or
- * after the read. A branch or remote that changed during the read does the same. The function never throws.
- * `confirm(pr)` is an optional read that runs on the matched PR before the final identity check, so
- * that check covers it. It returns null to accept the PR, or the reason text that leaves the run
- * undeclared; that text is the runtime's own, so the result carries `trusted`, and `undeclaredPr`
- * names the matched PR that the read refused, for the head compare of ADR 0052 (#1111). A head,
- * branch, or remote that moved during the read names no PR.
- * @param {{ cwd: string, head: string | null, gh?: Function, signal?: AbortSignal, timeoutMs?: number, confirm?: (pr: number) => Promise<string | null> }} options
+ * Finds the one open PR of the checked-out branch whose head is `head`, the work tree head after
+ * the worker turn. Its base repository must be the branch remote's repository, and the head,
+ * branch, and remote must not change during the `gh` read.
+ * The branch remote is `branch.<branch>.remote`, or `origin` when none is set. `GH_REPO` never
+ * decides the check, because the PR URL host, owner, and repo must match the remote URL, and the
+ * function never throws.
+ * An SSH remote host, in the scp and `ssh:` forms, resolves through `ssh -G`, and a failed read
+ * keeps the literal host.
+ * A detached branch, an unreadable remote, a failed or malformed reply, no match, several matches,
+ * or a moving head leaves the run undeclared.
+ * @param {{ cwd: string, head: string | null, gh?: Function, ssh?: Function, signal?: AbortSignal, timeoutMs?: number, confirm?: (pr: number) => Promise<string | null> }} options
  * @returns {Promise<{ pr: number } | { pr: null, reason: string, quiet?: true, trusted?: true, undeclaredPr?: number }>}
  */
 export async function resolveWorkerPr({
   cwd,
   head,
   gh = runGh,
+  ssh = runSsh,
   signal,
   timeoutMs = DEFAULT_READ_TIMEOUT_MS,
   confirm = null,
@@ -112,7 +169,7 @@ export async function resolveWorkerPr({
     return { pr: null, reason: "the work tree head is not known" };
   }
   try {
-    const before = await readRunState(cwd, signal);
+    const before = await readRunState(cwd, signal, { ssh, timeoutMs });
     const { branch, remote, repo: runRepo } = before;
     if (branch === null) {
       return { pr: null, reason: "the work tree has no checked-out branch" };
@@ -140,7 +197,7 @@ export async function resolveWorkerPr({
       return { pr: null, reason: `${sameRepo.length} open PRs come from branch ${branch}` };
     }
     const [entry] = sameRepo;
-    if (repoIdentity(entry.url, { pull: entry.number }) !== runRepo) {
+    if ((await repoIdentity(entry.url, { pull: entry.number })) !== runRepo) {
       return {
         pr: null,
         reason: `PR ${entry.number} is not in the repository of remote ${remote}`,
@@ -152,8 +209,10 @@ export async function resolveWorkerPr({
         reason: `PR ${entry.number} head differs from the work tree head ${head}`,
       };
     }
+    // `confirm` reads the matched PR before the final identity check. It returns null to accept, or
+    // the runtime-owned reason that sets `trusted` and `undeclaredPr` for ADR 0052 (#1111).
     const refusal = confirm ? await confirm(entry.number) : null;
-    const after = await readRunState(cwd, signal);
+    const after = await readRunState(cwd, signal, { ssh, timeoutMs });
     if (after.branch !== branch || after.repo !== runRepo || after.head !== head) {
       return { pr: null, reason: "the branch, remote, or head changed during the PR read" };
     }

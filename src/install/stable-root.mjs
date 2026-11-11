@@ -58,7 +58,7 @@ function normalizeDrive(path) {
 }
 
 /** True when the two paths name the same location, ignoring only drive letter case. */
-function samePath(left, right) {
+function samePathIgnoringDriveCase(left, right) {
   return normalizeDrive(left) === normalizeDrive(right);
 }
 
@@ -69,7 +69,9 @@ function samePath(left, right) {
  */
 function linkResolvingTo(candidate, target) {
   try {
-    return samePath(realpathSync(candidate), realpathSync(target)) ? candidate : null;
+    return samePathIgnoringDriveCase(realpathSync(candidate), realpathSync(target))
+      ? candidate
+      : null;
   } catch {
     return null;
   }
@@ -143,7 +145,7 @@ function projectLinkFor(scriptPath, packageRoot, name) {
   const parts = nameSegments(name);
   const { root } = parse(resolve(scriptPath));
   for (let dir = dirname(resolve(scriptPath)); ; dir = dirname(dir)) {
-    if (isNodeModulesLink(dir, parts) && !samePath(dir, packageRoot)) {
+    if (isNodeModulesLink(dir, parts) && !samePathIgnoringDriveCase(dir, packageRoot)) {
       const linked = linkResolvingTo(dir, packageRoot);
       if (linked) {
         // Normalized so the rendered path does not depend on the drive letter case

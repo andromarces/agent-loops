@@ -2,7 +2,7 @@
 // The runtime validates explicit values only: it reads no request and prompts for nothing.
 import { readFileSync } from "node:fs";
 import { access, constants, realpath, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, parse, resolve } from "node:path";
 import { supportedAgents } from "../agents/index.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import {
@@ -303,49 +303,59 @@ export function logRoleOptionWarnings(role, kind, model, effort, logged) {
 }
 
 /**
+ * The first value `probe` returns other than `undefined` along `start` and its ancestors, or
+ * `undefined` at the filesystem root. Each step visits one ancestor, so a caller that needs every
+ * ancestor gets one. A caller that stops at the first existing path returns there.
+ */
+async function firstAncestorMatch(start, probe) {
+  for (let current = start; ;) {
+    const found = await probe(current);
+    if (found !== undefined) return found;
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+/**
  * The canonical path of `path`, resolving the nearest existing ancestor through the real path and
  * keeping the missing tail. A root reached through a directory link is therefore compared against
  * the real work tree, never against the alias spelling.
  */
 async function canonicalWritePath(path) {
-  let current = resolve(path);
   const tail = [];
-  for (;;) {
+  const real = await firstAncestorMatch(resolve(path), async (current) => {
     try {
-      const real = await realpath(current);
-      return join(real, ...tail.reverse());
+      return await realpath(current);
     } catch (err) {
       if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") throw err;
-      const parent = dirname(current);
-      if (parent === current) return resolve(path);
       tail.push(basename(current));
-      current = parent;
+      return undefined;
     }
-  }
+  });
+  return real === undefined ? resolve(path) : join(real, ...tail.reverse());
 }
 
 /** The nearest existing directory at or above `path`. */
 async function nearestExistingDirectory(path) {
-  let current = resolve(path);
-  for (;;) {
+  const found = await firstAncestorMatch(resolve(path), async (current) => {
     try {
-      const found = await stat(current);
-      return found.isDirectory() ? current : dirname(current);
+      const entry = await stat(current);
+      return entry.isDirectory() ? current : dirname(current);
     } catch (err) {
       if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") throw err;
-      const parent = dirname(current);
-      if (parent === current) return current;
-      current = parent;
+      return undefined;
     }
-  }
+  });
+  return found ?? parse(resolve(path)).root;
 }
 
-/** Refuses a runs root that lies inside any Git work tree (ADR 0106 decision 8). */
-export async function refuseRunsRootInGitWorkTree(runsRoot, { gitRun = gitOrThrow } = {}) {
-  const candidate = await canonicalWritePath(runsRoot);
+/** Refuses a `noun` root inside any Git work tree, not only the target repository (ADR 0106 decision 8). */
+export async function refuseRootInGitWorkTree(path, noun, { gitRun = gitOrThrow } = {}) {
+  const candidate = await canonicalWritePath(path);
   const top = await gitWorkTreeTop(candidate, gitRun);
   if (top !== null && isInside(top, candidate)) {
-    throw usage("The runs root must lie outside every Git work tree.");
+    throw usage(`The ${noun} must lie outside every Git work tree.`);
   }
 }
 
@@ -359,27 +369,16 @@ async function gitWorkTreeTop(candidate, gitRun) {
   } catch {
     // Fall through to the `.git` entry scan.
   }
-  let current = ancestor;
-  for (;;) {
+  const top = await firstAncestorMatch(ancestor, async (current) => {
     try {
       await stat(join(current, ".git"));
-      return canonicalPath(current);
+      return await canonicalPath(current);
     } catch (err) {
       if (err?.code !== "ENOENT" && err?.code !== "ENOTDIR") throw err;
+      return undefined;
     }
-    const parent = dirname(current);
-    if (parent === current) return null;
-    current = parent;
-  }
-}
-
-/** Refuses a work-tree root inside any Git work tree, not only the target repository. */
-async function refuseWorkTreeRootInGitWorkTree(workTreeRoot, { gitRun = gitOrThrow } = {}) {
-  const candidate = await canonicalWritePath(workTreeRoot);
-  const top = await gitWorkTreeTop(candidate, gitRun);
-  if (top !== null && isInside(top, candidate)) {
-    throw usage("The work-tree root must lie outside every Git work tree.");
-  }
+  });
+  return top ?? null;
 }
 
 async function workTreeEntries(repo) {
@@ -396,26 +395,25 @@ async function workTreeEntries(repo) {
  * A missing path is checked at its nearest existing ancestor.
  * `rootError` selects the batch rethrow or the audit usage refusal at a filesystem root.
  */
-async function assertWritableDirectory(path, noun, { rootError = "usage" } = {}) {
+export async function assertWritableDirectory(path, noun, { rootError = "usage" } = {}) {
   const refusal = `The work-tree root is not a directory the ${noun} can write.`;
-  let current = path;
-  for (;;) {
+  let lastError;
+  const writable = await firstAncestorMatch(path, async (current) => {
     try {
       const found = await stat(current);
       if (!found.isDirectory()) throw usage(refusal);
       await access(current, constants.W_OK);
-      return;
+      return true;
     } catch (err) {
       if (err?.usage && rootError !== "throw") throw err;
       if (err?.code !== "ENOENT") throw usage(refusal);
-      const parent = dirname(current);
-      if (parent === current) {
-        if (rootError === "throw") throw err;
-        throw usage(refusal);
-      }
-      current = parent;
+      lastError = err;
+      return undefined;
     }
-  }
+  });
+  if (writable === true) return;
+  if (rootError === "throw") throw lastError;
+  throw usage(refusal);
 }
 
 /** The stable short key of a repository path, with a Windows drive letter in lower case. */
@@ -465,7 +463,7 @@ export async function prepareRepository({
   }
 
   const rootCanonical = await canonicalWritePath(options.workTreeRoot ?? defaultRoot);
-  await refuseWorkTreeRootInGitWorkTree(rootCanonical, { gitRun });
+  await refuseRootInGitWorkTree(rootCanonical, "work-tree root", { gitRun });
   await assertWritableDirectory(rootCanonical, noun, { rootError });
 
   return { base, revision, workTreeRoot: rootCanonical, repoKey: repoKey(repo) };

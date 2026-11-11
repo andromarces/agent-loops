@@ -178,6 +178,46 @@ test("a child that exits 1 is failed on the normal path", async () => {
   }
 });
 
+// Usefulness: an abort transcript stops failed with reason aborted, names it once, and frees the claim.
+test("a child that exits 1 after an abort is aborted on the normal path", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const lines = [];
+  const errorSpy = vi
+    .spyOn(console, "error")
+    .mockImplementation((line) => lines.push(String(line)));
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({
+          exitCode: 1,
+          abort: "The issue is already done on the base branch.\nA later line stays out.",
+          error: "The issue is already done on the base branch.",
+        }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(summary.loops[0]).toMatchObject({ status: "failed", reason: "aborted" });
+    const failures = lines.filter((line) => line.includes("failed (aborted"));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain("already done on the base branch");
+    expect(failures[0]).not.toContain("A later line stays out");
+    const claim = batchPaths(runsRoot).claim(prepared.repoKey, 1);
+    await expect(stat(claim)).rejects.toMatchObject({ code: "ENOENT" });
+    const loop = await readLoop(runsRoot, prepared.id, 1);
+    expect(loop.reason).toBe("aborted");
+  } finally {
+    errorSpy.mockRestore();
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: an exit 0 loop reports the runtime pull request in the summary and in batch status.
 test("an exit 0 loop records the pull request its runtime declared", async () => {
   const prepared = await waitPrepared([1]);
