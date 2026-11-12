@@ -219,7 +219,7 @@ A batch loop whose resume lock is held reports `paused` and keeps its existing d
 
 ### 10. Documentation for milestone 3
 
-The implementation updates the batch text of `docs/reference/usage.md`,
+The implementation updates the batch text of `docs/reference/batch.md`,
 `docs/reference/architecture.md`, `docs/orchestrator-instructions.md`, and `src/help.mjs`. The
 orchestrator instructions replace only the sentence that defers decisions, slot release, and merge
 continuation. README and onboarding expansion stay out of scope.

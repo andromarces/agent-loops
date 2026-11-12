@@ -45,7 +45,7 @@ The audit record stores the resolved focus. `batch audit resume` reruns a failed
 
 ### 5. The agent-session path and the reference docs name the flags
 
-The audit paragraph of `docs/orchestrator-instructions.md`, the `Reviewer audits` section of `docs/reference/usage.md`, and the `batch audit` lines of `src/help.mjs` name `--focus` and `--focus-file`.
+The audit paragraph of `docs/orchestrator-instructions.md`, the `Reviewer audits` section of `docs/reference/batch.md`, and the `batch audit` lines of `src/help.mjs` name `--focus` and `--focus-file`.
 
 ## Consequences
 
