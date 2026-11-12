@@ -821,10 +821,9 @@ test("the user docs state the remote-write limit", async () => {
   );
   const connectorStart = readme.indexOf("A GitHub app connector on Codex.");
   expect(connectorStart).toBeGreaterThanOrEqual(0);
-  const connectorParagraph = readme.slice(
-    connectorStart,
-    readme.indexOf("#### Denial probe", connectorStart),
-  );
+  const connectorEnd = readme.indexOf("#### Denial probe", connectorStart);
+  expect(connectorEnd).toBeGreaterThan(connectorStart);
+  const connectorParagraph = readme.slice(connectorStart, connectorEnd);
   expect(connectorParagraph).toContain("(issue #496)");
 });
 

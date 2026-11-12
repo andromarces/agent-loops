@@ -60,11 +60,11 @@ export async function createLinkedWorkTree({
 }
 
 // A clean repo at `CLEAN_REPO_HEAD`, answered from memory for a test that routes
-// `execa` through a double. The real snapshot code still runs over these answers;
-// only the `git` processes are gone. Each reply holds the bytes `git` prints, and
-// `answer` applies the `stripFinalNewline` option as execa does. Only the exact
+// `execa` through a double. The real snapshot code still runs over these answers,
+// and only the `git` processes are gone. Each reply holds the bytes `git` prints,
+// and `answer` applies the `stripFinalNewline` option as execa does. Only the exact
 // argument arrays that the code under test sends are answered, compared element by
-// element; any other `git` call, including a changed flag, flag order, or two
+// element. Any other `git` call, including a changed flag, flag order, or two
 // arguments joined into one element, throws. A `cwd` that does not exist fails
 // as execa does with `reject: false`: no exit code, `code: "ENOENT"`, empty output.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
