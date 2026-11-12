@@ -131,6 +131,7 @@ export function childDouble({
   roles = {},
   hold = false,
   pr = null,
+  undeclared = null,
   summary = null,
   error = null,
   warnings = [],
@@ -176,6 +177,7 @@ export function childDouble({
           ...earlier.events,
           ...(args.includes("--continue-from") ? [{ type: "continued", exitCode: 130 }] : []),
           ...nextEvents,
+          ...(undeclared === null ? [] : [{ type: "pr-undeclared", pr: undeclared }]),
           ...(pr === null ? [] : [{ type: "pr-declared", pr }]),
           ...(summary === null ? [] : [{ type: "action", action: { action: "finish", summary } }]),
           ...(abort === null

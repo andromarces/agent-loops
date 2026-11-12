@@ -180,6 +180,30 @@ export function declaredPrFromTranscript(earlier) {
 }
 
 /**
+ * The undeclared PR of the last attempt of a transcript, or null. A declared record wins, and a
+ * missing, malformed, or non-integer record fails closed to null. A `continued` event starts a new
+ * attempt, as in the batch report reader.
+ * @param {{ events?: object[] } | null | undefined} earlier
+ * @returns {number | null}
+ */
+export function undeclaredPrFromTranscript(earlier) {
+  const events = Array.isArray(earlier?.events) ? earlier.events : [];
+  let start = 0;
+  for (let index = 0; index < events.length; index += 1) {
+    if (events[index]?.type === "continued") start = index + 1;
+  }
+  let found = null;
+  for (const event of events.slice(start)) {
+    if (!isJsonObject(event)) return null;
+    if (event.type === "pr-declared") return null;
+    if (event.type !== "pr-undeclared") continue;
+    if (!Number.isSafeInteger(event.pr) || event.pr <= 0) return null;
+    found = event.pr;
+  }
+  return found;
+}
+
+/**
  * Refuses a `--continue-from` flag that changes or conflicts with the declared PR. The declared PR
  * is an init field of the continued run. A `--pr` or `--require-ci` for another PR is refused, as a
  * changed init field is. A flag for the same PR is accepted. The `review-only` mode refuses a

@@ -42,10 +42,11 @@ async function decisionView(runsRoot, batchId, loop) {
 /** The next action of a loop that needs its owner, or null when no named action exists. */
 function nextActionOf(loop) {
   if (loop.status !== "needs-owner" || loop.reason !== "pr-head-unresolved") return null;
-  if (loop.pr == null) {
+  const pr = loop.pr ?? loop.prUndeclared ?? null;
+  if (pr == null) {
     return `compare branch ${loop.branch} with the reviewed commit, then merge or resume. The pull request number is not recorded`;
   }
-  return `compare pull request ${loop.pr} head with the reviewed commit, then merge or resume`;
+  return `compare pull request ${pr} head with the reviewed commit, then merge or resume`;
 }
 
 /** Reads one batch for `batch status`. A live-owner checkpoint that is gone reads `stale`. */

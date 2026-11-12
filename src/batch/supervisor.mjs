@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canonicalPath } from "../lib/canonical-path.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
-import { declaredPrFromTranscript } from "../lib/gate.mjs";
+import { declaredPrFromTranscript, undeclaredPrFromTranscript } from "../lib/gate.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
 import { logError, logInfo, logWarn } from "../lib/log.mjs";
@@ -137,6 +137,16 @@ const terminal = (status) => TERMINAL.has(status);
 const loopEnded = (status) => terminal(status) || status === "interrupted";
 // The failed line of an aborted loop carries the first line of the abort reason.
 const abortDetail = (line) => (line ? `aborted: ${line}` : "aborted");
+
+// The undeclared PR that the runtime resolved for a loop whose worker opened one. A pull request
+// item and a `review-only` loop record none.
+function undeclaredPrOf(loop, data) {
+  if (loop.kind === "pr" || loop.mode === "review-only") return null;
+  return undeclaredPrFromTranscript(data);
+}
+
+// Clears a stored undeclared PR when a declared one replaces it. An absent declaration keeps it.
+const clearUndeclared = (pr) => (pr === null || pr === undefined ? {} : { prUndeclared: null });
 
 function summaryOf(manifest, loops, skipped = new Map()) {
   const keys = Array.isArray(manifest.items)
@@ -790,7 +800,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const markPrHeadUnresolved = async (
     issue,
     loop,
-    { pr, stepsUsed, remainingSteps, transcript },
+    { pr, prUndeclared, stepsUsed, remainingSteps, transcript },
   ) => {
     const options = {
       attempts: loop.attempts,
@@ -800,9 +810,19 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       transcript === undefined
         ? await readLoopReport(loop.transcript, options)
         : loopReportFromRead(transcript, options);
+    const recorded = pr ?? prUndeclared ?? null;
     return markNeedsOwner(issue, "pr-head-unresolved", {
-      evidence: pr === null ? "the transcript records no pull request" : `pull request ${pr}`,
-      extra: { pr, stepsUsed, remainingSteps, pid: null, startTime: null, report },
+      evidence:
+        recorded === null ? "the transcript records no pull request" : `pull request ${recorded}`,
+      extra: {
+        pr,
+        prUndeclared: prUndeclared ?? null,
+        stepsUsed,
+        remainingSteps,
+        pid: null,
+        startTime: null,
+        report,
+      },
     });
   };
 
@@ -900,7 +920,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       batchId: id,
       claim,
       openPrClosures: closures,
-      ownPr: loop.pr,
+      ownPr: loop.pr ?? loop.prUndeclared ?? null,
       ownBranch: loop.branch,
       requireSpecification: prepared.requireSpecification === true,
     });
@@ -1090,6 +1110,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       status: "queued",
       setupDone: loop.setupDone === true,
       pr: freshRecovery.pr ?? loop.pr,
+      ...clearUndeclared(freshRecovery.pr ?? loop.pr),
     });
     return { loop, continuation, freshRecovery };
   };
@@ -1230,20 +1251,27 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     });
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
-    const common = { stepsUsed, remainingSteps, pid: null, startTime: null };
     // One read of the declared pull request serves every exit path. An unreadable
-    // declaration keeps the needs-owner handling of the exit 4 path (#1791).
+    // declaration keeps the needs-owner handling of the exit 4 path (#1791). The
+    // undeclared pull request of an unreadable required-check source is read beside it (#1899).
     let declaredPr = loop.pr;
+    let prUndeclared = null;
     try {
-      declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
+      const data = transcript.ok ? transcript.data : null;
+      declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
+      prUndeclared = declaredPr !== null ? null : undeclaredPrOf(loop, data);
     } catch (err) {
       await markNeedsOwner(
         issue,
         `the transcript declares an unreadable pull request: ${err.message}`,
-        { evidence: err.message, extra: common },
+        {
+          evidence: err.message,
+          extra: { stepsUsed, remainingSteps, pid: null, startTime: null, prUndeclared },
+        },
       );
       return;
     }
+    const common = { stepsUsed, remainingSteps, pid: null, startTime: null, prUndeclared };
 
     if (wasInterrupted || exitCode === 130) {
       await changeLoop(
@@ -1314,6 +1342,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const readLoopTranscript = (file) => readTranscript(file, deps.readTranscript);
 
   const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr, transcript }) => {
+    const recordedPr = pr ?? loop.pr;
     await changeLoop(
       issue,
       {
@@ -1322,7 +1351,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         skipReason: null,
         stepsUsed,
         remainingSteps,
-        pr: pr ?? loop.pr,
+        pr: recordedPr,
+        prUndeclared: recordedPr == null ? (loop.prUndeclared ?? null) : null,
         pid: null,
         startTime: null,
       },
@@ -1407,8 +1437,11 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       return;
     }
     let declaredPr = loop.pr;
+    let prUndeclared = null;
     try {
-      declaredPr = declaredPrFromTranscript(transcript.ok ? transcript.data : null) ?? loop.pr;
+      const data = transcript.ok ? transcript.data : null;
+      declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
+      prUndeclared = declaredPr !== null ? null : undeclaredPrOf(loop, data);
     } catch (err) {
       await markNeedsOwner(
         issue,
@@ -1419,7 +1452,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       );
       return;
     }
-    loop = { ...loop, pr: declaredPr };
+    loop = { ...loop, pr: declaredPr, prUndeclared };
 
     const recordedExit = transcript.ok
       ? transcriptExitFromData(transcript.data)
@@ -1442,6 +1475,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     ) {
       await markPrHeadUnresolved(issue, loop, {
         pr: loop.pr,
+        prUndeclared: loop.prUndeclared,
         stepsUsed,
         remainingSteps,
         transcript,
@@ -1512,6 +1546,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       stepsUsed,
       remainingSteps,
       pr: decision.pr ?? loop.pr,
+      ...clearUndeclared(decision.pr ?? loop.pr),
       pid: null,
       startTime: null,
     });

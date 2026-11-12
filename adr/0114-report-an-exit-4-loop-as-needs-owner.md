@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[adr/0131-name-the-undeclared-pull-request-of-a-batch-loop.md](0131-name-the-undeclared-pull-request-of-a-batch-loop.md) partially supersedes this ADR. The replaced part is decision 3's sentence about a loop with no recorded pull request. A recorded undeclared pull request is named in the next action. Every other decision stays in force.
 
 ## Supersedes
 

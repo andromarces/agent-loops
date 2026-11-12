@@ -28,6 +28,8 @@ partially-superseded
 
 [adr/0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) partially supersedes this ADR. The replaced parts are decision 2's rule that `--issue` is the only issue source and decision 3's rule that the runtime selects no issue and receives its numbers only from the skill. An explicit `--from-audit <id>` reads the frozen set of a finished audit; the runtime still reads no label, milestone, project, or request. Every other sentence of decisions 2 and 3 stays in force.
 
+[adr/0131-name-the-undeclared-pull-request-of-a-batch-loop.md](0131-name-the-undeclared-pull-request-of-a-batch-loop.md) partially supersedes this ADR. The replaced parts are decision 8's checkpoint field list, decision 11's reconciliation rule for a recorded pull request, and decision 13's cleanup proof. A loop records `prUndeclared` beside `pr`, and a declared pull request wins. Reconciliation and the merged cleanup proof read either number.
+
 Every other decision, consequence, and acceptance check stays in force. The batch still never
 merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 

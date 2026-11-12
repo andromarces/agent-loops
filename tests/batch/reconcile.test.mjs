@@ -317,6 +317,44 @@ test("a declared pull request that the read does not find stops the loop", async
   expect(result.reason).toContain("declares pull request 9");
 });
 
+// Usefulness: an undeclared pull request that the read does not find is ambiguous.
+test("an undeclared pull request that the read does not find stops the loop", async () => {
+  const result = await reconcileLoop({
+    loop: loop({ prUndeclared: 9 }),
+    repo: "C:\\repo",
+    base: "main",
+    gh: ghReplies({ pulls: [openPull] }),
+    deps: deps(baseGit()),
+  });
+  expect(result).toMatchObject({ status: "needs-owner" });
+  expect(result.reason).toContain("undeclared pull request 9");
+});
+
+// Usefulness: a loop's own undeclared pull request never trips the another-branch exclusion.
+test("a loop's own undeclared pull request does not trip the another-branch check", async () => {
+  const result = await reconcileLoop({
+    loop: loop({ prUndeclared: 5 }),
+    repo: "C:\\repo",
+    base: "main",
+    gh: ghReplies({ pulls: [openPull], references: [{ number: 5 }] }),
+    deps: deps(baseGit()),
+  });
+  expect(result).toEqual({ status: "resume", reason: null, pr: null, requireCi: null });
+});
+
+// Usefulness: a pull request from another repository never fills the undeclared number.
+test("a foreign pull request never fills the undeclared number", async () => {
+  const result = await reconcileLoop({
+    loop: loop(),
+    repo: "C:\\repo",
+    base: "main",
+    gh: ghReplies({ pulls: [{ ...openPull, isCrossRepository: true }] }),
+    deps: deps(baseGit()),
+  });
+  expect(result).toMatchObject({ status: "needs-owner", pr: null });
+  expect(result.reason).toContain("fork");
+});
+
 // Usefulness: an open pull request on a dirty tree is not resumed.
 test("a dirty work tree with an open pull request stops the loop", async () => {
   const result = await reconcileLoop({

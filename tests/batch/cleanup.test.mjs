@@ -16,6 +16,7 @@ const repositories = [];
 let shared;
 const trees = {};
 let merged;
+let mergedUndeclared;
 
 async function createRepo() {
   const main = await createTempRepo();
@@ -73,6 +74,24 @@ beforeAll(async () => {
   await execa("git", ["push", "origin", repo.base], { cwd: repo.main });
   await execa("git", ["push", "origin", "--delete", tree.branch], { cwd: tree.workTree });
   merged = { ...tree, head, mergeCommit };
+
+  // A second merged tree keeps the undeclared proof case independent of the declared one.
+  const undeclaredRepo = await createRepo();
+  const undeclaredTree = await makeTree(undeclaredRepo, { name: "merged-undeclared" });
+  const undeclaredHead = (await git(["rev-parse", "HEAD"], undeclaredTree.workTree)).stdout;
+  await execa("git", ["merge", "--no-ff", "-m", "merge", undeclaredTree.branch], {
+    cwd: undeclaredRepo.main,
+  });
+  const undeclaredMergeCommit = (await git(["rev-parse", "HEAD"], undeclaredRepo.main)).stdout;
+  await execa("git", ["push", "origin", undeclaredRepo.base], { cwd: undeclaredRepo.main });
+  await execa("git", ["push", "origin", "--delete", undeclaredTree.branch], {
+    cwd: undeclaredTree.workTree,
+  });
+  mergedUndeclared = {
+    ...undeclaredTree,
+    head: undeclaredHead,
+    mergeCommit: undeclaredMergeCommit,
+  };
 }, 60_000);
 
 afterAll(async () => {
@@ -199,6 +218,27 @@ test("the main work tree is never removed", async () => {
   });
   expect(result.removed).toBe(false);
   expect((await stat(fixture.repo.main)).isDirectory()).toBe(true);
+});
+
+// Usefulness: a merged undeclared pull request proves the push when no declaration exists.
+test("a merged undeclared pull request proves a deleted remote branch", async () => {
+  const fixture = await fixtureFor(mergedUndeclared, { pr: null });
+  const gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "view") {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          state: "MERGED",
+          headRefOid: mergedUndeclared.head,
+          mergeCommit: { oid: mergedUndeclared.mergeCommit },
+        }),
+        stderr: "",
+      };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+  const result = await fixture.cleanup({ loop: { pr: null, prUndeclared: 5 }, gh });
+  expect(result).toEqual({ removed: true, reason: null });
 });
 
 // Usefulness: a merged pull request proves the push when the remote branch was deleted.

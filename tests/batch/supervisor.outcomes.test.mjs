@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { readDecision } from "../../src/batch/decisions.mjs";
+import { loopEntry } from "../../src/batch/loop-records.mjs";
 import { readBatchStatus } from "../../src/batch/status.mjs";
 import { batchPaths, readLoop, updateLoop } from "../../src/batch/store.mjs";
 import { runBatch } from "../../src/batch/supervisor.mjs";
@@ -405,6 +406,242 @@ test("a two-link continuation chain reports the declared pull request once", asy
     expect(final.summary.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
     const status = await readBatchStatus({ runsRoot, id: prepared.id });
     expect(status.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: an exit 0 loop reports the runtime's undeclared pull request beside its finish report.
+test("an exit 0 loop records the pull request its runtime left undeclared", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({
+          undeclared: 42,
+          summary: {
+            changed: "a",
+            verified: "b",
+            deferred: "c",
+            notDone: "d",
+            open: "CI is pending at finish",
+          },
+        }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: null,
+      prUndeclared: 42,
+    });
+    expect(summary.loops[0].report.summary.open).toBe("CI is pending at finish");
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: null,
+      prUndeclared: 42,
+    });
+    expect(status.loops[0].report.summary.open).toBe("CI is pending at finish");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a declared pull request wins over one that an earlier turn left undeclared.
+test("a declared pull request wins over an undeclared one", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ undeclared: 41, pr: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({ status: "succeeded", pr: 42, prUndeclared: null });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a malformed undeclared record fails closed and records no pull request.
+test("a malformed undeclared pull request records no number", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ undeclared: "42" }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({ status: "succeeded", pr: null, prUndeclared: null });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a continued transcript reads only the undeclared pull request of its last attempt.
+test("a continued transcript records its last attempt's undeclared pull request", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ steps: 1, undeclared: 41, hold: true });
+  const second = childDouble({ steps: 1, undeclared: 42 });
+  try {
+    const firstController = new AbortController();
+    const firstRun = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: first.spawn,
+        installSignal: false,
+        signal: firstController.signal,
+      },
+    });
+    await waitForLaunch(first);
+    firstController.abort();
+    await firstRun;
+
+    const final = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: second.spawn,
+        installSignal: false,
+      },
+    });
+    expect(final.summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: null,
+      prUndeclared: 42,
+    });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a review-only loop records no undeclared pull request, so its finish report stands alone.
+test("a review-only loop records no undeclared pull request", async () => {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1], {
+    items: [{ kind: "issue", number: 1, key: 1, mode: "review-only", task: null }],
+  });
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ undeclared: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: null,
+      prUndeclared: null,
+    });
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// Usefulness: a pull request item keeps its frozen number and gains no undeclared number.
+test("a pull request item loop entry keeps its frozen number", () => {
+  const entry = loopEntry({
+    issue: "pr-5",
+    kind: "pr",
+    mode: "review-first",
+    number: 5,
+    status: "succeeded",
+    pr: 5,
+    prUndeclared: null,
+  });
+  expect(entry).toMatchObject({ pr: 5, prUndeclared: null });
+});
+
+// Usefulness: a resumed succeeded loop with an undeclared pull request adds no checkpoint write.
+test("a no-op resume of an undeclared loop writes nothing", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ undeclared: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    const checkpoint = batchPaths(runsRoot).loop(prepared.id, 1);
+    const before = await stat(checkpoint, { bigint: true });
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, installSignal: false },
+    });
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.summary.loops[0]).toMatchObject({ prUndeclared: 42 });
+    expect((await stat(checkpoint, { bigint: true })).mtimeNs).toBe(before.mtimeNs);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: an exit 4 loop names its undeclared pull request and the next action in status.
+test("batch status names the undeclared pull request of an exit 4 loop", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble({ exitCode: 4, undeclared: 42 }).spawn,
+        installSignal: false,
+      },
+    });
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.loops[0]).toMatchObject({
+      status: "needs-owner",
+      reason: "pr-head-unresolved",
+      pr: null,
+      prUndeclared: 42,
+    });
+    expect(status.loops[0].nextAction).toContain("pull request 42");
   } finally {
     await cleanupRepo();
   }
