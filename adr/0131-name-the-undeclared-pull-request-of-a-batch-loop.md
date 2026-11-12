@@ -100,6 +100,7 @@ Andro Marces
 ## Links
 
 - [Issue #1899: Name the undeclared pull request of each batch loop on a repository with unreadable required checks](https://github.com/andromarces/agent-loops/issues/1899)
+- [Pull request #1903: Name the undeclared pull request of a batch loop](https://github.com/andromarces/agent-loops/pull/1903)
 - [adr/0106-foreground-batch-scheduling.md](0106-foreground-batch-scheduling.md)
 - [adr/0114-report-an-exit-4-loop-as-needs-owner.md](0114-report-an-exit-4-loop-as-needs-owner.md)
 - [adr/0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md](0053-compare-the-head-of-a-worker-opened-pr-that-the-runtime-refused-to-declare.md)
