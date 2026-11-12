@@ -2,7 +2,7 @@ import { readableErrorText } from "./error-message.mjs";
 import { execBounded, KILL_GRACE_MS } from "./exec.mjs";
 import { logError, logInfo, logWarn } from "./log.mjs";
 import { redactAndClean } from "./redact.mjs";
-import { beginEvidenceRead, forceCancelSignal } from "./sigint.mjs";
+import { beginEvidenceRead, canceledError, forceCancelSignal } from "./sigint.mjs";
 import { diffSnapshots, snapshot } from "./snapshot.mjs";
 import { holdTestSlot, testSlotOptions } from "./test-slot.mjs";
 
@@ -53,14 +53,6 @@ export function reportLateChangedPaths(testRun, baseline) {
   testRun.lateChangedPaths = boundedPaths(changed);
   testRun.lateChangedCount = changed.length;
 }
-// The error that a canceled run throws, which carries the advisory `canceled` result.
-function canceledError(testRun) {
-  const err = new Error("test command canceled");
-  err.isCanceled = true;
-  err.testRun = testRun;
-  return err;
-}
-
 // The advisory result of a command that never ran: every output field is empty. A run that ran
 // overrides the output fields.
 function baseTestRun(command, status, durationMs, summary) {
@@ -119,14 +111,14 @@ async function holdSlotFor(command, signal) {
   }
   const durationMs = Date.now() - startedAt;
   if (signal?.aborted) {
-    throw canceledError(
-      notRunResult(
+    throw canceledError("test command canceled", {
+      testRun: notRunResult(
         command,
         "canceled",
         "canceled while the command waited for a test slot; the command did not run",
         durationMs,
       ),
-    );
+    });
   }
   logWarn(`no test slot won within ${options.waitSeconds}s; the test command did not run`);
   return {
@@ -326,7 +318,7 @@ async function runInSlot({
     finalSnapshots.set(testRun, finalSnapshot);
   }
   if (canceled) {
-    throw canceledError(testRun);
+    throw canceledError("test command canceled", { testRun });
   }
   return testRun;
 }

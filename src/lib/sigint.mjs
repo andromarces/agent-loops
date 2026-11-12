@@ -5,8 +5,12 @@ import { logWarn, logError } from "./log.mjs";
 /** The one text of a SIGINT cancel, shared by the exit paths and the cancel error. */
 export const SIGINT_MESSAGE = "Interrupted by SIGINT";
 
-/** The cancel error, as the rest of the role CLI reports it, so Ctrl+C exits 130. */
-export const canceledError = () => Object.assign(new Error(SIGINT_MESSAGE), { isCanceled: true });
+/**
+ * The cancel error, as the rest of the role CLI reports it, so Ctrl+C exits 130. `message` names
+ * another cancel, and `fields` adds its result to the error.
+ */
+export const canceledError = (message = SIGINT_MESSAGE, fields) =>
+  Object.assign(new Error(message), { isCanceled: true }, fields);
 
 const FORCE_EXIT_WAIT_MS = 2000;
 

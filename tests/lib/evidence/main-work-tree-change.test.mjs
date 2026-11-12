@@ -108,6 +108,16 @@ const forwardMain = async () => {
   return head;
 };
 
+// Usefulness: verifies the shared branch read keeps a null branch for a detached main work tree (#1889).
+test("a detached main work tree reports a null branch", async () => {
+  await execa("git", ["checkout", "--detach"], { cwd: tree.main });
+
+  const state = await readMainWorkTree(tree.linked);
+
+  expect(state).not.toBeNull();
+  expect(state.branch).toBeNull();
+});
+
 // Usefulness: verifies a remote default ref that moves during the read keeps the path report (issue #1485).
 test("a remote default ref that moves during the read keeps the change report", async () => {
   const before = await readMainWorkTree(tree.linked);

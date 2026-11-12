@@ -7,9 +7,30 @@ import { UNREADABLE_MESSAGE } from "../../src/lib/error-message.mjs";
 import { killTreeOnExit } from "../../src/lib/exec-tree.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { processExists } from "../process-helpers.mjs";
-import { beginEvidenceRead, cancelOnSigInt, forceCancelSignal } from "../../src/lib/sigint.mjs";
+import {
+  beginEvidenceRead,
+  cancelOnSigInt,
+  canceledError,
+  forceCancelSignal,
+  SIGINT_MESSAGE,
+} from "../../src/lib/sigint.mjs";
 
 const IS_WINDOWS = process.platform === "win32";
+
+// Usefulness: verifies the shared cancel error keeps the SIGINT text and adds a caller field (#1889).
+test("canceledError keeps the SIGINT message and adds a caller field", () => {
+  const run = { status: "canceled" };
+
+  const sigint = canceledError();
+  const testCmd = canceledError("test command canceled", { testRun: run });
+
+  expect(sigint).toMatchObject({ message: SIGINT_MESSAGE, isCanceled: true });
+  expect(testCmd).toMatchObject({
+    message: "test command canceled",
+    isCanceled: true,
+    testRun: run,
+  });
+});
 
 // Usefulness: acceptance (#669) — the first SIGINT cancels the run and the process stays alive, so
 // the run handler can set exit 130 and write its transcript; the listener stays registered.
