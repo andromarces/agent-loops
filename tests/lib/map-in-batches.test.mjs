@@ -3,7 +3,7 @@ import { mapInBatches, settleInOrder } from "../../src/lib/map-in-batches.mjs";
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Usefulness: verifies the results keep the item order and at most `size` calls are in flight
+// Usefulness: verifies the results keep the item order. At most `size` calls are in flight
 // (issue #1187), so a caller gains concurrency with no change to its output and no EMFILE.
 test("mapInBatches keeps item order and never runs more than the batch size at once", async () => {
   let flying = 0;
@@ -20,8 +20,8 @@ test("mapInBatches keeps item order and never runs more than the batch size at o
   expect(max).toBe(4);
 });
 
-// Usefulness: verifies the first failure in item order throws, whichever call failed first in time,
-// as sequential calls would, and that the other calls of the batch settle before the throw.
+// Usefulness: verifies the first failure in item order throws, whichever call failed first in time.
+// The behavior matches sequential calls, and the other calls of the batch settle before the throw.
 test("mapInBatches throws the first failure in item order after the batch settles", async () => {
   const settled = [];
   const failure = await mapInBatches([0, 1, 2], 3, async (item) => {
