@@ -18,7 +18,7 @@ export async function settleInOrder(thunks) {
 
 /**
  * Maps `items` through `fn`, `size` calls at a time, and returns the results in item order. The calls
- * of a batch settle together. The first failure in item order then throws, as sequential calls would,
+ * of a batch settle together. The first failure in item order then throws, as sequential calls do,
  * and no later batch starts.
  * @template T, R
  * @param {T[]} items

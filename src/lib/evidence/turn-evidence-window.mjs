@@ -1,4 +1,4 @@
-import { settleInOrder } from "../batches.mjs";
+import { settleInOrder } from "../map-in-batches.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
 import { errorLine, readProp } from "../error-message.mjs";
 import { logInfo, logWarn } from "../log.mjs";

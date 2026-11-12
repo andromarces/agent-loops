@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "../batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "../map-in-batches.mjs";
 import { errorCode, errorLine } from "../error-message.mjs";
 import { reportedPathNames } from "./entry-report.mjs";
 import { gitRead } from "../git-read.mjs";

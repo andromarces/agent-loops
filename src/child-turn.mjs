@@ -1,6 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
-import { settleInOrder } from "./lib/batches.mjs";
+import { settleInOrder } from "./lib/map-in-batches.mjs";
 import { errorLine, firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { readRequiredChecks } from "./lib/checks/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/checks/gh-api.mjs";

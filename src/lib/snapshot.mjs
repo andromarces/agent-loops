@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
 import { join } from "node:path";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./map-in-batches.mjs";
 import { readableErrorText, readProp } from "./error-message.mjs";
 import { GIT_READ_TIMEOUT_MS, gitRead, readTopLevel, SnapshotError } from "./git-read.mjs";
 import { sha256 } from "./hash.mjs";
