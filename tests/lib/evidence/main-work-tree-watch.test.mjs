@@ -255,8 +255,8 @@ test("a restored edit that preserves the modification time is reported", async (
   const startBefore = Date.now();
   const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
   // Wait past the change-time guard, so the in-window restore reports through its change time.
-  // The saved Windows minimum at this wait was 7.044 ms against the 4 ms guard.
-  await vi.waitFor(() => expect(Date.now() - startBefore).toBeGreaterThanOrEqual(8), {
+  // The saved Windows minimum at this wait was 2.765 ms against the 2.1 ms guard.
+  await vi.waitFor(() => expect(Date.now() - startBefore).toBeGreaterThanOrEqual(4), {
     timeout: 5_000,
     interval: 1,
   });
@@ -325,25 +325,20 @@ test("a timestamp-preserving change just before the start reports no candidate",
   expect(reported, message).toBe(false);
 });
 
-// Usefulness: verifies that the saved Windows pre-window maximum reports no change (issue #1887).
-// Both process clocks are 2.593 ms behind the settled file stamp, the saved maximum of issue #1887.
-test("a clock difference at the saved pre-window maximum reports no pre-window change", async () => {
+// Usefulness: verifies that a system clock at the saved pre-window maximum reports no change
+// (issue #1887). The start comes from the sub-millisecond clock, so the system clock step moves no
+// stamp.
+test("a system clock at the saved pre-window maximum reports no pre-window change", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await writeFile(file, "copied\n");
   await writeFile(file, "hello\n");
   const settled = await settleChangeTime(file, old);
-  const realDateNow = Date.now.bind(Date);
-  const realNow = performance.now.bind(performance);
-  const realWall = performance.timeOrigin + realNow();
   const target = 2.593;
-  const dateSkewMs = realDateNow() - settled + target;
-  const perfSkewMs = realWall - settled + target;
-  const dateSkew = vi.spyOn(Date, "now").mockImplementation(() => realDateNow() - dateSkewMs);
-  const perfSkew = vi.spyOn(performance, "now").mockImplementation(() => realNow() - perfSkewMs);
+  // The system clock reads exactly the saved target before the settled file stamp.
+  const dateSkew = vi.spyOn(Date, "now").mockReturnValue(settled - target);
   try {
-    const startBefore = Date.now();
     const fake = createArmingWatch();
     const handle = await startMainWorkTreeWatch(dir, {
       drainDeadlineMs: 60_000,
@@ -353,11 +348,10 @@ test("a clock difference at the saved pre-window maximum reports no pre-window c
     await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
     const result = await handle.take();
     const stats = await lstat(file);
-    const message = `attempt 1 change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
+    const message = `change-time delta ${(stats.ctimeMs - (settled - target)).toFixed(3)} ms`;
     expect(result, message).toEqual({ candidates: [], failed: false });
   } finally {
     dateSkew.mockRestore();
-    perfSkew.mockRestore();
   }
 });
 

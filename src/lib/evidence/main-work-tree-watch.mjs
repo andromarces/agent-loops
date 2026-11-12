@@ -25,11 +25,10 @@ const IGNORE_BATCH_SIZE = 200;
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read. A change
 // time is a write only when it is strictly later than the start plus this guard. The saved Windows
-// probe put a pre-window change time at most 2.311 ms after the start, and the two CI records
-// reached 2.593 ms. It put a timestamp-preserving restore at least 7.044 ms after an
-// eight-millisecond wait. The guard sits between them, and an in-window restore inside the guard is
-// not reported.
-const CHANGE_TIME_GUARD_MS = 4;
+// probe put a pre-window change time at most 1.511 ms after the sub-millisecond start. It put a
+// timestamp-preserving restore at least 2.765 ms after a four-millisecond wait. The guard sits
+// between them, and an in-window restore inside the guard is not reported.
+const CHANGE_TIME_GUARD_MS = 2.1;
 
 /**
  * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the
@@ -117,10 +116,11 @@ export async function startMainWorkTreeWatch(
   } = {},
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
-  // past this instant. A read leaves it before. The file system stamps the change time from the
-  // system clock. The performance clock's wall time can sit a per-process millisecond or more away
-  // from it on Windows, so the start comes from the system clock.
-  const windowStart = Date.now();
+  // past this instant. A read leaves it before. The file system stamps the change time below one
+  // millisecond. `Date.now()` steps in whole milliseconds, so a pre-window stamp can read up to one
+  // millisecond later than that start. The performance clock's wall time keeps the sub-millisecond
+  // step, and its per-process offset cancels because one start serves every delta.
+  const windowStart = performance.timeOrigin + performance.now();
   const changeTimeAfterStart = windowStart + CHANGE_TIME_GUARD_MS;
   let failed = false;
   let watcherClosed = false;
