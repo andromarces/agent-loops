@@ -156,10 +156,10 @@ request item runs.
 
 ### 9. Documentation
 
-The `Batch runs` section of `docs/orchestrator-instructions.md`, the `Batch runs` section of
-`docs/reference/usage.md`, and the `batch` help text in `src/help.mjs` document the three item
-kinds, the per-item modes and defaults, the `--items-file` shape, the task identity, and how a
-parent turns a mixed request into items.
+The `Batch runs` section of `docs/orchestrator-instructions.md`, the `Batch runs` page at
+`docs/reference/batch.md`, and the `batch` help text in `src/help.mjs` document the three item
+kinds. They also document the per-item modes and defaults, the `--items-file` shape, the task
+identity, and how a parent turns a mixed request into items.
 
 ### 10. Acceptance checks
 

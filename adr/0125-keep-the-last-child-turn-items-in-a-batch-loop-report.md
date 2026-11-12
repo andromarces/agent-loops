@@ -39,5 +39,5 @@ A batch loop report takes `summary` from the last `finish` action of the last at
 - [adr/0115-batch-loop-final-report.md](0115-batch-loop-final-report.md)
 - [Implementation: batch loop report](../src/batch/report.mjs)
 - [Tests: batch loop report](../tests/batch/report.test.mjs)
-- [Reference: batch loop statuses and the summary](../docs/reference/usage.md)
+- [Reference: batch loop statuses and the summary](../docs/reference/batch.md)
 - [ADR Index](README.md)

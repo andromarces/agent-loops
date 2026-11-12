@@ -361,6 +361,46 @@ async function startSigTermParent() {
   return { dir, exit, treePid, orphanFile };
 }
 
+// A second SIGTERM watcher ends in the first signal dispatch, so no watcher reads the re-sent
+// signal. This test models a signal-exit unload before the loop dispatches that signal.
+// Usefulness: acceptance (#1886) — a re-sent SIGTERM ends the parent when the loop empties. Not
+// redundant: the other case holds a live tree handle through the signal.
+test.skipIf(IS_WINDOWS)(
+  "a re-sent SIGTERM ends the parent after the last signal watcher ends",
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "exec-tree-sigterm-loop-"));
+    const parent = join(dir, "parent.mjs");
+    const readyFile = join(dir, "ready.pid");
+    let runner;
+    try {
+      await writeFile(
+        parent,
+        [
+          'import { writeFileSync } from "node:fs";',
+          `import { killTreeOnExit } from ${JSON.stringify(EXEC_TREE_URL)};`,
+          "killTreeOnExit(Object.assign(Promise.resolve(), { pid: 1 }), { treeEnd: true });",
+          "const keep = setInterval(() => {}, 1000);",
+          'const other = () => { clearInterval(keep); process.removeListener("SIGTERM", other); };',
+          'process.on("SIGTERM", other);',
+          `writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
+        ].join("\n"),
+      );
+      runner = spawn(process.execPath, [parent], { stdio: "ignore" });
+      const exited = new Promise((resolve) =>
+        runner.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      await waitUntil(async () => (await readPid(readyFile)) !== undefined, 20_000);
+      runner.kill("SIGTERM");
+      const exit = await exited;
+      expect(exit.signal).toBe("SIGTERM");
+    } finally {
+      endProcess(runner?.pid);
+      await removePath(dir);
+    }
+  },
+  20_000,
+);
+
 // Usefulness: acceptance (#1326) — a SIGTERM of the parent ends a command tree that left the Codex
 // child's process group. No orphan write lands after the parent exit. Not redundant: the other
 // tests end a tree through a kill inside the parent, never through a parent signal.

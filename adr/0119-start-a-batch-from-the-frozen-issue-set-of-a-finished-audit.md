@@ -106,8 +106,8 @@ deferred: the audit command starts no batch and the batch command starts no audi
 
 The implementation adds:
 
-- The `--from-audit` flag, the refusal rules, and the stored order to the `Batch runs` section
-  of `docs/reference/usage.md`.
+- The `--from-audit` flag, the refusal rules, and the stored order to the `Batch runs` page
+  at `docs/reference/batch.md`.
 - A sentence to the batch paragraph of `docs/reference/architecture.md` that the runtime reads
   the frozen set of a created audit when the flag names one.
 - A rule in `docs/orchestrator-instructions.md`: the skill passes `--from-audit` when the

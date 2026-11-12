@@ -8,6 +8,8 @@ Partially supersedes [ADR 0041: Declare the run PR after init with `role declare
 
 Superseded by [ADR 0045: Gate the finish of a headless run on the PR that its runtime declares](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md). ADR 0045 replaces decision 5 and the finish consequences. Every other decision remains in force.
 
+Superseded by [ADR 0129: Map ssh.github.com to github.com for the worker PR declaration](0129-map-ssh-github-com-to-github-com-for-the-worker-pr-declaration.md). ADR 0129 replaces decision 6's literal host comparison with a mapping of the exact SSH host `ssh.github.com` to `github.com`. Every other part of decision 6 stays in force.
+
 ## Date
 
 2026-10-17
@@ -54,6 +56,7 @@ Andro Marces
 - Partially supersedes [ADR 0041: Declare the run PR after init with `role declare-pr`](0041-declare-the-run-pr-after-init-with-declare-pr.md)
 - [PR #923](https://github.com/andromarces/agent-loops/pull/923)
 - Partially superseded by [ADR 0045](0045-gate-the-finish-on-the-pr-that-the-headless-runtime-declares.md)
+- Partially superseded by [ADR 0129](0129-map-ssh-github-com-to-github-com-for-the-worker-pr-declaration.md)
 - Related issues: #286, #302, #320
 - Implementation:
   - Source: `resolveWorkerPr` in `src/lib/worker-pr.mjs`, `runLoop` in `src/runtime.mjs`, `declaredPrFromTranscript` in `src/lib/gate.mjs`

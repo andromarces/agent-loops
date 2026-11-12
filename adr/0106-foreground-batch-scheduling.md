@@ -479,11 +479,12 @@ directories, or another process's files.
 
 The implementation adds:
 
-- A `Batch runs` section to `docs/reference/usage.md`: the command surface and every
-  setting, selection and the frozen set, eligibility and skip reasons, loop slots versus
-  test slots, claim and checkpoint locations, loop statuses, the summary and exit codes,
-  interruption, resume with the remaining budget, GitHub reconciliation, failure isolation,
-  cleanup, and the accepted hard-kill limit.
+- A `Batch runs` page at `docs/reference/batch.md` covers the command surface and every
+  setting. It also covers selection and the frozen set, eligibility and skip reasons, and
+  loop slots versus test slots. The page covers claim and checkpoint locations, loop
+  statuses, and the summary and exit codes. It also covers interruption, resume with the
+  remaining budget, GitHub reconciliation, failure isolation, cleanup, and the accepted
+  hard-kill limit.
 - A batch paragraph to `docs/reference/architecture.md`, naming the foreground supervisor,
   the headless child, the local stores, and the unchanged per-loop gates.
 - A batch rule in `docs/orchestrator-instructions.md`: the skill resolves the natural

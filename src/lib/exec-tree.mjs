@@ -204,9 +204,15 @@ export function endCommandTrees() {
   return ended;
 }
 
+// Delay and cap of the SIGTERM re-send that follows the tree walk on a parent signal.
+const SIGTERM_RESEND_MS = 20;
+const SIGTERM_RESEND_LIMIT = 50;
+
 // A SIGTERM listener keeps signal-exit from re-sending the signal while other listeners exist.
 // This listener walks the trees, removes itself, and re-sends SIGTERM. The parent still ends by
-// SIGTERM, and the walk is synchronous and bounded.
+// SIGTERM, and the walk is synchronous and bounded. A re-sent signal is dispatched on a later
+// loop turn, and a pending signal does not hold the loop open. The timer sends again until the
+// signal ends this process, so an emptied loop never swallows the signal.
 function onParentSigTerm() {
   try {
     endCommandTrees();
@@ -214,6 +220,15 @@ function onParentSigTerm() {
     logWarn(`process tree end failed on SIGTERM: ${error?.code ?? error?.message}`);
   }
   process.removeListener("SIGTERM", onParentSigTerm);
+  let sent = 0;
+  const resend = setInterval(() => {
+    if (sent === SIGTERM_RESEND_LIMIT) {
+      clearInterval(resend);
+      return;
+    }
+    sent += 1;
+    process.kill(process.pid, "SIGTERM");
+  }, SIGTERM_RESEND_MS);
   process.kill(process.pid, "SIGTERM");
 }
 

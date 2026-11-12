@@ -28,12 +28,25 @@ export class SnapshotError extends Error {
 export const stripLf = (text) => (text.endsWith("\n") ? text.slice(0, -1) : text);
 
 /**
+ * The short name of the checked-out branch of `cwd`, or `detached` for a detached head. `strip`
+ * removes the text that Git prints after the name. `options` reaches the reader, so each caller
+ * keeps its bound, lock setting, and error class.
+ */
+export async function readBranch(
+  git,
+  cwd,
+  { detached = "", strip = (text) => text.trim(), ...options } = {},
+) {
+  const result = await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], options);
+  return result.exitCode === 0 ? strip(result.stdout) : detached;
+}
+
+/**
  * The short name of the checked-out branch of `cwd`, or "" for a detached head. `git` is a
  * `gitRead`-shaped reader.
  */
-export async function readHeadBranch(git, cwd, { signal } = {}) {
-  const result = await git(cwd, ["symbolic-ref", "--short", "-q", "HEAD"], { signal });
-  return result.exitCode === 0 ? result.stdout.trim() : "";
+export function readHeadBranch(git, cwd, { signal } = {}) {
+  return readBranch(git, cwd, { signal });
 }
 
 // The settled identity reads of one command, keyed by read kind and the exact `cwd` string.
