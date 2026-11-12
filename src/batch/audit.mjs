@@ -30,7 +30,7 @@ import {
 } from "./audit-prompts.mjs";
 import { readGhJson } from "./gh-read.mjs";
 import { identityEqual, pathIdentity } from "./git.mjs";
-import { progress } from "./supervisor.mjs";
+import { progress } from "./loop-records.mjs";
 import { runSetup } from "./worker.mjs";
 
 const ISSUE_PAGE_LIMIT = 1000;

@@ -29,7 +29,8 @@ import {
   preflightItemEligibility,
   readOpenPrClosures,
 } from "./eligibility.mjs";
-import { defaultMode, loopSegment, preparedItems } from "./items.mjs";
+import { loopSegment, preparedItems } from "./items.mjs";
+import { loopEntry, progress, queuedLoop } from "./loop-records.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
 import {
   createLoopWorkTree,
@@ -41,7 +42,7 @@ import {
   readWorkTreeGitState,
 } from "./git.mjs";
 import { reconcileLoop } from "./reconcile.mjs";
-import { missingLoopReport, loopReportFromRead, readLoopReport } from "./report.mjs";
+import { loopReportFromRead, readLoopReport } from "./report.mjs";
 import {
   readTranscript,
   stepsFromRead,
@@ -61,6 +62,9 @@ import {
   updateManifest,
 } from "./store.mjs";
 import { childArguments, runSetup, spawnHeadless, taskTextFor } from "./worker.mjs";
+
+// The batch id stays available here for the tests and the command line.
+export { newBatchId } from "./loop-records.mjs";
 
 // A needs-owner loop becomes a pending decision and releases its slot
 // (adr/0110-release-batch-slots-on-owner-decisions.md decision 1). A waiting loop keeps its
@@ -112,53 +116,6 @@ function ownStartTimeOnce() {
   return ownStamp;
 }
 
-/** Generates a batch id that is safe as a directory and a branch segment. */
-export function newBatchId(now = new Date()) {
-  const iso = now.toISOString();
-  const stamp = `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}-${iso.slice(11, 13)}${iso.slice(14, 16)}${iso.slice(17, 19)}`;
-  return `${stamp}-${randomUUID().slice(0, 8)}`;
-}
-
-/** A progress line on stderr, because stdout carries one JSON summary. */
-export function progress(message) {
-  process.stderr.write(`[agent-loop] batch: ${message}\n`);
-}
-
-export function queuedLoop(paths, id, item, maxSteps) {
-  const key = item.key;
-  return {
-    issue: key,
-    key,
-    kind: item.kind,
-    number: item.number ?? null,
-    text: item.text ?? null,
-    mode: item.mode ?? defaultMode(item.kind),
-    head: item.head ?? null,
-    headRefName: item.headRefName ?? null,
-    foreign: item.foreign === true,
-    prTitle: item.title ?? null,
-    taskOverride: item.task ?? null,
-    status: "queued",
-    skipReason: null,
-    reason: null,
-    attempts: 0,
-    branch: item.kind === "pr" ? (item.headRefName ?? `pr-${item.number}`) : `batch/${id}/${key}`,
-    workTree: null,
-    transcript: paths.transcript(id, key),
-    log: null,
-    pid: null,
-    startTime: null,
-    stepsUsed: 0,
-    remainingSteps: maxSteps,
-    pr: item.kind === "pr" ? item.number : null,
-    cleanup: null,
-    decision: null,
-    decisionAnswer: null,
-    blockingIssues: [],
-    report: null,
-  };
-}
-
 function skippedLoop(paths, id, item, maxSteps, { reason, evidence }) {
   return {
     ...queuedLoop(paths, id, item, maxSteps),
@@ -180,30 +137,6 @@ const terminal = (status) => TERMINAL.has(status);
 const loopEnded = (status) => terminal(status) || status === "interrupted";
 // The failed line of an aborted loop carries the first line of the abort reason.
 const abortDetail = (line) => (line ? `aborted: ${line}` : "aborted");
-
-export function loopEntry(loop) {
-  return {
-    issue: loop.issue,
-    ...(loop.kind !== undefined && loop.kind !== "issue"
-      ? { kind: loop.kind, mode: loop.mode, number: loop.number ?? null }
-      : {}),
-    status: loop.status,
-    skipReason: loop.skipReason,
-    reason: loop.reason,
-    workTree: loop.workTree?.path ?? null,
-    branch: loop.branch,
-    pr: loop.pr,
-    attempts: loop.attempts,
-    stepsUsed: loop.stepsUsed,
-    remainingSteps: loop.remainingSteps,
-    log: loop.log,
-    transcript: loop.transcript,
-    cleanup: loop.cleanup,
-    decision: loop.decision ?? null,
-    blockingIssues: loop.blockingIssues ?? [],
-    report: loop.report ?? missingLoopReport(),
-  };
-}
 
 function summaryOf(manifest, loops, skipped = new Map()) {
   const keys = Array.isArray(manifest.items)
@@ -923,6 +856,279 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     return { kind: "malformed" };
   };
 
+  // A skipped launch writes one checkpoint, releases the claim when asked, then reports one line.
+  const skipLoop = async (
+    issue,
+    { skipReason, reason, detail = null, extra = {}, release = false },
+  ) => {
+    await changeLoop(issue, { status: "skipped", skipReason, reason, ...extra });
+    if (release) await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+    progress(`issue ${issue}: skipped (${detail ?? `${skipReason}: ${reason}`})`);
+  };
+
+  // The eligibility step reads the open pull requests and the item state, and it ends the launch
+  // when the item waits or is skipped. It returns the claim read and the issue title.
+  const launchEligibility = async (issue, { item, loop }) => {
+    let closures = null;
+    if (item.kind === "issue") {
+      try {
+        closures = await refreshOpenPr();
+      } catch (err) {
+        pausedReason = err.message;
+        await changeLoop(issue, {
+          status: "queued",
+          reason: "eligibility-unverified",
+          skipReason: "eligibility-unverified",
+        });
+        throw err;
+      }
+      if (closures.incompletePr !== null) {
+        pausedReason = `pull request ${closures.incompletePr} returned a 250-commit page`;
+        await changeLoop(issue, {
+          status: "queued",
+          skipReason: "eligibility-unverified",
+          reason: pausedReason,
+        });
+        throw Object.assign(new Error(pausedReason), { batchWide: true });
+      }
+    }
+    const claim = await readClaim(runsRoot, prepared.repoKey, issue);
+    const eligibility = await checkItemEligibility({
+      item,
+      gh,
+      repo: prepared.repo,
+      batchId: id,
+      claim,
+      openPrClosures: closures,
+      ownPr: loop.pr,
+      ownBranch: loop.branch,
+      requireSpecification: prepared.requireSpecification === true,
+    });
+    if (!eligibility.ok) {
+      if (eligibility.reason === "blocked") {
+        waiting.add(issue);
+        const changed = await changeLoop(issue, {
+          status: "waiting",
+          skipReason: "blocked",
+          reason: eligibility.evidence,
+          blockingIssues: eligibility.blocking ?? [],
+          remainingSteps: loop.remainingSteps,
+          pid: null,
+          startTime: null,
+        });
+        progress(`issue ${issue}: waiting (${eligibility.evidence})`);
+        if (changed) {
+          await sendNotification({
+            kind: "merge-required",
+            title: "Batch merge required",
+            text: `Batch ${id} issue ${issue} waits for the merge of blocking issue(s) ${(eligibility.blocking ?? []).join(", ")}.`,
+          });
+        }
+        return null;
+      }
+      await skipLoop(issue, {
+        skipReason: eligibility.reason,
+        reason: eligibility.evidence,
+        extra: { remainingSteps: loop.remainingSteps },
+      });
+      return null;
+    }
+    const itemTitle = eligibility.title ?? null;
+    if (item.kind === "pr") {
+      try {
+        await planTree({
+          repo: prepared.repo,
+          branch: loop.branch,
+          head: loop.head,
+          number: item.number,
+        });
+      } catch (err) {
+        if (!PR_BRANCH_REFUSALS.has(err?.code)) {
+          throw err;
+        }
+        await skipLoop(issue, {
+          skipReason: err.code,
+          reason: err.message,
+          extra: { remainingSteps: loop.remainingSteps },
+        });
+        return null;
+      }
+    }
+    return { claim, itemTitle };
+  };
+
+  // The claim step acquires the item claim unless this batch already holds it.
+  const launchClaim = async (issue, { claim }) => {
+    const ownClaim = claim.exists && claim.record?.batchId === id;
+    const claimResult = ownClaim
+      ? { acquired: true }
+      : await acquireClaim(
+          runsRoot,
+          prepared.repoKey,
+          issue,
+          {
+            batchId: id,
+            repo: prepared.repo,
+            workTree: prepared.workTreeRoot,
+            pid: process.pid,
+            startTime: await ownStartTimeOnce(),
+          },
+          {
+            onStale: async (record) => {
+              if (record.batchId === id) return true;
+              const owner = await readLoop(runsRoot, record.batchId, issue).catch(() => null);
+              return owner?.status === "failed";
+            },
+          },
+        );
+    if (!claimResult.acquired) {
+      await skipLoop(issue, {
+        skipReason: "claimed",
+        reason: `claimed by batch ${claimResult.owner ?? "unknown"}`,
+        detail: `claimed by batch ${claimResult.owner ?? "unknown"}`,
+      });
+      return false;
+    }
+    return true;
+  };
+
+  // The work tree step builds the task, creates or verifies the work tree, and marks the loop
+  // queued. It returns the updated loop and the continuation facts.
+  const launchWorkTree = async (issue, { item, loop, itemTitle }) => {
+    let title = item.kind === "issue" ? `issue ${item.number}` : `pull request ${item.number}`;
+    if (item.kind === "pr" && typeof loop.prTitle === "string" && loop.prTitle.trim() !== "") {
+      title = loop.prTitle;
+    }
+    if (item.kind === "issue" && typeof itemTitle === "string" && itemTitle.trim() !== "") {
+      title = itemTitle;
+    }
+    const task = taskTextFor({
+      item,
+      loop,
+      prepared,
+      title,
+      branch: loop.branch,
+    });
+    const workTreePath = join(prepared.workTreeRoot, loopSegment(issue));
+    const recordedWorkTree = loop.workTree;
+    let workTree = recordedWorkTree;
+    try {
+      if (workTree === null || workTree === undefined) {
+        workTree =
+          item.kind === "pr"
+            ? await createPullRequestWorkTree({
+                repo: prepared.repo,
+                base: prepared.base,
+                workTree: workTreePath,
+                branch: loop.branch,
+                head: loop.head,
+                foreign: loop.foreign === true,
+                number: item.number,
+              })
+            : await createWorkTree({
+                repo: prepared.repo,
+                base: prepared.base,
+                workTree: workTreePath,
+                branch: loop.branch,
+              });
+      }
+    } catch (err) {
+      if (PR_BRANCH_REFUSALS.has(err?.code)) {
+        await skipLoop(issue, {
+          skipReason: err.code,
+          reason: err.message,
+          extra: { workTree: null, remainingSteps: loop.remainingSteps },
+          release: true,
+        });
+        return null;
+      }
+      await changeLoop(issue, {
+        status: "failed",
+        reason: `work-tree-failed: ${err.message}`,
+        workTree: null,
+      });
+      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      logError(`issue ${issue}: failed (work-tree-failed: ${err.message})`);
+      return null;
+    }
+    loop = { ...loop, task, workTree };
+    const continuation = loop.decisionAnswer != null;
+    let freshRecovery = { continueFrom: null, pr: null };
+    if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
+      const refused = await verifyWorkTree(loop);
+      if (refused !== null) {
+        await markNeedsOwner(issue, refused, { evidence: refused });
+        return null;
+      }
+      if (!continuation) {
+        const decision = await reconcile({
+          loop,
+          repo: prepared.repo,
+          base: prepared.base,
+          gh,
+          deps,
+        });
+        if (decision.status === "succeeded") {
+          await finishSuccess(issue, loop, {
+            stepsUsed: loop.stepsUsed,
+            remainingSteps: loop.remainingSteps,
+            pr: decision.pr ?? loop.pr,
+          });
+          return null;
+        }
+        if (decision.status === "needs-owner") {
+          await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
+          return null;
+        }
+        const continueFrom = loop.attempts > 0 ? loop.transcript : null;
+        freshRecovery = { continueFrom, pr: decision.pr ?? loop.pr };
+      }
+    }
+    await changeLoop(issue, {
+      workTree,
+      task,
+      status: "queued",
+      setupDone: loop.setupDone === true,
+      pr: freshRecovery.pr ?? loop.pr,
+    });
+    return { loop, continuation, freshRecovery };
+  };
+
+  // The start step continues a transcript, runs the setup, or spawns the child.
+  const launchStart = async (issue, { loop, continuation, freshRecovery, recovery }) => {
+    if (recovery !== null) {
+      if (interrupted || hard) return;
+      await changeLoop(issue, { attempts: loop.attempts + 1 });
+      loop = loops.get(issue);
+      return startChild(issue, loop, { resume: recovery });
+    }
+    if (continuation) {
+      await continueLoop(issue, loop);
+      return;
+    }
+    if (prepared.setupCmd && loop.setupDone !== true) {
+      const ok = await runSetup({
+        command: prepared.setupCmd,
+        workTree: loop.workTree.path,
+        timeoutSeconds: prepared.setupTimeout,
+        signal: controller.signal,
+        deps,
+      });
+      if (!ok && (interrupted || hard)) return;
+      if (!ok) {
+        await changeLoop(issue, { status: "failed", reason: "setup-failed" });
+        await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+        logError(`issue ${issue}: failed (setup-failed)`);
+        return;
+      }
+      await changeLoop(issue, { setupDone: true });
+    }
+    if (interrupted || hard) return;
+    await changeLoop(issue, { attempts: loop.attempts + 1 });
+    loop = loops.get(issue);
+    return startChild(issue, loop, { resume: freshRecovery });
+  };
+
   const launchIssue = async (issue, { recovery = null } = {}) => {
     let loop = loops.get(issue);
     const item = {
@@ -936,258 +1142,25 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       headRefName: loop.headRefName ?? null,
       foreign: loop.foreign === true,
     };
-    let itemTitle = null;
     if (recovery === null) {
-      let closures = null;
-      if (item.kind === "issue") {
-        try {
-          closures = await refreshOpenPr();
-        } catch (err) {
-          pausedReason = err.message;
-          await changeLoop(issue, {
-            status: "queued",
-            reason: "eligibility-unverified",
-            skipReason: "eligibility-unverified",
-          });
-          throw err;
-        }
-        if (closures.incompletePr !== null) {
-          pausedReason = `pull request ${closures.incompletePr} returned a 250-commit page`;
-          await changeLoop(issue, {
-            status: "queued",
-            skipReason: "eligibility-unverified",
-            reason: pausedReason,
-          });
-          throw Object.assign(new Error(pausedReason), { batchWide: true });
-        }
-      }
-      const claim = await readClaim(runsRoot, prepared.repoKey, issue);
-      const eligibility = await checkItemEligibility({
-        item,
-        gh,
-        repo: prepared.repo,
-        batchId: id,
-        claim,
-        openPrClosures: closures,
-        ownPr: loop.pr,
-        ownBranch: loop.branch,
-        requireSpecification: prepared.requireSpecification === true,
-      });
-      if (!eligibility.ok) {
-        if (eligibility.reason === "blocked") {
-          waiting.add(issue);
-          const changed = await changeLoop(issue, {
-            status: "waiting",
-            skipReason: "blocked",
-            reason: eligibility.evidence,
-            blockingIssues: eligibility.blocking ?? [],
-            remainingSteps: loop.remainingSteps,
-            pid: null,
-            startTime: null,
-          });
-          progress(`issue ${issue}: waiting (${eligibility.evidence})`);
-          if (changed) {
-            await sendNotification({
-              kind: "merge-required",
-              title: "Batch merge required",
-              text: `Batch ${id} issue ${issue} waits for the merge of blocking issue(s) ${(eligibility.blocking ?? []).join(", ")}.`,
-            });
-          }
-          return;
-        }
-        await changeLoop(issue, {
-          status: "skipped",
-          skipReason: eligibility.reason,
-          reason: eligibility.evidence,
-          remainingSteps: loop.remainingSteps,
-        });
-        progress(`issue ${issue}: skipped (${eligibility.reason}: ${eligibility.evidence})`);
-        return;
-      }
-      itemTitle = eligibility.title ?? null;
-      if (item.kind === "pr") {
-        try {
-          await planTree({
-            repo: prepared.repo,
-            branch: loop.branch,
-            head: loop.head,
-            number: item.number,
-          });
-        } catch (err) {
-          if (!PR_BRANCH_REFUSALS.has(err?.code)) {
-            throw err;
-          }
-          await changeLoop(issue, {
-            status: "skipped",
-            skipReason: err.code,
-            reason: err.message,
-            remainingSteps: loop.remainingSteps,
-          });
-          progress(`issue ${issue}: skipped (${err.code}: ${err.message})`);
-          return;
-        }
-      }
-      const ownClaim = claim.exists && claim.record?.batchId === id;
-      const claimResult = ownClaim
-        ? { acquired: true }
-        : await acquireClaim(
-            runsRoot,
-            prepared.repoKey,
-            issue,
-            {
-              batchId: id,
-              repo: prepared.repo,
-              workTree: prepared.workTreeRoot,
-              pid: process.pid,
-              startTime: await ownStartTimeOnce(),
-            },
-            {
-              onStale: async (record) => {
-                if (record.batchId === id) return true;
-                const owner = await readLoop(runsRoot, record.batchId, issue).catch(() => null);
-                return owner?.status === "failed";
-              },
-            },
-          );
-      if (!claimResult.acquired) {
-        await changeLoop(issue, {
-          status: "skipped",
-          skipReason: "claimed",
-          reason: `claimed by batch ${claimResult.owner ?? "unknown"}`,
-        });
-        progress(`issue ${issue}: skipped (claimed by batch ${claimResult.owner ?? "unknown"})`);
-        return;
-      }
-      let title = item.kind === "issue" ? `issue ${item.number}` : `pull request ${item.number}`;
-      if (item.kind === "pr" && typeof loop.prTitle === "string" && loop.prTitle.trim() !== "") {
-        title = loop.prTitle;
-      }
-      if (item.kind === "issue" && typeof itemTitle === "string" && itemTitle.trim() !== "") {
-        title = itemTitle;
-      }
-      const task = taskTextFor({
+      const eligibility = await launchEligibility(issue, { item, loop });
+      if (eligibility === null) return;
+      if (!(await launchClaim(issue, { claim: eligibility.claim }))) return;
+      const launched = await launchWorkTree(issue, {
         item,
         loop,
-        prepared,
-        title,
-        branch: loop.branch,
+        itemTitle: eligibility.itemTitle,
       });
-      const workTreePath = join(prepared.workTreeRoot, loopSegment(issue));
-      const recordedWorkTree = loop.workTree;
-      let workTree = recordedWorkTree;
-      try {
-        if (workTree === null || workTree === undefined) {
-          workTree =
-            item.kind === "pr"
-              ? await createPullRequestWorkTree({
-                  repo: prepared.repo,
-                  base: prepared.base,
-                  workTree: workTreePath,
-                  branch: loop.branch,
-                  head: loop.head,
-                  foreign: loop.foreign === true,
-                  number: item.number,
-                })
-              : await createWorkTree({
-                  repo: prepared.repo,
-                  base: prepared.base,
-                  workTree: workTreePath,
-                  branch: loop.branch,
-                });
-        }
-      } catch (err) {
-        if (PR_BRANCH_REFUSALS.has(err?.code)) {
-          await changeLoop(issue, {
-            status: "skipped",
-            skipReason: err.code,
-            reason: err.message,
-            workTree: null,
-            remainingSteps: loop.remainingSteps,
-          });
-          await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-          progress(`issue ${issue}: skipped (${err.code}: ${err.message})`);
-          return;
-        }
-        await changeLoop(issue, {
-          status: "failed",
-          reason: `work-tree-failed: ${err.message}`,
-          workTree: null,
-        });
-        await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-        logError(`issue ${issue}: failed (work-tree-failed: ${err.message})`);
-        return;
-      }
-      loop = { ...loop, task, workTree };
-      const continuation = loop.decisionAnswer != null;
-      let freshRecovery = { continueFrom: null, pr: null };
-      if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
-        const refused = await verifyWorkTree(loop);
-        if (refused !== null) {
-          await markNeedsOwner(issue, refused, { evidence: refused });
-          return;
-        }
-        if (!continuation) {
-          const decision = await reconcile({
-            loop,
-            repo: prepared.repo,
-            base: prepared.base,
-            gh,
-            deps,
-          });
-          if (decision.status === "succeeded") {
-            await finishSuccess(issue, loop, {
-              stepsUsed: loop.stepsUsed,
-              remainingSteps: loop.remainingSteps,
-              pr: decision.pr ?? loop.pr,
-            });
-            return;
-          }
-          if (decision.status === "needs-owner") {
-            await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
-            return;
-          }
-          const continueFrom = loop.attempts > 0 ? loop.transcript : null;
-          freshRecovery = { continueFrom, pr: decision.pr ?? loop.pr };
-        }
-      }
-      await changeLoop(issue, {
-        workTree,
-        task,
-        status: "queued",
-        setupDone: loop.setupDone === true,
-        pr: freshRecovery.pr ?? loop.pr,
+      if (launched === null) return;
+      loop = launched.loop;
+      return launchStart(issue, {
+        loop,
+        continuation: launched.continuation,
+        freshRecovery: launched.freshRecovery,
+        recovery: null,
       });
-      if (continuation) {
-        await continueLoop(issue, loop);
-        return;
-      }
-      if (prepared.setupCmd && loop.setupDone !== true) {
-        const ok = await runSetup({
-          command: prepared.setupCmd,
-          workTree: workTree.path,
-          timeoutSeconds: prepared.setupTimeout,
-          signal: controller.signal,
-          deps,
-        });
-        if (!ok && (interrupted || hard)) return;
-        if (!ok) {
-          await changeLoop(issue, { status: "failed", reason: "setup-failed" });
-          await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-          logError(`issue ${issue}: failed (setup-failed)`);
-          return;
-        }
-        await changeLoop(issue, { setupDone: true });
-      }
-      if (interrupted || hard) return;
-      await changeLoop(issue, { attempts: loop.attempts + 1 });
-      loop = loops.get(issue);
-      return startChild(issue, loop, { resume: freshRecovery });
     }
-
-    if (interrupted || hard) return;
-    await changeLoop(issue, { attempts: loop.attempts + 1 });
-    loop = loops.get(issue);
-    return startChild(issue, loop, { resume: recovery });
+    return launchStart(issue, { loop, continuation: false, freshRecovery: null, recovery });
   };
 
   const startChild = async (issue, loop, { resume }) => {

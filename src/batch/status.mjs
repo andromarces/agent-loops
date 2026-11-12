@@ -2,7 +2,7 @@
 import { ownerAlive } from "../lib/process-identity.mjs";
 import { readAnswer, readDecision } from "./decisions.mjs";
 import { batchPaths, readLoop, readManifest } from "./store.mjs";
-import { loopEntry, queuedLoop } from "./supervisor.mjs";
+import { loopEntry, queuedLoop } from "./loop-records.mjs";
 
 async function decisionView(runsRoot, batchId, loop) {
   if (typeof loop.decision !== "string") return null;
