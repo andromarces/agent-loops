@@ -12,7 +12,7 @@ This ADR partially supersedes [ADR 0134: Detect a worker report label that point
 - Decision 4's worker-only envelope field and its rule that no other surface carries the field. A reviewer envelope and the headless result carry it too.
 - Decision 7's rule that reviewer turns stay unchanged. A reviewer turn now names the label.
 
-Decisions 2, 3, 5, and 6 stay in force. Decision 3's exception applies to a reviewer turn, for the reason in decision 2 below.
+Decisions 2, 3, 5, and 6 stay in force. Decision 3 stays in force for a worker turn only. A reviewer turn has no exception, as decision 2 below states.
 
 ## Date
 
@@ -22,12 +22,12 @@ Decisions 2, 3, 5, and 6 stay in force. Decision 3's exception applies to a revi
 
 The worker path names a report label whose value points at response text outside the closing block (ADR 0134, issue #1907). The reviewer path kept its old shape. A reviewer can write `Why: the defects above`, and the parent then reads a report with no defect.
 
-The reviewer prompt in `src/prompts/reviewer.mjs` shares the closing-block text of `src/prompts/rules.mjs`. That text places quoted or multi-paragraph text before the block and lets one label refer to it. The reviewer prompt therefore documents the same exception as the worker prompt.
+The reviewer prompt in `src/prompts/reviewer.mjs` bars every reference to text outside the block at line 27. The shared closing-block text in `src/prompts/rules.mjs` places quoted or multi-paragraph text before the block. The reviewer rule has no exception, so a reviewer pointer is named even after that text.
 
 ## Decision
 
-1. **Detect a parsed report of every role.** `outsideBlockReportLabels` in `src/lib/report.mjs` keeps its signature and its pattern list. `runChild` in `src/child-turn.mjs` calls it for every parsed report, whether the role is worker or reviewer.
-2. **Keep the documented exception for both roles.** The reviewer prompt shares the closing-block text that documents the exception. A matching pointer returns no label in one case. Exactly one label points outside the block, and the text before it holds quoted text or at least two paragraphs.
+1. **Detect a parsed report of every role.** `outsideBlockReportLabels` in `src/lib/report.mjs` keeps its pattern list and gains an exception option. `runChild` in `src/child-turn.mjs` calls it for every parsed report and passes the exception only for a worker.
+2. **Keep the worker exception only.** The worker prompt documents the exception, and a worker turn keeps it. A reviewer turn has no exception, because its prompt bars every reference to text outside the block. A worker pointer returns no label in one case. Exactly one label points outside the block, and the text before it holds quoted text or at least two paragraphs.
 3. **Name the labels on both envelopes.** A parsed report with a match adds `reportOutsideBlockLabels` to a worker or reviewer envelope. The field holds label names only, never response text. A turn with no match carries no field.
 4. **Read one stored value.** `runChild` stores the result field once. The dispatch envelope and the headless result prompt read that stored value.
 5. **Leave the turn flow unchanged.** The report, the verdict, the repair turn, the step charge, and both accept gates keep their shape. A reviewer accept with the field stays an accept.
@@ -37,14 +37,15 @@ The reviewer prompt in `src/prompts/reviewer.mjs` shares the closing-block text 
 
 - The parent learns a reviewer label that points outside the block without reading the child response.
 - A reviewer accept with the field still ends the finish gate as an accept.
+- A reviewer pointer after quoted or multi-paragraph text carries the field, and a worker pointer keeps the exception.
 - A pointer that the pattern list misses reaches the parent as an ordinary report. The field is a heuristic, not a proof that every result is inside the block.
 - The runtime starts no new turn and charges no extra step for the detection.
 
 ## Alternatives
 
 1. **Keep the detection worker-only.** Not taken. A reviewer pointer then reaches the parent with no sign that a result is missing.
-2. **Drop the exception for a reviewer turn.** Not taken. The reviewer prompt shares the closing-block text that documents the exception, so the prompt and the detector disagree.
-3. **Add a second detector or a role option.** Not taken. One function and one pattern list cover both roles.
+2. **Keep the exception for a reviewer turn.** Not taken. The reviewer prompt bars every reference to text outside the block, so the prompt and the detector agree on naming the pointer.
+3. **Add a second detector or a second pattern list.** Not taken. One function, one pattern list, and one exception option cover both roles.
 
 ## Authors
 

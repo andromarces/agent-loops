@@ -1466,7 +1466,7 @@ test("the core instructions stay within one read of the read tool", async () => 
 });
 
 // Usefulness: verifies the core and detail name the outside-block field for both roles, the
-// reviewer turn, and the heuristic (issue #1910).
+// reviewer turn, the worker exception, and the heuristic (issue #1910).
 test("the instructions name the outside-block report label field", async () => {
   const core = await readFile(instructionsPath, "utf8");
   const detail = await readFile(join(referenceSectionsDir, "closing-block.md"), "utf8");
@@ -1477,6 +1477,8 @@ test("the instructions name the outside-block report label field", async () => {
   expectRule(core, /dispatch one turn of the same role/i, /named result inside the closing block/i);
   expectRule(detail, /reviewer envelope/i, /dispatch one reviewer turn/i);
   expectRule(detail, /heuristic/i);
+  expectRule(detail, /worker exception/i, /no label/i);
+  expectRule(detail, /reviewer turn has no exception/i, /text outside the block/i);
   expectRule(detail, /quoted text/i, /two paragraphs/i);
 });
 

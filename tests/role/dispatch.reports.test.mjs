@@ -846,12 +846,12 @@ test("worker dispatch names a report label that points above the closing block",
   expect((await readRepoState(repo)).lastResult.reportOutsideBlockLabels).toEqual(["Why"]);
 });
 
-// Usefulness: verifies the reviewer envelope and state file name the parsed report label that
-// points above the block (issue #1910).
+// Usefulness: verifies the reviewer envelope and state file name a pointer after quoted text,
+// because a reviewer turn has no exception (issue #1910).
 test("reviewer dispatch names a report label that points above the closing block", async () => {
   const repo = await newCleanRepo();
   const reply = [
-    "The diff holds no write.",
+    "> The diff holds no write.",
     "",
     "Conclusion: the fix passes",
     "Why: the check above",

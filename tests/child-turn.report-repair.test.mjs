@@ -528,8 +528,8 @@ test("a worker report that points nowhere carries no outside-block field", async
   expect(result).not.toHaveProperty("reportOutsideBlockLabels");
 });
 
-// Usefulness: verifies a parsed reviewer report that points above the block names its label on the
-// result, so the parent can ask for the missing result (issue #1910).
+// Usefulness: verifies the result names a reviewer report label that points above the block
+// (issue #1910).
 test("a reviewer report that points above the block carries its label", async () => {
   const pointer = [
     "The diff holds no write.",
@@ -552,9 +552,9 @@ test("a reviewer report that points above the block carries its label", async ()
   expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
 });
 
-// Usefulness: verifies a reviewer turn keeps the quoted-text exception, because its prompt shares
-// the closing-block text that places quoted text before the block (issue #1910).
-test("a reviewer report keeps the quoted-text exception", async () => {
+// Usefulness: verifies a reviewer pointer after quoted text carries its label, because the
+// reviewer prompt bars every reference to text outside the block (issue #1910).
+test("a reviewer report with quoted text carries its label", async () => {
   const pointer = [
     "> The diff holds no write.",
     "",
@@ -573,12 +573,12 @@ test("a reviewer report keeps the quoted-text exception", async () => {
 
   expect(agent.recorded).toHaveLength(1);
   expect(result.report).not.toBeNull();
-  expect(result).not.toHaveProperty("reportOutsideBlockLabels");
+  expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
 });
 
-// Usefulness: verifies a reviewer turn keeps the multi-paragraph exception, so the documented
-// format stays reportable for both roles (issue #1910).
-test("a reviewer report keeps the multi-paragraph exception", async () => {
+// Usefulness: verifies a reviewer pointer after two paragraphs carries its label, because the
+// reviewer prompt has no exception (issue #1910).
+test("a reviewer report with two paragraphs carries its label", async () => {
   const pointer = [
     "The diff holds no write.",
     "",
@@ -594,6 +594,30 @@ test("a reviewer report keeps the multi-paragraph exception", async () => {
     role: { kind: "fake", sessionId: null },
     roleName: "reviewer",
     prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
+// Usefulness: verifies a worker report keeps the quoted-text exception and carries no field
+// (issue #1910).
+test("a worker report keeps the quoted-text exception", async () => {
+  const pointer = [
+    "> The diff holds no write.",
+    "",
+    "Conclusion: the fix passes",
+    "Why: the quoted check above",
+    "Blockers: none",
+  ].join("\n");
+  const agent = scripted([pointer]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
     cwd: repo,
   });
 

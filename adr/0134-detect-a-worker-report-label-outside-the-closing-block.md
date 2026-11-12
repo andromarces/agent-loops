@@ -10,7 +10,7 @@ Partially superseded by [ADR 0135: Detect an outside-block report label for ever
 - Decision 4's worker-only field and its rule that no other surface carries it. Superseded by [ADR 0135](0135-detect-an-outside-block-report-label-for-every-child-role.md): a reviewer envelope and the headless result carry the field too.
 - Decision 7's unchanged reviewer turns. Superseded by [ADR 0135](0135-detect-an-outside-block-report-label-for-every-child-role.md): a reviewer turn names the label.
 
-Decisions 2, 3, 5, and 6 stay in force. Decision 3's exception applies to a reviewer turn, as ADR 0135 states.
+Decisions 2, 3, 5, and 6 stay in force. Decision 3 stays in force for a worker turn only. A reviewer turn has no exception, as ADR 0135 states.
 
 This ADR records the second choice of issue #1907: an envelope field names the label, and the parent dispatches one restatement turn.
 

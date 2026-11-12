@@ -185,14 +185,14 @@ test("--require-accept names Why and refuses a reviewer report without it", asyn
   }
 });
 
-// Usefulness: verifies a headless reviewer accept whose label points above the block reaches the
-// result event with its label and still counts as an accept (issue #1910).
+// Usefulness: verifies a headless reviewer accept with an outside label still counts as an accept
+// (issue #1910).
 test("--require-accept carries a reviewer outside-block label in the headless result", async () => {
   gitDouble.answer = cleanRepoGit;
   const repo = await createCleanRepoDir();
   try {
     const pointerAccept = [
-      "The diff holds no write.",
+      "> The diff holds no write.",
       "",
       "Conclusion: the state passes.",
       "Why: the check above.",
