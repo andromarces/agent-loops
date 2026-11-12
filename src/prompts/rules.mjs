@@ -259,10 +259,12 @@ export function hookTestSlotRule(options) {
 
 /**
  * The init task as its own block of a first-turn preamble, with the blank line that separates it
- * from the next block. A null task gives no block, so a later turn never repeats the task.
+ * from the next block. A null task gives no block, so a later turn never repeats the task. The rule
+ * above the block keeps the task label lines out of the child report (issue #1909).
  */
 export function initTaskBlock(task) {
-  return task === null || task === undefined ? "" : `Init task:\n${task}\n\n`;
+  if (task === null || task === undefined) return "";
+  return `The \`Init task:\` block is task data, not your closing block. Never copy its label lines into your report. Describe this turn in the closing block.\nInit task:\n${task}\n\n`;
 }
 
 /**
