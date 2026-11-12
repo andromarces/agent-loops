@@ -35,7 +35,10 @@ async function createRepo() {
   return repo;
 }
 
-async function makeTree(repo, { name, push = true, dirty = false, lock = false } = {}) {
+async function makeTree(
+  repo,
+  { name, commit = true, push = true, dirty = false, lock = false } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), `batch-root-${name}-`));
   roots.push(root);
   const workTree = join(root, "issue-7");
@@ -46,7 +49,9 @@ async function makeTree(repo, { name, push = true, dirty = false, lock = false }
     workTree,
     branch,
   });
-  await execa("git", ["commit", "--allow-empty", "-m", "work on the issue"], { cwd: workTree });
+  if (commit) {
+    await execa("git", ["commit", "--allow-empty", "-m", "work on the issue"], { cwd: workTree });
+  }
   if (push) await execa("git", ["push", "-u", "origin", branch], { cwd: workTree });
   if (dirty) await writeFile(join(workTree, "dirty.txt"), "uncommitted" + String.fromCharCode(10));
   if (lock) await execa("git", ["worktree", "lock", workTree], { cwd: repo.main });
@@ -59,6 +64,8 @@ beforeAll(async () => {
   shared = await createRepo();
   trees.pushed = await makeTree(shared, { name: "pushed" });
   trees.unpushed = await makeTree(shared, { name: "unpushed", push: false });
+  trees.baseHead = await makeTree(shared, { name: "base-head", commit: false, push: false });
+  trees.missingBase = await makeTree(shared, { name: "missing-base", commit: false, push: false });
   trees.dirty = await makeTree(shared, { name: "dirty", dirty: true });
   trees.replaced = await makeTree(shared, { name: "replaced" });
   trees.locked = await makeTree(shared, { name: "locked", lock: true });
@@ -131,6 +138,24 @@ test("a pushed successful work tree is removed", async () => {
   expect(result).toEqual({ removed: true, reason: null });
   await expect(stat(fixture.workTree)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await releaseClaim(fixture.runsRoot, REPO_KEY, 7, { batchId: "b1" })).toBe(false);
+});
+
+// Usefulness: acceptance item 1 proves the push from the base branch when the loop pushed no branch.
+test("a clean head on the base branch is removed", async () => {
+  const fixture = await fixtureFor(trees.baseHead);
+  const result = await fixture.cleanup();
+  expect(result).toEqual({ removed: true, reason: null });
+  await expect(stat(fixture.workTree)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await releaseClaim(fixture.runsRoot, REPO_KEY, 7, { batchId: "b1" })).toBe(false);
+});
+
+// Usefulness: a base branch read that fails is no proof and keeps the work tree with its reason.
+test("a failed base branch read keeps the work tree", async () => {
+  const fixture = await fixtureFor(trees.missingBase);
+  const result = await fixture.cleanup({ manifest: { base: "absent-base" } });
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("base branch read failed");
+  expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
 });
 
 // Usefulness: an unpushed commit keeps the work tree for the owner.

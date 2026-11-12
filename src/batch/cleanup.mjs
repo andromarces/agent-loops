@@ -1,5 +1,6 @@
 // Cleanup of one batch loop (ADR 0106 decision 13). Only a pushed success is removed, and only
-// while every identity, branch, cleanliness, claim, and work-tree-lock check passes.
+// while every identity, branch, cleanliness, claim, and work-tree-lock check passes. A head that
+// is an ancestor of `origin/<base>` also proves the push.
 import { canonicalPath, isInside } from "../lib/canonical-path.mjs";
 import {
   commitsAhead,
@@ -101,6 +102,11 @@ export async function cleanupLoop({ manifest, loop, runsRoot, gh = null }) {
   if (remote !== null) {
     const ahead = await commitsAhead(remote, workTree.branch, workTree.path);
     pushed = (await isAncestor(head, remote, manifest.repo)) && ahead === 0;
+  }
+  if (!pushed) {
+    const baseHead = await fetchRemoteBranch(manifest.repo, manifest.base);
+    if (baseHead === null) return keep("the base branch read failed (unpushed)");
+    pushed = await isAncestor(head, baseHead, manifest.repo);
   }
   if (!pushed) {
     if (gh === null) return keep("no pushed proof (unpushed)");
