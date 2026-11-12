@@ -16,6 +16,11 @@ Partially superseded by [ADR 0128: Publish on Node 26 with a pnpm trust policy](
 
 - Decision 13's Node 24 publish line. Superseded by [ADR 0128](0128-publish-on-node-26-with-a-pnpm-trust-policy.md): `npm stage publish` runs on Node 26.
 
+Partially superseded by [ADR 0133: Drop the Husky hooks-path migration from the prepare guard](0133-drop-the-husky-hooks-path-migration.md). The superseded parts are:
+
+- Decision 9's Husky `core.hooksPath` unset. Superseded by [ADR 0133](0133-drop-the-husky-hooks-path-migration.md): the guard runs no Git probe and changes no hooks path.
+- The consequence that a clone set up under Husky migrates on its next `pnpm install`. Superseded by [ADR 0133](0133-drop-the-husky-hooks-path-migration.md): a clone that still holds that value keeps it.
+
 Every other decision and consequence stays in force.
 
 ## Date

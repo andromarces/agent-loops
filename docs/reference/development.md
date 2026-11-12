@@ -58,10 +58,8 @@ Vite+ hook dispatcher (`vp config`). The hook scripts live in `.vite-hooks/`.
 
 `prepare` exits 0 in CI, in production, with `VP_GIT_HOOKS=0`, and when
 `vite-plus` is absent. `prepare` writes nothing to stdout. When the dispatcher
-install fails, it writes one warning line to stderr and still exits 0. A clone set up under Husky has a local `core.hooksPath`
-that resolves to `<repo>/.husky/_`. `prepare` unsets only that local value, so
-`vp config` can install the dispatcher. Any other hooks path, and a value in the
-global or system config, stays unchanged.
+install fails, it writes one warning line to stderr and still exits 0. `prepare`
+changes no `core.hooksPath` value.
 
 ## Releasing
 
