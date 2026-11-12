@@ -53,6 +53,7 @@ Andro Marces
 ## Links
 
 - [Issue #1910](https://github.com/andromarces/agent-loops/issues/1910)
+- [PR #1911](https://github.com/andromarces/agent-loops/pull/1911)
 - [ADR 0134: Detect a worker report label that points outside the closing block](0134-detect-a-worker-report-label-outside-the-closing-block.md)
 - Implementation:
   - Detection: `outsideBlockReportLabels` in `src/lib/report.mjs`
