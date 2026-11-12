@@ -25,19 +25,19 @@ const IGNORE_BATCH_SIZE = 200;
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read. A change
 // time is a write only when it is strictly later than the start plus this guard. The saved Windows
-// probe put a pre-window change time at most 1.268 ms after the measured-fraction start. It put a
-// timestamp-preserving restore at least 2.959 ms after a four-millisecond wait. The guard sits
+// probe put a pre-window change time at most 1.786 ms after the measured-fraction start. It put a
+// timestamp-preserving restore at least 2.732 ms after a four-millisecond wait. The guard sits
 // between them, and an in-window restore inside the guard is not reported.
-const CHANGE_TIME_GUARD_MS = 2.1;
+const CHANGE_TIME_GUARD_MS = 2.25;
 // Milliseconds that the window-start spin waits for a system clock tick before it falls back.
 const START_TICK_SPIN_MS = 2;
-// Milliseconds that one system clock read, or the gap between two reads, may take.
+// Milliseconds that one system clock read, or the gap between two reads, can take.
 const START_READ_BOUND_MS = 0.5;
 
 /**
  * Returns the window start from the system clock at the measured fraction of the call instant.
- * Each `Date.now()` read sits between two performance clock readings, and the spin accepts a tick
- * only when both readings and the gap since the previous read stay under the bound. Every other
+ * Each `Date.now()` read sits between two performance clock readings. The spin accepts a tick only
+ * when both readings and the gap since the previous read stay under the bound. Every other
  * path returns `base + 1`, the latest instant that the reading allows, so every path returns a
  * value in `[base, base + 1]`. The performance clock serves as an elapsed timer only, and the
  * caller reads this before the watch arms.

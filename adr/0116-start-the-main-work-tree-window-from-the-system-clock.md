@@ -4,7 +4,7 @@
 
 partially-superseded
 
-Partially superseded by [ADR 0130: Start the main work tree watch window from a measured system-clock fraction](0130-start-the-main-work-tree-window-from-a-measured-system-clock-fraction.md). The replaced parts are decision 2's guard value, decision 3's limit value, and decision 4's test values. Decision 1 and decision 5 stay in force.
+Partially superseded by [ADR 0130: Start the main work tree watch window from a bounded system-clock fraction](0130-start-the-main-work-tree-window-from-a-bounded-system-clock-fraction.md). The replaced parts are decision 2's guard value, decision 3's limit value, and decision 4's test values. Decision 1 and decision 5 stay in force.
 
 Partially supersedes [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). The replaced parts are decision 3 and its Context sentence that the performance clock matches the file system stamp. The 2000 ms margin and decisions 1, 2, 4, and 5 stay in force. The guard changes from one millisecond to 2.5 ms.
 
