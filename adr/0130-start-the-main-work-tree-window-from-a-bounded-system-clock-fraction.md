@@ -33,7 +33,7 @@ The probe of run 43163755445 measured 1,000 samples for each set over 20 distinc
 ## Consequences
 
 - An accepted start reports no pre-window change time up to 1.786 ms after it.
-- All 1,000 saved restores at the 4 ms wait remain reported, and the earliest sat 2.732 ms after an accepted start.
+- All 1,000 saved restores at the 4 ms wait remain reported, and the earliest sat 2.732 ms after its start.
 - An accepted start does not report a restore within 2.25 ms after it.
 - The fallback start uses a 1.8 ms guard, so its cutoff is `base + 2.8`.
 - A pre-window change at 1.786 ms after the fallback start sits below that cutoff, and a restore at 2.732 ms after it is reported.
