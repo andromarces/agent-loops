@@ -170,7 +170,7 @@ The reliability rule of the milestone 1 implementation issue applies. A reliabil
 
 The implementation adds:
 
-- A `Reviewer audits` section of `docs/reference/batch.md`: the command surface and settings, the frozen revision, the independent audits, the gate, the consolidation, the dedupe rules, the frozen set, the store, the statuses, and the exit codes.
+- A `Reviewer audits` section of `docs/reference/batch.md` covers the command surface and settings, the frozen revision, the independent audits, the gate, and the consolidation. It also covers the dedupe rules, the frozen set, the store, the statuses, and the exit codes.
 - A paragraph to `docs/reference/architecture.md` that names the audit supervisor, the read-only reviewer turns, the consolidation turn, and the runtime-owned creation.
 - A rule in `docs/orchestrator-instructions.md`: the skill resolves an audit request into explicit flags and runs `agent-loop batch audit start`; the runtime prompts for nothing and reads no issue selection.
 - The `agent-loop batch audit` lines in `help.mjs`, with the refusals and exit codes.
