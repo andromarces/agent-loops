@@ -137,8 +137,7 @@ test("the red-run rule bounds the wait and reports a run that did not start", ()
   expect(rule).toMatch(/Never implement the fix first and restore the old source/);
 });
 
-// Usefulness: acceptance #1909: an init task that holds label lines stays task data, so the prompt
-// states that its block is not the closing block and never supplies report values.
+// Usefulness: #1909: task label lines stay task data, so the prompt keeps them out of the report.
 test("the init task block is task data and not the closing block", () => {
   const task = "Conclusion: TASK-LABEL-CONCLUSION-710\nWhy: TASK-LABEL-WHY-710";
   const block = initTaskBlock(task);

@@ -201,30 +201,37 @@ export function hasClosingBlockAttempt(response) {
  * without that line. A lone required label line or a lone `Verdict:` line above it, with only blank
  * lines between, joins the block (issues #1592 and #1793). That label must appear once in the
  * response outside a fence, so a quoted or repeated label stays out. The whole response is
- * normalized first, so a bold label starts a block as its plain form does. With `unlabeled`, a
- * response without a `Conclusion:` label takes the non-blank line directly before the first known
- * report label as `Conclusion`. When a bold-lead narration paragraph sits there, the nearest plain
- * prose line above becomes `Conclusion` (issue #1597).
+ * normalized first, so a bold label starts a block as its plain form does. A `Conclusion:` line
+ * inside a fence never starts the block, and a fenced line supplies no label when `blankFenced`
+ * holds (issue #1909). With `unlabeled`, a response
+ * without a `Conclusion:` label takes the non-blank line directly before the first known report
+ * label outside a fence as `Conclusion`. When a bold-lead narration paragraph sits there, the
+ * nearest plain prose line above becomes `Conclusion` (issue #1597).
  * @param {string} response
- * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean }} [options]
+ * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean, blankFenced?: boolean }} [options]
  * @returns {string[] | null}
  */
-function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose = false } = {}) {
+function closingBlock(
+  response,
+  { unlabeled = false, boldLabels = true, diagnose = false, blankFenced = true } = {},
+) {
   // A bold label inside a fenced code block stays text (issue #1483).
   const { lines, fenced } = normalizedReportLines(response, boldLabels);
+  const blockFrom = (first) =>
+    blankFenced ? withoutFencedLines(lines, first, fenced) : lines.slice(first);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (/^Conclusion:\s*/i.test(lines[i])) {
+    if (!fenced[i] && /^Conclusion:\s*/i.test(lines[i])) {
       start = i;
     }
   }
   if (start !== -1) {
-    return lines.slice(leadingRequiredLabelStart(lines, start, fenced));
+    return blockFrom(leadingRequiredLabelStart(lines, start, fenced));
   }
   if (!unlabeled) {
     return null;
   }
-  const first = lines.findIndex((line) => PLAIN_LABEL_LINE.test(line));
+  const first = lines.findIndex((line, index) => !fenced[index] && PLAIN_LABEL_LINE.test(line));
   if (first === -1) {
     return null;
   }
@@ -237,13 +244,26 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     if (prose === -1) {
       // Diagnosis starts at the first known label when no prose line precedes it, so Why still
       // names missing labels (issue #1520).
-      return diagnose ? lines.slice(first) : null;
+      return diagnose ? blockFrom(first) : null;
     }
     before = prose;
   }
-  const block = lines.slice(before);
+  const block = blockFrom(before);
   block[0] = `Conclusion: ${lines[before].trim()}`;
   return block;
+}
+
+/**
+ * The block lines from `first`, with each fenced line blanked. A fenced line is quoted text, so it
+ * never supplies a report label or a list (issue #1909). The blank keeps the line count that
+ * `textBeforeBlock` uses.
+ * @param {string[]} lines
+ * @param {number} first
+ * @param {boolean[]} fenced
+ * @returns {string[]}
+ */
+function withoutFencedLines(lines, first, fenced) {
+  return lines.slice(first).map((line, index) => (fenced[first + index] ? "" : line));
 }
 
 // The required labels a child can write in their own paragraph above `Conclusion:`, for example
@@ -855,7 +875,9 @@ function hasDroppedList(lines) {
  * @returns {"accept" | "reject" | "unknown"}
  */
 export function parseVerdict(response) {
-  const block = closingBlock(response);
+  // The verdict scan keeps its earlier fence rule, so a fenced verdict that a stream split still
+  // reaches the fail-closed guard (issue #1909, issue #1483).
+  const block = closingBlock(response, { blankFenced: false });
   const line = block ? (lastLabeled(block, "Verdict")?.value ?? null) : null;
   const value = line ? line.replace(/\.$/, "") : null;
   const match = value ? value.match(/^(accept|reject)(?:\s*[—–:,.-]\s+(.*))?$/i) : null;

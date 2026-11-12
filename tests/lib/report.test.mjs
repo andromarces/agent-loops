@@ -930,6 +930,61 @@ test("parseVerdict keeps a Verdict line inside a fence above Conclusion out", ()
   expect(parseVerdict(fenced.join("\n"))).toBe("unknown");
 });
 
+// Usefulness: #1909: a fenced task quotation never supplies a report value, so the parser skips its Conclusion line.
+test("parseReportBlock keeps a fenced Conclusion quotation out of the block", () => {
+  const quoted = [
+    "I was given this task:",
+    "```",
+    "Conclusion: TASK-LABEL-CONCLUSION-710",
+    "Why: TASK-LABEL-WHY-710",
+    "Blockers: none",
+    "Checks: TASK-LABEL-CHECKS-710",
+    "```",
+    "",
+    "I created dispatch-marker.txt and no notes.txt.",
+  ].join("\n");
+  expect(parseReportBlock(quoted)).toBeNull();
+});
+
+// Usefulness: #1909: a fenced quotation after the block never overrides a real label value.
+test("parseReportBlock keeps a fenced quotation after the block out of every label", () => {
+  const response = [
+    "Conclusion: created dispatch-marker.txt",
+    "Why: the turn wrote the file",
+    "Blockers: none",
+    "Checks: created the file",
+    "",
+    "```",
+    "Conclusion: TASK-LABEL-CONCLUSION-710",
+    "Why: TASK-LABEL-WHY-710",
+    "Blockers: none",
+    "Checks: TASK-LABEL-CHECKS-710",
+    "```",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    conclusion: "created dispatch-marker.txt",
+    why: "the turn wrote the file",
+    checks: "created the file",
+  });
+});
+
+// Usefulness: #1909: a fenced label inside the block never replaces the real label value.
+test("parseReportBlock keeps a fenced label inside the block out of its value", () => {
+  const response = [
+    "Conclusion: created dispatch-marker.txt",
+    "Why: the turn wrote the file",
+    "Blockers: none",
+    "```",
+    "Why: TASK-LABEL-WHY-710",
+    "```",
+    "Checks: created the file",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "the turn wrote the file",
+    checks: "created the file",
+  });
+});
+
 // Usefulness: verifies a Verdict line inside the block beats one above it, so the last line wins (issue #1793).
 test("parseVerdict keeps the Verdict line inside the block over one above it", () => {
   expect(parseVerdict(`Verdict: accept\n\n${REPORT}\nVerdict: reject`)).toBe("reject");

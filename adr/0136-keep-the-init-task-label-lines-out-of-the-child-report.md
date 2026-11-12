@@ -4,7 +4,7 @@
 
 accepted
 
-This ADR supersedes no earlier decision. It records the first choice of issue #1909: a prompt rule at the init task block, in place of the detection path.
+This ADR supersedes no earlier decision. It records the choices of issue #1909: a parser fix for a fenced quotation and a prompt rule at the init task block.
 
 ## Date
 
@@ -12,32 +12,39 @@ This ADR supersedes no earlier decision. It records the first choice of issue #1
 
 ## Context
 
-A worker envelope can carry a parsed report whose values come from the `Init task:` block (issue #1909). The parser starts the closing block at the last `Conclusion:` line, so it reads the child's own block. A scripted response with the task label lines and a second block parsed to the task `conclusion` and `why`. Its `checks` and `notes` came from the turn. That shape matches the observed opencode envelope. The cause is the child prompt, not the parser.
+A worker envelope can carry a parsed report whose values come from the `Init task:` block (issue #1909).
+
+A scripted response reproduced the parser cause. The response held the task label lines in a fenced code block, then a turn description. `parseReportBlock` returned `TASK-LABEL-CONCLUSION-710` as the conclusion. The turn description alone returned no report.
+
+The parser started the block at a `Conclusion:` line inside the fence. The closing-block contract states that a label in a fenced code block stays out. The same response with the task lines in a blockquote returned no report.
+
+A plain quotation of the task lines at column 0 stays indistinguishable from a valid block. The parser takes the last `Conclusion:` line as the block start. The prompt rule is the only barrier for that shape.
+
+The observed child also wrote task values into its own block. The prompt rule states that the block is task data, and the live check below records that result.
 
 ## Decision
 
-1. **State the rule where the block renders.** `initTaskBlock` in `src/prompts/rules.mjs` renders the block for a worker and reviewer first turn. It adds the rule above the block.
-2. **Keep the parser and the report shape.** The parser still reads the child's own block, and no envelope field is added.
-3. **Keep every guard and gate.** The #1615 repair, the reviewer verdict rule, both accept gates, and the OpenCode fail-closed guard keep their behavior.
-4. **Reject the detection path for this cause.** The detection path relies on the #1615 repair. `repairedReportMatches` requires each label to keep the normalized content of the original response. A repair that replaces a copied task value with a turn value fails that match, so the repaired report is unused.
-5. **Take the detection path only on a new live failure.** A live turn that still copies a task value needs its own decision and its own design.
+1. **Skip a fenced line in the parser.** `closingBlock` in `src/lib/report.mjs` ignores a `Conclusion:` line inside a fence. It blanks every fenced line for the report, so a quoted report label supplies no value. The verdict scan keeps its earlier fence rule.
+2. **Keep the first-turn prompt rule.** `initTaskBlock` in `src/prompts/rules.mjs` states that the block is task data, not the closing block. Worker and reviewer first turns render it.
+3. **Keep every other parser rule and assertion.** The accepted shapes and the last-occurrence rule stay. The list folds, the repair, the verdict rules, both accept gates, and the OpenCode guard also stay.
+4. **Record the plain-prose limit.** A plain task quotation at column 0 has no quotation mark that the parser can read. It stays indistinguishable from a valid block, and the prompt rule covers that shape.
+5. **Reject the detection path.** The #1615 repair requires each label to keep the original response content. A repair that replaces a copied value fails that match, so the repair is unused.
 
 ## Consequences
 
-- A first turn whose task holds label lines gets the rule before it reads the block.
-- The report keeps its shape and its repair turn.
-- A later turn still holds the task text in its conversation, and this rule does not reach it.
-- The parser needs no change, so no accepted shape is lost.
+- A fenced task quotation never becomes a report value, and a real block beside it keeps its own values.
+- A blockquote label already stayed out, and the scripted probe records that result.
+- A plain task quotation at column 0 still parses as a block. The prompt rule is the mitigation, and the limit stays documented.
+- The report shape, the repair turn, and every gate keep their behavior.
 
 ## Live check
 
-Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0.
+Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. The live turns ran with the prompt rule only. The parser probe ran on the final change from commit `7a470cee`.
 
-- The source was commit `7a470cee` plus the change of this ADR.
 - Each CLI ran one `role dispatch` worker turn in a new disposable Git repository outside every work tree.
 - `AGENT_LOOP_RUNS_ROOT` named a folder in the system temporary directory.
 - The task held `Conclusion: TASK-LABEL-CONCLUSION-710`, `Why: TASK-LABEL-WHY-710`, `Checks: TASK-LABEL-CHECKS-710`, and `Verdict: accept`.
-- The prompt asked for `dispatch-marker.txt` and no `notes.txt`.
+- The unsteered prompt asked for `dispatch-marker.txt` and no `notes.txt`.
 - Each nested run ended with `role abort`.
 
 - **opencode v0.0.0-dev-1248**, requested model `opencode-go/deepseek-v4.1-flash`.
@@ -47,17 +54,18 @@ Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0.
 - **GitHub Copilot CLI 1.0.110-3**, a write prompt.
   - The turn exited 0 with no file and `shellDenied: true`.
   - The report described the denied write and held no task label value.
-- **GitHub Copilot CLI 1.0.110-3**, a read prompt for `seed.txt`.
-  - The turn exited 0 and the report named `seed-value-1909`.
-  - No field held a task label value.
+
+- The scripted parser probe held the task label lines in a fence, then a turn description. `parseReportBlock` returned null after the fix.
+- The same task lines in a blockquote also returned null.
+- The same task lines as plain earlier prose returned `TASK-LABEL-CONCLUSION-710`. That shape has no quotation mark, so the parser cannot tell it from a valid block.
 
 - Not verified: codex-cli, agy, a later turn, and a Windows or Linux host.
 
 ## Alternatives
 
-1. **Run the #1615 repair on a copied value.** Not taken. Decision 4 records the match rule that rejects a repaired turn value.
-2. **Change the parser.** Not taken. The parser reads the child's own block, and the observed report came from the child.
-3. **Add an envelope field for the copied label.** Not taken. The prompt rule removes the cause, and a field adds a parent turn.
+1. **Run the #1615 repair on a copied value.** Not taken. Decision 5 records the match rule that rejects a repaired turn value.
+2. **Drop a plain label line that sits after narration.** Not taken. A plain `Conclusion:` line is also the valid block start.
+3. **Add an envelope field for the copied label.** Not taken. The parser fix and the prompt rule remove the cause, and a field adds a parent turn.
 
 ## Authors
 
@@ -66,11 +74,16 @@ Andro Marces
 ## Links
 
 - [Issue #1909](https://github.com/andromarces/agent-loops/issues/1909)
+- [PR #1912](https://github.com/andromarces/agent-loops/pull/1912)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md)
 - [ADR 0105: Keep probe evidence in the linked issue or ADR](0105-keep-probe-evidence-in-the-linked-issue-or-adr.md)
 - [ADR 0134: Detect a worker report label that points outside the closing block](0134-detect-a-worker-report-label-outside-the-closing-block.md)
 - Implementation:
-  - Prompt rule: `initTaskBlock` in `src/prompts/rules.mjs`
-  - Docs: `docs/orchestrator/task-delivery.md` and `docs/reference/role.md`
-  - Tests: `tests/prompts/rules.test.mjs`
+  - [Implementation: report parser](../src/lib/report.mjs)
+  - [Implementation: init task block](../src/prompts/rules.mjs)
+  - [Implementation: closing-block docs](../docs/orchestrator/closing-block.md)
+  - [Implementation: task delivery docs](../docs/orchestrator/task-delivery.md)
+  - [Implementation: role reference](../docs/reference/role.md)
+  - [Implementation: parser tests](../tests/lib/report.test.mjs)
+  - [Implementation: prompt tests](../tests/prompts/rules.test.mjs)
 - [ADR Index](README.md)
