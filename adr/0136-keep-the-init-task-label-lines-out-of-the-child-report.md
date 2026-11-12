@@ -92,10 +92,12 @@ Andro Marces
 - [ADR 0134: Detect a worker report label that points outside the closing block](0134-detect-a-worker-report-label-outside-the-closing-block.md)
 - Implementation:
   - [Implementation: report parser](../src/lib/report.mjs)
+  - [Implementation: OpenCode split guard](../src/agents/opencode-text.mjs)
   - [Implementation: init task block](../src/prompts/rules.mjs)
   - [Implementation: closing-block docs](../docs/orchestrator/closing-block.md)
   - [Implementation: task delivery docs](../docs/orchestrator/task-delivery.md)
   - [Implementation: role reference](../docs/reference/role.md)
   - [Implementation: parser tests](../tests/lib/report.test.mjs)
+  - [Implementation: OpenCode stream tests](../tests/agents/opencode.stream.test.mjs)
   - [Implementation: prompt tests](../tests/prompts/rules.test.mjs)
 - [ADR Index](README.md)
