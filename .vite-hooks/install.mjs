@@ -18,18 +18,7 @@ const fail = (step, detail) => {
   throw new StepError(`${step} failed (${detail})`);
 };
 
-/** Runs git and returns its result; a spawn error or an unexpected exit fails `step`. */
-const git = (step, okStatuses, ...args) => {
-  const result = spawnSync("git", args, { encoding: "utf8" });
-  if (result.error) fail(step, result.error.code ?? result.error.message);
-  if (!okStatuses.includes(result.status))
-    fail(step, `git exited with ${result.status ?? result.signal}`);
-  return result;
-};
-
 try {
-  // A missing or broken helper takes the warning path below, not a load failure.
-  const { isLocalHuskyHooksPath } = await import("./husky-path.mjs");
   let manifest;
   try {
     manifest = import.meta.resolve("vite-plus/package.json");
@@ -37,32 +26,6 @@ try {
     if (error.code === "ERR_MODULE_NOT_FOUND") process.exit(0);
     fail("resolving vite-plus", error.code ?? "unknown error");
   }
-
-  // A clone set up under Husky keeps a local core.hooksPath of .husky/_, so
-  // `vp config` would skip the install and every hook would stay a silent no-op.
-  // Clear only that local value, in any spelling that resolves to <repo>/.husky/_.
-  const root = git("reading the Git work tree", [0], "rev-parse", "--show-toplevel").stdout.trim();
-  // Exit 1 means no local value.
-  const local = git(
-    "reading core.hooksPath",
-    [0, 1],
-    "config",
-    "--local",
-    "--get",
-    "core.hooksPath",
-  );
-  const value = local.stdout.replace(/\r?\n$/, "");
-  if (local.status === 0 && isLocalHuskyHooksPath(root, value))
-    git(
-      "clearing the Husky core.hooksPath",
-      [0],
-      "config",
-      "--local",
-      "--fixed-value",
-      "--unset",
-      "core.hooksPath",
-      value,
-    );
 
   const vp = fileURLToPath(new URL("bin/vp", manifest));
   if (!existsSync(vp)) fail("vp config", "vite-plus has no bin/vp");
