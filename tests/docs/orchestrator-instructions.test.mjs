@@ -297,6 +297,11 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /reviewer prompt/i, /read-only limits/i, /out-of-tree system/i),
   (text) =>
     expectRule(text, /verified/, /reviewed`? identifies no change/i, /what the reviewer checked/i),
+  // Issue #1907: a worker report that points outside the block names its label, and the parent
+  // asks for that result inside the block.
+  (text) => expectRule(text, /reportOutsideBlockLabels/, /closing block/i),
+  (text) =>
+    expectRule(text, /dispatch (?:one|a) worker turn/i, /named result inside the closing block/i),
 ];
 
 // Usefulness: verifies the removed re-check leaves no documentation rule, and the field is stated
@@ -1455,8 +1460,8 @@ test("the core instructions stay within one read of the read tool", async () => 
   expect(size).toBeLessThanOrEqual(50_000);
 });
 
-// Usefulness: verifies the instructions name the outside-block report label field and its one
-// restatement turn, and the detail file states the heuristic and the exception (issue #1907).
+// Usefulness: verifies the core names the outside-block field and its restatement turn, and the
+// detail states the heuristic (issue #1907).
 test("the instructions name the outside-block report label field", async () => {
   const core = await readFile(instructionsPath, "utf8");
   const detail = await readFile(join(referenceSectionsDir, "closing-block.md"), "utf8");

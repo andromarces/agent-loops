@@ -489,7 +489,7 @@ test.each([
 );
 
 // Usefulness: verifies a parsed worker report that points above the block names its label on the
-// result, so the parent learns a result arrived outside the block (issue #1907).
+// result (issue #1907).
 test("a worker report that points above the block carries its label", async () => {
   const pointer = [
     "The runner environment holds no `SUBFAILED` line.",

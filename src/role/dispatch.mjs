@@ -743,8 +743,7 @@ function dispatchPayload(roleName, result) {
     ...(result.reportMissingLabels?.length > 0
       ? { reportMissingLabels: result.reportMissingLabels }
       : {}),
-    // A parsed worker report names each label whose value points at response text outside the
-    // closing block, so the parent can ask for that result in the block (issue #1907).
+    // A parsed worker report names each label that points outside the block (issue #1907).
     ...(roleName === "worker" && result.reportOutsideBlockLabels?.length > 0
       ? { reportOutsideBlockLabels: result.reportOutsideBlockLabels }
       : {}),

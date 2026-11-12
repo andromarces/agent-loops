@@ -14,16 +14,16 @@ This ADR supersedes no earlier decision. It records the second choice of issue #
 
 The worker prompt states that every result the parent needs stands inside the closing block. The worker never points at text outside it (#976). The parent reads only the envelope.
 
-A worker turn on 2026-11-12 wrote `Why: the inference above, from the runner env`, and the cause itself stayed in the response text before the block. The report held all six fields, so the parent had no sign that a result was missing. The runtime gave no field for that case.
+A worker turn on 2026-11-12 wrote `Why: the inference above, from the runner env`. The cause itself stayed in the response text before the block. The report held all six fields, so the parent had no sign that a result was missing. The runtime gave no field for that case.
 
 ## Decision
 
 1. **Detect a parsed worker report only.** `outsideBlockReportLabels` in `src/lib/report.mjs` takes the child response and the parsed report. It returns the report label names whose value points at response text outside the closing block, in report order, for example `["Why"]`. A null report returns no label.
-2. **Keep one small pattern list.** The list holds a noun phrase before `above`, a verb before `above`, and a closing-block reference. `above` after a determiner or a digit reads as a quantity and stays out. A phrase that names a report label points inside the block. The detection is a heuristic, and a pointer that the list misses stays undetected.
+2. **Keep one small pattern list.** The list holds a noun phrase whose `above` ends the phrase, a verb before `above`, and a closing-block reference. A word after `above`, such as a comparison (`above target`) or a determiner and noun (`above the limit`), stays out. A value that names a report label points inside the block. The detection is a heuristic, and a pointer that the list misses stays undetected.
 3. **Keep the documented exception.** The exception returns no label. Exactly one label points outside the block, and the response text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote line or a fenced code block. The rule comes from the closing-block text of `src/prompts/rules.mjs` and the worker prompt in `src/prompts/worker.mjs`.
 4. **Name the labels in a new envelope field.** A parsed worker report with a match adds `reportOutsideBlockLabels` beside `reportMissingLabels`. It holds the label names only, never response text. A turn with no match carries no field. No other surface carries it.
 5. **Leave the runtime turn flow unchanged.** The report stays in the envelope unchanged, and the step stays charged. The runtime starts no new turn.
-6. **State the parent rule.** The orchestrator instructions tell the parent to dispatch one worker turn that asks for the named result inside the closing block. The field detail is in `docs/orchestrator/closing-block.md`, and the envelope field is in `docs/reference/role.md`. That keeps the core within its 50,000-byte bound.
+6. **State the parent rule.** The orchestrator instructions and the headless prompt tell the parent to dispatch one worker turn for the named result. The field detail is in `docs/orchestrator/closing-block.md`, and the envelope field is in `docs/reference/role.md`. That keeps the core within its 50,000-byte bound.
 7. **Leave reviewer turns unchanged.** A reviewer report with a pointer carries no field, and the reviewer path keeps its current shape.
 
 ## Consequences

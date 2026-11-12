@@ -2164,15 +2164,44 @@ test("outsideBlockReportLabels keeps the multi-paragraph exception", () => {
   expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 
-// Usefulness: verifies a quantity, an inside-block pointer, and a value that points nowhere stay
-// unmatched, so the detector reports only a pointer to earlier response text (issue #1907).
-test("outsideBlockReportLabels leaves a quantity and an inside-block pointer out", () => {
-  const quantity = "Conclusion: done\nWhy: the temperature above the limit\nBlockers: none";
-  expect(outsideBlockReportLabels(quantity, parseReportBlock(quantity))).toEqual([]);
-  const inside = "Conclusion: done\nWhy: see the Why line above\nBlockers: none";
-  expect(outsideBlockReportLabels(inside, parseReportBlock(inside))).toEqual([]);
-  const nowhere = "Conclusion: done\nWhy: tests pass\nBlockers: none";
-  expect(outsideBlockReportLabels(nowhere, parseReportBlock(nowhere))).toEqual([]);
+// Usefulness: verifies a comparison right after `above` stays unmatched (issue #1907).
+test("outsideBlockReportLabels leaves a comparison after above out", () => {
+  for (const value of [
+    "the coverage is above target",
+    "the coverage is above the limit",
+    "the coverage is above 80 %",
+  ]) {
+    const response = `Conclusion: done\nWhy: ${value}\nBlockers: none`;
+    expect(outsideBlockReportLabels(response, parseReportBlock(response)), value).toEqual([]);
+  }
+});
+
+// Usefulness: verifies a pointer that names a block label before or after above stays internal
+// (issue #1907).
+test("outsideBlockReportLabels leaves a pointer that names a block label out", () => {
+  const after = "Conclusion: done\nWhy: as shown above in Conclusion\nBlockers: none";
+  expect(outsideBlockReportLabels(after, parseReportBlock(after))).toEqual([]);
+  const before = "Conclusion: done\nWhy: see the Why line above\nBlockers: none";
+  expect(outsideBlockReportLabels(before, parseReportBlock(before))).toEqual([]);
+});
+
+// Usefulness: verifies a comparison in another label keeps the quoted-text exception (issue #1907).
+test("outsideBlockReportLabels keeps the quoted-text exception with a comparison label", () => {
+  const response = [
+    "> The gate listing holds no `SUBFAILED` line.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the evidence above",
+    "Blockers: none",
+    "Checks: the coverage is above target",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies a value that points nowhere stays unmatched (issue #1907).
+test("outsideBlockReportLabels leaves a value that points nowhere out", () => {
+  const response = "Conclusion: done\nWhy: tests pass\nBlockers: none";
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 
 // Usefulness: verifies a null report names no label, so the field stays off a turn whose report

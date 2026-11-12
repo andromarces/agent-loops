@@ -534,6 +534,8 @@ Completion:
 - This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, startRead)}${compareHeadBlock(compareHead, { orchestratorKind, timeout, waitCommand })}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
+A worker report whose label points outside the closing block adds \`reportOutsideBlockLabels\`. Dispatch one worker turn that asks for the named result inside the closing block.
+
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
 
 A reviewer result carries the runtime-owned reviewed state: head, clean, exact, and digest. A task is PR work when its change is delivered on a pull request. For PR work, name the PR branch in the worker prompt: the worker commits its change on that branch and pushes it, so the PR head equals the reviewed head. The worker pushes only with \`git push -u origin <branch>\`, which names the refspec, and never with a plain \`git push\`. Under \`push.default=matching\`, a plain \`git push\` also pushes every other local branch that has a remote branch of the same name, such as the default branch. The run supplies the PR number, and the head commit comes from that PR. In a headless run, the task names the PR number. After each push, when the branch has an open PR, the worker updates the PR body in place so that it describes the pushed head. It adds no revision log to the body or to a comment. ${PR_BODY_SCOPE} Apply these parent rules:
@@ -662,6 +664,7 @@ export function resultPrompt({
       "workTree",
       "prChecks",
       ...TURN_EVIDENCE_FIELDS,
+      "reportOutsideBlockLabels",
       "shellDenied",
     ]),
     ...(declaredPr === null ? {} : { declaredPr }),

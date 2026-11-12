@@ -122,6 +122,6 @@ A parsed worker report can hold a label whose value points at response text outs
 
 Dispatch one worker turn that asks for the named result inside the closing block. Reviewer turns stay unchanged.
 
-The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase before `above`, a verb before `above`, or a reference to the closing block. A determiner or a digit after `above` reads as a quantity and stays out. A phrase that names a report label stays inside the block. A pointer that the list misses stays undetected.
+The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase whose `above` ends it, a verb before `above`, or a reference to the closing block. A word after `above`, such as `above target` or `above the limit`, reads as a comparison and stays out. A value that names a report label stays inside the block, for example `Why: as shown above in Conclusion`. A pointer that the list misses stays undetected.
 
 One documented exception returns no label. Exactly one label points outside the block, and the response text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote line or a fenced code block.

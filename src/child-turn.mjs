@@ -152,7 +152,6 @@ export async function runProbeTurn({
  * @param {object} options
  * @returns {Promise<
  *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
- *     reportOutsideBlockLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
  *   { role: string, status: "error", error: string, transient?: string, refusedModel?: string } & TurnEvidence
@@ -558,8 +557,8 @@ export async function runChild(options) {
         `${roleName}: the closing block lacks ${reportMissingLabels.length === 1 ? "the required label" : "the required labels"} ${reportMissingLabels.join(", ")}`,
       );
     }
-    // A parsed worker report names each label whose value points at response text outside the
-    // closing block, so the parent can ask for that result in the block (issue #1907).
+    // A parsed worker report names each label that points outside the block, so the parent can ask
+    // for that result (issue #1907).
     const outsideBlockLabels =
       isWorker && report !== null ? outsideBlockReportLabels(response, report) : [];
     if (outsideBlockLabels.length > 0) {
@@ -573,6 +572,7 @@ export async function runChild(options) {
       response,
       report,
       ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
+      // The field holds label names only, never response text (issue #1907).
       ...(outsideBlockLabels.length > 0 ? { reportOutsideBlockLabels: outsideBlockLabels } : {}),
       ...(shellDenied ? { shellDenied } : {}),
       ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
