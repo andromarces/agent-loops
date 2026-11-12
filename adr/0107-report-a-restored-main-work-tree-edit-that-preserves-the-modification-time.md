@@ -4,7 +4,7 @@
 
 partially-superseded
 
-[adr/0116-start-the-main-work-tree-window-from-the-system-clock.md](0116-start-the-main-work-tree-window-from-the-system-clock.md) partially supersedes this ADR. The replaced parts are decision 3's performance-clock start and the Context sentence that the performance clock matches the file system stamp. Decisions 1, 2, 4, and 5 stay in force, and the change-time guard becomes 2.5 ms.
+[adr/0116-start-the-main-work-tree-window-from-the-system-clock.md](0116-start-the-main-work-tree-window-from-the-system-clock.md) partially supersedes this ADR. The replaced parts are decision 3's performance-clock start and the Context sentence that the performance clock matches the file system stamp. Decisions 1, 2, 4, and 5 stay in force, and the change-time guard becomes 4 ms under [ADR 0130](0130-widen-the-change-time-guard-to-four-milliseconds.md).
 
 Partially supersedes [ADR 0086: Leave out a read-only access whose modification time predates the turn window](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md) decisions 2 and 5. It adds a change-time signal to decision 2's modification-time test, and replaces decision 5's limit. ADR 0086 decision 1, decision 3's 2000 ms margin for the modification time, and decision 4 stay in force. ADR 0080 decisions 2 to 8 and ADR 0100 stay in force.
 

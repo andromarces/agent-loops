@@ -25,10 +25,11 @@ const IGNORE_BATCH_SIZE = 200;
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read. A change
 // time is a write only when it is strictly later than the start plus this guard. The saved Windows
-// probe put a pre-window change time at most 2.100 ms after the start. It put a
-// timestamp-preserving restore at least 2.896 ms after the start. The guard sits between them, and an
-// in-window restore inside the guard is not reported.
-const CHANGE_TIME_GUARD_MS = 2.5;
+// probe put a pre-window change time at most 2.311 ms after the start, and the two CI records
+// reached 2.593 ms. It put a timestamp-preserving restore at least 7.044 ms after an
+// eight-millisecond wait. The guard sits between them, and an in-window restore inside the guard is
+// not reported.
+const CHANGE_TIME_GUARD_MS = 4;
 
 /**
  * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the

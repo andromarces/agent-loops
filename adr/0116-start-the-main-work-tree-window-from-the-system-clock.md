@@ -2,9 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
-Partially supersedes [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). The replaced parts are decision 3 and its Context sentence that the performance clock matches the file system stamp. The 2000 ms margin, the change-time guard, and decisions 1, 2, 4, and 5 stay in force. The guard changes from one millisecond to 2.5 ms.
+Partially superseded by [ADR 0130: Widen the change-time guard to four milliseconds](0130-widen-the-change-time-guard-to-four-milliseconds.md). The replaced parts are decision 2's guard value, decision 3's limit value, and decision 4's test values. Decision 1, decision 2's clock, and decision 5 stay in force.
+
+Partially supersedes [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md). The replaced parts are decision 3 and its Context sentence that the performance clock matches the file system stamp. The 2000 ms margin and decisions 1, 2, 4, and 5 stay in force. The guard changes from one millisecond to 2.5 ms.
 
 ## Date
 
