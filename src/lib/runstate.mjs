@@ -13,7 +13,7 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./map-in-batches.mjs";
 import { sha256 } from "./hash.mjs";
 import { rootPath } from "./root-pins.mjs";
 import { isJsonObject } from "./json.mjs";

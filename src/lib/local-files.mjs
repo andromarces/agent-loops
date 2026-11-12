@@ -6,7 +6,7 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./map-in-batches.mjs";
 import { canonicalPath } from "./canonical-path.mjs";
 import { readTopLevel } from "./git-read.mjs";
 import { logInfo, logWarn } from "./log.mjs";

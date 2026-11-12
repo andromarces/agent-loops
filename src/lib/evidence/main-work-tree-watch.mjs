@@ -2,7 +2,7 @@ import { watch } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { performance } from "node:perf_hooks";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "../batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "../map-in-batches.mjs";
 import { execBounded } from "../exec.mjs";
 import { errorLine } from "../error-message.mjs";
 import { logWarn } from "../log.mjs";

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./map-in-batches.mjs";
 import { isSha256Hex, sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
 import { hasBlockedAncestor, MAX_FILE_BYTES, namesFile, sameFile } from "./local-files.mjs";

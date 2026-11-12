@@ -1,6 +1,6 @@
 import { readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { DEFAULT_BATCH_SIZE, mapInBatches } from "../batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "../map-in-batches.mjs";
 import { errorLine } from "../error-message.mjs";
 import { logWarn } from "../log.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";

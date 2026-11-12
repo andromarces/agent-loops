@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { mapInBatches, settleInOrder } from "../../src/lib/batches.mjs";
+import { mapInBatches, settleInOrder } from "../../src/lib/map-in-batches.mjs";
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

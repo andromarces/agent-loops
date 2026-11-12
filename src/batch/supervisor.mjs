@@ -48,7 +48,7 @@ import {
   transcriptAbortFromData,
   transcriptExitFromData,
 } from "./steps.mjs";
-import { mapInBatches } from "../lib/batches.mjs";
+import { mapInBatches } from "../lib/map-in-batches.mjs";
 import {
   acquireClaim,
   batchPaths,
