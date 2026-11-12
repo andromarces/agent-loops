@@ -25,8 +25,8 @@ const IGNORE_BATCH_SIZE = 200;
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read. A change
 // time is a write only when it is strictly later than the start plus this guard. The saved Windows
-// probe put a pre-window change time at most 1.511 ms after the sub-millisecond start. It put a
-// timestamp-preserving restore at least 2.765 ms after a four-millisecond wait. The guard sits
+// probe put a pre-window change time at most 1.268 ms after the measured-fraction start. It put a
+// timestamp-preserving restore at least 2.959 ms after a four-millisecond wait. The guard sits
 // between them, and an in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.1;
 // Milliseconds that the window-start spin waits for the system clock to tick before it falls back.
