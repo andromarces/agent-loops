@@ -846,6 +846,31 @@ test("worker dispatch names a report label that points above the closing block",
   expect((await readRepoState(repo)).lastResult.reportOutsideBlockLabels).toEqual(["Why"]);
 });
 
+// Usefulness: verifies the reviewer envelope and state file name a pointer after quoted text,
+// because a reviewer turn has no exception (issue #1910).
+test("reviewer dispatch names a report label that points above the closing block", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "> The diff holds no write.",
+    "",
+    "Conclusion: the fix passes",
+    "Why: the check above",
+    "Blockers: none",
+    "Checks: npm test",
+    "Verdict: accept",
+  ].join("\n");
+  const reviewer = recordingAdapter([async () => reply]);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: reviewer },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).not.toBeNull();
+  expect(result.payload.reportOutsideBlockLabels).toEqual(["Why"]);
+  expect((await readRepoState(repo)).lastResult.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
 // Usefulness: verifies issue #1520 comment shape A keeps every parsed field and carries no reportMissingLabels.
 test("worker dispatch keeps every field for issue #1520 comment shape A", async () => {
   const repo = await newCleanRepo();

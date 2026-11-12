@@ -528,9 +528,9 @@ test("a worker report that points nowhere carries no outside-block field", async
   expect(result).not.toHaveProperty("reportOutsideBlockLabels");
 });
 
-// Usefulness: verifies a reviewer turn stays unchanged and carries no outside-block field (issue
-// #1907).
-test("a reviewer report that points above the block carries no outside-block field", async () => {
+// Usefulness: verifies the result names a reviewer report label that points above the block
+// (issue #1910).
+test("a reviewer report that points above the block carries its label", async () => {
   const pointer = [
     "The diff holds no write.",
     "",
@@ -544,6 +544,80 @@ test("a reviewer report that points above the block carries no outside-block fie
     role: { kind: "fake", sessionId: null },
     roleName: "reviewer",
     prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
+// Usefulness: verifies a reviewer pointer after quoted text carries its label, because the
+// reviewer prompt bars every reference to text outside the block (issue #1910).
+test("a reviewer report with quoted text carries its label", async () => {
+  const pointer = [
+    "> The diff holds no write.",
+    "",
+    "Conclusion: the fix passes",
+    "Why: the quoted check above",
+    "Blockers: none",
+  ].join("\n");
+  const agent = scripted([pointer]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
+// Usefulness: verifies a reviewer pointer after two paragraphs carries its label, because the
+// reviewer prompt has no exception (issue #1910).
+test("a reviewer report with two paragraphs carries its label", async () => {
+  const pointer = [
+    "The diff holds no write.",
+    "",
+    "The check listing shows every job green.",
+    "",
+    "Conclusion: the fix passes",
+    "Why: the check above",
+    "Blockers: none",
+  ].join("\n");
+  const agent = scripted([pointer]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
+// Usefulness: verifies a worker report keeps the quoted-text exception and carries no field
+// (issue #1910).
+test("a worker report keeps the quoted-text exception", async () => {
+  const pointer = [
+    "> The diff holds no write.",
+    "",
+    "Conclusion: the fix passes",
+    "Why: the quoted check above",
+    "Blockers: none",
+  ].join("\n");
+  const agent = scripted([pointer]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
     cwd: repo,
   });
 

@@ -2268,6 +2268,33 @@ test("outsideBlockReportLabels keeps the multi-paragraph exception", () => {
   expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 
+// Usefulness: verifies the reviewer mode names a pointer after quoted text or two paragraphs,
+// because a reviewer turn has no exception (issue #1910).
+test("outsideBlockReportLabels names a reviewer pointer after the exception text", () => {
+  const quoted = [
+    "> The runner environment holds no failing line.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the quoted evidence above",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(quoted, parseReportBlock(quoted), { exception: false })).toEqual([
+    "Why",
+  ]);
+  const paragraphs = [
+    "The runner environment holds no failing line.",
+    "",
+    "The gate listing shows every job green.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the evidence above",
+    "Blockers: none",
+  ].join("\n");
+  expect(
+    outsideBlockReportLabels(paragraphs, parseReportBlock(paragraphs), { exception: false }),
+  ).toEqual(["Why"]);
+});
+
 // Usefulness: verifies a comparison right after `above` stays unmatched (issue #1907).
 test("outsideBlockReportLabels leaves a comparison after above out", () => {
   for (const value of [
