@@ -41,6 +41,7 @@ Andro Marces
 ## Links
 
 - [Issue #1904](https://github.com/andromarces/agent-loops/issues/1904)
+- [PR #1906](https://github.com/andromarces/agent-loops/pull/1906)
 - [ADR 0022: Run the dev toolchain and Git hooks through Vite+](0022-vite-plus-toolchain-and-npm-distribution.md)
 - [Implementation: prepare guard](../.vite-hooks/install.mjs)
 - [Implementation: install tests](../tests/vite-hooks/install.test.mjs)
