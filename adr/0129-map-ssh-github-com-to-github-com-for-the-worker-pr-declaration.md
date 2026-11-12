@@ -45,6 +45,7 @@ Andro Marces
 
 - [Issue #1888](https://github.com/andromarces/agent-loops/issues/1888)
 - Partially supersedes [ADR 0043](0043-let-the-headless-runtime-declare-the-pr-a-worker-opens.md)
+- [PR #1895](https://github.com/andromarces/agent-loops/pull/1895)
 - [PR #1882](https://github.com/andromarces/agent-loops/pull/1882)
 - Implementation:
   - Source: `repoIdentity` in `src/lib/worker-pr.mjs`
