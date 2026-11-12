@@ -36,6 +36,17 @@ An operator path is input from outside the fixed list, so it reaches paths that 
 - A link inside a listed directory is still skipped by name, as in ADR 0018. Only a link on the path itself is refused.
 - The checks read the work tree at init. A swap between a check and the copy is the approved limit of ADR 0018.
 
+## Verification
+
+2026-11-12, macOS 27.3 (build 26C5035r), Node v27.0.0-alpha.0.0.0, source commit `cbcd1da`.
+
+- A case-sensitive APFS disk image held a disposable repository with tracked `Specs/a.md` and two ignored, untracked directories, `specs` and `data`.
+- The init with `--copy-local-path specs` was refused with `--copy-local-path "specs" is refused: it holds a tracked file` at exit 1.
+- The refused init wrote no state file and reported no child start.
+- The init with `--copy-local-path data` exited 0, and `localFiles.copied` held `data/y.json`.
+- The run state held `copyLocalPaths` `data` and `localFilesCopied` `data/y.json`, and the copied bytes matched the source.
+- The worker turn ran through `opencode` with `opencode-go/deepseek-v4.1-flash` at high effort, and the run ended with `abort`.
+
 ## Alternatives
 
 1. **Skip an unsafe path by name, as the fixed list does**: rejected. The operator typed the path, so a silent skip hides a mistake and leaves the child without the data.
