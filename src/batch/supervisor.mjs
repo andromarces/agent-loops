@@ -856,6 +856,16 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     return { kind: "malformed" };
   };
 
+  // A skipped launch writes one checkpoint, releases the claim when asked, then reports one line.
+  const skipLoop = async (
+    issue,
+    { skipReason, reason, detail = null, extra = {}, release = false },
+  ) => {
+    await changeLoop(issue, { status: "skipped", skipReason, reason, ...extra });
+    if (release) await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+    progress(`issue ${issue}: skipped (${detail ?? `${skipReason}: ${reason}`})`);
+  };
+
   const launchIssue = async (issue, { recovery = null } = {}) => {
     let loop = loops.get(issue);
     const item = {
@@ -928,13 +938,11 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
           }
           return;
         }
-        await changeLoop(issue, {
-          status: "skipped",
+        await skipLoop(issue, {
           skipReason: eligibility.reason,
           reason: eligibility.evidence,
-          remainingSteps: loop.remainingSteps,
+          extra: { remainingSteps: loop.remainingSteps },
         });
-        progress(`issue ${issue}: skipped (${eligibility.reason}: ${eligibility.evidence})`);
         return;
       }
       itemTitle = eligibility.title ?? null;
@@ -950,13 +958,11 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
           if (!PR_BRANCH_REFUSALS.has(err?.code)) {
             throw err;
           }
-          await changeLoop(issue, {
-            status: "skipped",
+          await skipLoop(issue, {
             skipReason: err.code,
             reason: err.message,
-            remainingSteps: loop.remainingSteps,
+            extra: { remainingSteps: loop.remainingSteps },
           });
-          progress(`issue ${issue}: skipped (${err.code}: ${err.message})`);
           return;
         }
       }
@@ -983,12 +989,11 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
             },
           );
       if (!claimResult.acquired) {
-        await changeLoop(issue, {
-          status: "skipped",
+        await skipLoop(issue, {
           skipReason: "claimed",
           reason: `claimed by batch ${claimResult.owner ?? "unknown"}`,
+          detail: `claimed by batch ${claimResult.owner ?? "unknown"}`,
         });
-        progress(`issue ${issue}: skipped (claimed by batch ${claimResult.owner ?? "unknown"})`);
         return;
       }
       let title = item.kind === "issue" ? `issue ${item.number}` : `pull request ${item.number}`;
@@ -1030,15 +1035,12 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         }
       } catch (err) {
         if (PR_BRANCH_REFUSALS.has(err?.code)) {
-          await changeLoop(issue, {
-            status: "skipped",
+          await skipLoop(issue, {
             skipReason: err.code,
             reason: err.message,
-            workTree: null,
-            remainingSteps: loop.remainingSteps,
+            extra: { workTree: null, remainingSteps: loop.remainingSteps },
+            release: true,
           });
-          await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-          progress(`issue ${issue}: skipped (${err.code}: ${err.message})`);
           return;
         }
         await changeLoop(issue, {
