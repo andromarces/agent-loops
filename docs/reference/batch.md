@@ -155,7 +155,9 @@ A loop that ends on headless exit 1 or 2 is `failed` with its reason. A failed s
 
 A loop that exits 4 is `needs-owner` with reason `pr-head-unresolved`. It keeps its claim and work tree. Its decision offers `resume` and `abandon`. `resume` reconciles the pull request, so a merged pull request ends the loop `succeeded`. With no remaining step budget, resume fails with `step-budget-exhausted` before reconciliation.
 
-Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes. The path is the recorded path under the batch root and not the main work tree, and `git worktree list` names it. The recorded branch is checked out, the device and inode still match, and the tree is clean. Every local commit is pushed or merged, no other live process holds the claim, and no live run lock names the tree. A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed; the branch, pull request, transcript, log, and checkpoint stay.
+Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes. The path is the recorded path under the batch root and not the main work tree, and `git worktree list` names it. The recorded branch is checked out, the device and inode still match, and the tree is clean. Every local commit is pushed, merged, or on the base branch. No other live process holds the claim, and no live run lock names the tree.
+
+A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed. The branch, pull request, transcript, log, and checkpoint stay.
 
 The merged proof reads the declared pull request, or the undeclared one when no declaration exists.
 

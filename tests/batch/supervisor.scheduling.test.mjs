@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
-import { git } from "../../src/batch/git.mjs";
+import { createLoopWorkTree, git } from "../../src/batch/git.mjs";
 import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/store.mjs";
 import { runBatch } from "../../src/batch/supervisor.mjs";
 import { childArguments } from "../../src/batch/worker.mjs";
@@ -71,7 +71,17 @@ test("three selected issues create three work trees and one child each", async (
       prepared,
       runsRoot: join(prepared.workTreeRoot, "runs"),
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: {
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        // An unpushed commit keeps the work tree after real cleanup, so its branch stays readable.
+        createWorkTree: async (options) => {
+          const tree = await createLoopWorkTree(options);
+          await git(["commit", "--allow-empty", "-m", "work on the issue"], tree.path);
+          return tree;
+        },
+      },
     });
     expect(exitCode).toBe(0);
     expect(summary.loops).toHaveLength(3);

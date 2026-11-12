@@ -17,6 +17,7 @@ let shared;
 const trees = {};
 let merged;
 let mergedUndeclared;
+let rewoundBase;
 
 async function createRepo() {
   const main = await createTempRepo();
@@ -36,7 +37,10 @@ async function createRepo() {
   return repo;
 }
 
-async function makeTree(repo, { name, push = true, dirty = false, lock = false } = {}) {
+async function makeTree(
+  repo,
+  { name, commit = true, push = true, dirty = false, lock = false } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), `batch-root-${name}-`));
   roots.push(root);
   const workTree = join(root, "issue-7");
@@ -47,7 +51,9 @@ async function makeTree(repo, { name, push = true, dirty = false, lock = false }
     workTree,
     branch,
   });
-  await execa("git", ["commit", "--allow-empty", "-m", "work on the issue"], { cwd: workTree });
+  if (commit) {
+    await execa("git", ["commit", "--allow-empty", "-m", "work on the issue"], { cwd: workTree });
+  }
   if (push) await execa("git", ["push", "-u", "origin", branch], { cwd: workTree });
   if (dirty) await writeFile(join(workTree, "dirty.txt"), "uncommitted" + String.fromCharCode(10));
   if (lock) await execa("git", ["worktree", "lock", workTree], { cwd: repo.main });
@@ -60,28 +66,47 @@ beforeAll(async () => {
   shared = await createRepo();
   trees.pushed = await makeTree(shared, { name: "pushed" });
   trees.unpushed = await makeTree(shared, { name: "unpushed", push: false });
+  trees.baseHead = await makeTree(shared, { name: "base-head", commit: false, push: false });
+  trees.missingBase = await makeTree(shared, { name: "missing-base", commit: false, push: false });
   trees.dirty = await makeTree(shared, { name: "dirty", dirty: true });
   trees.replaced = await makeTree(shared, { name: "replaced" });
   trees.locked = await makeTree(shared, { name: "locked", lock: true });
 
-  // Process-level exception: this case merges into the base branch and deletes a remote branch,
-  // a state change that cannot be reset for another case. It uses its own repository.
+  // Process-level exception: this case squash merges into the base branch and deletes a remote
+  // branch, a state change that cannot be reset for another case. It uses its own repository. A
+  // squash merge keeps the pull-request head on no base commit, so this case reaches prProof.
   const repo = await createRepo();
-  const tree = await makeTree(repo, { name: "merged" });
+  const tree = await makeTree(repo, { name: "merged", commit: false, push: false });
+  await writeFile(join(tree.workTree, "merged.txt"), "merged" + String.fromCharCode(10));
+  await execa("git", ["add", "merged.txt"], { cwd: tree.workTree });
+  await execa("git", ["commit", "-m", "work on the issue"], { cwd: tree.workTree });
+  await execa("git", ["push", "-u", "origin", tree.branch], { cwd: tree.workTree });
   const head = (await git(["rev-parse", "HEAD"], tree.workTree)).stdout;
-  await execa("git", ["merge", "--no-ff", "-m", "merge", tree.branch], { cwd: repo.main });
+  await execa("git", ["merge", "--squash", tree.branch], { cwd: repo.main });
+  await execa("git", ["commit", "-m", "squash merge"], { cwd: repo.main });
   const mergeCommit = (await git(["rev-parse", "HEAD"], repo.main)).stdout;
   await execa("git", ["push", "origin", repo.base], { cwd: repo.main });
   await execa("git", ["push", "origin", "--delete", tree.branch], { cwd: tree.workTree });
   merged = { ...tree, head, mergeCommit };
 
-  // A second merged tree keeps the undeclared proof case independent of the declared one.
+  // A second merged tree keeps the undeclared proof case independent of the declared one. A
+  // squash merge keeps its head on no base commit, so this case also reaches prProof.
   const undeclaredRepo = await createRepo();
-  const undeclaredTree = await makeTree(undeclaredRepo, { name: "merged-undeclared" });
-  const undeclaredHead = (await git(["rev-parse", "HEAD"], undeclaredTree.workTree)).stdout;
-  await execa("git", ["merge", "--no-ff", "-m", "merge", undeclaredTree.branch], {
-    cwd: undeclaredRepo.main,
+  const undeclaredTree = await makeTree(undeclaredRepo, {
+    name: "merged-undeclared",
+    commit: false,
+    push: false,
   });
+  const undeclaredFile = join(undeclaredTree.workTree, "undeclared.txt");
+  await writeFile(undeclaredFile, "undeclared" + String.fromCharCode(10));
+  await execa("git", ["add", "undeclared.txt"], { cwd: undeclaredTree.workTree });
+  await execa("git", ["commit", "-m", "work on the issue"], { cwd: undeclaredTree.workTree });
+  await execa("git", ["push", "-u", "origin", undeclaredTree.branch], {
+    cwd: undeclaredTree.workTree,
+  });
+  const undeclaredHead = (await git(["rev-parse", "HEAD"], undeclaredTree.workTree)).stdout;
+  await execa("git", ["merge", "--squash", undeclaredTree.branch], { cwd: undeclaredRepo.main });
+  await execa("git", ["commit", "-m", "squash merge"], { cwd: undeclaredRepo.main });
   const undeclaredMergeCommit = (await git(["rev-parse", "HEAD"], undeclaredRepo.main)).stdout;
   await execa("git", ["push", "origin", undeclaredRepo.base], { cwd: undeclaredRepo.main });
   await execa("git", ["push", "origin", "--delete", undeclaredTree.branch], {
@@ -92,6 +117,30 @@ beforeAll(async () => {
     head: undeclaredHead,
     mergeCommit: undeclaredMergeCommit,
   };
+
+  // Process-level exception: this case narrows the fetch refspec and rewinds the remote base
+  // branch, state that cannot be reset for another case. It uses its own repository. The work
+  // tree head is then on no remote ref, while the cached tracking ref still holds it.
+  const rewoundRepo = await createRepo();
+  await writeFile(join(rewoundRepo.main, "base.txt"), "base move" + String.fromCharCode(10));
+  await execa("git", ["add", "base.txt"], { cwd: rewoundRepo.main });
+  await execa("git", ["commit", "-m", "base moves on"], { cwd: rewoundRepo.main });
+  await execa("git", ["push", "origin", rewoundRepo.base], { cwd: rewoundRepo.main });
+  const rewound = (await git(["rev-parse", "HEAD~1"], rewoundRepo.main)).stdout;
+  const rewoundTree = await makeTree(rewoundRepo, {
+    name: "rewound",
+    commit: false,
+    push: false,
+  });
+  await execa(
+    "git",
+    ["config", "remote.origin.fetch", "+refs/heads/other:refs/remotes/origin/other"],
+    { cwd: rewoundRepo.main },
+  );
+  await execa("git", ["update-ref", `refs/heads/${rewoundRepo.base}`, rewound], {
+    cwd: rewoundRepo.remote,
+  });
+  rewoundBase = rewoundTree;
 }, 60_000);
 
 afterAll(async () => {
@@ -150,6 +199,24 @@ test("a pushed successful work tree is removed", async () => {
   expect(result).toEqual({ removed: true, reason: null });
   await expect(stat(fixture.workTree)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await releaseClaim(fixture.runsRoot, REPO_KEY, 7, { batchId: "b1" })).toBe(false);
+});
+
+// Usefulness: acceptance item 1 proves the push from the base branch when the loop pushed no branch.
+test("a clean head on the base branch is removed", async () => {
+  const fixture = await fixtureFor(trees.baseHead);
+  const result = await fixture.cleanup();
+  expect(result).toEqual({ removed: true, reason: null });
+  await expect(stat(fixture.workTree)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await releaseClaim(fixture.runsRoot, REPO_KEY, 7, { batchId: "b1" })).toBe(false);
+});
+
+// Usefulness: a base branch read that fails is no proof and keeps the work tree with its reason.
+test("a failed base branch read keeps the work tree", async () => {
+  const fixture = await fixtureFor(trees.missingBase);
+  const result = await fixture.cleanup({ manifest: { base: "absent-base" } });
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("base branch read failed");
+  expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
 });
 
 // Usefulness: an unpushed commit keeps the work tree for the owner.
@@ -239,6 +306,15 @@ test("a merged undeclared pull request proves a deleted remote branch", async ()
   };
   const result = await fixture.cleanup({ loop: { pr: null, prUndeclared: 5 }, gh });
   expect(result).toEqual({ removed: true, reason: null });
+});
+
+// Usefulness: a cached base ref that the upstream rewound is no proof, so the work tree stays.
+test("a rewound base branch keeps a head on no remote ref", async () => {
+  const fixture = await fixtureFor(rewoundBase);
+  const result = await fixture.cleanup();
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("unpushed");
+  expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
 });
 
 // Usefulness: a merged pull request proves the push when the remote branch was deleted.

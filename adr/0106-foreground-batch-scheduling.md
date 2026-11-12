@@ -30,6 +30,8 @@ partially-superseded
 
 [adr/0131-name-the-undeclared-pull-request-of-a-batch-loop.md](0131-name-the-undeclared-pull-request-of-a-batch-loop.md) partially supersedes this ADR. The replaced parts are decision 8's checkpoint field list, decision 11's reconciliation rule for a recorded pull request, and decision 13's cleanup proof. A loop records `prUndeclared` beside `pr`, and a declared pull request wins. Reconciliation and the merged cleanup proof read either number.
 
+[adr/0132-count-a-head-on-the-base-branch-as-pushed-proof.md](0132-count-a-head-on-the-base-branch-as-pushed-proof.md) partially supersedes this ADR. The replaced parts are decision 13's pushed-proof bullet, which names two proofs only. They are also its sentence that a local commit neither proof covers is `unpushed-local-work`, and acceptance check 13's first sentence. A third proof counts a head that is an ancestor of the current `origin/<base>` tip read from the remote. Every other decision, consequence, and acceptance check stays in force.
+
 Every other decision, consequence, and acceptance check stays in force. The batch still never
 merges, approves, comments on, labels, force-pushes, resets, or deletes a branch.
 
