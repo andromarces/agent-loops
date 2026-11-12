@@ -24,7 +24,7 @@ const SHORT_DRAIN_MS = 100;
 // The recorded old-start pre-window delta of issue #1887 and the saved restore minimum.
 const RECORDED_PRE_WINDOW_DELTA_MS = 2.593;
 const SAVED_RESTORE_MIN_MS = 2.732;
-// The true call instant sits this far into the millisecond for every mocked edge case.
+// The true call instant sits this far into the millisecond for the accepted-tick mocks.
 const MOCKED_CALL_FRACTION = 0.9;
 
 // Usefulness: verifies requirement "a write after a reopened watch is reported" (issue #1628).
