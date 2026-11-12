@@ -14,7 +14,9 @@ This ADR partially supersedes [ADR 0043: Let the headless runtime declare the PR
 
 ## Context
 
-GitHub documents `ssh.github.com` on port 443 as its SSH host for networks that block port 22. An SSH alias with `HostName ssh.github.com` resolves to that host. A literal `ssh://git@ssh.github.com:443/owner/repo.git` remote names it too. The pull request URL names `github.com`. ADR 0043 decision 6 compared the two hosts as one literal string. The identities then differed, so the runtime declared no pull request (issue #1888). PR #1882 resolved the SSH alias through `ssh -G` and kept the `hostname` value. Its review deferred this mapping.
+GitHub documents `ssh.github.com` on port 443 as its SSH host for networks that block port 22. An SSH alias with `HostName ssh.github.com` resolves to that host. A literal `ssh://git@ssh.github.com:443/owner/repo.git` remote names it too. The pull request URL names `github.com`.
+
+ADR 0043 decision 6 compared the two hosts as one literal string. The identities then differed, so the runtime declared no pull request (issue #1888). PR #1882 resolved the SSH alias through `ssh -G` and kept the `hostname` value. Its review deferred this mapping.
 
 ## Decision
 
