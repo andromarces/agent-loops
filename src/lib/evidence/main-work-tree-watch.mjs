@@ -29,6 +29,27 @@ const MTIME_MARGIN_MS = 2_000;
 // timestamp-preserving restore at least 2.765 ms after a four-millisecond wait. The guard sits
 // between them, and an in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.1;
+// Milliseconds that the window-start spin waits for the system clock to tick before it falls back.
+const START_TICK_SPIN_MS = 2;
+
+/**
+ * Returns the window start from the system clock, placed at the sub-millisecond fraction of the
+ * reading. The spin waits for the next whole-millisecond tick and measures that wait with the
+ * performance clock as an elapsed timer only. A tick jump or a spin past the bound returns the
+ * plain reading. The caller reads this before the watch arms and before any child spawn.
+ * @returns {number}
+ */
+function readWindowStart() {
+  const base = Date.now();
+  const began = performance.now();
+  let current = base;
+  while (current === base) {
+    if (performance.now() - began >= START_TICK_SPIN_MS) return base;
+    current = Date.now();
+  }
+  const elapsed = performance.now() - began;
+  return current === base + 1 ? base + 1 - elapsed : current;
+}
 
 /**
  * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the
@@ -117,10 +138,10 @@ export async function startMainWorkTreeWatch(
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
   // past this instant. A read leaves it before. The file system stamps the change time below one
-  // millisecond. `Date.now()` steps in whole milliseconds, so a pre-window stamp can read up to one
-  // millisecond later than that start. The performance clock's wall time keeps the sub-millisecond
-  // step, and its per-process offset cancels because one start serves every delta.
-  const windowStart = performance.timeOrigin + performance.now();
+  // millisecond, so a start on a whole millisecond reads up to one millisecond early. The bounded
+  // spin places the start at the measured fraction of the same system clock. The start is read
+  // before the watch arms, so no child write precedes it.
+  const windowStart = readWindowStart();
   const changeTimeAfterStart = windowStart + CHANGE_TIME_GUARD_MS;
   let failed = false;
   let watcherClosed = false;
