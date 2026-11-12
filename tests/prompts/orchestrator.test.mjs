@@ -305,6 +305,31 @@ test("the headless prompt states the outside-block report label rule", () => {
   );
 });
 
+// Usefulness: verifies resultPrompt carries the copied task label names of a result (issue #1914).
+test("resultPrompt carries the copied task label names", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "worker",
+      status: "ok",
+      response: "done",
+      reportCopiedTaskLabels: ["Conclusion", "Why"],
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"reportCopiedTaskLabels"');
+  expect(prompt).toContain('"Conclusion"');
+  expect(prompt).toContain('"Why"');
+});
+
+// Usefulness: verifies the headless prompt names the copied task label field and its restatement
+// turn (issue #1914).
+test("the headless prompt states the copied task label rule", () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  expectRule(prompt, /reportCopiedTaskLabels/, /init task/i);
+  expectRule(prompt, /dispatch one turn of the same role/i, /copied/i);
+});
+
 // Usefulness: verifies the headless result payload carries the inherited temporary directory
 // entries a reviewer turn left, so a headless parent holds what a `role dispatch` envelope carries
 // (issue #1024).

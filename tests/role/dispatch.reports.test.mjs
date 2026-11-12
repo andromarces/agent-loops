@@ -846,6 +846,41 @@ test("worker dispatch names a report label that points above the closing block",
   expect((await readRepoState(repo)).lastResult.reportOutsideBlockLabels).toEqual(["Why"]);
 });
 
+// Usefulness: verifies the first dispatch and a later dispatch of one run both name each label
+// copied from the stored task (issue #1914).
+test("worker dispatch names each label copied from the init task on both turns", async () => {
+  const repo = await newCleanRepo();
+  const task = [
+    "Conclusion: TASK-LABEL-CONCLUSION-1914",
+    "Why: TASK-LABEL-WHY-1914",
+    "Blockers: none",
+    "Checks: TASK-LABEL-CHECKS-1914",
+  ].join("\n");
+  const worker = recordingAdapter([async () => task, async () => task]);
+  const first = await executeRoleCommand(
+    withRepo(dispatchArgv(["--task", task, ...INIT_OVERRIDES.slice(2)]), repo),
+    { agents: { fake1: worker, fake2: recordingAdapter([]) }, stdin: stdinPrompt },
+  );
+  expect(first.exitCode).toBe(0);
+  expect(first.payload.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
+  expect((await readRepoState(repo)).lastResult.reportCopiedTaskLabels).toEqual([
+    "Conclusion",
+    "Why",
+    "Checks",
+  ]);
+  const later = await executeRoleCommand(withRepo(dispatchArgv([]), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(later.exitCode).toBe(0);
+  expect(later.payload.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
+  expect((await readRepoState(repo)).lastResult.reportCopiedTaskLabels).toEqual([
+    "Conclusion",
+    "Why",
+    "Checks",
+  ]);
+});
+
 // Usefulness: verifies the reviewer envelope and state file name a pointer after quoted text,
 // because a reviewer turn has no exception (issue #1910).
 test("reviewer dispatch names a report label that points above the closing block", async () => {

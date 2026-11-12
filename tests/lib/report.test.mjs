@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  copiedTaskReportLabels,
   hasClosingBlockAttempt,
   acceptanceFailure,
   missingRequiredReportLabels,
@@ -2339,4 +2340,76 @@ test("outsideBlockReportLabels leaves a value that points nowhere out", () => {
 // does not parse (issue #1907).
 test("outsideBlockReportLabels returns no label for a null report", () => {
   expect(outsideBlockReportLabels("Conclusion: done\nWhy: the evidence above", null)).toEqual([]);
+});
+
+// A task that holds report label lines, as a plain-copy response needs.
+const COPIED_TASK = [
+  "Conclusion: TASK-LABEL-CONCLUSION-1914",
+  "Why: TASK-LABEL-WHY-1914",
+  "Blockers: none",
+  "Checks: TASK-LABEL-CHECKS-1914",
+].join("\n");
+
+// Usefulness: verifies each copied task value names its label, in report order, and the shared
+// value none names none (issue #1914).
+test("copiedTaskReportLabels names each label copied from the init task", () => {
+  const response = COPIED_TASK;
+  expect(copiedTaskReportLabels(parseReportBlock(response), COPIED_TASK)).toEqual([
+    "Conclusion",
+    "Why",
+    "Checks",
+  ]);
+});
+
+// Usefulness: verifies a report whose values differ from the task carries no label, so the parent
+// reads an ordinary report (issue #1914).
+test("copiedTaskReportLabels leaves a report whose values differ out", () => {
+  const response = [
+    "Conclusion: the change landed",
+    "Why: the new test passes",
+    "Blockers: none",
+    "Checks: pnpm test",
+  ].join("\n");
+  expect(copiedTaskReportLabels(parseReportBlock(response), COPIED_TASK)).toEqual([]);
+});
+
+// Usefulness: verifies a fenced task label line supplies no value, as ADR 0136 decision 1 states
+// (issue #1914).
+test("copiedTaskReportLabels reads no value from a fenced task line", () => {
+  const task = [
+    "```",
+    "Conclusion: FENCED-CONCLUSION-1914",
+    "Why: FENCED-WHY-1914",
+    "```",
+    "",
+    "Conclusion: TASK-CONCLUSION-1914",
+    "Why: TASK-WHY-1914",
+    "Blockers: none",
+  ].join("\n");
+  const response = ["Conclusion: FENCED-CONCLUSION-1914", "Why: FENCED-WHY-1914"].join("\n");
+  expect(copiedTaskReportLabels(parseReportBlock(response), task)).toEqual([]);
+});
+
+// Usefulness: verifies a task value of none supplies no comparison, because a correct report can
+// hold it (issue #1914).
+test("copiedTaskReportLabels skips a task value of none", () => {
+  const task = "Conclusion: none\nWhy: TASK-WHY-1914\nBlockers: none";
+  const response = "Conclusion: none\nWhy: TASK-WHY-1914\nBlockers: none";
+  expect(copiedTaskReportLabels(parseReportBlock(response), task)).toEqual(["Why"]);
+});
+
+// Usefulness: verifies a task Verdict line supplies no comparison, because accept is a normal
+// reviewer answer (issue #1914).
+test("copiedTaskReportLabels reads no task Verdict line", () => {
+  const task = "Conclusion: TASK-CONCLUSION-1914\nWhy: TASK-WHY-1914\nVerdict: accept";
+  const response = "Conclusion: the fix passes\nWhy: the new test passes\nVerdict: accept";
+  expect(copiedTaskReportLabels(parseReportBlock(response), task)).toEqual([]);
+});
+
+// Usefulness: verifies a null report, a missing task, and a task with no label line each name no
+// label, so the field stays off an ordinary turn (issue #1914).
+test("copiedTaskReportLabels returns no label without a report or a task value", () => {
+  expect(copiedTaskReportLabels(null, COPIED_TASK)).toEqual([]);
+  expect(copiedTaskReportLabels(parseReportBlock(COPIED_TASK), null)).toEqual([]);
+  expect(copiedTaskReportLabels(parseReportBlock(COPIED_TASK), "fix the flaky test")).toEqual([]);
 });

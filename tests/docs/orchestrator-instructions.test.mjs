@@ -307,6 +307,11 @@ const SHARED_PARENT_RULES = [
       /dispatch one turn of the same role/i,
       /named result inside the closing block/i,
     ),
+  // Issue #1914: a report value equal to an init task label value names its label, and the parent
+  // asks for the copied result restated inside the block.
+  (text) => expectRule(text, /reportCopiedTaskLabels/, /init task/i),
+  (text) =>
+    expectRule(text, /dispatch one turn of the same role/i, /copied result/i, /closing block/i),
 ];
 
 // Usefulness: verifies the removed re-check leaves no documentation rule, and the field is stated
@@ -1480,6 +1485,20 @@ test("the instructions name the outside-block report label field", async () => {
   expectRule(detail, /worker exception/i, /no label/i);
   expectRule(detail, /reviewer turn has no exception/i, /text outside the block/i);
   expectRule(detail, /quoted text/i, /two paragraphs/i);
+});
+
+// Usefulness: verifies the core and the closing-block detail name the copied task value field, its
+// no-comparison values, and its restatement turn (issue #1914).
+test("the instructions name the copied task value field", async () => {
+  const core = await readFile(instructionsPath, "utf8");
+  const detail = await readFile(join(referenceSectionsDir, "closing-block.md"), "utf8");
+  for (const text of [core, detail]) {
+    expectRule(text, /reportCopiedTaskLabels/, /init task/i);
+    expectRule(text, /copied result/i, /closing block/i);
+  }
+  expectRule(core, /holds no response text/i);
+  expectRule(detail, /no comparison value/i, /none/i);
+  expectRule(detail, /heuristic/i);
 });
 
 // Usefulness: verifies #1171 — the reference doc and the headless prompt state the same `open` rule

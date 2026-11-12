@@ -128,3 +128,9 @@ Dispatch one worker turn that asks for the named result inside the closing block
 The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase whose `above` ends it, a verb before `above`, or a reference to the closing block. A word after `above`, such as `above target` or `above the limit`, reads as a comparison and stays out. A value that names a report label stays inside the block, for example `Why: as shown above in Conclusion`. A pointer that the list misses stays undetected.
 
 One documented worker exception returns no label. Exactly one label points outside the block, and the response text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote line or a fenced code block. A reviewer turn has no exception, because its prompt bars every reference to text outside the block.
+
+## Report values copied from the init task
+
+A child can copy the `Init task:` label lines as plain lines at column 0. The parser cannot tell that shape from a valid block, so the report holds task values. The runtime compares each parsed report value with the value of the same label in the init task. A report value equal to an init task value of the same label adds `reportCopiedTaskLabels`. The field names each copied label, holds no response text, and gives `["Conclusion"]` as an example. A turn with no match carries no field.
+
+Dispatch one turn of the same role that asks for the copied result, restated inside the closing block. The task supplies no comparison value for a line inside a fence, an empty value, or a value of `none` or `n/a`. A correct report can hold `none`, so the field leaves it out. The comparison reads the same label only, and a value under another label stays out. A task `Verdict:` line supplies no comparison, because `accept` is a normal reviewer answer. The field is a heuristic: an exact match costs one restatement turn.

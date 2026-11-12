@@ -164,6 +164,7 @@ Example reviewer envelope:
   missing or non-string response ends `status: "error"`, not `ok` with
   `report: null`.
   - A worker or reviewer report that points at text outside the closing block adds `reportOutsideBlockLabels`, which names each such label and holds no response text. Dispatch one turn of the same role that asks for the named result inside the closing block. The detail is in [Closing block list rules](orchestrator/closing-block.md#report-text-outside-the-block).
+  - A worker or reviewer report whose value equals an init task label value adds `reportCopiedTaskLabels`, which names each copied label and holds no response text. Dispatch one turn of the same role that asks for the copied result, restated inside the closing block. The detail is in [Closing block list rules](orchestrator/closing-block.md#report-values-copied-from-the-init-task).
 - `report.checks` names the commands that ran in that child turn and their
   results, for a worker turn and for a reviewer turn alike. It is reported
   evidence from the child, not proof that a command ran, so it never replaces

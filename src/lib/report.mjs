@@ -493,6 +493,38 @@ export function outsideBlockReportLabels(response, report, { exception = true } 
   return hasQuotedText(before) || paragraphCount(before) >= 2 ? [] : labels;
 }
 
+// A task value that a correct report can also hold, so it names no copied label.
+const NON_SPECIFIC_VALUE = /^(?:none|n\/a)\.?$/i;
+
+/**
+ * The report label names whose value equals the value of the same label in the init task, in report
+ * order, for example `["Conclusion"]`. The task is parsed by `parseReportBlock`, so a fenced task
+ * line supplies no value. A task value of `none` or `n/a` names no label, because a correct report
+ * can hold it. The detection is a heuristic: an exact match names the label, and a value under
+ * another label stays out.
+ * @param {ReturnType<typeof parseReportBlock>} report
+ * @param {string | null | undefined} task
+ * @returns {string[]}
+ */
+export function copiedTaskReportLabels(report, task) {
+  if (!report || typeof task !== "string") {
+    return [];
+  }
+  const taskReport = parseReportBlock(task);
+  if (!taskReport) {
+    return [];
+  }
+  return REPORT_LABELS.filter(([key]) => {
+    const value = report[key];
+    const taskValue = taskReport[key];
+    if (typeof value !== "string" || typeof taskValue !== "string") {
+      return false;
+    }
+    const copied = value.trim();
+    return copied !== "" && !NON_SPECIFIC_VALUE.test(copied) && copied === taskValue.trim();
+  }).map(([, label]) => label);
+}
+
 /**
  * Every required label that a null report lacks, in report order: `Conclusion`, `Why`, then
  * `Blockers`. The list is empty when every required label is present or no closing block attempt

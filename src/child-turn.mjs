@@ -8,6 +8,7 @@ import { clearGitIdentityReads } from "./lib/git-read.mjs";
 import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import {
+  copiedTaskReportLabels,
   missingRequiredReportLabels,
   outsideBlockReportLabels,
   repairedReportMatches,
@@ -152,6 +153,7 @@ export async function runProbeTurn({
  * @param {object} options
  * @returns {Promise<
  *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
+ *     reportOutsideBlockLabels?: string[], reportCopiedTaskLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
  *   { role: string, status: "error", error: string, transient?: string, refusedModel?: string } & TurnEvidence
@@ -567,6 +569,15 @@ export async function runChild(options) {
         `${roleName}: the closing block points outside itself at ${outsideBlockLabels.length === 1 ? "the label" : "the labels"} ${outsideBlockLabels.join(", ")}`,
       );
     }
+    // A parsed report names each label whose value equals the value of the same label in the init
+    // task. The task reaches every turn as its own input, so a later turn of the conversation keeps
+    // the comparison (issue #1914).
+    const copiedTaskLabels = copiedTaskReportLabels(report, task);
+    if (copiedTaskLabels.length > 0) {
+      logWarn(
+        `${roleName}: the closing block copies the init task value of ${copiedTaskLabels.length === 1 ? "the label" : "the labels"} ${copiedTaskLabels.join(", ")}`,
+      );
+    }
     return {
       role: roleName,
       status: "ok",
@@ -575,6 +586,8 @@ export async function runChild(options) {
       ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
       // The field holds label names only, never response text (issue #1907).
       ...(outsideBlockLabels.length > 0 ? { reportOutsideBlockLabels: outsideBlockLabels } : {}),
+      // The field holds label names only, never task or response text (issue #1914).
+      ...(copiedTaskLabels.length > 0 ? { reportCopiedTaskLabels: copiedTaskLabels } : {}),
       ...(shellDenied ? { shellDenied } : {}),
       ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
       ...(reviewed ? { reviewed } : {}),
