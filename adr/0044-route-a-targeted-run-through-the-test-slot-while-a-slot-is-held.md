@@ -64,5 +64,5 @@ Andro Marces
 - Implementation:
   - Source: `holdTestSlot` in `src/lib/test-slot.mjs`, `parseTestSlotArgs` in `src/lib/test-slot-cli.mjs`, `testSlotRule` in `src/prompts/rules.mjs`
   - Tests: `tests/lib/test-slot.test.mjs`, `tests/prompts/rules.test.mjs`
-  - Docs: `docs/orchestrator-instructions.md`, `docs/reference/usage.md` (Test slot)
+  - Docs: `docs/orchestrator-instructions.md`, `docs/reference/test-slot.md`
 - [ADR Index](README.md)

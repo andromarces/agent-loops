@@ -110,7 +110,7 @@ and releases no claim. It deletes no branch, tag, or remote ref.
 The implementation adds:
 
 - The `agent-loop batch audit remove` line and the removal rule to the `Reviewer audits`
-  subsection of `docs/reference/usage.md`.
+  section of `docs/reference/batch.md`.
 - A removal rule to `docs/orchestrator-instructions.md`: the skill runs
   `agent-loop batch audit remove` when the user asks to remove a finished audit, and deletes no
   audit folder or store by hand.

@@ -62,7 +62,7 @@ A `needs-owner` loop keeps the batch exit code at 1 through `exitCodeOf`. The ba
 
 ### 6. Documentation and tests
 
-The implementation updates `docs/reference/usage.md`, `docs/reference/architecture.md`, `docs/orchestrator-instructions.md`, and the batch help text. The tests in `tests/batch/supervisor.outcomes.test.mjs`, `tests/batch/supervisor.recovery.test.mjs`, and `tests/batch/supervisor.decisions.test.mjs` cover both paths and the status text. They also cover exit 1 and exit 2 as failed, and a resume after an exit 4 stop.
+The implementation updates `docs/reference/batch.md`, `docs/reference/architecture.md`, `docs/orchestrator-instructions.md`, and the batch help text. The tests in `tests/batch/supervisor.outcomes.test.mjs`, `tests/batch/supervisor.recovery.test.mjs`, and `tests/batch/supervisor.decisions.test.mjs` cover both paths and the status text. They also cover exit 1 and exit 2 as failed, and a resume after an exit 4 stop.
 
 ## Consequences
 

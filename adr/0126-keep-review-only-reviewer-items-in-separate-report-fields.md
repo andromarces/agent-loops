@@ -55,5 +55,5 @@ Andro Marces
 - [ADR 0115: Report each loop's final report in the batch summary](0115-batch-loop-final-report.md)
 - [Implementation: batch loop report](../src/batch/report.mjs)
 - [Tests: batch loop report](../tests/batch/report.test.mjs)
-- [Docs: batch loop report shape](../docs/reference/usage.md)
+- [Docs: batch loop report shape](../docs/reference/batch.md)
 - [ADR Index](README.md)

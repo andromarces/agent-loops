@@ -479,7 +479,7 @@ directories, or another process's files.
 
 The implementation adds:
 
-- A `Batch runs` section to `docs/reference/usage.md`: the command surface and every
+- A `Batch runs` page at `docs/reference/batch.md`: the command surface and every
   setting, selection and the frozen set, eligibility and skip reasons, loop slots versus
   test slots, claim and checkpoint locations, loop statuses, the summary and exit codes,
   interruption, resume with the remaining budget, GitHub reconciliation, failure isolation,
