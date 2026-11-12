@@ -185,3 +185,71 @@ test("a host that starts with a dash never reaches the ssh argument list", async
   expect(result).toEqual({ pr: null, reason: REASON });
   expect(ssh.calls).toEqual([]);
 });
+
+// Usefulness: verifies acceptance 1, since an alias that resolves to ssh.github.com declares the github.com PR.
+test("an SSH host alias that resolves to ssh.github.com declares the PR", async () => {
+  const result = await resolveWorkerPr({
+    cwd: "/repo",
+    head: HEAD,
+    gh: listGh([pr("https://github.com/owner/repo/pull/42")]),
+    ssh: sshDouble("host github-port\nhostname ssh.github.com\nuser git\n"),
+  });
+
+  expect(result).toEqual({ pr: 42 });
+});
+
+// Usefulness: verifies acceptance 1, since the literal ssh.github.com URL on port 443 declares the github.com PR.
+test("a literal ssh URL for ssh.github.com on port 443 declares the PR", async () => {
+  gitDouble.answer = runState("ssh://git@ssh.github.com:443/owner/repo.git");
+
+  const result = await resolveWorkerPr({
+    cwd: "/repo",
+    head: HEAD,
+    gh: listGh([pr("https://github.com/owner/repo/pull/42")]),
+    ssh: sshDouble("host ssh.github.com\nhostname ssh.github.com\nuser git\n"),
+  });
+
+  expect(result).toEqual({ pr: 42 });
+});
+
+// Usefulness: verifies acceptance 2, since a host that merely resembles ssh.github.com keeps its own identity.
+test("a host that is not exactly ssh.github.com does not map to github.com", async () => {
+  for (const host of [
+    "ssh.github.example.com",
+    "ssh.ghe.example.com",
+    "github.example.com",
+    "ssh.github.com.example.com",
+    "foo.ssh.github.com",
+  ]) {
+    const result = await resolveWorkerPr({
+      cwd: "/repo",
+      head: HEAD,
+      gh: listGh([pr("https://github.com/owner/repo/pull/42")]),
+      ssh: sshDouble(`hostname ${host}\n`),
+    });
+
+    expect(result, host).toEqual({ pr: null, reason: REASON });
+  }
+});
+
+// Usefulness: verifies acceptance 2, since a GitHub Enterprise host matches its own PR and not github.com.
+test("a GitHub Enterprise host keeps its own identity", async () => {
+  gitDouble.answer = runState("git@ghe.example.com:owner/repo.git");
+  const ssh = sshDouble("hostname ghe.example.com\n");
+
+  const own = await resolveWorkerPr({
+    cwd: "/repo",
+    head: HEAD,
+    gh: listGh([pr("https://ghe.example.com/owner/repo/pull/42")]),
+    ssh,
+  });
+  const github = await resolveWorkerPr({
+    cwd: "/repo",
+    head: HEAD,
+    gh: listGh([pr("https://github.com/owner/repo/pull/42")]),
+    ssh,
+  });
+
+  expect(own).toEqual({ pr: 42 });
+  expect(github).toEqual({ pr: null, reason: REASON });
+});

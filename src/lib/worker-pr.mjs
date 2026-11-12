@@ -64,8 +64,9 @@ async function resolvedSshHost(host, { user, decodeUser = false, ssh, cwd, signa
  * The lowercase `host/owner/repo` identity of a GitHub repository URL, or null. A remote takes the
  * `https`, `http`, `ssh`, and `git` URL forms and the scp form `git@host:owner/repo`. For the scp
  * and `ssh:` forms the host resolves through `ssh -G` with the remote user, and a failed read keeps
- * the literal host. A PR URL (`pull`, the PR number) takes the form
- * `https://host/owner/repo/pull/<number>`, and its last segment must equal that number.
+ * the literal host. An SSH host `ssh.github.com` maps to `github.com`. A PR URL (`pull`, the PR
+ * number) takes the form `https://host/owner/repo/pull/<number>`, and its last segment must equal
+ * that number.
  */
 async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, timeoutMs } = {}) {
   const scp = pull === null ? SCP_REMOTE.exec(text) : null;
@@ -104,7 +105,9 @@ async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, time
     sshRemote && host
       ? ((await resolvedSshHost(host, { user, decodeUser, ssh, cwd, signal, timeoutMs })) ?? host)
       : host;
-  return resolved && owner && name ? `${resolved}/${owner}/${name}`.toLowerCase() : null;
+  const canonical =
+    sshRemote && resolved && resolved.toLowerCase() === "ssh.github.com" ? "github.com" : resolved;
+  return canonical && owner && name ? `${canonical}/${owner}/${name}`.toLowerCase() : null;
 }
 
 /**
