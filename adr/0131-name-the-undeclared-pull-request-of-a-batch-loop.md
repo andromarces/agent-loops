@@ -16,7 +16,7 @@ The replaced parts are decision 8's checkpoint field list, decision 11's reconci
 
 This ADR partially supersedes
 [adr/0114-report-an-exit-4-loop-as-needs-owner.md](0114-report-an-exit-4-loop-as-needs-owner.md)
-decision 3. A recorded undeclared pull request is named in the next action.
+decisions 2 and 3. Decision 2's rule applies to `pr` only. A transcript with no declaration now records `prUndeclared`. Decision 3 names a recorded undeclared pull request in the next action.
 A loop with no recorded pull request names the branch only when both fields are null.
 
 Every other decision, consequence, and acceptance check stays in force.
