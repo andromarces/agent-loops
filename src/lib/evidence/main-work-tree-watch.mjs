@@ -29,19 +29,23 @@ const MTIME_MARGIN_MS = 2_000;
 // timestamp-preserving restore at least 2.732 ms after a four-millisecond wait. The guard sits
 // between them, and an in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.25;
+// Milliseconds after the fallback start within which a change time still counts as a read. The
+// fallback start is `base + 1`, so this guard keeps the cutoff at `base + 2.7`. That cutoff reports
+// the saved restore minimum and keeps the recorded pre-window delta out.
+const FALLBACK_GUARD_MS = 1.7;
 // Milliseconds that the window-start spin waits for a system clock tick before it falls back.
 const START_TICK_SPIN_MS = 2;
 // Milliseconds that one system clock read, or the gap between two reads, can take.
 const START_READ_BOUND_MS = 0.5;
 
 /**
- * Returns the window start from the system clock at the measured fraction of the call instant.
+ * Returns the window start and whether it came from the fallback.
  * Each `Date.now()` read sits between two performance clock readings. The spin accepts a tick only
- * when both readings and the gap since the previous read stay under the bound. Every other
- * path returns `base + 1`, the latest instant that the reading allows, so every path returns a
- * value in `[base, base + 1]`. The performance clock serves as an elapsed timer only, and the
- * caller reads this before the watch arms.
- * @returns {number}
+ * when both readings and the previous-read gap stay under the bound. An accepted tick returns the
+ * measured call fraction in `[base, base + 1]`. A read, a gap, or a wait past the bound returns
+ * `base + 1`, the latest instant that the reading allows. The performance clock serves as an
+ * elapsed timer only, and the caller reads this before the watch arms.
+ * @returns {{ start: number, fallback: boolean }}
  */
 function readWindowStart() {
   const base = Date.now();
@@ -56,12 +60,15 @@ function readWindowStart() {
       after - before <= START_READ_BOUND_MS && before - previous <= START_READ_BOUND_MS;
     previous = after;
     if (now === base) continue;
-    if (!reliable || now !== base + 1) return base + 1;
+    if (!reliable || now !== base + 1) return { start: base + 1, fallback: true };
     const elapsed = (before + after) / 2 - origin;
-    if (elapsed > 1 + START_READ_BOUND_MS) return base + 1;
-    return Math.min(base + 1, Math.max(base, base + 1 - elapsed));
+    if (elapsed > 1 + START_READ_BOUND_MS) return { start: base + 1, fallback: true };
+    return {
+      start: Math.min(base + 1, Math.max(base, base + 1 - elapsed)),
+      fallback: false,
+    };
   }
-  return base + 1;
+  return { start: base + 1, fallback: true };
 }
 
 /**
@@ -154,8 +161,9 @@ export async function startMainWorkTreeWatch(
   // millisecond, so a start on a whole millisecond reads up to one millisecond early. The bounded
   // spin places the start at the measured fraction of the same system clock. The start is read
   // before the watch arms, so no child write precedes it.
-  const windowStart = readWindowStart();
-  const changeTimeAfterStart = windowStart + CHANGE_TIME_GUARD_MS;
+  const { start: windowStart, fallback: startFallback } = readWindowStart();
+  const changeTimeAfterStart =
+    windowStart + (startFallback ? FALLBACK_GUARD_MS : CHANGE_TIME_GUARD_MS);
   let failed = false;
   let watcherClosed = false;
   let stopped = false;

@@ -25,18 +25,18 @@ The probe of run 43163755445 measured 1,000 samples for each set over 20 distinc
 ## Decision
 
 1. **Start.** The window start comes from `Date.now()` with a bounded spin of 2 ms and a read bound of 0.5 ms. Every path returns a value in `[base, base + 1]`, and the fallback is `base + 1`.
-2. **Guard.** The change-time guard is 2.25 ms. It sits 0.464 ms above the saved pre-window maximum and 0.482 ms below the saved restore minimum.
-3. **Limit.** An in-window restore inside 2.25 ms after the start is not reported.
-4. **Test.** The restore case keeps its 4 ms wait. Four cases pin the recorded pre-window delta, the preempted read, the spin overrun, and the saved restore minimum.
+2. **Guard.** The change-time guard is 2.25 ms on an accepted start. It sits 0.464 ms above the saved pre-window maximum and 0.482 ms below the saved restore minimum. The fallback start uses a 1.7 ms guard, so its cutoff is `base + 2.7`.
+3. **Limit.** An accepted start does not report an in-window restore inside 2.25 ms after it.
+4. **Test.** The restore case keeps its 4 ms wait. Five cases pin the recorded pre-window delta, the preempted read, the spin overrun, the saved restore minimum, and the fallback restore.
 5. **Unchanged.** ADR 0116 decision 1 and decision 5 stay in force, with the 2000 ms margin, the caps, the bounds, and the deadline.
 
 ## Consequences
 
-- A pre-window change time up to 1.786 ms after the start reports no path.
-- All 1,000 saved restores at the 4 ms wait remain reported, and the earliest sat 2.732 ms after the start.
-- A restore within 2.25 ms after the start is not reported.
-- The fallback start sits up to one millisecond later. A restore at the saved 2.732 ms minimum falls inside the 2.25 ms guard and goes unreported.
-- The recorded 2.593 ms and 2.551 ms old-start deltas stay under the guard on every path, because the start never sits before `base`.
+- An accepted start reports no pre-window change time up to 1.786 ms after it.
+- All 1,000 saved restores at the 4 ms wait remain reported on both paths, and the earliest sat 2.732 ms after an accepted start.
+- An accepted start does not report a restore within 2.25 ms after it.
+- The fallback start uses a 1.7 ms guard, so its cutoff is `base + 2.7`. That cutoff reports a restore at the saved 2.732 ms minimum.
+- A pre-window change at the recorded 2.593 ms delta sits at `base + 2.593`, below the fallback cutoff.
 - The spin adds a bounded delay before the watch arms, and the probe ran 9 fallbacks and 3 retries in 2,000 calls.
 
 ## Alternatives
