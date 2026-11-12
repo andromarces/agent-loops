@@ -65,7 +65,7 @@ test("two temporary repositories copy from one provided template", async () => {
   }
 });
 
-// Usefulness: (#1417) a copy owns its `.git`; a changed config, hook, or ref in one case
+// Usefulness: (#1417) a copy owns its `.git`. A changed config, hook, or ref in one case
 // reaches no other copy.
 test("a change in one temporary repository reaches no other copy", async () => {
   const first = await createTempRepo();

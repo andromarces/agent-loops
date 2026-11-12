@@ -239,9 +239,8 @@ async function chmodPlain(base, rel, target, mode) {
  * Copies one source file over its run copy and returns the hash of the bytes written.
  * Reads the source once, then writes those bytes through a temporary file and a rename, or replaces
  * nothing when the copy already holds those bytes.
- * The temporary file starts at 0600, then takes the copy's prior mode on the open handle.
  * On Windows, a read-only target is cleared for the rename and takes the prior mode back from
- * the temporary file; a failed rename restores the target mode before the cleanup.
+ * the temporary file. A failed rename restores the target mode before the cleanup.
  * Refuses before any write when a side is missing or unreadable, a link sits on the path, or the
  * copy differs from `expectedCopyHash`. Content and hashes never reach a log line or an error text.
  * @param {string} cwd
@@ -281,6 +280,7 @@ export async function refreshLocalFile(
   if (copy.hash === source.hash) {
     return copy.hash;
   }
+  // The temporary file starts at 0600 and takes the copy's prior mode on the open handle.
   const temp = join(dirname(target), `.refresh-${randomUUID()}.tmp`);
   await beforeTempCreate?.(temp);
   // Remove the temporary path only after this call creates it.
@@ -296,7 +296,7 @@ export async function refreshLocalFile(
     await handle.close();
     handle = null;
     // A Windows rename over a read-only target fails with EPERM. Clear the attribute before the
-    // rename; the temporary file carries the prior copy mode, so the rename brings it back.
+    // rename. The temporary file carries the prior copy mode, so the rename brings it back.
     // Re-check the path just before the clear. A swap after that check and before `chmod` can still
     // redirect it, in the same path-based window that the following rename has.
     if (process.platform === "win32") {

@@ -1,5 +1,5 @@
 // Process identity: liveness of a pid and its start-time stamp, which tells a live owner from a
-// reused pid (#173, ADR 0020). Reads the process table or /proc.
+// reused pid (#498, ADR 0020). Reads the process table or /proc.
 import { readFile, readlink } from "node:fs/promises";
 import { execBounded } from "./exec.mjs";
 

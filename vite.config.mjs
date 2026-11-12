@@ -6,7 +6,7 @@ export default defineConfig({
     globalSetup: ["./tests/git-template-setup.mjs"],
     setupFiles: ["./tests/setup-tmpdir.mjs"],
   },
-  // Oxfmt and Oxlint defaults; the empty blocks keep both tools on this file.
+  // Oxfmt and Oxlint defaults. The empty blocks keep both tools on this file.
   fmt: {},
   lint: {},
   // Format only, JS/TS only: the pre-commit hook never lints and never touches
