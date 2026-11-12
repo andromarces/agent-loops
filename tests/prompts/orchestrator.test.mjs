@@ -273,29 +273,36 @@ test("resultPrompt carries the reviewed state for a reviewer result", () => {
   expect(prompt).toContain('"digest": "d"');
 });
 
-// Usefulness: verifies resultPrompt carries the worker report labels that point outside the block
-// (issue #1907).
-test("resultPrompt carries the outside-block report labels of a worker result", () => {
-  const prompt = resultPrompt({
-    result: {
-      role: "worker",
-      status: "ok",
-      response: "done",
-      reportOutsideBlockLabels: ["Why"],
-    },
-    stepsUsed: 1,
-    maxSteps: 3,
-  });
-  expect(prompt).toContain('"reportOutsideBlockLabels"');
-  expect(prompt).toContain('"Why"');
+// Usefulness: verifies resultPrompt carries the outside-block report labels of a worker result
+// (issue #1907) and a reviewer result (issue #1910).
+test("resultPrompt carries the outside-block report labels of each role", () => {
+  for (const role of ["worker", "reviewer"]) {
+    const prompt = resultPrompt({
+      result: {
+        role,
+        status: "ok",
+        response: "done",
+        reportOutsideBlockLabels: ["Why"],
+      },
+      stepsUsed: 1,
+      maxSteps: 3,
+    });
+    expect(prompt, role).toContain('"reportOutsideBlockLabels"');
+    expect(prompt, role).toContain('"Why"');
+  }
 });
 
-// Usefulness: verifies the headless prompt names the outside-block field and its restatement turn
-// (issue #1907).
+// Usefulness: verifies the headless prompt names the outside-block field for both roles and its
+// restatement turn (issue #1910).
 test("the headless prompt states the outside-block report label rule", () => {
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
   expectRule(prompt, /reportOutsideBlockLabels/, /closing block/i);
-  expectRule(prompt, /dispatch one worker turn/i, /named result inside the closing block/i);
+  expectRule(prompt, /worker or reviewer report/i);
+  expectRule(
+    prompt,
+    /dispatch one turn of the same role/i,
+    /named result inside the closing block/i,
+  );
 });
 
 // Usefulness: verifies the headless result payload carries the inherited temporary directory

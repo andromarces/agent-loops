@@ -163,7 +163,7 @@ Example reviewer envelope:
   `["Why"]`, and holds no response text. A child turn whose adapter returns a
   missing or non-string response ends `status: "error"`, not `ok` with
   `report: null`.
-  - A worker report that points at text outside the closing block adds `reportOutsideBlockLabels`, which names each such label and holds no response text. Dispatch one worker turn that asks for the named result inside the closing block. The detail is in [Closing block list rules](orchestrator/closing-block.md#report-text-outside-the-block).
+  - A worker or reviewer report that points at text outside the closing block adds `reportOutsideBlockLabels`, which names each such label and holds no response text. Dispatch one turn of the same role that asks for the named result inside the closing block. The detail is in [Closing block list rules](orchestrator/closing-block.md#report-text-outside-the-block).
 - `report.checks` names the commands that ran in that child turn and their
   results, for a worker turn and for a reviewer turn alike. It is reported
   evidence from the child, not proof that a command ran, so it never replaces

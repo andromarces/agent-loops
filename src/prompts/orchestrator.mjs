@@ -534,7 +534,7 @@ Completion:
 - This headless loop chooses its own action order and still applies the completion rule above.${modeBlock(mode)}${requireAccept ? "\n- This run enforces the completion rule (--require-accept): the runtime refuses a finish until a reviewer turn reports on the state, and after any worker turn that reviewer turn returns Verdict: accept." : ""}${prDeclarationBlock(pr, startRead)}${compareHeadBlock(compareHead, { orchestratorKind, timeout, waitCommand })}${testCmdBlock(testCmd)}${reviewerSandboxBlock(reviewerSandbox)}${continuedBlock(continued, gateRestored)}${prGateBlock({ pr, requireCi, orchestratorKind, reviewerKind, reviewerSandbox, timeout, waitCommand })}
 Each child turn ends with a closing report block. In the block, conclusion, why, and blockers are required; checks, notes, and deferred are optional, and the block stays valid when the child omits them.
 
-A worker report whose label points outside the closing block adds \`reportOutsideBlockLabels\`. Dispatch one worker turn that asks for the named result inside the closing block.
+A worker or reviewer report whose label points outside the closing block adds \`reportOutsideBlockLabels\`. Dispatch one turn of the same role that asks for the named result inside the closing block.
 
 Every child turn reports a Checks line that names the commands that ran and their results; checks is null when the child omits the line. Only the reviewer Checks line is a gate input, so a worker Checks line is reported evidence and never an accept.
 

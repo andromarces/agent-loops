@@ -441,21 +441,23 @@ function textBeforeBlock(response) {
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
  * the block.
- * The documented exception returns no label. Exactly one label points outside the block, and the
- * text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote
- * line or a fenced code block.
+ * The exception returns no label when `exception` is true and exactly one label points outside the
+ * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
+ * code block. A reviewer turn passes `exception: false`, because its prompt bars every reference to
+ * text outside the block.
  * @param {string} response
  * @param {ReturnType<typeof parseReportBlock>} report
+ * @param {{ exception?: boolean }} [options]
  * @returns {string[]}
  */
-export function outsideBlockReportLabels(response, report) {
+export function outsideBlockReportLabels(response, report, { exception = true } = {}) {
   if (!report) {
     return [];
   }
   const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key])).map(
     ([, label]) => label,
   );
-  if (labels.length === 0 || labels.length > 1) {
+  if (labels.length === 0 || labels.length > 1 || !exception) {
     return labels;
   }
   const before = textBeforeBlock(response);
