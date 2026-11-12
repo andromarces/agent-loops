@@ -29,26 +29,39 @@ const MTIME_MARGIN_MS = 2_000;
 // timestamp-preserving restore at least 2.959 ms after a four-millisecond wait. The guard sits
 // between them, and an in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.1;
-// Milliseconds that the window-start spin waits for the system clock to tick before it falls back.
+// Milliseconds that the window-start spin waits for a system clock tick before it falls back.
 const START_TICK_SPIN_MS = 2;
+// Milliseconds that one system clock read, or the gap between two reads, may take.
+const START_READ_BOUND_MS = 0.5;
 
 /**
- * Returns the window start from the system clock, placed at the sub-millisecond fraction of the
- * reading. The spin waits for the next whole-millisecond tick and measures that wait with the
- * performance clock as an elapsed timer only. A tick jump or a spin past the bound returns the
- * plain reading. The caller reads this before the watch arms and before any child spawn.
+ * Returns the window start from the system clock at the measured fraction of the call instant.
+ * Each `Date.now()` read sits between two performance clock readings, and the spin accepts a tick
+ * only when both readings and the gap since the previous read stay under the bound. Every other
+ * path returns `base + 1`, the latest instant that the reading allows, so every path returns a
+ * value in `[base, base + 1]`. The performance clock serves as an elapsed timer only, and the
+ * caller reads this before the watch arms.
  * @returns {number}
  */
 function readWindowStart() {
   const base = Date.now();
-  const began = performance.now();
-  let current = base;
-  while (current === base) {
-    if (performance.now() - began >= START_TICK_SPIN_MS) return base;
-    current = Date.now();
+  const deadline = performance.now() + START_TICK_SPIN_MS;
+  const origin = performance.now();
+  let previous = origin;
+  while (performance.now() < deadline) {
+    const before = performance.now();
+    const now = Date.now();
+    const after = performance.now();
+    const reliable =
+      after - before <= START_READ_BOUND_MS && before - previous <= START_READ_BOUND_MS;
+    previous = after;
+    if (now === base) continue;
+    if (!reliable || now !== base + 1) return base + 1;
+    const elapsed = (before + after) / 2 - origin;
+    if (elapsed > 1 + START_READ_BOUND_MS) return base + 1;
+    return Math.min(base + 1, Math.max(base, base + 1 - elapsed));
   }
-  const elapsed = performance.now() - began;
-  return current === base + 1 ? base + 1 - elapsed : current;
+  return base + 1;
 }
 
 /**
