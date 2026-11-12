@@ -557,10 +557,9 @@ export async function runChild(options) {
         `${roleName}: the closing block lacks ${reportMissingLabels.length === 1 ? "the required label" : "the required labels"} ${reportMissingLabels.join(", ")}`,
       );
     }
-    // A parsed worker report names each label that points outside the block, so the parent can ask
-    // for that result (issue #1907).
-    const outsideBlockLabels =
-      isWorker && report !== null ? outsideBlockReportLabels(response, report) : [];
+    // A parsed report of either role names each label that points outside the block, so the parent
+    // can ask for that result (issues #1907 and #1910).
+    const outsideBlockLabels = report !== null ? outsideBlockReportLabels(response, report) : [];
     if (outsideBlockLabels.length > 0) {
       logWarn(
         `${roleName}: the closing block points outside itself at ${outsideBlockLabels.length === 1 ? "the label" : "the labels"} ${outsideBlockLabels.join(", ")}`,

@@ -185,6 +185,54 @@ test("--require-accept names Why and refuses a reviewer report without it", asyn
   }
 });
 
+// Usefulness: verifies a headless reviewer accept whose label points above the block reaches the
+// result event with its label and still counts as an accept (issue #1910).
+test("--require-accept carries a reviewer outside-block label in the headless result", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const pointerAccept = [
+      "The diff holds no write.",
+      "",
+      "Conclusion: the state passes.",
+      "Why: the check above.",
+      "Blockers: none.",
+      "Checks: npm test",
+      "Verdict: accept",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const orchestrator = scripted(orchReplies);
+    const events = [];
+
+    const result = await runLoop({
+      task: "Task 30c",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: orchestrator,
+        work: scripted(["worker changed"]),
+        rev: scripted([pointerAccept]),
+      },
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const results = events.filter((event) => event.type === "result").map((event) => event.result);
+    expect(results[1].reportOutsideBlockLabels).toEqual(["Why"]);
+    expect(orchestrator.recorded[2].prompt).toContain('"reportOutsideBlockLabels"');
+    expect(orchestrator.recorded[2].prompt).toContain('"Why"');
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies the headless gate keeps a parsed report without Conclusion unaccepted.
 test("--require-accept refuses a reviewer report with prose and no Conclusion label", async () => {
   gitDouble.answer = cleanRepoGit;

@@ -743,8 +743,9 @@ function dispatchPayload(roleName, result) {
     ...(result.reportMissingLabels?.length > 0
       ? { reportMissingLabels: result.reportMissingLabels }
       : {}),
-    // A parsed worker report names each label that points outside the block (issue #1907).
-    ...(roleName === "worker" && result.reportOutsideBlockLabels?.length > 0
+    // A parsed report of either role names each label that points outside the block (issues #1907
+    // and #1910).
+    ...(result.reportOutsideBlockLabels?.length > 0
       ? { reportOutsideBlockLabels: result.reportOutsideBlockLabels }
       : {}),
     ...turnResultFields(result, ["shellDenied", "workTree", ...TURN_EVIDENCE_FIELDS]),

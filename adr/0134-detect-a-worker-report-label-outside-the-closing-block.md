@@ -2,9 +2,17 @@
 
 ## Status
 
-accepted
+partially-superseded
 
-This ADR supersedes no earlier decision. It records the second choice of issue #1907: an envelope field names the label, and the parent dispatches one restatement turn.
+Partially superseded by [ADR 0135: Detect an outside-block report label for every child role](0135-detect-an-outside-block-report-label-for-every-child-role.md). The superseded parts are:
+
+- Decision 1's worker-only detection. Superseded by [ADR 0135](0135-detect-an-outside-block-report-label-for-every-child-role.md): `runChild` detects the label on every parsed report.
+- Decision 4's worker-only field and its rule that no other surface carries it. Superseded by [ADR 0135](0135-detect-an-outside-block-report-label-for-every-child-role.md): a reviewer envelope and the headless result carry the field too.
+- Decision 7's unchanged reviewer turns. Superseded by [ADR 0135](0135-detect-an-outside-block-report-label-for-every-child-role.md): a reviewer turn names the label.
+
+Decisions 2, 3, 5, and 6 stay in force. Decision 3's exception applies to a reviewer turn, as ADR 0135 states.
+
+This ADR records the second choice of issue #1907: an envelope field names the label, and the parent dispatches one restatement turn.
 
 ## Date
 
@@ -31,7 +39,7 @@ A worker turn on 2026-11-12 wrote `Why: the inference above, from the runner env
 - The parent learns the label that points outside the block without reading the child response.
 - A pointer that the pattern list misses reaches the parent as an ordinary report. The field is a heuristic, not a proof that every result is inside the block.
 - A matched turn costs one parent-dispatched restatement turn. The runtime charges no extra step for the detection.
-- Reviewer turns and every other envelope keep their shape.
+- Reviewer turns and every other envelope kept their shape at this ADR. ADR 0135 replaces that consequence for reviewer turns.
 
 ## Alternatives
 
@@ -48,6 +56,7 @@ Andro Marces
 - [Issue #1907](https://github.com/andromarces/agent-loops/issues/1907)
 - [PR #1908](https://github.com/andromarces/agent-loops/pull/1908)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md), related as the #1615 repair turn
+- [ADR 0135: Detect an outside-block report label for every child role](0135-detect-an-outside-block-report-label-for-every-child-role.md)
 - Implementation:
   - Detection: `outsideBlockReportLabels` in `src/lib/report.mjs`
   - Result field: `runChild` in `src/child-turn.mjs`
