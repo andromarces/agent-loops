@@ -223,6 +223,8 @@ jobs:
             sleep 15
           done
           exit 1
+      - name: Probe the watch window start (issue #1887)
+        run: node ./scripts/probe-window-start.mjs
       # Call the runner directly. `pnpm test -- --shard=<i>/5` inserts a `--`
       # separator on the script command, and vp drops the arguments after it,
       # so every shard ran the full suite.
