@@ -833,6 +833,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (typeof current.decision !== "string") {
       await markNeedsOwner(issue, current.reason ?? "needs-owner", {
         evidence: current.reason ?? null,
+        extra: { prUndeclared: current.prUndeclared ?? null },
       });
       return { kind: "pending" };
     }
@@ -1077,7 +1078,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (recordedWorkTree !== null && recordedWorkTree !== undefined) {
       const refused = await verifyWorkTree(loop);
       if (refused !== null) {
-        await markNeedsOwner(issue, refused, { evidence: refused });
+        await markNeedsOwner(issue, refused, {
+          evidence: refused,
+          extra: { prUndeclared: loop.prUndeclared ?? null },
+        });
         return null;
       }
       if (!continuation) {
@@ -1097,7 +1101,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
           return null;
         }
         if (decision.status === "needs-owner") {
-          await markNeedsOwner(issue, decision.reason, { evidence: decision.reason });
+          await markNeedsOwner(issue, decision.reason, {
+            evidence: decision.reason,
+            extra: { prUndeclared: loop.prUndeclared ?? null },
+          });
           return null;
         }
         const continueFrom = loop.attempts > 0 ? loop.transcript : null;
@@ -1383,6 +1390,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         reason,
         stepsUsed,
         remainingSteps,
+        prUndeclared: loop.prUndeclared ?? null,
         pid: null,
         startTime: null,
       },
@@ -1433,6 +1441,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if ((!transcript.ok || transcript.data === null) && loop.attempts > 0) {
       await markNeedsOwner(issue, "unverified-steps", {
         evidence: "the transcript is missing",
+        extra: { prUndeclared: loop.prUndeclared ?? null },
       });
       return;
     }
@@ -1448,6 +1457,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         `the transcript declares an unreadable pull request: ${err.message}`,
         {
           evidence: err.message,
+          extra: { prUndeclared: loop.prUndeclared ?? null },
         },
       );
       return;
@@ -1506,7 +1516,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (!steps.ok) {
       await markNeedsOwner(issue, "unverified-steps", {
         evidence: steps.reason ?? "the step count is unreadable",
-        extra: { stepsUsed, remainingSteps },
+        extra: { stepsUsed, remainingSteps, prUndeclared: loop.prUndeclared ?? null },
       });
       return;
     }
@@ -1538,15 +1548,16 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (decision.status === "needs-owner") {
       await markNeedsOwner(issue, decision.reason, {
         evidence: decision.reason,
-        extra: { stepsUsed, remainingSteps },
+        extra: { stepsUsed, remainingSteps, prUndeclared: loop.prUndeclared ?? null },
       });
       return;
     }
+    const recordedPr = decision.pr ?? loop.pr;
     await changeLoop(issue, {
       stepsUsed,
       remainingSteps,
-      pr: decision.pr ?? loop.pr,
-      ...clearUndeclared(decision.pr ?? loop.pr),
+      pr: recordedPr,
+      prUndeclared: recordedPr == null ? (loop.prUndeclared ?? null) : null,
       pid: null,
       startTime: null,
     });
@@ -1565,6 +1576,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
         await markNeedsOwner(issue, "unverified-process-identity", {
           evidence: "the process start stamp cannot be read",
+          extra: { prUndeclared: loop.prUndeclared ?? null },
         });
         return;
       }

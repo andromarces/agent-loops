@@ -313,5 +313,15 @@ test("undeclaredPrFromTranscript fails closed on a malformed record", () => {
   ]) {
     expect(undeclaredPrFromTranscript({ events: [event] })).toBeNull();
   }
+  expect(
+    undeclaredPrFromTranscript({
+      events: [{ type: "pr-undeclared", pr: 42 }, "not an event"],
+    }),
+  ).toBeNull();
+  expect(
+    undeclaredPrFromTranscript({
+      events: [{ type: "pr-undeclared", pr: Number.MAX_SAFE_INTEGER + 1 }],
+    }),
+  ).toBeNull();
   expect(undeclaredPrFromTranscript(null)).toBeNull();
 });
