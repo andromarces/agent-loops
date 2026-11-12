@@ -25,18 +25,19 @@ The probe of run 43163755445 measured 1,000 samples for each set over 20 distinc
 ## Decision
 
 1. **Start.** The window start comes from `Date.now()` with a bounded spin of 2 ms and a read bound of 0.5 ms. Every path returns a value in `[base, base + 1]`, and the fallback is `base + 1`.
-2. **Guard.** The change-time guard is 2.25 ms on an accepted start. It sits 0.464 ms above the saved pre-window maximum and 0.482 ms below the saved restore minimum. The fallback start uses a 1.8 ms guard, so its cutoff is `base + 2.8`.
-3. **Limit.** An accepted start does not report an in-window restore inside 2.25 ms after it. A fallback start does not report a restore inside 1.8 ms after it.
-4. **Test.** The restore case keeps its 4 ms wait. Five cases pin the recorded pre-window delta, the preempted read, the spin overrun, the saved restore minimum, and the fallback restore.
+2. **Guard.** The change-time guard is 2.25 ms on an accepted start. It sits 0.464 ms above the saved pre-window maximum and 0.482 ms below the saved restore minimum. The fallback start uses a 1.7 ms guard, so its cutoff is `base + 2.7`.
+3. **Limit.** An accepted start does not report an in-window restore inside 2.25 ms after it. A fallback start reports every restore at or past 2.732 ms after any call instant in its millisecond.
+4. **Test.** The restore case keeps its 4 ms wait. Six cases pin the recorded pre-window delta, the preempted read, the spin overrun, the saved restore minimum, and two fallback restores.
 5. **Unchanged.** ADR 0116 decision 1 and decision 5 stay in force, with the 2000 ms margin, the caps, the bounds, and the deadline.
 
 ## Consequences
 
-- An accepted start reports no pre-window change time up to 1.786 ms after it.
-- All 1,000 saved restores at the 4 ms wait remain reported, and the earliest sat 2.732 ms after its start.
-- An accepted start does not report a restore within 2.25 ms after it.
-- The fallback start uses a 1.8 ms guard, so its cutoff is `base + 2.8`.
-- A pre-window change at 1.786 ms after the fallback start sits below that cutoff, and a restore at 2.732 ms after it is reported.
+- An accepted start reports no pre-window change time up to 1.786 ms after the call instant.
+- An accepted start reports every restore at or past the saved 2.732 ms restore minimum after the call instant.
+- All 1,000 saved restores at the 4 ms wait remain reported.
+- The fallback cutoff is `base + 2.7`, so every restore at or past 2.732 ms after any call instant in that millisecond is reported.
+- A fallback start can report a pre-window change from a late call instant between `base + 2.7` and `base + 2.786`. That report is the accepted limit.
+- The recorded CI deltas of 2.593 ms and 2.551 ms from `base` stay out on the fallback path.
 - The spin adds a bounded delay before the watch arms, and the probe ran 9 fallbacks and 3 retries in 2,000 calls.
 
 ## Alternatives

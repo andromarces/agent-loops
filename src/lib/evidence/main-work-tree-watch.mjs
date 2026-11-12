@@ -30,9 +30,10 @@ const MTIME_MARGIN_MS = 2_000;
 // between them, and an in-window restore inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.25;
 // Milliseconds after the fallback start within which a change time still counts as a read. The
-// fallback start is `base + 1`, so this guard keeps the cutoff at `base + 2.8`. That cutoff reports
-// a restore at the saved restore minimum and keeps a pre-window change at the saved maximum out.
-const FALLBACK_GUARD_MS = 1.8;
+// fallback start is `base + 1`. The cutoff is `base + 2.7`, so a restore 2.732 ms or more after any
+// call instant in that millisecond is reported. A late call instant can report a pre-window change
+// between `base + 2.7` and `base + 2.786`, which is the accepted limit.
+const FALLBACK_GUARD_MS = 1.7;
 // Milliseconds that the window-start spin waits for a system clock tick before it falls back.
 const START_TICK_SPIN_MS = 2;
 // Milliseconds that one system clock read, or the gap between two reads, can take.

@@ -475,6 +475,31 @@ test("a restore at the saved minimum is reported on the fallback start", async (
   expect(result).toEqual({ candidates: ["init.txt"], failed: false });
 });
 
+// Usefulness: verifies requirement "a fallback start reports an early-call restore at the saved
+// minimum" (issue #1887). The fallback must not hide a restore from an early call instant.
+test("a restore at the saved minimum is reported after an early fallback call", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  // The call instant sits 0.01 ms into the mocked millisecond, and the restore stamp follows it by
+  // the saved minimum.
+  const base = settled - 0.01 - SAVED_RESTORE_MIN_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(
+    dir,
+    fake,
+    [base, base, base + 1],
+    [0, 0, 0.01, 0.02, 0.03, 0.08, 0.09, 1.09],
+  );
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: ["init.txt"], failed: false });
+});
+
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
 // window does not appear in mainWorkTreeChangedInTurn" (issue #1583). A read moves only the access
 // time, so the state, size, modification time, and change time stay equal and the watch must report
