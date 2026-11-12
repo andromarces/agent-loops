@@ -17,7 +17,7 @@ import {
   removeWorkTree,
 } from "./git.mjs";
 import { parseObject, readStoreText } from "./store.mjs";
-import { newBatchId, progress } from "./supervisor.mjs";
+import { newBatchId, progress } from "./loop-records.mjs";
 
 /** Generates an audit id that is safe as a directory and a file name. */
 export const newAuditId = newBatchId;

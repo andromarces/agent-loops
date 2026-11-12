@@ -19,7 +19,8 @@ import { runAudit } from "./audit.mjs";
 import { runGh } from "../lib/checks/gh-api.mjs";
 import { answerDecision } from "./decisions.mjs";
 import { readBatchStatus } from "./status.mjs";
-import { newBatchId, runBatch } from "./supervisor.mjs";
+import { newBatchId } from "./loop-records.mjs";
+import { runBatch } from "./supervisor.mjs";
 import { listBatches, readManifest } from "./store.mjs";
 
 const BATCH_USAGE = `
