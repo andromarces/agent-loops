@@ -46,6 +46,7 @@ Andro Marces
 ## Links
 
 - [Issue #1907](https://github.com/andromarces/agent-loops/issues/1907)
+- [PR #1908](https://github.com/andromarces/agent-loops/pull/1908)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md), related as the #1615 repair turn
 - Implementation:
   - Detection: `outsideBlockReportLabels` in `src/lib/report.mjs`
