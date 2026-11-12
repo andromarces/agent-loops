@@ -20,26 +20,30 @@ The parser started the block at a `Conclusion:` line inside the fence. The closi
 
 A plain quotation of the task lines at column 0 stays indistinguishable from a valid block. The parser takes the last `Conclusion:` line as the block start. The prompt rule is the only barrier for that shape.
 
-The observed child also wrote task values into its own block. The prompt rule states that the block is task data, and the live check below records that result.
+The issue envelope held report values equal to the task values, and no saved record holds the raw response. The prompt rule states that the block is task data, and the live check below records that result.
+
+A fenced `Verdict:` line had the same defect on `origin/main`. A real `Verdict: reject` followed by a fenced `Verdict: accept` returned accept, and `acceptanceFailure` returned null. The fix keeps every fenced line out of the verdict too.
 
 ## Decision
 
-1. **Skip a fenced line in the parser.** `closingBlock` in `src/lib/report.mjs` ignores a `Conclusion:` line inside a fence. It blanks every fenced line for the report, so a quoted report label supplies no value. The verdict scan keeps its earlier fence rule.
-2. **Keep the first-turn prompt rule.** `initTaskBlock` in `src/prompts/rules.mjs` states that the block is task data, not the closing block. Worker and reviewer first turns render it.
-3. **Keep every other parser rule and assertion.** The accepted shapes and the last-occurrence rule stay. The list folds, the repair, the verdict rules, both accept gates, and the OpenCode guard also stay.
-4. **Record the plain-prose limit.** A plain task quotation at column 0 has no quotation mark that the parser can read. It stays indistinguishable from a valid block, and the prompt rule covers that shape.
-5. **Reject the detection path.** The #1615 repair requires each label to keep the original response content. A repair that replaces a copied value fails that match, so the repair is unused.
+1. **Skip a fenced line in the parser.** `closingBlock` in `src/lib/report.mjs` ignores a `Conclusion:` line inside a fence. It blanks every fenced line for the report and the verdict, so a quoted label or verdict supplies no value.
+2. **Keep the split guard closed.** `guardVerdict` reads a fenced line only for the OpenCode split-message guard. A split fenced accept still refuses the stream, and no gate reads that value.
+3. **Keep the first-turn prompt rule.** `initTaskBlock` in `src/prompts/rules.mjs` states that the block is task data, not the closing block. Worker and reviewer first turns render it.
+4. **Keep every other parser rule and assertion.** The accepted shapes and the last-occurrence rule stay. The list folds, the repair, the valid verdict shapes, both accept gates, and the OpenCode guard also stay.
+5. **Record the plain-prose limit.** A plain task quotation at column 0 has no quotation mark that the parser can read. It stays indistinguishable from a valid block, and the prompt rule covers that shape.
+6. **Reject the detection path.** The #1615 repair requires each label to keep the original response content. A repair that replaces a copied value fails that match, so the repair is unused.
 
 ## Consequences
 
 - A fenced task quotation never becomes a report value, and a real block beside it keeps its own values.
 - A blockquote label already stayed out, and the scripted probe records that result.
 - A plain task quotation at column 0 still parses as a block. The prompt rule is the mitigation, and the limit stays documented.
+- A quoted verdict never passes an accept gate, and a response whose only verdict is fenced has none.
 - The report shape, the repair turn, and every gate keep their behavior.
 
 ## Live check
 
-Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. The live turns ran with the prompt rule only. The parser probe ran on the final change from commit `7a470cee`.
+Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. The live turns ran with the prompt rule only. The parser and verdict probes ran on the final change from commit `7a470cee`.
 
 - Each CLI ran one `role dispatch` worker turn in a new disposable Git repository outside every work tree.
 - `AGENT_LOOP_RUNS_ROOT` named a folder in the system temporary directory.
@@ -58,6 +62,9 @@ Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. Th
 - The scripted parser probe held the task label lines in a fence, then a turn description. `parseReportBlock` returned null after the fix.
 - The same task lines in a blockquote also returned null.
 - The same task lines as plain earlier prose returned `TASK-LABEL-CONCLUSION-710`. That shape has no quotation mark, so the parser cannot tell it from a valid block.
+- The verdict probe paired a real `Verdict: reject` with a fenced `Verdict: accept`. It returned reject after the fix, and `acceptanceFailure` returned verdict.
+- The mirror pair with a real accept and a fenced reject returned accept.
+- A response whose only verdict sat in a fence returned unknown.
 
 - Not verified: codex-cli, agy, a later turn, and a Windows or Linux host.
 

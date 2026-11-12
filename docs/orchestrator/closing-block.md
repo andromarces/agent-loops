@@ -79,6 +79,9 @@ earlier prose, in a blockquote, or in a fenced code block stays out and neither 
 the block. A label repeated inside the block keeps its last occurrence. A `Verdict:` line inside the
 block still governs over one above it.
 
+A `Verdict:` line inside a fenced code block supplies no verdict. A response whose only `Verdict:`
+line sits in a fence has none.
+
 A report that parses only because bold labels were normalized fails closed into `raw` when its
 OpenCode response has more than one unidentified part. The report is null in that case. A
 single-part response, and every response with only plain labels, keeps its result.
