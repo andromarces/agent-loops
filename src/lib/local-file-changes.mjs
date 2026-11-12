@@ -4,16 +4,10 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
 import { isSha256Hex, sha256 } from "./hash.mjs";
 import { isJsonObject } from "./json.mjs";
-import {
-  hasBlockedAncestor,
-  MAX_FILE_BYTES,
-  namesFile,
-  READ_BATCH_SIZE,
-  sameFile,
-} from "./local-files.mjs";
+import { hasBlockedAncestor, MAX_FILE_BYTES, namesFile, sameFile } from "./local-files.mjs";
 import { locateWorkTrees, signalBoundReadWorkTree } from "./work-tree-layout.mjs";
 
 const MISSING = Symbol("missing");
@@ -152,7 +146,7 @@ async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf, { locat
     }
     base = baseOf(found);
   }
-  const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
+  const pairs = await mapInBatches(names, DEFAULT_BATCH_SIZE, async (rel) => {
     if (!isPlainRelativeName(rel)) {
       return null;
     }
@@ -178,7 +172,7 @@ export async function findLocalFileChanges(cwd, names, initHashes, { signal, ...
   }
   const hashes = isJsonObject(initHashes) ? initHashes : null;
   // `afterAncestorCheck` and `beforeRead` are test seams on the guarded read.
-  const pairs = await mapInBatches(names, READ_BATCH_SIZE, async (rel) => {
+  const pairs = await mapInBatches(names, DEFAULT_BATCH_SIZE, async (rel) => {
     if (!isPlainRelativeName(rel)) {
       return { rel, source: NOT_COMPARABLE, copy: NOT_COMPARABLE };
     }

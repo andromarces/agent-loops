@@ -1,6 +1,6 @@
 import { readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { mapInBatches } from "../batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "../batches.mjs";
 import { errorLine } from "../error-message.mjs";
 import { logWarn } from "../log.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
@@ -11,7 +11,6 @@ const REGISTERED_PREFIX = "registered/";
 // A name of a literal system temporary directory that differs from the inherited one. No entry name
 // can hold the slash, so the parent can tell the two reads apart (issue #1713).
 const LITERAL_PREFIX = "literal-tmp/";
-const READ_BATCH_SIZE = 32;
 
 /**
  * The literal system temporary directories that a child can name without an environment variable.
@@ -135,7 +134,7 @@ export async function appearedInInheritedTmpdir(before, { includeInherited = tru
   }
   if (inheritedAppeared.length === 0 && literalAppeared.length === 0) return [];
   const parent = tmpdir();
-  const registered = await mapInBatches(inheritedAppeared, READ_BATCH_SIZE, (name) =>
+  const registered = await mapInBatches(inheritedAppeared, DEFAULT_BATCH_SIZE, (name) =>
     isRegisteredTurnTmpdir(parent, name),
   );
   return reportedEntryNames([

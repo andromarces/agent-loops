@@ -2,7 +2,7 @@ import { watch } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { performance } from "node:perf_hooks";
-import { mapInBatches } from "../batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "../batches.mjs";
 import { execBounded } from "../exec.mjs";
 import { errorLine } from "../error-message.mjs";
 import { logWarn } from "../log.mjs";
@@ -19,8 +19,6 @@ const MAX_KEYS = 500;
 const MAX_READS = 500;
 // Event paths that one `git check-ignore` call reads.
 const IGNORE_BATCH_SIZE = 200;
-// Candidate paths that one file check reads at a time.
-const FILE_BATCH_SIZE = 32;
 // Milliseconds before the window start within which a modification time still counts as a write.
 // Two seconds covers a coarse file system clock and a small skew, and reports a write that
 // it cannot separate from the window.
@@ -366,7 +364,7 @@ export async function startMainWorkTreeWatch(
    * the access time, so both times stay before the window; a write that restores the modification
    * time still moves the change time past the window start. */
   const fileCandidates = () =>
-    mapInBatches([...candidates], FILE_BATCH_SIZE, async (path) => {
+    mapInBatches([...candidates], DEFAULT_BATCH_SIZE, async (path) => {
       if (stopped) return null;
       if (reads.size >= maxReads) {
         fail(new Error(`more than ${maxReads} reads`));

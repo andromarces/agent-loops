@@ -322,7 +322,7 @@ async function firstAncestorMatch(start, probe) {
  * keeping the missing tail. A root reached through a directory link is therefore compared against
  * the real work tree, never against the alias spelling.
  */
-export async function canonicalWritePath(path) {
+async function canonicalWritePath(path) {
   const tail = [];
   const real = await firstAncestorMatch(resolve(path), async (current) => {
     try {

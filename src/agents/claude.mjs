@@ -15,6 +15,7 @@ import { logWarn } from "../lib/log.mjs";
 import { isUuid } from "../lib/session-record.mjs";
 import {
   asSessionId,
+  CAPACITY_STATUS,
   assertResumedSession,
   childRan,
   recordResolvedModel,
@@ -26,6 +27,7 @@ import {
   readSessionHead,
   requireHeldUnconfirmedSession,
   setUsageOrDelete,
+  singleSessionId,
   turnExecOptions,
 } from "./shared.mjs";
 
@@ -35,8 +37,6 @@ const missingSession = (id) => `No conversation found with session ID: ${id}`;
 // Claude Code 2.1.316 writes `api_error_status: 529` on the result event of a provider overload
 // (probe against a local 529 server). The `result` text carries an environment suffix, so only the
 // structured status is matched (issue #1017).
-const CAPACITY_STATUS = 529;
-
 /**
  * Marks a failed turn whose terminal failure is a provider overload. The terminal failure is the
  * last `result` event of the output, so an earlier overload followed by another cause is never
@@ -316,8 +316,7 @@ function turnModels(inits, results) {
 function recordTurnModel(state, parsed, requestedSessionId, onInitModel) {
   const events = Array.isArray(parsed) ? parsed : [parsed];
   const named = events.filter((event) => isJsonObject(event) && event.session_id !== undefined);
-  const ids = new Set(named.map((event) => asSessionId(event.session_id) ?? null));
-  const session = ids.size === 1 ? [...ids][0] : null;
+  const session = singleSessionId(named.map((event) => event.session_id)) ?? null;
   const results = (
     Array.isArray(parsed) ? events.filter((e) => e?.type === "result") : events
   ).filter(isJsonObject);

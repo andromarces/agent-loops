@@ -13,14 +13,11 @@
 // and the directory name avoids a file-versus-directory clash at that path.
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
 import { sha256 } from "./hash.mjs";
 import { rootPath } from "./root-pins.mjs";
 import { isJsonObject } from "./json.mjs";
 import { writeFileAtomic } from "./atomic-write.mjs";
-
-// State files that one batch of reads handles at once.
-const READ_BATCH_SIZE = 32;
 
 export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 
@@ -114,7 +111,7 @@ function assertSessionId(sessionId) {
 export async function readStatesForSession(parentSession) {
   const { sessionRunsDir, legacyIndexFile } = statePaths({ parentSession });
   const stateFiles = await readSessionEntryPaths(sessionRunsDir, legacyIndexFile);
-  const states = await mapInBatches(stateFiles, READ_BATCH_SIZE, (stateFile) =>
+  const states = await mapInBatches(stateFiles, DEFAULT_BATCH_SIZE, (stateFile) =>
     readState(stateFile).catch(() => null),
   );
   // An absent, unreadable, corrupt, or non-object state file reads as null and never denies on its own.
@@ -128,7 +125,7 @@ async function readSessionEntryPaths(sessionRunsDir, legacyIndexFile) {
   const stateFiles = [];
   try {
     const names = (await readdir(sessionRunsDir)).filter((name) => !name.endsWith(".tmp"));
-    const texts = await mapInBatches(names, READ_BATCH_SIZE, (name) =>
+    const texts = await mapInBatches(names, DEFAULT_BATCH_SIZE, (name) =>
       readFile(join(sessionRunsDir, name), "utf8").catch(() => null),
     );
     // An unreadable entry reads as null and is skipped.
@@ -185,7 +182,7 @@ export async function readClaudeSessions(stateDir) {
   }
   const entries = [];
   const files = names.filter((n) => /^state(\..+)?\.json$/.test(n));
-  const rolesOfFiles = await mapInBatches(files, READ_BATCH_SIZE, (name) =>
+  const rolesOfFiles = await mapInBatches(files, DEFAULT_BATCH_SIZE, (name) =>
     readState(join(stateDir, name)).then(
       (state) => state?.roles,
       () => undefined,

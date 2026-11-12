@@ -4,6 +4,7 @@ import {
   lastClosingMessage,
   setMainLoopUsage,
   setUsageOrDelete,
+  singleSessionId,
   turnExecOptions,
 } from "../../src/agents/shared.mjs";
 
@@ -101,4 +102,19 @@ test("turnExecOptions maps turn options to exec options and omits an absent env 
   expect("env" in bare).toBe(false);
   expect("onSpawn" in bare).toBe(false);
   expect(bare.input).toBe("prompt");
+});
+
+// Usefulness: one valid id repeated across values resolves, so the three adapters keep their shared rule.
+test("singleSessionId returns the one id every value names", () => {
+  expect(singleSessionId(["sess-1", "sess-1"])).toBe("sess-1");
+});
+
+// Usefulness: no evidence, a missing value, a malformed value, and two ids never resolve, so an adapter cannot guess a session.
+test("singleSessionId refuses no id, an invalid id, and two ids", () => {
+  expect(singleSessionId([])).toBeUndefined();
+  expect(singleSessionId(["sess-1", undefined])).toBeUndefined();
+  expect(singleSessionId([undefined])).toBeUndefined();
+  expect(singleSessionId(["sess-1", null])).toBeUndefined();
+  expect(singleSessionId([7, 7])).toBeUndefined();
+  expect(singleSessionId(["sess-1", "sess-2"])).toBeUndefined();
 });

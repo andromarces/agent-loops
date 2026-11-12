@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { mapInBatches } from "../batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "../batches.mjs";
 import { errorCode, errorLine } from "../error-message.mjs";
 import { reportedPathNames } from "./entry-report.mjs";
 import { gitRead } from "../git-read.mjs";
@@ -33,9 +33,6 @@ const DEPENDENCY_PATTERN = /^(?:requirements|constraints).*\.txt$/;
 // Has at most 256 non-Node dependency files. A longer list reports the rest as changed, so a
 // capped read never hides a change.
 const MAX_DEPENDENCY_FILES = 256;
-// Hashes this many non-Node files at once, so a large list never opens every file at once.
-const HASH_BATCH_SIZE = 32;
-
 // The whole read ends at this bound, root discovery, listing, and hashing together.
 const READ_BOUND_MS = 10_000;
 // Marks a dependency file whose hash is unreadable in time.
@@ -125,7 +122,7 @@ export async function readLockfiles(cwd, { boundMs = READ_BOUND_MS } = {}) {
       }
       const [nodeHashes, fileHashes] = await Promise.all([
         Promise.all(LOCKFILES.map((name) => hash(root, name))),
-        mapInBatches(hashed, HASH_BATCH_SIZE, (path) => hash(root, path)),
+        mapInBatches(hashed, DEFAULT_BATCH_SIZE, (path) => hash(root, path)),
       ]);
       return Object.fromEntries([
         ...LOCKFILES.map((name, i) => [name, nodeHashes[i]]),

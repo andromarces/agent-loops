@@ -1,6 +1,6 @@
 import { defaultAgents, runAgent } from "./agents/index.mjs";
 import { throwIfCanceled } from "./agents/shared.mjs";
-import { mapInBatches } from "./lib/batches.mjs";
+import { settleInOrder } from "./lib/batches.mjs";
 import { errorLine, firstErrorLine, readableErrorText, readProp } from "./lib/error-message.mjs";
 import { readRequiredChecks } from "./lib/checks/ci-gate.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "./lib/checks/gh-api.mjs";
@@ -505,27 +505,22 @@ export async function runChild(options) {
     // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
     // The four reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
-    const [workTree, sharedGitChanged, lockfileChanged, mainChange] = await mapInBatches(
-      [
-        isWorker ? evidence.workTree : null,
-        evidence.sharedGitChanged,
-        evidence.lockfileChanged,
-        evidence.mainWorkTreeChanged,
-      ],
-      4,
-      (read) => (read === null ? null : read()),
-    );
+    const [workTree, sharedGitChanged, lockfileChanged, mainChange] = await settleInOrder([
+      isWorker ? evidence.workTree : () => null,
+      evidence.sharedGitChanged,
+      evidence.lockfileChanged,
+      evidence.mainWorkTreeChanged,
+    ]);
     if (isReviewer && role.conversationReplaced && !signal?.aborted) {
       await sendTaskToReplacement();
     }
     // Read after the last child call before the closing-block repair, the task-only turn included.
     // A repair turn runs after these reads, so an entry that it creates stays unseen (ADR 0094,
     // ADR 0095).
-    const [localSourceChangedInTurn, advisory] = await mapInBatches(
-      [evidence.localSourceChangedInTurn, evidence.advisory],
-      2,
-      (read) => read(),
-    );
+    const [localSourceChangedInTurn, advisory] = await settleInOrder([
+      evidence.localSourceChangedInTurn,
+      evidence.advisory,
+    ]);
     const { inheritedTmpdirEntries, packageStoreEntries } = advisory;
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
     // this function passes here, so no caller records a canceled turn as ok (#587).

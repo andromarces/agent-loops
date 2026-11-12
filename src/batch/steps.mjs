@@ -12,7 +12,7 @@ const DISPATCH_ACTIONS = new Set(["run_worker", "run_reviewer"]);
  * @param {unknown} data the parsed transcript
  * @returns {{ ok: true, steps: number, segments: number } | { ok: false, reason: string }}
  */
-export function countStepsFromData(data, { checkpointSteps = 0 } = {}) {
+function countStepsFromData(data, { checkpointSteps = 0 } = {}) {
   if (!isJsonObject(data) || !Array.isArray(data.events)) {
     return { ok: false, reason: "the transcript holds no event list" };
   }
@@ -51,22 +51,6 @@ export function countStepsFromData(data, { checkpointSteps = 0 } = {}) {
 }
 
 /**
- * Counts the charged steps of a transcript text. The checkpoint count is a cross-check, and the
- * larger value wins.
- * @param {string} text the transcript JSON
- * @returns {{ ok: true, steps: number, segments: number } | { ok: false, reason: string }}
- */
-export function countSteps(text, options) {
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: "the transcript is not valid JSON" };
-  }
-  return countStepsFromData(data, options);
-}
-
-/**
  * Counts the steps of an already-parsed transcript. A transcript with fewer segments than attempts
  * cannot prove its count.
  * @returns {{ ok: true, steps: number } | { ok: false, reason: string }}
@@ -83,25 +67,37 @@ export function stepsUsedFromData(data, { checkpointSteps = 0, attempts = 0 } = 
   return counted;
 }
 
+/** The step count from one transcript read, with the refusal text of a direct read. */
+export function stepsFromRead(read, { checkpointSteps = 0, attempts = 0 } = {}) {
+  if (read.ok) return stepsUsedFromData(read.data, { checkpointSteps, attempts });
+  if (read.missing === true && attempts === 0) return { ok: true, steps: checkpointSteps };
+  return {
+    ok: false,
+    reason:
+      read.invalid === true ? "the transcript is not valid JSON" : "the transcript is missing",
+  };
+}
+
 /**
- * Reads `file` and counts its steps. A missing file is a proven zero only for a loop with no
- * attempt. Any other missing or malformed record cannot establish a budget.
+ * Reads one transcript once. The result is `{ ok: true, data }`, or a refusal that names the cause.
+ * `readText` is injectable so a caller can replace the file read.
  */
-export async function readStepsUsed(file, { checkpointSteps = 0, attempts = 0 } = {}) {
+export async function readTranscript(file, readText = (path) => readFile(path, "utf8")) {
   let text;
   try {
-    text = await readFile(file, "utf8");
+    text = await readText(file);
   } catch (err) {
-    if (err?.code === "ENOENT" && attempts === 0) return { ok: true, steps: checkpointSteps };
-    return { ok: false, reason: "the transcript is missing" };
+    return {
+      ok: false,
+      missing: err?.code === "ENOENT",
+      reason: err?.code === "ENOENT" ? "the transcript is missing" : "the transcript is unreadable",
+    };
   }
-  let data;
   try {
-    data = JSON.parse(text);
+    return { ok: true, data: JSON.parse(text) };
   } catch {
-    return { ok: false, reason: "the transcript is not valid JSON" };
+    return { ok: false, invalid: true, reason: "the transcript is not valid JSON" };
   }
-  return stepsUsedFromData(data, { checkpointSteps, attempts });
 }
 
 /**
@@ -145,30 +141,4 @@ export function transcriptExitFromData(data) {
   const proven =
     last?.type === "gate" || (data.exitCode !== 0 && data.exitCode !== null && errorText !== "");
   return { ok: true, exitCode: data.exitCode, proven };
-}
-
-/**
- * Reads the recorded exit code of a transcript. `ok` is false for a missing or malformed record,
- * which proves nothing about the last attempt. `proven` is true when the run ended with its `gate`
- * event, or when a nonzero exit carries an error text. The default `exitCode: 1` of a transcript
- * written before the first turn is never read as a finished run.
- * @returns {Promise<{ ok: true, exitCode: number | null, proven: boolean } | { ok: false, reason: string }>}
- */
-export async function readTranscriptExit(file) {
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (err) {
-    return {
-      ok: false,
-      reason: err?.code === "ENOENT" ? "the transcript is missing" : err.message,
-    };
-  }
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: "the transcript is not valid JSON" };
-  }
-  return transcriptExitFromData(data);
 }

@@ -6,7 +6,7 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
-import { mapInBatches } from "./batches.mjs";
+import { DEFAULT_BATCH_SIZE, mapInBatches } from "./batches.mjs";
 import { canonicalPath } from "./canonical-path.mjs";
 import { readTopLevel } from "./git-read.mjs";
 import { logInfo, logWarn } from "./log.mjs";
@@ -35,9 +35,6 @@ const LOCAL_FILE_PATHS = [
   ".github/copilot-instructions.md",
   ".vscode",
 ];
-
-// Names that one batch of file reads handles at once, so a long list never opens every file at once.
-export const READ_BATCH_SIZE = 32;
 
 // Where Claude Code creates work trees. Other work tree paths come from
 // `git worktree list` and from a nested `.git` entry.
@@ -535,7 +532,7 @@ async function walkListed(mainReal, listed, sourceBlocked, maxEntries, cache) {
 async function canonOfTracked(mainReal, listed, trackedNames) {
   const listedRoots = new Set(listed.map((path) => foldName(path.split("/")[0])));
   const names = trackedNames.filter((name) => listedRoots.has(foldName(name.split("/")[0])));
-  const canons = await mapInBatches(names, READ_BATCH_SIZE, (name) =>
+  const canons = await mapInBatches(names, DEFAULT_BATCH_SIZE, (name) =>
     realpath(join(mainReal, name)).catch(() => null),
   );
   return new Set(canons);

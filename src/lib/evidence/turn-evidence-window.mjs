@@ -1,4 +1,4 @@
-import { mapInBatches } from "../batches.mjs";
+import { settleInOrder } from "../batches.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
 import { errorLine, readProp } from "../error-message.mjs";
 import { logInfo, logWarn } from "../log.mjs";
@@ -302,17 +302,13 @@ async function readAdvisory(state) {
  */
 async function readFailedTurnEvidence(state) {
   const [sharedGitChanged, lockfileChanged, mainChange, localSourceChangedInTurn, advisory] =
-    await mapInBatches(
-      [
-        readSharedGitChanged,
-        readLockfileChanged,
-        readMainWorkTreeChanged,
-        readLocalSourceChangedInTurn,
-        readAdvisory,
-      ],
-      5,
-      (read) => read(state),
-    );
+    await settleInOrder([
+      () => readSharedGitChanged(state),
+      () => readLockfileChanged(state),
+      () => readMainWorkTreeChanged(state),
+      () => readLocalSourceChangedInTurn(state),
+      () => readAdvisory(state),
+    ]);
   return {
     sharedGitChanged,
     lockfileChanged,

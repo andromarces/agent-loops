@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { mapInBatches } from "../../src/lib/batches.mjs";
+import { mapInBatches, settleInOrder } from "../../src/lib/batches.mjs";
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -41,4 +41,51 @@ test("mapInBatches starts no later batch after a failure", async () => {
     if (item === 1) throw new Error("failed");
   }).catch(() => {});
   expect(started).toEqual([0, 1]);
+});
+
+// Usefulness: a fixed thunk list runs together and keeps result order, so replacing a mapInBatches call adds no serial wait.
+test("settleInOrder starts every thunk at once and returns results in order", async () => {
+  let flying = 0;
+  let max = 0;
+  const thunk = (value, wait) => async () => {
+    flying += 1;
+    max = Math.max(max, flying);
+    await pause(wait);
+    flying -= 1;
+    return value;
+  };
+  expect(await settleInOrder([thunk("a", 20), thunk("b", 1), thunk("c", 10)])).toEqual([
+    "a",
+    "b",
+    "c",
+  ]);
+  expect(max).toBe(3);
+});
+
+// Usefulness: the first failure in thunk order throws after every thunk settles, as mapInBatches does for one batch.
+test("settleInOrder throws the first failure in order after all thunks settle", async () => {
+  const settled = [];
+  const failure = await settleInOrder([
+    async () => {
+      await pause(20);
+      settled.push(0);
+      throw new Error("failed 0");
+    },
+    async () => {
+      await pause(1);
+      settled.push(1);
+      throw new Error("failed 1");
+    },
+    async () => {
+      await pause(1);
+      settled.push(2);
+    },
+  ]).catch((error) => error);
+  expect(failure.message).toBe("failed 0");
+  expect(settled).toEqual([1, 2, 0]);
+});
+
+// Usefulness: verifies an empty thunk list settles to an empty result, so a caller has no special case.
+test("settleInOrder returns an empty list for no thunk", async () => {
+  expect(await settleInOrder([])).toEqual([]);
 });

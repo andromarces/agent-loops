@@ -8,6 +8,12 @@ import { hasClosingBlockAttempt } from "../lib/report.mjs";
 // A model id has no whitespace or control character, so a sentence or a blank is not one.
 const MODEL_ID = /^[^\s\p{Cc}]+$/u;
 
+/** The provider HTTP status that a capacity failure carries. */
+export const CAPACITY_STATUS = 529;
+
+/** The longest failure detail that an adapter reports. */
+export const DETAIL_LIMIT = 500;
+
 /** True for a model id: a non-empty string with no whitespace or control character. */
 export function isModelId(value) {
   return typeof value === "string" && MODEL_ID.test(value);
@@ -212,6 +218,17 @@ export function isNonEmptyString(value) {
  */
 export function asSessionId(value) {
   return isNonEmptyString(value) ? value : undefined;
+}
+
+/**
+ * Returns the one session id that every `values` entry names, or undefined. A missing or malformed
+ * entry, an empty list, or two different ids proves no single session.
+ * @param {unknown[]} values raw session id values
+ */
+export function singleSessionId(values) {
+  const ids = new Set(values.map((value) => asSessionId(value) ?? null));
+  if (ids.size !== 1) return undefined;
+  return [...ids][0] || undefined;
 }
 
 /**
