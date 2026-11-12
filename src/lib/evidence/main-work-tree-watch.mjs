@@ -25,10 +25,52 @@ const IGNORE_BATCH_SIZE = 200;
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read. A change
 // time is a write only when it is strictly later than the start plus this guard. The saved Windows
-// probe put a pre-window change time at most 2.100 ms after the start. It put a
-// timestamp-preserving restore at least 2.896 ms after the start. The guard sits between them, and an
-// in-window restore inside the guard is not reported.
-const CHANGE_TIME_GUARD_MS = 2.5;
+// probe put a pre-window change time at most 1.786 ms after the measured-fraction start. It put a
+// timestamp-preserving restore at least 2.732 ms after a four-millisecond wait. The guard sits
+// between them, and an in-window restore inside the guard is not reported.
+const CHANGE_TIME_GUARD_MS = 2.25;
+// Milliseconds after the fallback start within which a change time still counts as a read. The
+// fallback start is `base + 1`. The cutoff is `base + 2.7`, so a restore 2.732 ms or more after any
+// call instant in that millisecond is reported. A late call instant can report a pre-window change
+// between `base + 2.7` and `base + 2.786`, which is the accepted limit.
+const FALLBACK_GUARD_MS = 1.7;
+// Milliseconds that the window-start spin waits for a system clock tick before it falls back.
+const START_TICK_SPIN_MS = 2;
+// Milliseconds that one system clock read, or the gap between two reads, can take.
+const START_READ_BOUND_MS = 0.5;
+
+/**
+ * Returns the window start and whether it came from the fallback.
+ * Each `Date.now()` read sits between two performance clock readings. The spin accepts a tick only
+ * when both readings and the previous-read gap stay under the bound. An accepted tick returns the
+ * measured call fraction in `[base, base + 1]`. A read, a gap, or a wait past the bound returns
+ * `base + 1`, the latest instant that the reading allows. The performance clock serves as an
+ * elapsed timer only, and the caller reads this before the watch arms.
+ * @returns {{ start: number, fallback: boolean }}
+ */
+function readWindowStart() {
+  const base = Date.now();
+  const deadline = performance.now() + START_TICK_SPIN_MS;
+  const origin = performance.now();
+  let previous = origin;
+  while (performance.now() < deadline) {
+    const before = performance.now();
+    const now = Date.now();
+    const after = performance.now();
+    const reliable =
+      after - before <= START_READ_BOUND_MS && before - previous <= START_READ_BOUND_MS;
+    previous = after;
+    if (now === base) continue;
+    if (!reliable || now !== base + 1) return { start: base + 1, fallback: true };
+    const elapsed = (before + after) / 2 - origin;
+    if (elapsed > 1 + START_READ_BOUND_MS) return { start: base + 1, fallback: true };
+    return {
+      start: Math.min(base + 1, Math.max(base, base + 1 - elapsed)),
+      fallback: false,
+    };
+  }
+  return { start: base + 1, fallback: true };
+}
 
 /**
  * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the
@@ -116,11 +158,13 @@ export async function startMainWorkTreeWatch(
   } = {},
 ) {
   // The turn starts before the child call can write, so a later write moves the modification time
-  // past this instant. A read leaves it before. The file system stamps the change time from the
-  // system clock. The performance clock's wall time can sit a per-process millisecond or more away
-  // from it on Windows, so the start comes from the system clock.
-  const windowStart = Date.now();
-  const changeTimeAfterStart = windowStart + CHANGE_TIME_GUARD_MS;
+  // past this instant. A read leaves it before. The file system stamps the change time below one
+  // millisecond, so a start on a whole millisecond reads up to one millisecond early. The bounded
+  // spin places the start at the measured fraction of the same system clock. The start is read
+  // before the watch arms, so no child write precedes it.
+  const { start: windowStart, fallback: startFallback } = readWindowStart();
+  const changeTimeAfterStart =
+    windowStart + (startFallback ? FALLBACK_GUARD_MS : CHANGE_TIME_GUARD_MS);
   let failed = false;
   let watcherClosed = false;
   let stopped = false;

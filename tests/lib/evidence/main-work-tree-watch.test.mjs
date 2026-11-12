@@ -21,6 +21,11 @@ afterEach(async () => {
 
 // A short drain bound proves the deadline fires without a one-second wait (issue #1556).
 const SHORT_DRAIN_MS = 100;
+// The recorded old-start pre-window delta of issue #1887 and the saved restore minimum.
+const RECORDED_PRE_WINDOW_DELTA_MS = 2.593;
+const SAVED_RESTORE_MIN_MS = 2.732;
+// The true call instant sits this far into the millisecond for the accepted-tick mocks.
+const MOCKED_CALL_FRACTION = 0.9;
 
 // Usefulness: verifies requirement "a write after a reopened watch is reported" (issue #1628).
 // A dropped first event leaves the restored path out of the field.
@@ -148,6 +153,39 @@ function createArmingWatch() {
   return { factory, deliver: (type, filename) => fake.deliver(type, filename) };
 }
 
+/**
+ * Starts the watch with both clocks mocked from the given scripts. `dates` holds the system clock
+ * readings, and `clocks` holds the performance clock readings as elapsed milliseconds. The mocks
+ * are restored after the call returns.
+ * @param {string} dir
+ * @param {ReturnType<typeof createArmingWatch>} fake
+ * @param {number[]} dates
+ * @param {number[] | ((index: number) => number)} clocks
+ */
+async function startWithMockedClocks(dir, fake, dates, clocks) {
+  let dateIndex = 0;
+  let clockIndex = 0;
+  const dateNow = vi
+    .spyOn(Date, "now")
+    .mockImplementation(() => dates[Math.min(dateIndex++, dates.length - 1)]);
+  const perfNow = vi
+    .spyOn(performance, "now")
+    .mockImplementation(() =>
+      typeof clocks === "function"
+        ? clocks(clockIndex++)
+        : clocks[Math.min(clockIndex++, clocks.length - 1)],
+    );
+  try {
+    return await startMainWorkTreeWatch(dir, {
+      drainDeadlineMs: 60_000,
+      watchFactory: fake.factory,
+    });
+  } finally {
+    dateNow.mockRestore();
+    perfNow.mockRestore();
+  }
+}
+
 // Usefulness: verifies requirement "a watch that fails to start reports no field and warns" (issue
 // #1556). A silent start failure reads as no main work tree change.
 test("a watch that fails to start warns and returns no handle", async () => {
@@ -255,6 +293,7 @@ test("a restored edit that preserves the modification time is reported", async (
   const startBefore = Date.now();
   const handle = await startMainWorkTreeWatch(dir, { drainDeadlineMs: 60_000 });
   // Wait past the change-time guard, so the in-window restore reports through its change time.
+  // The saved Windows minimum at this wait was 2.732 ms against the 2.25 ms guard.
   await vi.waitFor(() => expect(Date.now() - startBefore).toBeGreaterThanOrEqual(4), {
     timeout: 5_000,
     interval: 1,
@@ -324,41 +363,141 @@ test("a timestamp-preserving change just before the start reports no candidate",
   expect(reported, message).toBe(false);
 });
 
-// Usefulness: verifies that the recorded Windows clock difference reports no pre-window change
-// (issue #1740). Both process clocks are 2.2 ms behind the settled file stamp, as the saved
-// 1.542 ms difference was.
-test("a clock difference of two milliseconds reports no pre-window change", async () => {
+// Usefulness: verifies requirement "a pre-window change at the recorded delta reports no
+// candidate" (issue #1887). The accepted tick places the start after the call fraction.
+test("an accepted tick keeps the recorded pre-window change unreported", async () => {
   dir = await createTempRepo();
   const file = join(dir, "init.txt");
   const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
   await writeFile(file, "copied\n");
   await writeFile(file, "hello\n");
   const settled = await settleChangeTime(file, old);
-  const realDateNow = Date.now.bind(Date);
-  const realNow = performance.now.bind(performance);
-  const realWall = performance.timeOrigin + realNow();
-  const target = 2.2;
-  const dateSkewMs = realDateNow() - settled + target;
-  const perfSkewMs = realWall - settled + target;
-  const dateSkew = vi.spyOn(Date, "now").mockImplementation(() => realDateNow() - dateSkewMs);
-  const perfSkew = vi.spyOn(performance, "now").mockImplementation(() => realNow() - perfSkewMs);
-  try {
-    const startBefore = Date.now();
-    const fake = createArmingWatch();
-    const handle = await startMainWorkTreeWatch(dir, {
-      drainDeadlineMs: 60_000,
-      watchFactory: fake.factory,
-    });
-    fake.deliver("change", "init.txt");
-    await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
-    const result = await handle.take();
-    const stats = await lstat(file);
-    const message = `attempt 1 change-time delta ${(stats.ctimeMs - startBefore).toFixed(3)} ms`;
-    expect(result, message).toEqual({ candidates: [], failed: false });
-  } finally {
-    dateSkew.mockRestore();
-    perfSkew.mockRestore();
-  }
+  const base = settled - RECORDED_PRE_WINDOW_DELTA_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(
+    dir,
+    fake,
+    [base, base, base + 1],
+    [0, 0, 0.01, 0.02, 0.03, 0.08, 0.09, 0.1],
+  );
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: [], failed: false });
+});
+
+// Usefulness: verifies requirement "a preempted tick read reports no recorded pre-window change"
+// (issue #1887). A long read bracket returns the fallback start.
+test("a preempted tick read keeps the recorded pre-window change unreported", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  const base = settled - RECORDED_PRE_WINDOW_DELTA_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(
+    dir,
+    fake,
+    [base, base, base + 1],
+    [0, 0, 0.01, 0.02, 0.03, 0.08, 0.09, 1.09],
+  );
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: [], failed: false });
+});
+
+// Usefulness: verifies requirement "a spin overrun reports no recorded pre-window change" (issue
+// #1887). A coarse clock reaches the spin deadline and returns the fallback start.
+test("a spin overrun keeps the recorded pre-window change unreported", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  const base = settled - RECORDED_PRE_WINDOW_DELTA_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(dir, fake, [base], (index) => index * 0.1);
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: [], failed: false });
+});
+
+// Usefulness: verifies requirement "a restore at the saved minimum is reported" (issue #1887). The
+// stamp sits the saved minimum after the true call instant.
+test("a restore at the saved minimum is reported", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  const base = settled - MOCKED_CALL_FRACTION - SAVED_RESTORE_MIN_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(
+    dir,
+    fake,
+    [base, base, base + 1],
+    [0, 0, 0.01, 0.02, 0.03, 0.08, 0.09, 0.1],
+  );
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: ["init.txt"], failed: false });
+});
+
+// Usefulness: verifies requirement "the fallback start reports a restore at the saved minimum"
+// (issue #1887). The fallback must not drop a restore that the origin/main cutoff reports.
+test("a restore at the saved minimum is reported on the fallback start", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  // The call instant sits 0.1 ms into the mocked millisecond, and the restore stamp follows it by
+  // the saved minimum.
+  const base = settled - 0.1 - SAVED_RESTORE_MIN_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(
+    dir,
+    fake,
+    [base, base, base + 1],
+    [0, 0, 0.01, 0.02, 0.03, 0.08, 0.09, 1.09],
+  );
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: ["init.txt"], failed: false });
+});
+
+// Usefulness: verifies requirement "a fallback start reports an early-call restore at the saved
+// minimum" (issue #1887). The fallback must not hide a restore from an early call instant.
+test("a restore at the saved minimum is reported after an early fallback call", async () => {
+  dir = await createTempRepo();
+  const file = join(dir, "init.txt");
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  await writeFile(file, "copied\n");
+  await writeFile(file, "hello\n");
+  const settled = await settleChangeTime(file, old);
+  // The call instant sits 0.01 ms into the mocked millisecond, and the restore stamp follows it by
+  // the saved minimum.
+  const base = settled - 0.01 - SAVED_RESTORE_MIN_MS;
+  const fake = createArmingWatch();
+  const handle = await startWithMockedClocks(
+    dir,
+    fake,
+    [base, base, base + 1],
+    [0, 0, 0.01, 0.02, 0.03, 0.08, 0.09, 1.09],
+  );
+  fake.deliver("change", "init.txt");
+  await vi.waitFor(() => expect(handle.seenFileCount()).toBeGreaterThan(0), { timeout: 5_000 });
+  const result = await handle.take();
+  expect(result).toEqual({ candidates: ["init.txt"], failed: false });
 });
 
 // Usefulness: verifies acceptance "On Windows, a read of a main work tree file inside a turn
