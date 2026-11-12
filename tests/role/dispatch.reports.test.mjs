@@ -862,6 +862,7 @@ test("worker dispatch names each label copied from the init task on both turns",
     { agents: { fake1: worker, fake2: recordingAdapter([]) }, stdin: stdinPrompt },
   );
   expect(first.exitCode).toBe(0);
+  expect(first.payload.report).not.toBeNull();
   expect(first.payload.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
   expect((await readRepoState(repo)).lastResult.reportCopiedTaskLabels).toEqual([
     "Conclusion",
@@ -873,6 +874,7 @@ test("worker dispatch names each label copied from the init task on both turns",
     stdin: stdinPrompt,
   });
   expect(later.exitCode).toBe(0);
+  expect(later.payload.report).not.toBeNull();
   expect(later.payload.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
   expect((await readRepoState(repo)).lastResult.reportCopiedTaskLabels).toEqual([
     "Conclusion",

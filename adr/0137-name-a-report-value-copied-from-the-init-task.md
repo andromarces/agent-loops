@@ -24,7 +24,7 @@ A scripted worker turn on `origin/main` at commit `70a9b315` reproduced the case
 
 ## Decision
 
-1. **Detect a copied task value.** `copiedTaskReportLabels` in `src/lib/report.mjs` takes the parsed report and the init task. It returns the label names whose report value equals the value of the same label in the task. The task goes through `parseReportBlock`, so a fenced task line supplies no value.
+1. **Detect a copied task value.** `copiedTaskReportLabels` in `src/lib/report.mjs` takes the parsed report and the init task. It returns the label names whose report value equals the value of the same label in the task. The task values come from the diagnostic fold of `missingRequiredReportLabels`, so a partial task block supplies its own values. A fenced task line supplies no value.
 2. **Store one result field.** `runChild` in `src/child-turn.mjs` computes `reportCopiedTaskLabels` once beside `reportOutsideBlockLabels`. A turn with no match carries no field.
 3. **Carry the field on every surface.** The `role dispatch` envelope and the state file `lastResult` read the stored value. The headless result prompt carries it too.
 4. **Reject the repair turn.** Decision 6 of ADR 0136 stays. The #1615 repair keeps the original label content, so a repaired report still holds the copied value.
@@ -68,6 +68,7 @@ Andro Marces
 ## Links
 
 - [Issue #1914](https://github.com/andromarces/agent-loops/issues/1914)
+- [PR #1915](https://github.com/andromarces/agent-loops/pull/1915)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md), related as the #1615 repair turn
 - [ADR 0136: Keep the init task label lines out of the child report](0136-keep-the-init-task-label-lines-out-of-the-child-report.md)
 - Implementation:

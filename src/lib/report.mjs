@@ -498,10 +498,11 @@ const NON_SPECIFIC_VALUE = /^(?:none|n\/a)\.?$/i;
 
 /**
  * The report label names whose value equals the value of the same label in the init task, in report
- * order, for example `["Conclusion"]`. The task is parsed by `parseReportBlock`, so a fenced task
- * line supplies no value. A task value of `none` or `n/a` names no label, because a correct report
- * can hold it. The detection is a heuristic: an exact match names the label, and a value under
- * another label stays out.
+ * order, for example `["Conclusion"]`. The task label values come from the diagnostic fold that
+ * `missingRequiredReportLabels` uses, so a partial task block supplies the values it holds. A fenced
+ * task line supplies no value. A task value of `none` or `n/a` names no label, because a correct
+ * report can hold it. The detection is a heuristic: an exact match names the label, and a value
+ * under another label stays out.
  * @param {ReturnType<typeof parseReportBlock>} report
  * @param {string | null | undefined} task
  * @returns {string[]}
@@ -510,13 +511,15 @@ export function copiedTaskReportLabels(report, task) {
   if (!report || typeof task !== "string") {
     return [];
   }
-  const taskReport = parseReportBlock(task);
-  if (!taskReport) {
-    return [];
-  }
+  const taskValues = new Map(
+    (foldedReportBlock(task, { diagnose: true })?.labels ?? []).map(({ key, value }) => [
+      key,
+      value,
+    ]),
+  );
   return REPORT_LABELS.filter(([key]) => {
     const value = report[key];
-    const taskValue = taskReport[key];
+    const taskValue = taskValues.get(key);
     if (typeof value !== "string" || typeof taskValue !== "string") {
       return false;
     }

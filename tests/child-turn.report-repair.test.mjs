@@ -670,6 +670,8 @@ test("a later turn of the same conversation names the copied labels", async () =
   expect(agent.recorded).toHaveLength(2);
   expect(agent.recorded[1].sessionId).toBe(agent.recorded[0].sessionId);
   expect(agent.recorded[1].prompt).not.toContain("Init task:");
+  expect(first.report).not.toBeNull();
+  expect(later.report).not.toBeNull();
   expect(first).not.toHaveProperty("reportCopiedTaskLabels");
   expect(later.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
 });

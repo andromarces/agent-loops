@@ -307,8 +307,8 @@ const SHARED_PARENT_RULES = [
       /dispatch one turn of the same role/i,
       /named result inside the closing block/i,
     ),
-  // Issue #1914: a report value equal to an init task label value names its label, and the parent
-  // asks for the copied result restated inside the block.
+  // Issue #1914: a report value equal to an init task label value names its label.
+  // The parent asks for the copied result restated inside the block.
   (text) => expectRule(text, /reportCopiedTaskLabels/, /init task/i),
   (text) =>
     expectRule(text, /dispatch one turn of the same role/i, /copied result/i, /closing block/i),
