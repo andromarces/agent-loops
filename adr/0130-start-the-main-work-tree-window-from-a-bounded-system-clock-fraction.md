@@ -18,7 +18,7 @@ ADR 0116 decision 1 keeps the system clock, which the file system stamp follows.
 
 A start from the performance clock's wall time does not work. Its per-process offset does not cancel against a fixed guard, and one run keeps one clock origin across turns. A start read from a probe file needs a write and a read on every turn.
 
-The chosen start reads `Date.now()` and spins to the next tick, with `performance.now()` as an elapsed timer only. Each read sits between two performance clock readings, and the spin accepts a tick only when both readings and the gap since the previous read stay under 0.5 ms. A read, a gap, or a wait past the bound returns `base + 1`, the latest instant that the reading allows. Every path returns a value in `[base, base + 1]`, the interval that holds the call instant.
+The chosen start reads `Date.now()` and spins to the next tick, with `performance.now()` as an elapsed timer only. Each read sits between two performance clock readings. The spin accepts a tick only when both readings and the previous-read gap stay under 0.5 ms. A read, a gap, or a wait past the bound returns `base + 1`, the latest instant that the reading allows. Every path returns a value in `[base, base + 1]`, the interval that holds the call instant.
 
 The probe of run 43163755445 measured 1,000 samples for each set over 20 distinct processes. It ran four child processes per `windows-tests` shard.
 
