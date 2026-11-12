@@ -121,6 +121,7 @@ test("a cancel during the slot wait throws a cancel and leaks no slot", async ()
     .then(() => null)
     .catch((caught) => caught);
   expect(err?.isCanceled).toBe(true);
+  expect(err?.message).toBe("test command canceled");
   expect(err.testRun).toMatchObject({ status: "canceled", exitCode: null, advisory: true });
   expect(await exists(ctx.ranFile)).toBe(false);
   expect((await holder).status).toBe("pass");

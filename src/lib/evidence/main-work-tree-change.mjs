@@ -1,6 +1,6 @@
 import { errorLine } from "../error-message.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
-import { gitRead, stripLf } from "../git-read.mjs";
+import { gitRead, readBranch, stripLf } from "../git-read.mjs";
 import { logWarn } from "../log.mjs";
 import { snapshot } from "../snapshot.mjs";
 import { withTimeBound } from "../time-bound.mjs";
@@ -32,7 +32,17 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
         const bound = { signal, timeoutMs: deadlineMs };
         const [snap, branch] = await Promise.all([
           Promise.race([snapshot(main, { ...bound, env: { GIT_OPTIONAL_LOCKS: "0" } }), stopped]),
-          Promise.race([readBranch(main, bound), stopped]),
+          Promise.race([
+            readBranch(gitRead, main, {
+              ...bound,
+              detached: null,
+              allowExit: [0, 1],
+              env: { GIT_OPTIONAL_LOCKS: "0" },
+              stripFinalNewline: false,
+              strip: stripLf,
+            }),
+            stopped,
+          ]),
         ]);
         // root lets the turn watch the work tree that the before read resolved.
         const state = {
@@ -65,17 +75,6 @@ export async function readMainWorkTree(cwd, { deadlineMs = READ_BOUND_MS, since 
 }
 
 const stateOf = (entry) => `${entry.status}\0${entry.hash ?? ""}`;
-
-/** Reads the checked-out branch of `main`, or null for a detached HEAD. */
-async function readBranch(main, bound) {
-  const result = await gitRead(main, ["symbolic-ref", "--short", "-q", "HEAD"], {
-    ...bound,
-    allowExit: [0, 1],
-    env: { GIT_OPTIONAL_LOCKS: "0" },
-    stripFinalNewline: false,
-  });
-  return result.exitCode === 0 ? stripLf(result.stdout) : null;
-}
 
 /**
  * Names the old and new head when the move is a clean fast-forward to the remote default branch.
