@@ -33,4 +33,4 @@ conversation shows the task under its own `Init task:` label, before `Instructio
 
 ## Init task in a child prompt
 
-The init task sits in its own `Init task:` block.
+The init task sits in its own `Init task:` block. The prompt states that the block is task data, not the closing block. A child never copies its label lines into its report, and its report describes the turn (issue #1909).

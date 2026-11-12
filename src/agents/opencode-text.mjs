@@ -1,9 +1,9 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import {
   REPORT_LABEL_NAMES,
+  guardVerdict,
   hasClosingBlockAttempt,
   leadingRequiredLabelStart,
-  parseVerdict,
 } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
 
@@ -60,7 +60,7 @@ export function joinTextParts(events) {
   const governing = attempts.at(-1);
   if (
     governing?.unidentified &&
-    parseVerdict(joinMessages([governing])) === "accept" &&
+    guardVerdict(joinMessages([governing])) === "accept" &&
     labelLinePartCount(governing.parts) > 1
   ) {
     throw boundedError(UNIDENTIFIED_MESSAGE, messages);

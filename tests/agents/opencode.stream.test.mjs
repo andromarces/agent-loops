@@ -847,6 +847,17 @@ test("opencode refuses a fenced verdict that spans unidentified parts", async ()
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
 });
 
+// Usefulness: #1909: a split fenced task quotation still reaches the origin/main split-block refusal.
+test("opencode refuses a split fenced task quotation with a following verdict", async () => {
+  const error = await runWithEvents(
+    textEvent("The init task said:\n```\nConclusion: TASK-LABEL-CONCLUSION-710\n"),
+    textEvent("Why: TASK-LABEL-WHY-710\n```\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
 // Usefulness: verifies an all-bold report split across unidentified parts marks the turn. The
 // dispatch layer can fail it closed, while the same block in one part parses (issue #1483).
 test("opencode marks an all-bold report split across unidentified parts", async () => {

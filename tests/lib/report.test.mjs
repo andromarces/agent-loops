@@ -930,6 +930,110 @@ test("parseVerdict keeps a Verdict line inside a fence above Conclusion out", ()
   expect(parseVerdict(fenced.join("\n"))).toBe("unknown");
 });
 
+// Usefulness: #1909: a fenced task quotation never supplies a report value, so the parser skips its Conclusion line.
+test("parseReportBlock keeps a fenced Conclusion quotation out of the block", () => {
+  const quoted = [
+    "I was given this task:",
+    "```",
+    "Conclusion: TASK-LABEL-CONCLUSION-710",
+    "Why: TASK-LABEL-WHY-710",
+    "Blockers: none",
+    "Checks: TASK-LABEL-CHECKS-710",
+    "```",
+    "",
+    "I created dispatch-marker.txt and no notes.txt.",
+  ].join("\n");
+  expect(parseReportBlock(quoted)).toBeNull();
+});
+
+// Usefulness: #1909: a fenced quotation after the block never overrides a real label value.
+test("parseReportBlock keeps a fenced quotation after the block out of every label", () => {
+  const response = [
+    "Conclusion: created dispatch-marker.txt",
+    "Why: the turn wrote the file",
+    "Blockers: none",
+    "Checks: created the file",
+    "",
+    "```",
+    "Conclusion: TASK-LABEL-CONCLUSION-710",
+    "Why: TASK-LABEL-WHY-710",
+    "Blockers: none",
+    "Checks: TASK-LABEL-CHECKS-710",
+    "```",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    conclusion: "created dispatch-marker.txt",
+    why: "the turn wrote the file",
+    checks: "created the file",
+  });
+});
+
+// Usefulness: #1909: a fenced label inside the block never replaces the real label value.
+test("parseReportBlock keeps a fenced label inside the block out of its value", () => {
+  const response = [
+    "Conclusion: created dispatch-marker.txt",
+    "Why: the turn wrote the file",
+    "Blockers: none",
+    "```",
+    "Why: TASK-LABEL-WHY-710",
+    "```",
+    "Checks: created the file",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "the turn wrote the file",
+    checks: "created the file",
+  });
+});
+
+// Usefulness: #1909: a fenced verdict never overrides the real verdict, in either direction.
+test("parseVerdict keeps a fenced verdict after the real verdict out", () => {
+  const response = (verdict, quoted) =>
+    [
+      "Conclusion: done",
+      "Why: ok",
+      "Blockers: none",
+      "Checks: ran",
+      `Verdict: ${verdict}`,
+      "",
+      "```",
+      `Verdict: ${quoted}`,
+      "```",
+    ].join("\n");
+  expect(parseVerdict(response("reject", "accept"))).toBe("reject");
+  expect(parseVerdict(response("accept", "reject"))).toBe("accept");
+});
+
+// Usefulness: #1909: a response whose only verdict sits in a fence has no verdict.
+test("parseVerdict yields unknown when only a fenced verdict exists", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: ran",
+    "```",
+    "Verdict: accept",
+    "```",
+  ].join("\n");
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: #1909: a fenced accept never passes the acceptance gate after a real reject.
+test("acceptanceFailure refuses a fenced accept after a real reject", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: ran",
+    "Verdict: reject",
+    "",
+    "```",
+    "Verdict: accept",
+    "```",
+  ].join("\n");
+  expect(acceptanceFailure(response)).toBe("verdict");
+  expect(parseReportBlock(response).checks).toBe("ran");
+});
+
 // Usefulness: verifies a Verdict line inside the block beats one above it, so the last line wins (issue #1793).
 test("parseVerdict keeps the Verdict line inside the block over one above it", () => {
   expect(parseVerdict(`Verdict: accept\n\n${REPORT}\nVerdict: reject`)).toBe("reject");

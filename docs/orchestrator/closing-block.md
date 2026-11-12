@@ -59,12 +59,12 @@ unparseable.
 A column-0 label line whose name and colon sit inside `**...**` is that label, for example
 `**Blockers:** none`. Only the six report labels gain this form, so `**Rule:**`
 stays text. `**Blockers**:` with the colon outside the bold still makes the block unparseable.
-A bold label inside a fenced code block stays text.
+A report label of any shape inside a fenced code block stays text and supplies no value.
 
 A column-0 line that holds only `**Label**`, with no colon and no other text, is that label too. The lines under it supply its value as they do for the plain form.
 
 When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
-report label becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
+report label outside a fence becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
 label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
 last-occurrence-wins rule.
 
@@ -78,6 +78,9 @@ lines between, also joins the block. So `**Blockers:** none` in its own paragrap
 earlier prose, in a blockquote, or in a fenced code block stays out and neither starts nor extends
 the block. A label repeated inside the block keeps its last occurrence. A `Verdict:` line inside the
 block still governs over one above it.
+
+A `Verdict:` line inside a fenced code block supplies no verdict. A response whose only `Verdict:`
+line sits in a fence has none.
 
 A report that parses only because bold labels were normalized fails closed into `raw` when its
 OpenCode response has more than one unidentified part. The report is null in that case. A

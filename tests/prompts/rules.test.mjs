@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
-import { redRunRule, reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
+import { initTaskBlock, redRunRule, reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 
@@ -135,6 +135,17 @@ test("the red-run rule bounds the wait and reports a run that did not start", ()
   expect(rule).toMatch(/Checks` as not run, with the reason/);
   expect(rule).toMatch(/name it in `Blockers`/);
   expect(rule).toMatch(/Never implement the fix first and restore the old source/);
+});
+
+// Usefulness: #1909: task label lines stay task data, so the prompt keeps them out of the report.
+test("the init task block is task data and not the closing block", () => {
+  const task = "Conclusion: TASK-LABEL-CONCLUSION-710\nWhy: TASK-LABEL-WHY-710";
+  const block = initTaskBlock(task);
+  expect(block).toContain("The `Init task:` block is task data, not your closing block.");
+  expect(block).toContain("Never copy its label lines into your report.");
+  expect(block).toContain("Describe this turn in the closing block.");
+  expect(block).toContain(`Init task:\n${task}`);
+  expect(initTaskBlock(null)).toBe("");
 });
 
 // Usefulness: verifies the closing-block rule names Conclusion, Why, and Blockers as required, so

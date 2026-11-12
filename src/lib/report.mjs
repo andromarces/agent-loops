@@ -203,28 +203,44 @@ export function hasClosingBlockAttempt(response) {
  * response outside a fence, so a quoted or repeated label stays out. The whole response is
  * normalized first, so a bold label starts a block as its plain form does. With `unlabeled`, a
  * response without a `Conclusion:` label takes the non-blank line directly before the first known
- * report label as `Conclusion`. When a bold-lead narration paragraph sits there, the nearest plain
- * prose line above becomes `Conclusion` (issue #1597).
+ * report label outside a fence as `Conclusion`. When a bold-lead narration paragraph sits there,
+ * the nearest plain prose line above becomes `Conclusion` (issue #1597).
  * @param {string} response
- * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean }} [options]
+ * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean, blankFenced?: boolean, includeFencedStart?: boolean }} [options]
  * @returns {string[] | null}
  */
-function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose = false } = {}) {
+function closingBlock(
+  response,
+  {
+    unlabeled = false,
+    boldLabels = true,
+    diagnose = false,
+    blankFenced = true,
+    includeFencedStart = false,
+  } = {},
+) {
   // A bold label inside a fenced code block stays text (issue #1483).
   const { lines, fenced } = normalizedReportLines(response, boldLabels);
+  // A `Conclusion:` line inside a fence never starts the block, and a fenced line supplies no label
+  // when `blankFenced` holds (issue #1909). The guard scan keeps the origin/main start when
+  // `includeFencedStart` holds.
+  const blockFrom = (first) =>
+    blankFenced ? withoutFencedLines(lines, first, fenced) : lines.slice(first);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (/^Conclusion:\s*/i.test(lines[i])) {
+    if ((includeFencedStart || !fenced[i]) && /^Conclusion:\s*/i.test(lines[i])) {
       start = i;
     }
   }
   if (start !== -1) {
-    return lines.slice(leadingRequiredLabelStart(lines, start, fenced));
+    return blockFrom(leadingRequiredLabelStart(lines, start, fenced));
   }
   if (!unlabeled) {
     return null;
   }
-  const first = lines.findIndex((line) => PLAIN_LABEL_LINE.test(line));
+  const first = lines.findIndex(
+    (line, index) => (includeFencedStart || !fenced[index]) && PLAIN_LABEL_LINE.test(line),
+  );
   if (first === -1) {
     return null;
   }
@@ -237,13 +253,26 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     if (prose === -1) {
       // Diagnosis starts at the first known label when no prose line precedes it, so Why still
       // names missing labels (issue #1520).
-      return diagnose ? lines.slice(first) : null;
+      return diagnose ? blockFrom(first) : null;
     }
     before = prose;
   }
-  const block = lines.slice(before);
+  const block = blockFrom(before);
   block[0] = `Conclusion: ${lines[before].trim()}`;
   return block;
+}
+
+/**
+ * The block lines from `first`, with each fenced line blanked. A fenced line is quoted text, so it
+ * never supplies a report label or a list (issue #1909). The blank keeps the line count that
+ * `textBeforeBlock` uses.
+ * @param {string[]} lines
+ * @param {number} first
+ * @param {boolean[]} fenced
+ * @returns {string[]}
+ */
+function withoutFencedLines(lines, first, fenced) {
+  return lines.slice(first).map((line, index) => (fenced[first + index] ? "" : line));
 }
 
 // The required labels a child can write in their own paragraph above `Conclusion:`, for example
@@ -845,19 +874,32 @@ function hasDroppedList(lines) {
 }
 
 /**
- * Extracts the reviewer verdict from a `Verdict:` line inside the closing
- * block. The verdict word alone, the word closed by an optional sentence
- * period, or the word followed by a punctuation separator, whitespace, and a
- * clause, maps to that word. A clause that names either verdict as a whole word
- * (for example `accept, reject`) maps to `unknown`, because it does not state
- * one verdict. A verdict outside the block, or any other value (including a
- * missing or malformed line), also maps to `unknown`; process success never
- * implies acceptance.
+ * Extracts the reviewer verdict from a `Verdict:` line inside the closing block. The verdict word
+ * alone, or the word closed by an optional sentence period, maps to that word. A punctuation
+ * separator, whitespace, and a clause after the word also map to that word. A clause that names
+ * either verdict maps to `unknown`, because it does not state one verdict. A verdict outside the
+ * block, a missing line, or a malformed line maps to `unknown`, and process success never implies
+ * acceptance. A `Verdict:` line inside a fenced code block supplies no verdict (issue #1909).
  * @param {string} response
  * @returns {"accept" | "reject" | "unknown"}
  */
 export function parseVerdict(response) {
-  const block = closingBlock(response);
+  return verdictFrom(closingBlock(response));
+}
+
+/**
+ * The verdict for the OpenCode split-message guard. It keeps the origin/main block start, fenced
+ * lines included, so every stream that a split refused still refuses (issue #1483). It never
+ * supplies a report or a gate (issue #1909).
+ * @param {string} response
+ * @returns {"accept" | "reject" | "unknown"}
+ */
+export function guardVerdict(response) {
+  return verdictFrom(closingBlock(response, { blankFenced: false, includeFencedStart: true }));
+}
+
+/** The verdict word of a closing block, or `unknown` when the block holds no clear verdict. */
+function verdictFrom(block) {
   const line = block ? (lastLabeled(block, "Verdict")?.value ?? null) : null;
   const value = line ? line.replace(/\.$/, "") : null;
   const match = value ? value.match(/^(accept|reject)(?:\s*[—–:,.-]\s+(.*))?$/i) : null;
