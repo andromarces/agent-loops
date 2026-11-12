@@ -73,6 +73,7 @@ Andro Marces
 ## Links
 
 - [Issue #1898: Remove the work tree of a succeeded batch loop whose head is already on the base branch](https://github.com/andromarces/agent-loops/issues/1898)
+- [PR #1902](https://github.com/andromarces/agent-loops/pull/1902)
 - [ADR 0106 decision 13](0106-foreground-batch-scheduling.md) (pushed-proof bullet and acceptance check 13 replaced)
 - Implementation: `cleanupLoop` in `src/batch/cleanup.mjs`
 - Tests: `tests/batch/cleanup.test.mjs`
