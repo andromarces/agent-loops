@@ -2,7 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+## Superseded by
+
+[adr/0131-name-the-undeclared-pull-request-of-a-batch-loop.md](0131-name-the-undeclared-pull-request-of-a-batch-loop.md) partially supersedes this ADR. The replaced parts are decision 2's rule and decision 3's sentence. Decision 2 left a loop without a recorded pull request when the transcript declared none. Decision 3 named the branch when no recorded pull request existed. A transcript with no declaration records `prUndeclared`, and the next action names it. Every other decision stays in force.
 
 ## Supersedes
 

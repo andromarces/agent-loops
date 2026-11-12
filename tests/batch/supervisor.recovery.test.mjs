@@ -371,6 +371,97 @@ test("a transcript that exited 4 stops needs-owner on recovery", async () => {
   }
 });
 
+// Usefulness: a recovery refusal keeps the undeclared pull request that the transcript resolved.
+test("a recovery refusal keeps the undeclared pull request", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 1, undeclared: 42, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(child);
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: null }));
+
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        installSignal: false,
+        reconcileLoop: async () => ({
+          status: "needs-owner",
+          reason: "the reconciliation read failed",
+          pr: null,
+          requireCi: null,
+        }),
+      },
+    });
+    expect(resumed.summary.loops[0]).toMatchObject({ status: "needs-owner", prUndeclared: 42 });
+    expect((await readLoop(runsRoot, prepared.id, 1)).prUndeclared).toBe(42);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a recovery failure keeps the undeclared pull request that the transcript resolved.
+test("a recovery failure keeps the undeclared pull request", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({ steps: 1, undeclared: 42, hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(child);
+    controller.abort();
+    await run;
+    const transcript = child.calls[0].transcript;
+    const data = JSON.parse(await readFile(transcript, "utf8"));
+    await writeFile(transcript, JSON.stringify({ ...data, exitCode: 2 }));
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: null }));
+
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, installSignal: false },
+    });
+    expect(resumed.summary.loops[0]).toMatchObject({
+      status: "failed",
+      reason: "exit-2",
+      prUndeclared: 42,
+    });
+    expect((await readLoop(runsRoot, prepared.id, 1)).prUndeclared).toBe(42);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: two simultaneous resumes launch one loop once.
 test("two simultaneous resumes launch a loop once", async () => {
   const repo = await batchRepo();

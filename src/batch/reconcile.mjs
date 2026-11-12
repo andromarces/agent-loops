@@ -233,11 +233,14 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
   }
 
   const details = pulls;
+  const recordedPr = loop.pr ?? loop.prUndeclared ?? null;
 
-  if (loop.pr !== null && loop.pr !== undefined) {
-    if (!details.some((pull) => pull.number === loop.pr)) {
+  if (recordedPr !== null) {
+    if (!details.some((pull) => pull.number === recordedPr)) {
       return owner(
-        `the transcript declares pull request ${loop.pr}, and the read does not find it`,
+        loop.pr !== null
+          ? `the transcript declares pull request ${recordedPr}, and the read does not find it`
+          : `the transcript records undeclared pull request ${recordedPr}, and the read does not find it`,
       );
     }
   }
@@ -249,6 +252,7 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
       ? issue.closedByPullRequestsReferences.nodes
       : [];
   const ownNumbers = new Set(details.map((pull) => pull.number));
+  if (Number.isInteger(recordedPr)) ownNumbers.add(recordedPr);
   for (const reference of references) {
     if (Number.isInteger(reference?.number) && !ownNumbers.has(reference.number)) {
       return owner(`the issue is closed by pull request ${reference.number} of another branch`);
@@ -295,6 +299,11 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
       return owner("the remote branch head differs from the local head");
     }
     if (!state.clean) return owner("the work tree is not clean");
+    // A loop whose only recorded pull request is undeclared keeps the head compare. A
+    // required-check gate for that pull request refuses every finish on an unreadable source.
+    if (loop.pr == null && loop.prUndeclared != null) {
+      return { status: "resume", reason: null, pr: null, requireCi: null };
+    }
     return { status: "resume", reason: null, pr: pull.number, requireCi: pull.number };
   }
 

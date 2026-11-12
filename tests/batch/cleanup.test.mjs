@@ -16,6 +16,7 @@ const repositories = [];
 let shared;
 const trees = {};
 let merged;
+let mergedUndeclared;
 let rewoundBase;
 
 async function createRepo() {
@@ -87,6 +88,35 @@ beforeAll(async () => {
   await execa("git", ["push", "origin", repo.base], { cwd: repo.main });
   await execa("git", ["push", "origin", "--delete", tree.branch], { cwd: tree.workTree });
   merged = { ...tree, head, mergeCommit };
+
+  // A second merged tree keeps the undeclared proof case independent of the declared one. A
+  // squash merge keeps its head on no base commit, so this case also reaches prProof.
+  const undeclaredRepo = await createRepo();
+  const undeclaredTree = await makeTree(undeclaredRepo, {
+    name: "merged-undeclared",
+    commit: false,
+    push: false,
+  });
+  const undeclaredFile = join(undeclaredTree.workTree, "undeclared.txt");
+  await writeFile(undeclaredFile, "undeclared" + String.fromCharCode(10));
+  await execa("git", ["add", "undeclared.txt"], { cwd: undeclaredTree.workTree });
+  await execa("git", ["commit", "-m", "work on the issue"], { cwd: undeclaredTree.workTree });
+  await execa("git", ["push", "-u", "origin", undeclaredTree.branch], {
+    cwd: undeclaredTree.workTree,
+  });
+  const undeclaredHead = (await git(["rev-parse", "HEAD"], undeclaredTree.workTree)).stdout;
+  await execa("git", ["merge", "--squash", undeclaredTree.branch], { cwd: undeclaredRepo.main });
+  await execa("git", ["commit", "-m", "squash merge"], { cwd: undeclaredRepo.main });
+  const undeclaredMergeCommit = (await git(["rev-parse", "HEAD"], undeclaredRepo.main)).stdout;
+  await execa("git", ["push", "origin", undeclaredRepo.base], { cwd: undeclaredRepo.main });
+  await execa("git", ["push", "origin", "--delete", undeclaredTree.branch], {
+    cwd: undeclaredTree.workTree,
+  });
+  mergedUndeclared = {
+    ...undeclaredTree,
+    head: undeclaredHead,
+    mergeCommit: undeclaredMergeCommit,
+  };
 
   // Process-level exception: this case narrows the fetch refspec and rewinds the remote base
   // branch, state that cannot be reset for another case. It uses its own repository. The work
@@ -255,6 +285,27 @@ test("the main work tree is never removed", async () => {
   });
   expect(result.removed).toBe(false);
   expect((await stat(fixture.repo.main)).isDirectory()).toBe(true);
+});
+
+// Usefulness: a merged undeclared pull request proves the push when no declaration exists.
+test("a merged undeclared pull request proves a deleted remote branch", async () => {
+  const fixture = await fixtureFor(mergedUndeclared, { pr: null });
+  const gh = async (args) => {
+    if (args[0] === "pr" && args[1] === "view") {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          state: "MERGED",
+          headRefOid: mergedUndeclared.head,
+          mergeCommit: { oid: mergedUndeclared.mergeCommit },
+        }),
+        stderr: "",
+      };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+  const result = await fixture.cleanup({ loop: { pr: null, prUndeclared: 5 }, gh });
+  expect(result).toEqual({ removed: true, reason: null });
 });
 
 // Usefulness: a cached base ref that the upstream rewound is no proof, so the work tree stays.

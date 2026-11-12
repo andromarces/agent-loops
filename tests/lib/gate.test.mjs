@@ -7,6 +7,7 @@ import {
   gateFromTranscript,
   matchingGate,
   resetGate,
+  undeclaredPrFromTranscript,
 } from "../../src/lib/gate.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
 import { removePath } from "../fs-helpers.mjs";
@@ -272,4 +273,55 @@ test("declaredPrFromTranscript ignores the pr-undeclared events", () => {
     events: [{ type: "pr-undeclared", pr: 42, stepsUsed: 1 }, { type: "gate" }],
   };
   expect(declaredPrFromTranscript(earlier)).toBeNull();
+});
+
+// Usefulness: reads the last attempt's undeclared PR, so a continued transcript never keeps an old one.
+test("undeclaredPrFromTranscript reads the last attempt", () => {
+  const earlier = {
+    events: [
+      { type: "pr-undeclared", pr: 41 },
+      { type: "continued" },
+      { type: "pr-undeclared", pr: 42 },
+    ],
+  };
+  expect(undeclaredPrFromTranscript(earlier)).toBe(42);
+  expect(
+    undeclaredPrFromTranscript({
+      events: [{ type: "pr-undeclared", pr: 41 }, { type: "continued" }, { type: "gate" }],
+    }),
+  ).toBeNull();
+});
+
+// Usefulness: a declared record wins over an undeclared one, so the gate never follows the wrong PR.
+test("undeclaredPrFromTranscript yields to a declaration in its attempt", () => {
+  const earlier = {
+    events: [
+      { type: "pr-undeclared", pr: 41 },
+      { type: "pr-declared", pr: 42 },
+    ],
+  };
+  expect(undeclaredPrFromTranscript(earlier)).toBeNull();
+});
+
+// Usefulness: a malformed undeclared record fails closed instead of naming a bad pull request.
+test("undeclaredPrFromTranscript fails closed on a malformed record", () => {
+  for (const event of [
+    { type: "pr-undeclared", pr: "42" },
+    { type: "pr-undeclared", pr: 0 },
+    { type: "pr-undeclared" },
+    "not an event",
+  ]) {
+    expect(undeclaredPrFromTranscript({ events: [event] })).toBeNull();
+  }
+  expect(
+    undeclaredPrFromTranscript({
+      events: [{ type: "pr-undeclared", pr: 42 }, "not an event"],
+    }),
+  ).toBeNull();
+  expect(
+    undeclaredPrFromTranscript({
+      events: [{ type: "pr-undeclared", pr: Number.MAX_SAFE_INTEGER + 1 }],
+    }),
+  ).toBeNull();
+  expect(undeclaredPrFromTranscript(null)).toBeNull();
 });

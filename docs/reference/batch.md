@@ -95,9 +95,11 @@ Checkpoints are written on an event only. The events are `start`, a launch, a sk
 
 ## Loop statuses and the summary
 
-A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state. A `needs-owner` loop with reason `pr-head-unresolved` names its pull request and the next action.
+A loop is `queued`, `running`, `waiting`, `succeeded`, `skipped`, `failed`, `needs-owner`, or `interrupted`. `batch status` reports a `running` loop whose recorded owner is dead as `stale` and names `batch resume` as the next action. It also shows each pending decision's options and recommendation, each required merge, and the completion state. A `needs-owner` loop with reason `pr-head-unresolved` names its pull request and the next action. The pull request is the declared one, or the undeclared one when no declaration exists.
 
 `start` and `resume` print progress on stderr and one JSON object on stdout with the batch id, status, and one entry per item. Each entry holds its identity in `issue` (an issue number, `pr-<n>`, or `task-<id>`). A non-issue item also holds its `kind` and `mode`. The entry holds loop status, reason, work tree, branch, pull request, attempts, steps used, and remaining steps.
+
+A loop whose runtime refused to declare the pull request its worker opened also holds `prUndeclared`, the resolved number, or `null`. A declared `pr` always wins. `batch status` names the undeclared pull request beside the finish report.
 
 It also holds log, transcript, cleanup result, and report. A `review-only` report also holds the reviewer `verdict` (`accept`, `reject`, or `unknown`). It keeps the reviewer findings, blockers, notes, and deferred items in `reviewerFindings`, `reviewerBlockers`, `reviewerNotes`, and `reviewerDeferred`. A batch that names only `--issue` keeps the previous entry shape.
 
@@ -128,7 +130,7 @@ A run that throws while a child is live stops that child the same way, writes th
 
 A pending decision with no answer stays pending and keeps its slot free once no recorded child process is live. A malformed decision or answer keeps the loop `needs-owner` and logs a warning. An answer of `resume` returns the loop to the queue, and an answer of `abandon` ends it as `failed`. An answer of `skip` ends it as `skipped`. A live answer refreshes eligibility, takes the loop lock, and continues the same transcript.
 
-The eligibility check ignores the loop's own open pull request that closes its issue. Another branch's pull request still skips the loop. A live answer and a `batch resume` answer share one continuation step. The step applies the `step-budget-exhausted` check before it reconciles and launches.
+The eligibility check ignores the loop's own open pull request that closes its issue. Another branch's pull request still skips the loop. The loop's own recorded pull request, declared or undeclared, is never another branch's pull request. A live answer and a `batch resume` answer share one continuation step. The step applies the `step-budget-exhausted` check before it reconciles and launches.
 
 A `waiting` issue is re-checked on the same 15-second poll, and it launches after its blockers close. Both states survive an interrupted session, so `batch resume` keeps them.
 
@@ -141,6 +143,8 @@ Before a resumed attempt, and before any launch that follows an uncertain exit, 
 - A merged pull request that lacks a local commit is `needs-owner` with `unpushed-local-work`.
 - A closed issue with no merged pull request, or a closed-unmerged pull request, is `needs-owner`.
 - One open pull request whose head equals the local and remote heads on a clean tree resumes with `--pr` and `--require-ci`.
+- A loop whose only recorded pull request is undeclared resumes through the head compare, with no `--pr` and no `--require-ci`.
+- The recorded pull request, declared or undeclared, must appear in the branch read. Its own pull request never reads as another branch's pull request.
 - Another open head, more than one open pull request, a remote head that differs, or a diverged branch is `needs-owner`.
 
 The batch never force-pushes, resets, merges, reopens, or deletes a branch to make a state fit.
@@ -154,6 +158,8 @@ A loop that exits 4 is `needs-owner` with reason `pr-head-unresolved`. It keeps 
 Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes. The path is the recorded path under the batch root and not the main work tree, and `git worktree list` names it. The recorded branch is checked out, the device and inode still match, and the tree is clean. Every local commit is pushed, merged, or on the base branch. No other live process holds the claim, and no live run lock names the tree.
 
 A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed. The branch, pull request, transcript, log, and checkpoint stay.
+
+The merged proof reads the declared pull request, or the undeclared one when no declaration exists.
 
 The batch never removes the main work tree or any path outside its own root. General system temporary directory cleanup stays out of scope. A hard-killed session leaves a checkpoint that the next session resumes. A transcript that never recorded a step count cannot prove the remainder, so that loop stops as `needs-owner`.
 

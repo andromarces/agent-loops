@@ -38,13 +38,13 @@ async function remoteBaseTip(repo, base) {
 }
 
 async function prProof({ loop, repo, base, gh, head }) {
-  if (loop.pr === null || loop.pr === undefined)
-    return keep("the loop has no pushed proof (unpushed)");
+  const pr = loop.pr ?? loop.prUndeclared ?? null;
+  if (pr === null) return keep("the loop has no pushed proof (unpushed)");
   let view;
   try {
     view = await readGhJson(
       gh,
-      ["pr", "view", String(loop.pr), "--json", "state,headRefOid,mergeCommit"],
+      ["pr", "view", String(pr), "--json", "state,headRefOid,mergeCommit"],
       repo,
     );
   } catch (err) {
@@ -52,7 +52,7 @@ async function prProof({ loop, repo, base, gh, head }) {
       err?.kind === "empty" || (err?.kind === "status" && (err.reply?.stderr ?? "").trim() === "");
     return keep(`the pull request read failed: ${noReply ? "no reply" : (err?.message ?? err)}`);
   }
-  if (view?.state !== "MERGED") return keep(`pull request ${loop.pr} is not merged (unpushed)`);
+  if (view?.state !== "MERGED") return keep(`pull request ${pr} is not merged (unpushed)`);
   if (!(await isAncestor(head, view.headRefOid, repo))) {
     return keep("a local commit is not in the merged pull request (unpushed)");
   }
