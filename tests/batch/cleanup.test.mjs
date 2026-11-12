@@ -16,6 +16,7 @@ const repositories = [];
 let shared;
 const trees = {};
 let merged;
+let rewoundBase;
 
 async function createRepo() {
   const main = await createTempRepo();
@@ -70,16 +71,46 @@ beforeAll(async () => {
   trees.replaced = await makeTree(shared, { name: "replaced" });
   trees.locked = await makeTree(shared, { name: "locked", lock: true });
 
-  // Process-level exception: this case merges into the base branch and deletes a remote branch,
-  // a state change that cannot be reset for another case. It uses its own repository.
+  // Process-level exception: this case squash merges into the base branch and deletes a remote
+  // branch, a state change that cannot be reset for another case. It uses its own repository. A
+  // squash merge keeps the pull-request head on no base commit, so this case reaches prProof.
   const repo = await createRepo();
-  const tree = await makeTree(repo, { name: "merged" });
+  const tree = await makeTree(repo, { name: "merged", commit: false, push: false });
+  await writeFile(join(tree.workTree, "merged.txt"), "merged" + String.fromCharCode(10));
+  await execa("git", ["add", "merged.txt"], { cwd: tree.workTree });
+  await execa("git", ["commit", "-m", "work on the issue"], { cwd: tree.workTree });
+  await execa("git", ["push", "-u", "origin", tree.branch], { cwd: tree.workTree });
   const head = (await git(["rev-parse", "HEAD"], tree.workTree)).stdout;
-  await execa("git", ["merge", "--no-ff", "-m", "merge", tree.branch], { cwd: repo.main });
+  await execa("git", ["merge", "--squash", tree.branch], { cwd: repo.main });
+  await execa("git", ["commit", "-m", "squash merge"], { cwd: repo.main });
   const mergeCommit = (await git(["rev-parse", "HEAD"], repo.main)).stdout;
   await execa("git", ["push", "origin", repo.base], { cwd: repo.main });
   await execa("git", ["push", "origin", "--delete", tree.branch], { cwd: tree.workTree });
   merged = { ...tree, head, mergeCommit };
+
+  // Process-level exception: this case narrows the fetch refspec and rewinds the remote base
+  // branch, state that cannot be reset for another case. It uses its own repository. The work
+  // tree head is then on no remote ref, while the cached tracking ref still holds it.
+  const rewoundRepo = await createRepo();
+  await writeFile(join(rewoundRepo.main, "base.txt"), "base move" + String.fromCharCode(10));
+  await execa("git", ["add", "base.txt"], { cwd: rewoundRepo.main });
+  await execa("git", ["commit", "-m", "base moves on"], { cwd: rewoundRepo.main });
+  await execa("git", ["push", "origin", rewoundRepo.base], { cwd: rewoundRepo.main });
+  const rewound = (await git(["rev-parse", "HEAD~1"], rewoundRepo.main)).stdout;
+  const rewoundTree = await makeTree(rewoundRepo, {
+    name: "rewound",
+    commit: false,
+    push: false,
+  });
+  await execa(
+    "git",
+    ["config", "remote.origin.fetch", "+refs/heads/other:refs/remotes/origin/other"],
+    { cwd: rewoundRepo.main },
+  );
+  await execa("git", ["update-ref", `refs/heads/${rewoundRepo.base}`, rewound], {
+    cwd: rewoundRepo.remote,
+  });
+  rewoundBase = rewoundTree;
 }, 60_000);
 
 afterAll(async () => {
@@ -224,6 +255,15 @@ test("the main work tree is never removed", async () => {
   });
   expect(result.removed).toBe(false);
   expect((await stat(fixture.repo.main)).isDirectory()).toBe(true);
+});
+
+// Usefulness: a cached base ref that the upstream rewound is no proof, so the work tree stays.
+test("a rewound base branch keeps a head on no remote ref", async () => {
+  const fixture = await fixtureFor(rewoundBase);
+  const result = await fixture.cleanup();
+  expect(result.removed).toBe(false);
+  expect(result.reason).toContain("unpushed");
+  expect((await stat(fixture.workTree)).isDirectory()).toBe(true);
 });
 
 // Usefulness: a merged pull request proves the push when the remote branch was deleted.

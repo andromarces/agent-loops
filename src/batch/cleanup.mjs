@@ -1,12 +1,13 @@
 // Cleanup of one batch loop (ADR 0106 decision 13). Only a pushed success is removed, and only
 // while every identity, branch, cleanliness, claim, and work-tree-lock check passes. A head that
-// is an ancestor of `origin/<base>` also proves the push.
+// is an ancestor of the current `origin/<base>` tip also proves the push.
 import { canonicalPath, isInside } from "../lib/canonical-path.mjs";
 import {
   commitsAhead,
   findRegisteredWorkTrees,
   identityEqual,
   fetchRemoteBranch,
+  git,
   isAncestor,
   pathIdentity,
   readWorkTreeGitState,
@@ -16,6 +17,25 @@ import { readGhJson } from "./gh-read.mjs";
 import { readClaim, releaseClaim } from "./store.mjs";
 
 const keep = (reason) => ({ removed: false, reason });
+
+const COMMIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * The current `origin/<base>` tip commit, read from the remote rather than a cached tracking ref.
+ * The tip object is fetched by ref name when it is missing. Returns null on any failed read.
+ */
+async function remoteBaseTip(repo, base) {
+  const listed = await git(["ls-remote", "--exit-code", "origin", `refs/heads/${base}`], repo);
+  const tip = listed.stdout.split(/\s+/)[0] ?? "";
+  if (listed.exitCode !== 0 || !COMMIT_SHA.test(tip)) return null;
+  const present = async () =>
+    (await git(["cat-file", "-e", `${tip}^{commit}`], repo)).exitCode === 0;
+  if (!(await present())) {
+    const fetched = await git(["fetch", "origin", `refs/heads/${base}`], repo);
+    if (fetched.exitCode !== 0) return null;
+  }
+  return (await present()) ? tip : null;
+}
 
 async function prProof({ loop, repo, base, gh, head }) {
   if (loop.pr === null || loop.pr === undefined)
@@ -104,9 +124,9 @@ export async function cleanupLoop({ manifest, loop, runsRoot, gh = null }) {
     pushed = (await isAncestor(head, remote, manifest.repo)) && ahead === 0;
   }
   if (!pushed) {
-    const baseHead = await fetchRemoteBranch(manifest.repo, manifest.base);
-    if (baseHead === null) return keep("the base branch read failed (unpushed)");
-    pushed = await isAncestor(head, baseHead, manifest.repo);
+    const baseTip = await remoteBaseTip(manifest.repo, manifest.base);
+    if (baseTip === null) return keep("the base branch read failed (unpushed)");
+    pushed = await isAncestor(head, baseTip, manifest.repo);
   }
   if (!pushed) {
     if (gh === null) return keep("no pushed proof (unpushed)");

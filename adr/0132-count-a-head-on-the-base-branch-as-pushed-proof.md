@@ -28,7 +28,9 @@ force.
 A batch loop whose task ends with no code change has no branch on the remote and no pull request.
 Its head stays on the commit it was created from, `origin/<base>`, so removal loses no commit.
 `cleanupLoop` read the remote branch and then the pull request, so both proofs failed. It kept
-the work tree with reason `the loop has no pushed proof (unpushed)`.
+the work tree with reason `the loop has no pushed proof (unpushed)`. A cached
+`refs/remotes/origin/<base>` survives a narrowed fetch refspec after an upstream rewind, so that
+ref can hold a head the remote no longer has.
 
 A batch of four issues on 12 Nov 2026 ended two loops with an issue edit and no pull request.
 Both succeeded. Each work tree was clean, its head equalled `origin/main`, and
@@ -37,23 +39,24 @@ Both succeeded. Each work tree was clean, its head equalled `origin/main`, and
 ## Decision
 
 1. **Third proof.** In `cleanupLoop`, after the remote-branch proof and before the
-   pull-request proof, fetch `origin/<base>` with the same fetch helper that reads the loop
-   branch. The head is proved pushed when it is an ancestor of the fetched base head. The proof
-   runs after the identity, path, registration, lock, branch, cleanliness, and claim checks.
-2. **Failed read.** A failed or empty base read returns a keep with reason
-   `the base branch read failed (unpushed)`. It never counts as proof, and it does not fall
-   through to the pull-request proof.
+   pull-request proof, read the current tip of `origin/<base>` with `git ls-remote origin
+   refs/heads/<base>`. The head is proved pushed when it is an ancestor of that tip. A tip
+   object that is missing is fetched by the ref name before the check. The proof runs after the
+   identity, path, registration, lock, branch, cleanliness, and claim checks.
+2. **Failed read.** A failed read, a missing ref, an unparseable SHA, or a missing tip object
+   returns a keep. The reason is `the base branch read failed (unpushed)`. It never counts as
+   proof, and it does not fall through to the pull-request proof.
 3. **Removal.** A removal through this proof runs the same `git worktree remove --force`,
    link-safe remainder delete, and claim release as every other removal.
 4. **Unchanged.** Every earlier check keeps its order, its reason text, and its Git arguments.
 
 ## Consequences
 
-- A succeeded loop with a clean work tree whose head is on `origin/<base>` has its work tree
-  removed. It has no remote branch and no pull request.
+- A succeeded loop with a clean work tree whose head is an ancestor of the current
+  `origin/<base>` tip has its work tree removed. It has no remote branch and no pull request.
 - A loop with a local commit that is on no remote ref keeps its work tree.
-- A loop with a remote branch runs one extra `git fetch origin <base>` only when that branch
-  does not prove the push.
+- A loop without remote-branch proof runs one `git ls-remote` for the base ref. It fetches the
+  ref only when the tip object is missing.
 - A repository whose `origin/<base>` cannot be read keeps every such work tree with the base
   read reason. That includes a loop with a merged pull request.
 
@@ -61,8 +64,8 @@ Both succeeded. Each work tree was clean, its head equalled `origin/main`, and
 
 1. **Treat the absence of a pull request as proof.** Rejected. A loop with no code change has no
    pull request, and so does a loop with unpushed local work.
-2. **Compare the head with the local base branch.** Rejected. A stale local base ref can sit
-   behind a local commit and make an unpushed head look contained.
+2. **Compare the head with a cached base ref.** Rejected. A cached ref can keep a base commit
+   that the upstream base no longer holds, so a head on no remote ref looks contained.
 3. **Fall through to the pull-request proof on a failed base read.** Rejected. The keep reason
    then does not name the failed read.
 
