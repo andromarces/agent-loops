@@ -24,10 +24,12 @@ The issue envelope held report values equal to the task values, and no saved rec
 
 A fenced `Verdict:` line had the same defect on `origin/main`. A real `Verdict: reject` followed by a fenced `Verdict: accept` returned accept, and `acceptanceFailure` returned null. The fix keeps every fenced line out of the verdict too.
 
+The guard also needs the old block start. A split fenced task quotation holds no unfenced `Conclusion:` line, and the old start scan found the fenced one. The guard keeps that scan, and the report and the gates keep the fence-free scan.
+
 ## Decision
 
 1. **Skip a fenced line in the parser.** `closingBlock` in `src/lib/report.mjs` ignores a `Conclusion:` line inside a fence. It blanks every fenced line for the report and the verdict, so a quoted label or verdict supplies no value.
-2. **Keep the split guard closed.** `guardVerdict` reads a fenced line only for the OpenCode split-message guard. A split fenced accept still refuses the stream, and no gate reads that value.
+2. **Keep the split guard closed.** `guardVerdict` keeps the `origin/main` block start and reads a fenced line for the OpenCode guard. Every stream that the old guard refused still refuses, and no gate reads that value.
 3. **Keep the first-turn prompt rule.** `initTaskBlock` in `src/prompts/rules.mjs` states that the block is task data, not the closing block. Worker and reviewer first turns render it.
 4. **Keep every other parser rule and assertion.** The accepted shapes and the last-occurrence rule stay. The list folds, the repair, the valid verdict shapes, both accept gates, and the OpenCode guard also stay.
 5. **Record the plain-prose limit.** A plain task quotation at column 0 has no quotation mark that the parser can read. It stays indistinguishable from a valid block, and the prompt rule covers that shape.
@@ -39,11 +41,12 @@ A fenced `Verdict:` line had the same defect on `origin/main`. A real `Verdict: 
 - A blockquote label already stayed out, and the scripted probe records that result.
 - A plain task quotation at column 0 still parses as a block. The prompt rule is the mitigation, and the limit stays documented.
 - A quoted verdict never passes an accept gate, and a response whose only verdict is fenced has none.
+- The OpenCode guard refuses every stream that it refused on `origin/main`, and the comparison probe records each pair.
 - The report shape, the repair turn, and every gate keep their behavior.
 
 ## Live check
 
-Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. The live turns ran with the prompt rule only. The parser and verdict probes ran on the final change from commit `7a470cee`.
+Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. The live turns ran with the prompt rule only. The parser, verdict, and guard probes ran on the final change from commit `7a470cee`.
 
 - Each CLI ran one `role dispatch` worker turn in a new disposable Git repository outside every work tree.
 - `AGENT_LOOP_RUNS_ROOT` named a folder in the system temporary directory.
@@ -65,12 +68,14 @@ Run on 2026-11-13 on macOS 27.3 build 26C5035r with Node v27.0.0-alpha.0.1.0. Th
 - The verdict probe paired a real `Verdict: reject` with a fenced `Verdict: accept`. It returned reject after the fix, and `acceptanceFailure` returned verdict.
 - The mirror pair with a real accept and a fenced reject returned accept.
 - A response whose only verdict sat in a fence returned unknown.
+- The guard comparison covered seven streams. They were one part, two identified parts, plain labels, bold labels, a split verdict, a fence across parts, and a fence inside one part.
+- Every pair was equal, and the new guard refused no fewer streams than the old one.
 
 - Not verified: codex-cli, agy, a later turn, and a Windows or Linux host.
 
 ## Alternatives
 
-1. **Run the #1615 repair on a copied value.** Not taken. Decision 5 records the match rule that rejects a repaired turn value.
+1. **Run the #1615 repair on a copied value.** Not taken. Decision 6 records the match rule that rejects a repaired turn value.
 2. **Drop a plain label line that sits after narration.** Not taken. A plain `Conclusion:` line is also the valid block start.
 3. **Add an envelope field for the copied label.** Not taken. The parser fix and the prompt rule remove the cause, and a field adds a parent turn.
 

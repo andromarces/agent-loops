@@ -206,22 +206,29 @@ export function hasClosingBlockAttempt(response) {
  * report label outside a fence as `Conclusion`. When a bold-lead narration paragraph sits there,
  * the nearest plain prose line above becomes `Conclusion` (issue #1597).
  * @param {string} response
- * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean, blankFenced?: boolean }} [options]
+ * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean, blankFenced?: boolean, includeFencedStart?: boolean }} [options]
  * @returns {string[] | null}
  */
 function closingBlock(
   response,
-  { unlabeled = false, boldLabels = true, diagnose = false, blankFenced = true } = {},
+  {
+    unlabeled = false,
+    boldLabels = true,
+    diagnose = false,
+    blankFenced = true,
+    includeFencedStart = false,
+  } = {},
 ) {
   // A bold label inside a fenced code block stays text (issue #1483).
   const { lines, fenced } = normalizedReportLines(response, boldLabels);
   // A `Conclusion:` line inside a fence never starts the block, and a fenced line supplies no label
-  // when `blankFenced` holds (issue #1909).
+  // when `blankFenced` holds (issue #1909). The guard scan keeps the origin/main start when
+  // `includeFencedStart` holds.
   const blockFrom = (first) =>
     blankFenced ? withoutFencedLines(lines, first, fenced) : lines.slice(first);
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (!fenced[i] && /^Conclusion:\s*/i.test(lines[i])) {
+    if ((includeFencedStart || !fenced[i]) && /^Conclusion:\s*/i.test(lines[i])) {
       start = i;
     }
   }
@@ -231,7 +238,9 @@ function closingBlock(
   if (!unlabeled) {
     return null;
   }
-  const first = lines.findIndex((line, index) => !fenced[index] && PLAIN_LABEL_LINE.test(line));
+  const first = lines.findIndex(
+    (line, index) => (includeFencedStart || !fenced[index]) && PLAIN_LABEL_LINE.test(line),
+  );
   if (first === -1) {
     return null;
   }
@@ -877,14 +886,14 @@ export function parseVerdict(response) {
 }
 
 /**
- * The verdict for the OpenCode split-message guard. It also reads a fenced line, so a quoted accept
- * that a stream split still fails closed (issue #1483). It never supplies a report or a gate
- * (issue #1909).
+ * The verdict for the OpenCode split-message guard. It keeps the origin/main block start, fenced
+ * lines included, so every stream that a split refused still refuses (issue #1483). It never
+ * supplies a report or a gate (issue #1909).
  * @param {string} response
  * @returns {"accept" | "reject" | "unknown"}
  */
 export function guardVerdict(response) {
-  return verdictFrom(closingBlock(response, { blankFenced: false }));
+  return verdictFrom(closingBlock(response, { blankFenced: false, includeFencedStart: true }));
 }
 
 /** The verdict word of a closing block, or `unknown` when the block holds no clear verdict. */
