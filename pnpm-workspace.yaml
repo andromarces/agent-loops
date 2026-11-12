@@ -9,5 +9,5 @@ trustPolicy: no-downgrade
 # pins must match the `vite` and `vitest` dependencies of vite-plus; a test
 # fails when they differ.
 overrides:
-  vite: npm:@voidzero-dev/vite-plus-core@1.5.1
+  vite: npm:@voidzero-dev/vite-plus-core@1.6.0
   vitest: 5.1.0
