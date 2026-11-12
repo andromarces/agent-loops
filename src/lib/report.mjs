@@ -212,6 +212,27 @@ export function hasClosingBlockAttempt(response) {
 function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose = false } = {}) {
   // A bold label inside a fenced code block stays text (issue #1483).
   const { lines, fenced } = normalizedReportLines(response, boldLabels);
+  const start = closingBlockStart(lines, fenced, { unlabeled, diagnose });
+  if (start === -1) {
+    return null;
+  }
+  const block = lines.slice(start);
+  // An inferred Conclusion takes the prose line above the first label.
+  if (unlabeled && !PLAIN_LABEL_LINE.test(lines[start])) {
+    block[0] = `Conclusion: ${lines[start].trim()}`;
+  }
+  return block;
+}
+
+/**
+ * The index where the closing block starts in `lines`, or -1 when it has none. It applies the same
+ * rules as `closingBlock`, so a caller can read the response text before the block (issue #1907).
+ * @param {string[]} lines
+ * @param {boolean[]} fenced
+ * @param {{ unlabeled?: boolean, diagnose?: boolean }} [options]
+ * @returns {number}
+ */
+function closingBlockStart(lines, fenced, { unlabeled = false, diagnose = false } = {}) {
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
     if (/^Conclusion:\s*/i.test(lines[i])) {
@@ -219,14 +240,14 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     }
   }
   if (start !== -1) {
-    return lines.slice(leadingRequiredLabelStart(lines, start, fenced));
+    return leadingRequiredLabelStart(lines, start, fenced);
   }
   if (!unlabeled) {
-    return null;
+    return -1;
   }
   const first = lines.findIndex((line) => PLAIN_LABEL_LINE.test(line));
   if (first === -1) {
-    return null;
+    return -1;
   }
   let before = first - 1;
   while (before >= 0 && lines[before].trim() === "") {
@@ -237,13 +258,11 @@ function closingBlock(response, { unlabeled = false, boldLabels = true, diagnose
     if (prose === -1) {
       // Diagnosis starts at the first known label when no prose line precedes it, so Why still
       // names missing labels (issue #1520).
-      return diagnose ? lines.slice(first) : null;
+      return diagnose ? first : -1;
     }
     before = prose;
   }
-  const block = lines.slice(before);
-  block[0] = `Conclusion: ${lines[before].trim()}`;
-  return block;
+  return before;
 }
 
 // The required labels a child can write in their own paragraph above `Conclusion:`, for example
@@ -387,6 +406,74 @@ function reportDetail(response, { boldLabels = true } = {}) {
  */
 export function parseReportBlock(response, { boldLabels = true } = {}) {
   return reportDetail(response, { boldLabels })?.report ?? null;
+}
+
+// A pointer to earlier response text, anchored to a short pattern list. The detection is a
+// heuristic: a pointer that the list misses stays undetected (issue #1907).
+const ABOVE_NOUN_POINTER =
+  /\b(?:the|this|that|these|those)\s+(?:[\p{L}\p{N}`*_-]+\s+){0,4}above\b(?!\s+(?:the|a|an|\p{N}))/iu;
+const ABOVE_VERB_POINTER =
+  /\b(?:see|as|stated|described|shown|explained|listed|noted|given|written)\s+(?:it\s+)?above\b/iu;
+const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closing\s+block\b/iu;
+
+// A pointer that names a report label or `Verdict` reads as a reference inside the block.
+const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
+
+const BLOCKQUOTE_LINE = /^\s{0,3}>/;
+const FENCE_LINE = /^\s{0,3}(?:`{3,}|~{3,})/;
+
+/** True when `value` points at response text outside the closing block. */
+function pointsOutsideBlock(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  return [ABOVE_NOUN_POINTER, ABOVE_VERB_POINTER, CLOSING_BLOCK_POINTER].some((pattern) => {
+    const match = value.match(pattern);
+    return match !== null && !NAMED_LABEL_POINTER.test(match[0]);
+  });
+}
+
+/** True when `text` holds a quoted passage: a blockquote line or a fenced code block. */
+function hasQuotedText(text) {
+  return text.split(/\r?\n/).some((line) => BLOCKQUOTE_LINE.test(line) || FENCE_LINE.test(line));
+}
+
+/** The number of non-empty paragraphs in `text`, separated by blank lines. */
+function paragraphCount(text) {
+  return text.split(/\r?\n[ \t]*\r?\n/).filter((part) => part.trim() !== "").length;
+}
+
+/** The response text before the closing block, or the empty string when there is none. */
+function textBeforeBlock(response) {
+  const { lines, fenced } = normalizedReportLines(response);
+  const start = closingBlockStart(lines, fenced, { unlabeled: true });
+  return start === -1 ? "" : lines.slice(0, start).join("\n");
+}
+
+/**
+ * The report label names whose value points at response text outside the closing block, in report
+ * order, for example `["Why"]`. The detection is a heuristic over a small pattern list: a noun
+ * phrase before `above`, a verb before `above`, or a closing-block reference. A determiner or a
+ * digit after `above` reads as a quantity and stays out.
+ * The documented exception returns no label. Exactly one label points outside the block, and the
+ * text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote
+ * line or a fenced code block.
+ * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} report
+ * @returns {string[]}
+ */
+export function outsideBlockReportLabels(response, report) {
+  if (!report) {
+    return [];
+  }
+  const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key])).map(
+    ([, label]) => label,
+  );
+  if (labels.length === 0 || labels.length > 1) {
+    return labels;
+  }
+  const before = textBeforeBlock(response);
+  return hasQuotedText(before) || paragraphCount(before) >= 2 ? [] : labels;
 }
 
 /**

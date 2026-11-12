@@ -9,6 +9,7 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import {
   missingRequiredReportLabels,
+  outsideBlockReportLabels,
   repairedReportMatches,
   reportForResult,
 } from "./lib/report.mjs";
@@ -151,6 +152,7 @@ export async function runProbeTurn({
  * @param {object} options
  * @returns {Promise<
  *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
+ *     reportOutsideBlockLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
  *   { role: string, status: "error", error: string, transient?: string, refusedModel?: string } & TurnEvidence
@@ -556,12 +558,22 @@ export async function runChild(options) {
         `${roleName}: the closing block lacks ${reportMissingLabels.length === 1 ? "the required label" : "the required labels"} ${reportMissingLabels.join(", ")}`,
       );
     }
+    // A parsed worker report names each label whose value points at response text outside the
+    // closing block, so the parent can ask for that result in the block (issue #1907).
+    const outsideBlockLabels =
+      isWorker && report !== null ? outsideBlockReportLabels(response, report) : [];
+    if (outsideBlockLabels.length > 0) {
+      logWarn(
+        `${roleName}: the closing block points outside itself at ${outsideBlockLabels.length === 1 ? "the label" : "the labels"} ${outsideBlockLabels.join(", ")}`,
+      );
+    }
     return {
       role: roleName,
       status: "ok",
       response,
       report,
       ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
+      ...(outsideBlockLabels.length > 0 ? { reportOutsideBlockLabels: outsideBlockLabels } : {}),
       ...(shellDenied ? { shellDenied } : {}),
       ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
       ...(reviewed ? { reviewed } : {}),

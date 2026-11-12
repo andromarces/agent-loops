@@ -160,7 +160,12 @@ Example reviewer envelope:
   the same session. If it fails, `report` is null and `raw` carries the response.
   Treat it as not accepted. When a required
   label is missing, `reportMissingLabels` names each missing label, for example
-  `["Why"]`, and holds no response text. A child turn whose adapter returns a
+  `["Why"]`, and holds no response text. A worker report that points at text
+  outside the block adds `reportOutsideBlockLabels`, which names each such label,
+  for example `["Why"]`, and holds no response text. Dispatch one worker turn
+  that asks for the named result inside the closing block. The detection, its
+  heuristic limit, and its one exception are in
+  [Closing block list rules](orchestrator/closing-block.md#report-text-outside-the-block). A child turn whose adapter returns a
   missing or non-string response ends `status: "error"`, not `ok` with
   `report: null`.
 - `report.checks` names the commands that ran in that child turn and their

@@ -1455,6 +1455,19 @@ test("the core instructions stay within one read of the read tool", async () => 
   expect(size).toBeLessThanOrEqual(50_000);
 });
 
+// Usefulness: verifies the instructions name the outside-block report label field and its one
+// restatement turn, and the detail file states the heuristic and the exception (issue #1907).
+test("the instructions name the outside-block report label field", async () => {
+  const core = await readFile(instructionsPath, "utf8");
+  const detail = await readFile(join(referenceSectionsDir, "closing-block.md"), "utf8");
+  for (const text of [core, detail]) {
+    expectRule(text, /reportOutsideBlockLabels/, /label/, /response text/i);
+  }
+  expectRule(core, /dispatch one worker turn/i, /named result inside the closing block/i);
+  expectRule(detail, /heuristic/i);
+  expectRule(detail, /quoted text/i, /two paragraphs/i);
+});
+
 // Usefulness: verifies #1171 — the reference doc and the headless prompt state the same `open` rule
 // for a refused tool-cache cleanup and for output under a reviewer-chosen path, so a headless run does
 // not keep a default-cache cleanup in `open` and the cache exception does not cover reviewer output.

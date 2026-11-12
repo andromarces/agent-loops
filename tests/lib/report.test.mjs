@@ -3,6 +3,7 @@ import {
   hasClosingBlockAttempt,
   acceptanceFailure,
   missingRequiredReportLabels,
+  outsideBlockReportLabels,
   parseReportBlock,
   parseVerdict,
   parsesOnlyWithBoldLabels,
@@ -2095,4 +2096,87 @@ test("parseReportBlock keeps a pipe line with no delimiter row", () => {
   expect(
     parseReportBlock("a | b\n--- | ---\n1 | 2\nConclusion: done\nWhy: x\nBlockers: none"),
   ).toMatchObject({ why: "x" });
+});
+
+// Usefulness: verifies a parsed report whose Why points at the paragraph above names Why, the
+// missing-result case of issue #1907.
+test("outsideBlockReportLabels names a label that points above the block", () => {
+  const response = [
+    "The runner environment holds no `SUBFAILED` line.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the inference above, from the runner env",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual(["Why"]);
+});
+
+// Usefulness: verifies two labels that each point above the block are both named, in report order
+// (issue #1907).
+test("outsideBlockReportLabels names two labels that point above the block", () => {
+  const response = [
+    "The inference sits in the paragraph above.",
+    "",
+    "Conclusion: done",
+    "Why: the inference above",
+    "Blockers: none",
+    "Notes: see above",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual(["Why", "Notes"]);
+});
+
+// Usefulness: verifies a pointer to the closing block itself is named, so a label that sends the
+// parent outside the block is detected (issue #1907).
+test("outsideBlockReportLabels names a pointer to the text before the closing block", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: the evidence before the closing block",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual(["Why"]);
+});
+
+// Usefulness: verifies the documented exception returns no label for one label and one quoted
+// paragraph before the block (issue #1907).
+test("outsideBlockReportLabels keeps the quoted-text exception", () => {
+  const response = [
+    "> The gate listing holds no `SUBFAILED` line.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the quoted cause above",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies the documented exception returns no label for one label and two paragraphs
+// before the block, so the documented format stays reportable (issue #1907).
+test("outsideBlockReportLabels keeps the multi-paragraph exception", () => {
+  const response = [
+    "The runner environment holds no failing line.",
+    "",
+    "The gate listing shows every job green.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the evidence above",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies a quantity, an inside-block pointer, and a value that points nowhere stay
+// unmatched, so the detector reports only a pointer to earlier response text (issue #1907).
+test("outsideBlockReportLabels leaves a quantity and an inside-block pointer out", () => {
+  const quantity = "Conclusion: done\nWhy: the temperature above the limit\nBlockers: none";
+  expect(outsideBlockReportLabels(quantity, parseReportBlock(quantity))).toEqual([]);
+  const inside = "Conclusion: done\nWhy: see the Why line above\nBlockers: none";
+  expect(outsideBlockReportLabels(inside, parseReportBlock(inside))).toEqual([]);
+  const nowhere = "Conclusion: done\nWhy: tests pass\nBlockers: none";
+  expect(outsideBlockReportLabels(nowhere, parseReportBlock(nowhere))).toEqual([]);
+});
+
+// Usefulness: verifies a null report names no label, so the field stays off a turn whose report
+// does not parse (issue #1907).
+test("outsideBlockReportLabels returns no label for a null report", () => {
+  expect(outsideBlockReportLabels("Conclusion: done\nWhy: the evidence above", null)).toEqual([]);
 });
