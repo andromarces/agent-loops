@@ -389,6 +389,79 @@ export function parseReportBlock(response, { boldLabels = true } = {}) {
   return reportDetail(response, { boldLabels })?.report ?? null;
 }
 
+// A pointer to earlier response text, anchored to a short pattern list. A noun phrase counts only
+// when `above` ends it, so a comparison such as `above target`, `above the limit`, or `above 80 %`
+// stays out. The detection is a heuristic: a pointer that the list misses stays undetected
+// (issue #1907).
+const ABOVE_NOUN_POINTER =
+  /\b(?:the|this|that|these|those)\s+(?:[\p{L}\p{N}`*_-]+\s+){0,4}above(?=\s*(?:$|[.,;:!?)}\]—–]))/iu;
+const ABOVE_VERB_POINTER =
+  /\b(?:see|as|stated|described|shown|explained|listed|noted|given|written)\s+(?:it\s+)?above\b/iu;
+const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closing\s+block\b/iu;
+
+// A value that names a report label or `Verdict` points inside the same block.
+const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
+
+const BLOCKQUOTE_LINE = /^\s{0,3}>/;
+const FENCE_LINE = /^\s{0,3}(?:`{3,}|~{3,})/;
+
+/** True when `value` points at response text outside the closing block. */
+function pointsOutsideBlock(value) {
+  if (typeof value !== "string" || NAMED_LABEL_POINTER.test(value)) {
+    return false;
+  }
+  return [ABOVE_NOUN_POINTER, ABOVE_VERB_POINTER, CLOSING_BLOCK_POINTER].some((pattern) =>
+    pattern.test(value),
+  );
+}
+
+/** True when `text` holds a quoted passage: a blockquote line or a fenced code block. */
+function hasQuotedText(text) {
+  return text.split(/\r?\n/).some((line) => BLOCKQUOTE_LINE.test(line) || FENCE_LINE.test(line));
+}
+
+/** The number of non-empty paragraphs in `text`, separated by blank lines. */
+function paragraphCount(text) {
+  return text.split(/\r?\n[ \t]*\r?\n/).filter((part) => part.trim() !== "").length;
+}
+
+/** The response text before the closing block, or the empty string when there is none. */
+function textBeforeBlock(response) {
+  const block = closingBlock(response, { unlabeled: true });
+  if (!block) {
+    return "";
+  }
+  const { lines } = normalizedReportLines(response);
+  return lines.slice(0, lines.length - block.length).join("\n");
+}
+
+/**
+ * The report label names whose value points at response text outside the closing block, in report
+ * order, for example `["Why"]`. The detection is a heuristic over a small pattern list: a noun
+ * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
+ * `above` reads as a comparison and stays out, and a value that names a report label stays inside
+ * the block.
+ * The documented exception returns no label. Exactly one label points outside the block, and the
+ * text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote
+ * line or a fenced code block.
+ * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} report
+ * @returns {string[]}
+ */
+export function outsideBlockReportLabels(response, report) {
+  if (!report) {
+    return [];
+  }
+  const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key])).map(
+    ([, label]) => label,
+  );
+  if (labels.length === 0 || labels.length > 1) {
+    return labels;
+  }
+  const before = textBeforeBlock(response);
+  return hasQuotedText(before) || paragraphCount(before) >= 2 ? [] : labels;
+}
+
 /**
  * Every required label that a null report lacks, in report order: `Conclusion`, `Why`, then
  * `Blockers`. The list is empty when every required label is present or no closing block attempt

@@ -487,3 +487,67 @@ test.each([
     expect(acceptanceFailure(result.response, result.report)).toBe(expected);
   },
 );
+
+// Usefulness: verifies a parsed worker report that points above the block names its label on the
+// result (issue #1907).
+test("a worker report that points above the block carries its label", async () => {
+  const pointer = [
+    "The runner environment holds no `SUBFAILED` line.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the inference above, from the runner env",
+    "Blockers: none",
+  ].join("\n");
+  const agent = scripted([pointer]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
+// Usefulness: verifies a parsed worker report that points nowhere carries no field, so the parent
+// reads an ordinary report (issue #1907).
+test("a worker report that points nowhere carries no outside-block field", async () => {
+  const agent = scripted(["Conclusion: done\nWhy: tests pass\nBlockers: none"]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result).not.toHaveProperty("reportOutsideBlockLabels");
+});
+
+// Usefulness: verifies a reviewer turn stays unchanged and carries no outside-block field (issue
+// #1907).
+test("a reviewer report that points above the block carries no outside-block field", async () => {
+  const pointer = [
+    "The diff holds no write.",
+    "",
+    "Conclusion: the fix passes",
+    "Why: the check above",
+    "Blockers: none",
+  ].join("\n");
+  const agent = scripted([pointer]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result).not.toHaveProperty("reportOutsideBlockLabels");
+});

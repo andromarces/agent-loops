@@ -115,3 +115,13 @@ A `*` line that is not the dropped shape above either is a list and blanks the b
 `*item`, `* item`, or `*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
 
 A table pair is a line with a `|` and a delimiter row directly below it. A Markdown table in the block makes it unparseable: put tabular data in `- ` items, one row per item.
+
+## Report text outside the block
+
+A parsed worker report can hold a label whose value points at response text outside the closing block, for example `Why: the inference above`. The runtime adds `reportOutsideBlockLabels`, which names each such label and holds no response text, for example `["Why"]`. A turn with no match carries no field. The report stays in the envelope unchanged, and the step stays charged.
+
+Dispatch one worker turn that asks for the named result inside the closing block. Reviewer turns stay unchanged.
+
+The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase whose `above` ends it, a verb before `above`, or a reference to the closing block. A word after `above`, such as `above target` or `above the limit`, reads as a comparison and stays out. A value that names a report label stays inside the block, for example `Why: as shown above in Conclusion`. A pointer that the list misses stays undetected.
+
+One documented exception returns no label. Exactly one label points outside the block, and the response text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote line or a fenced code block.

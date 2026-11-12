@@ -811,6 +811,41 @@ test("worker dispatch omits reportMissingLabels for a parsed report", async () =
   expect(result.payload).not.toHaveProperty("reportMissingLabels");
 });
 
+// Usefulness: verifies a worker envelope with no outside pointer carries no label field (issue
+// #1907).
+test("worker dispatch omits reportOutsideBlockLabels for a report with no pointer", async () => {
+  const repo = await newCleanRepo();
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).not.toBeNull();
+  expect(result.payload).not.toHaveProperty("reportOutsideBlockLabels");
+});
+
+// Usefulness: verifies the worker envelope and state file name the parsed report label that points
+// above the block (issue #1907).
+test("worker dispatch names a report label that points above the closing block", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "The runner environment holds no `SUBFAILED` line.",
+    "",
+    "Conclusion: the required check failed",
+    "Why: the inference above, from the runner env",
+    "Blockers: none",
+    "Checks: pnpm test",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).not.toBeNull();
+  expect(result.payload.reportOutsideBlockLabels).toEqual(["Why"]);
+  expect((await readRepoState(repo)).lastResult.reportOutsideBlockLabels).toEqual(["Why"]);
+});
+
 // Usefulness: verifies issue #1520 comment shape A keeps every parsed field and carries no reportMissingLabels.
 test("worker dispatch keeps every field for issue #1520 comment shape A", async () => {
   const repo = await newCleanRepo();

@@ -9,6 +9,7 @@ import { logError, logInfo, logWarn } from "./lib/log.mjs";
 import { createReviewerScratch, removeReviewerScratch } from "./lib/reviewer-scratch.mjs";
 import {
   missingRequiredReportLabels,
+  outsideBlockReportLabels,
   repairedReportMatches,
   reportForResult,
 } from "./lib/report.mjs";
@@ -556,12 +557,23 @@ export async function runChild(options) {
         `${roleName}: the closing block lacks ${reportMissingLabels.length === 1 ? "the required label" : "the required labels"} ${reportMissingLabels.join(", ")}`,
       );
     }
+    // A parsed worker report names each label that points outside the block, so the parent can ask
+    // for that result (issue #1907).
+    const outsideBlockLabels =
+      isWorker && report !== null ? outsideBlockReportLabels(response, report) : [];
+    if (outsideBlockLabels.length > 0) {
+      logWarn(
+        `${roleName}: the closing block points outside itself at ${outsideBlockLabels.length === 1 ? "the label" : "the labels"} ${outsideBlockLabels.join(", ")}`,
+      );
+    }
     return {
       role: roleName,
       status: "ok",
       response,
       report,
       ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
+      // The field holds label names only, never response text (issue #1907).
+      ...(outsideBlockLabels.length > 0 ? { reportOutsideBlockLabels: outsideBlockLabels } : {}),
       ...(shellDenied ? { shellDenied } : {}),
       ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
       ...(reviewed ? { reviewed } : {}),
