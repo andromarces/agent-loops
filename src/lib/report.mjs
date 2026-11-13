@@ -486,10 +486,16 @@ export function outsideBlockReportLabels(response, report, { exception = true } 
   const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key])).map(
     ([, label]) => label,
   );
-  if (labels.length === 0 || labels.length > 1 || !exception) {
-    return labels;
+  if (labels.length === 0) {
+    return [];
   }
   const before = textBeforeBlock(response);
+  if (before.trim() === "") {
+    return [];
+  }
+  if (labels.length > 1 || !exception) {
+    return labels;
+  }
   return hasQuotedText(before) || paragraphCount(before) >= 2 ? [] : labels;
 }
 

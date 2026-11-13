@@ -798,6 +798,13 @@ test("headless worker and reviewer turns carry the test slot rule", async () => 
       expect(prompt).toMatch(
         /Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn/,
       );
+      expect(prompt).toContain("Run one test command at a time.");
+      expect(prompt).toContain(
+        "Start no concurrent copy of a test run and no test run in the background, also when it ends inside the same command.",
+      );
+      expect(prompt).toContain(
+        "A single-test run is a targeted run and takes the --if-held wrapper form.",
+      );
     }
   } finally {
     gitDouble.answer = null;
