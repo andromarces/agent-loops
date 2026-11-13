@@ -406,8 +406,8 @@ function reportDetail(response, { boldLabels = true } = {}) {
  * the block does not parse. Each label is matched case-insensitively at line start inside the block
  * only, and the last occurrence wins. `conclusion`, `why`, and `blockers` are required, while an
  * absent or empty optional label maps to null. A `- ` or `N. ` list under a label or after one
- * blank line joins the value with "; ", except a blank-line ordered Verdict line. One nesting level
- * folds a `- ` or `N. ` sub-item at the parent text column with ", ". Any other list line, table
+ * blank line joins the value with "; ", except a blank-line ordered Verdict line. Every nesting level
+ * folds a `- ` or `N. ` sub-item at its parent text column with ", ". Any other list line, table
  * pair, or hidden or decorated label is unparseable, except a dash list under plain prose or a
  * whole-line bold heading.
  * @param {string} response
@@ -718,11 +718,11 @@ const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 // there stays a list that hasDroppedList rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
-// The one nesting level that folds into its parent item.
+// The nesting levels that fold into their parent item.
 // A sub-item line holds ASCII spaces up to the parent item text column.
 // Then come a `-` or `N. ` marker, one ASCII space, and the item.
-// The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four (issues #870 and #1603).
-// Another indent width, a tab, and a second nesting level stay lists that hasDroppedList rejects.
+// The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four (issues #870, #1603, and #1917).
+// Another indent width and a tab stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\. )(?=\\S)`);
 
 // An ordered sub-item at the parent text column, with exactly one ASCII space after its marker.
@@ -795,9 +795,26 @@ function isContinuationLine(line) {
 }
 
 /**
+ * The text of the item at `start` and of its direct sub-items at every deeper level, joined with
+ * ", ", and the last line used. `marker` is the full marker prefix of the parent line, so its
+ * length is the column where the sub-item marker starts.
+ */
+function takeSubitems(lines, start, marker) {
+  const [subMarker] = lines[start].match(foldableSubitem(marker));
+  const parts = [lines[start].slice(subMarker.length).trim()];
+  let i = start;
+  while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], subMarker)) {
+    const nested = takeSubitems(lines, i + 1, subMarker);
+    parts.push(nested.text);
+    i = nested.end;
+  }
+  return { text: parts.join(", "), end: i };
+}
+
+/**
  * The items that match `pattern` and directly follow line `start`, and the last line used. Each
- * item absorbs its sub-items, joined with ", ", then the continuation lines after them, joined with
- * a space like a Markdown lazy continuation.
+ * item absorbs its sub-items at every deeper level, joined with ", ". The continuation lines after
+ * them join with a space, like a Markdown lazy continuation.
  */
 function takeItems(lines, start, pattern, { refuseOrderedVerdict = false } = {}) {
   let i = start;
@@ -809,8 +826,9 @@ function takeItems(lines, start, pattern, { refuseOrderedVerdict = false } = {})
     const [marker] = lines[++i].match(pattern);
     const parts = [lines[i].slice(marker.length).trim()];
     while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], marker)) {
-      const [subMarker] = lines[++i].match(foldableSubitem(marker));
-      parts.push(lines[i].slice(subMarker.length).trim());
+      const nested = takeSubitems(lines, i + 1, marker);
+      parts.push(nested.text);
+      i = nested.end;
     }
     const continuation = [];
     while (i + 1 < lines.length && isContinuationLine(lines[i + 1])) {

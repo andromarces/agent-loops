@@ -8,6 +8,7 @@ import {
   parseReportBlock,
   parseVerdict,
   parsesOnlyWithBoldLabels,
+  repairedReportMatches,
 } from "../../src/lib/report.mjs";
 
 const REPORT = "Conclusion: done\nWhy: tests pass\nBlockers: none";
@@ -222,12 +223,11 @@ test("parseReportBlock joins one level of indented sub-items into their parent i
   expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n  - b`)).toMatchObject({ notes: "a, b" });
 });
 
-// Usefulness: verifies sub-list shapes outside #870 fail: no parent, second level, another indent, blank line, or filled label.
-test("parseReportBlock returns null for a sub-list shape outside one nested level", () => {
+// Usefulness: verifies sub-list shapes outside #870 fail: no parent, a wrong indent, a blank line, or a filled label.
+test("parseReportBlock returns null for a sub-list shape outside the fold", () => {
   for (const list of [
     "  - a",
     "- a\n    - b",
-    "- a\n  - b\n    - c",
     "- a\n   - b",
     "- a\n\t- b",
     "- a\n  * b",
@@ -237,6 +237,120 @@ test("parseReportBlock returns null for a sub-list shape outside one nested leve
     expect(parseReportBlock(`${REPORT}\nNotes:\n${list}`)).toBeNull();
   }
   expect(parseReportBlock(`${REPORT}\nNotes: none\n  - a`)).toBeNull();
+});
+
+// Usefulness: verifies shape 1 folds a deeper level into its parent item, so the report parses
+// instead of returning null (issue #1917).
+test("parseReportBlock folds a deeper list level under a label", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes:",
+    "- Step one:",
+    "  - Decision one:",
+    "    - Accept the helper.",
+    "    - Add the test.",
+    "  - Decision two:",
+    "    - Keep the name.",
+    "- Step two",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    notes:
+      "Step one:, Decision one:, Accept the helper., Add the test., Decision two:, Keep the name.; Step two",
+  });
+});
+
+// Usefulness: verifies shape 3 folds a deeper level under a bold item, so a report with two
+// numbered blockers parses instead of returning null (issue #1917).
+test("parseReportBlock folds shape 3 with a deeper level under a bold item", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- **Blocker one:**",
+    "  - It fails.",
+    "  - It waits.",
+    "- **Blocker two:**",
+    "  - It passes.",
+    "  - It resumes.",
+    "    - Again one.",
+    "    - Again two.",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "**Blocker one:**, It fails., It waits.; **Blocker two:**, It passes., It resumes., Again one., Again two.",
+  });
+});
+
+// Usefulness: verifies a faithful repair of a shape 1 report matches the original, so the repair
+// turn can accept the restated block (issue #1917).
+test("a faithful repair of a shape 1 report matches the original response", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes:",
+    "- Step one:",
+    "  - Decision one:",
+    "    - Accept the helper.",
+    "    - Add the test.",
+    "- Step two",
+    "Deferred: none",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes:",
+    "- Step one:",
+    "  - Decision one:",
+    "    - Accept the helper.",
+    "    - Add the test.",
+    "- Step two",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a repair that adds a word to a shape 1 finding is refused, so a repair
+// cannot change the original content (issue #1917).
+test("a repair that changes a shape 1 finding does not match", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes:",
+    "- Step one:",
+    "  - Decision one:",
+    "    - Accept the helper.",
+    "- Step two",
+    "Deferred: none",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes:",
+    "- Step one:",
+    "  - Decision one:",
+    "    - Accept the helper now.",
+    "- Step two",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
 });
 
 // Usefulness: verifies an ordered list (`N. ` at column 0) directly under a label folds like a

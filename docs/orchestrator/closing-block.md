@@ -15,7 +15,7 @@ the markers drop and the items join into one line with `; `. A list under `Block
 `none`. The reviewer `Verdict:` line is no report label, so a list after it
 stays unparseable.
 
-One nesting level folds too. A sub-item line holds spaces U+0020 up to the parent item text column,
+Every nesting level folds the same way, each sub-item into its parent item. A sub-item line holds spaces U+0020 up to the parent item text column,
 then a marker, one space U+0020, then the item. The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four. The sub-item directly after a `- ` or `N. ` item joins it with `, `, and several
 consecutive sub-items fold the same way. So `- a`, two spaces then `- b`, and two spaces then `- c`
 read `a, b, c`. A sub-item under `1. a` takes three spaces, so `1. a` and
@@ -97,8 +97,7 @@ through `raw` instead of being dropped. Examples are bullets after the reviewer 
 a list outside any label, and a bullet with no space after the marker (`-item`, `*item`). A
 separator other than one space (a tab, a nonbreaking space, two spaces) also fails, even under
 an empty label. A `*` or `+` bullet, an `N)` item, and an ordered item under a plain prose line
-fail too. An indented bullet that is not one nested level (no parent item, a second level,
-another indent width) fails as well. A bold heading line that groups a `- ` list
+fail too. An indented bullet with no parent item or another indent width fails as well. A bold heading line that groups a `- ` list
 outside the fold rule above fails too.
 
 A child that mirrors the parent prompt's ordered list still puts the list under a label. An indented
