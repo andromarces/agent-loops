@@ -32,7 +32,19 @@ test("the rule bounds a direct targeted run and sends a broader run through the 
 // Usefulness: issue #1919: the rule bars concurrent copies and a background test run, and sends a
 // single test through --if-held. No other test pins this.
 test("the rule runs one test command at a time", () => {
-  const forms = [testSlotRule({ platform: "linux" }), testSlotRule({ platform: "win32" })];
+  // Explicit paths render each command form on every host, whatever its path separators.
+  const forms = [
+    testSlotRule({
+      execPath: "/opt/node",
+      cliPath: "/repo/src/cli.mjs",
+      platform: "linux",
+    }),
+    testSlotRule({
+      execPath: "C:/node/node.exe",
+      cliPath: "C:/repo/src/cli.mjs",
+      platform: "win32",
+    }),
+  ];
   for (const rule of forms) {
     expect(rule).toContain("Run one test command at a time.");
     expect(rule).toContain(
