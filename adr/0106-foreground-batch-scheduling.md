@@ -230,9 +230,10 @@ in order. Each failure records one skip reason and names the evidence:
   `gh pr list --state open --json number,closingIssuesReferences --limit 1000`, then the
   commit messages of each open pull request. A commit page of 250 entries is incomplete, so
   the batch stops launching and reports the pull request for the owner's decision.
-  Note: issue #1924 adds the non-default-base body read to the selection rules of
-  [docs/orchestrator-instructions.md](../docs/orchestrator-instructions.md#selecting-issues-for-a-batch)
-  only, and the batch runtime does not apply it yet. Issue #1926 tracks that follow-up.
+  Note: the batch reads the body of each open pull request whose base is not the default
+  branch. It applies the same keyword grammar, repository limit, and ignored contexts as
+  [the selection rules](../docs/orchestrator-instructions.md#selecting-issues-for-a-batch).
+  Issue [#1926](https://github.com/andromarces/agent-loops/issues/1926) added that read.
 - `not-specified`: the body has no `## Acceptance` heading with at least one list item, or
   has neither a `## Problem` nor a `## Scope` heading. This is a structural minimum only.
   Whether an issue is semantically clear enough is the skill's selection judgment; the

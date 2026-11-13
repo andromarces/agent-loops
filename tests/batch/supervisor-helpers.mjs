@@ -77,7 +77,11 @@ export function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
       return { status: 0, stdout: JSON.stringify([]), stderr: "" };
     }
     if (args[0] === "repo" && args[1] === "view") {
-      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" } }),
+        stderr: "",
+      };
     }
     if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
       return {

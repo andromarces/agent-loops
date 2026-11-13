@@ -533,6 +533,8 @@ gh repo view --json defaultBranchRef --jq .defaultBranchRef.name
 
 For each open PR whose `baseRefName` is not that default branch, read its `body` for closing keywords. Exclude every issue that the body closes.
 
+Count only the GitHub closing keywords `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, and `resolved`, in any case. A colon after the keyword is optional. A reference is `#123`, `owner/repo#123` of this repository, or its full issue URL. Ignore a keyword inside an inline code span, a fenced or indented code block, a block quote, or a closed HTML comment. A line that starts a comment block hides its lines. An unclosed inline comment is literal text.
+
 A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply. The paginated read covers every page that the API returns:
 
 ```bash

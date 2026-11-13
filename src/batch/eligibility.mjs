@@ -5,7 +5,262 @@ import { isJsonObject } from "../lib/json.mjs";
 import { readGhJson } from "./gh-read.mjs";
 
 const CLOSING_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+const BODY_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+/gi;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+\S/;
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
+const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
+const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+const BLOCK_LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])( +)(?=\S)/;
+const BLOCK_COMMENT = /^ {0,3}<!--/;
+
+/** The content column of a list item start, or null when the line starts no item. */
+function listItemColumn(text) {
+  const match = LIST_MARKER.exec(text);
+  if (match === null) return null;
+  return match[1].length + match[2].length + match[3].length;
+}
+
+/** True for a line that starts a new block and so ends a paragraph or a quote continuation. */
+function isBlockStart(line) {
+  return (
+    FENCE_OPEN.test(line) ||
+    HEADING.test(line) ||
+    THEMATIC_BREAK.test(line) ||
+    BLOCK_LIST_ITEM.test(line)
+  );
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function maskRange(ignored, start, end) {
+  for (let index = start; index < end; index += 1) ignored[index] = true;
+}
+
+function leadingSpaces(line) {
+  return /^ */.exec(line)[0].length;
+}
+
+/** The lines of one list item, with the item indent removed from every line that carries it. */
+function collectItem(lines, index, column) {
+  const itemLines = [lines[index].slice(column)];
+  let cursor = index + 1;
+  let blank = false;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (line.trim() === "") {
+      itemLines.push("");
+      blank = true;
+      cursor += 1;
+      continue;
+    }
+    if (leadingSpaces(line) >= column) {
+      itemLines.push(line.slice(column));
+      blank = false;
+      cursor += 1;
+      continue;
+    }
+    if (!blank && !isBlockStart(line)) {
+      itemLines.push(line);
+      cursor += 1;
+      continue;
+    }
+    break;
+  }
+  return { itemLines, next: cursor };
+}
+
+/** The index after a block comment that opens at `index`, or the end of its container. */
+function skipCommentBlock(lines, index) {
+  let cursor = index;
+  while (cursor < lines.length) {
+    const close = lines[cursor].includes("-->");
+    cursor += 1;
+    if (close) break;
+  }
+  return cursor;
+}
+
+/** The paragraph and heading text that counts. List item content is scanned recursively. */
+function scanBlocks(lines) {
+  const blocks = [];
+  const paragraph = [];
+  let fence = null;
+  let quote = false;
+  let index = 0;
+  const flush = () => {
+    if (paragraph.length === 0) return;
+    blocks.push(paragraph.join("\n"));
+    paragraph.length = 0;
+  };
+  while (index < lines.length) {
+    const line = lines[index];
+    if (fence !== null) {
+      const close = FENCE_CLOSE.exec(line);
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+      index += 1;
+      continue;
+    }
+    if (line.trim() === "") {
+      flush();
+      quote = false;
+      index += 1;
+      continue;
+    }
+    if (quote) {
+      if (/^ {0,3}>/.test(line) || !isBlockStart(line)) {
+        index += 1;
+        continue;
+      }
+      quote = false;
+    }
+    if (BLOCK_COMMENT.test(line)) {
+      flush();
+      quote = false;
+      if (line.includes("-->")) {
+        const rest = line.slice(line.indexOf("-->") + 3);
+        if (rest.trim() !== "") paragraph.push(rest);
+        index += 1;
+      } else {
+        index = skipCommentBlock(lines, index);
+      }
+      continue;
+    }
+    const open = FENCE_OPEN.exec(line);
+    if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
+      flush();
+      fence = { char: open[2][0], length: open[2].length };
+      quote = false;
+      index += 1;
+      continue;
+    }
+    if (/^ {0,3}>/.test(line)) {
+      flush();
+      quote = true;
+      index += 1;
+      continue;
+    }
+    if (THEMATIC_BREAK.test(line)) {
+      flush();
+      quote = false;
+      index += 1;
+      continue;
+    }
+    const column = listItemColumn(line);
+    if (column !== null) {
+      flush();
+      const item = collectItem(lines, index, column);
+      blocks.push(...scanBlocks(item.itemLines));
+      index = item.next;
+      quote = false;
+      continue;
+    }
+    if (HEADING.test(line)) {
+      flush();
+      blocks.push(line);
+      quote = false;
+      index += 1;
+      continue;
+    }
+    if (paragraph.length === 0 && /^(?: {4}|\t)/.test(line)) {
+      index += 1;
+      continue;
+    }
+    paragraph.push(line);
+    index += 1;
+  }
+  flush();
+  return blocks;
+}
+
+/** Masks inline code spans, then each closed HTML comment outside them, inside one block. */
+function maskInline(text) {
+  const ignored = Array.from({ length: text.length }, () => false);
+  maskSpansInRun(text, 0, text.length, ignored);
+  let index = 0;
+  while (index < text.length) {
+    if (ignored[index] || !text.startsWith("<!--", index)) {
+      index += 1;
+      continue;
+    }
+    const close = text.indexOf("-->", index + 4);
+    if (close === -1) {
+      index += 1;
+      continue;
+    }
+    maskRange(ignored, index, close + 3);
+    index = close + 3;
+  }
+  let visible = "";
+  for (let index = 0; index < text.length; index += 1) {
+    visible += ignored[index] ? " " : text[index];
+  }
+  return visible;
+}
+
+function maskSpansInRun(body, start, end, ignored) {
+  let index = start;
+  while (index < end) {
+    if (ignored[index] || body[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let openEnd = index;
+    while (openEnd < end && body[openEnd] === "`") openEnd += 1;
+    const length = openEnd - index;
+    let scan = openEnd;
+    let closeEnd = -1;
+    while (scan < end) {
+      if (ignored[scan] || body[scan] !== "`") {
+        scan += 1;
+        continue;
+      }
+      let runEnd = scan;
+      while (runEnd < end && body[runEnd] === "`") runEnd += 1;
+      if (runEnd - scan === length) {
+        closeEnd = runEnd;
+        break;
+      }
+      scan = runEnd;
+    }
+    if (closeEnd === -1) {
+      index = openEnd;
+      continue;
+    }
+    maskRange(ignored, index, closeEnd);
+    index = closeEnd;
+  }
+}
+
+/**
+ * The issue numbers that `body` closes in `repository`. A keyword inside inline code, fenced or
+ * indented code, a block quote, or an HTML comment names none.
+ * @returns {number[]}
+ */
+export function closingIssueNumbers(body, repository) {
+  if (typeof body !== "string" || typeof repository !== "string") return [];
+  const [owner, name] = repository.split("/");
+  if (!owner || !name) return [];
+  const slug = `${escapeRegExp(owner)}/${escapeRegExp(name)}`;
+  const reference = new RegExp(
+    `^(?:#(\\d+)|${slug}#(\\d+)|https://github\\.com/${slug}/issues/(\\d+))(?!\\w|/)`,
+    "i",
+  );
+  const closed = [];
+  for (const block of scanBlocks(body.split("\n"))) {
+    const visible = maskInline(block);
+    for (const match of visible.matchAll(BODY_KEYWORD)) {
+      const found = reference.exec(visible.slice(match.index + match[0].length));
+      if (!found) continue;
+      const number = Number(found[1] ?? found[2] ?? found[3]);
+      if (Number.isInteger(number) && number > 0) closed.push(number);
+    }
+  }
+  return [...new Set(closed)];
+}
 
 function blockedNumbers(value) {
   if (Array.isArray(value)) return value;
@@ -66,11 +321,11 @@ export function hasStructuralMinimum(body) {
 /**
  * Reads every open pull request and the issues its body or commit messages close. Throws when a
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
- * commit read reached the API's 250-commit page. The caller then stops launching. `slug` is the
- * repository name, read when it is null and returned for the next call.
- * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, slug: string | null }>}
+ * commit read reached the API's 250-commit page. The caller then stops launching. `repository` is
+ * the cached name and default branch, read when it is null and returned for the next call.
+ * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, repository: { nameWithOwner: string, defaultBranch: string } | null }>}
  */
-export async function readOpenPrClosures({ gh, repo, slug = null }) {
+export async function readOpenPrClosures({ gh, repo, repository = null }) {
   const list = await readGhJson(
     gh,
     [
@@ -79,7 +334,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
       "--state",
       "open",
       "--json",
-      "number,closingIssuesReferences,headRefName",
+      "number,closingIssuesReferences,headRefName,baseRefName,body",
       "--limit",
       "1000",
     ],
@@ -99,6 +354,12 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
     if (!isJsonObject(entry) || !Number.isInteger(entry.number)) {
       throw new Error("gh pr list returned a malformed entry");
     }
+    if (typeof entry.baseRefName !== "string") {
+      throw new Error("gh pr list returned a malformed base branch");
+    }
+    if (typeof entry.body !== "string") {
+      throw new Error("gh pr list returned a malformed body");
+    }
     const references = entry.closingIssuesReferences;
     if (references !== undefined && !Array.isArray(references)) {
       throw new Error("gh pr list returned malformed closing references");
@@ -110,15 +371,29 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
       }
     }
   }
-  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources, slug };
+  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources, repository };
 
-  let repositorySlug = slug;
-  if (repositorySlug === null) {
-    const repository = await readGhJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
-    if (!isJsonObject(repository) || typeof repository.nameWithOwner !== "string") {
+  let cached = repository;
+  if (cached === null) {
+    const view = await readGhJson(
+      gh,
+      ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"],
+      repo,
+    );
+    if (!isJsonObject(view) || typeof view.nameWithOwner !== "string") {
       throw new Error("gh repo view returned no repository name");
     }
-    repositorySlug = repository.nameWithOwner;
+    if (!isJsonObject(view.defaultBranchRef) || typeof view.defaultBranchRef.name !== "string") {
+      throw new Error("gh repo view returned no default branch name");
+    }
+    cached = { nameWithOwner: view.nameWithOwner, defaultBranch: view.defaultBranchRef.name };
+  }
+  for (const entry of list) {
+    if (entry.baseRefName === cached.defaultBranch) continue;
+    for (const issueNumber of closingIssueNumbers(entry.body, cached.nameWithOwner)) {
+      closed.add(issueNumber);
+      addSource(issueNumber, entry);
+    }
   }
   let incompletePr = null;
   for (const entry of list) {
@@ -126,7 +401,10 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
     for (let page = 1; page <= 3 && count < 250; page += 1) {
       const commits = await readGhJson(
         gh,
-        ["api", `repos/${repositorySlug}/pulls/${entry.number}/commits?per_page=100&page=${page}`],
+        [
+          "api",
+          `repos/${cached.nameWithOwner}/pulls/${entry.number}/commits?per_page=100&page=${page}`,
+        ],
         repo,
       );
       if (!Array.isArray(commits)) throw new Error("the commit read returned no list");
@@ -150,7 +428,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
   }
   const first = [...closed].sort((a, b) => a - b)[0];
   const firstSource = first === undefined ? null : (sources.get(first)?.[0]?.number ?? null);
-  return { closed, pr: firstSource, incompletePr, sources, slug: repositorySlug };
+  return { closed, pr: firstSource, incompletePr, sources, repository: cached };
 }
 
 /**

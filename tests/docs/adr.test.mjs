@@ -410,6 +410,16 @@ test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0
   expect(text).toMatch(/unelevated Windows/i);
 });
 
+// Usefulness: verifies acceptance #1926: ADR 0106 decision 6 states the non-default-base body read of the batch.
+test("ADR 0106 states the non-default-base PR body read", async () => {
+  const text = (await readRepoFile("adr/0106-foreground-batch-scheduling.md")).replace(/\s+/g, " ");
+  expect(text).toMatch(
+    /batch reads the body of each open pull request whose base is not the default branch/i,
+  );
+  expect(text).toMatch(/keyword grammar[^.]*repository limit[^.]*ignored contexts/i);
+  expect(text).toContain("https://github.com/andromarces/agent-loops/issues/1926");
+});
+
 // Usefulness: verifies ADR 0019 supersedes ADR 0001 in both directions and in the index. It
 // restates the decisions of ADR 0001 that still hold, so no live decision is lost.
 test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {

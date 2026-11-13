@@ -390,6 +390,27 @@ test("the selection section excludes issues that a non-default-base PR body clos
   expectRule(instructions, /exclude every issue/i, /body closes/i);
 });
 
+// Usefulness: verifies acceptance #1926: the selection section names the body grammar, the repository limit, and the ignored contexts.
+test("the selection section states the non-default-base body grammar and limits", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expectRule(
+    instructions,
+    /`close`/,
+    /`closes`/,
+    /`closed`/,
+    /`fix`/,
+    /`fixes`/,
+    /`fixed`/,
+    /`resolve`/,
+    /`resolves`/,
+    /`resolved`/,
+  );
+  expectRule(instructions, /optional/i, /colon/i);
+  expectRule(instructions, /`#123`/, /`owner\/repo#123`/, /full issue URL/i);
+  expectRule(instructions, /inline code span/i, /fenced or indented code block/i, /block quote/i);
+  expectRule(instructions, /HTML comment/i);
+});
+
 // Usefulness: verifies the headless prompt states the gate outcome on a base branch whose
 // required-check sources each state it holds none (issue #336). The gate passes on the PR head, the
 // clean reviewed tree, and the merge state, and records the absence. An orchestrator on such a

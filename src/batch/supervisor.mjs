@@ -635,15 +635,15 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     return changed;
   };
 
-  let openPrSlug = null;
+  let openPrRepository = null;
   const refreshOpenPr = async () => {
     try {
       const closures = await readOpenPrClosures({
         gh,
         repo: prepared.repo,
-        slug: openPrSlug,
+        repository: openPrRepository,
       });
-      openPrSlug = closures.slug;
+      openPrRepository = closures.repository;
       return closures;
     } catch (err) {
       throw Object.assign(new Error(`the open pull request read failed: ${err.message}`), {
