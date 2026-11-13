@@ -79,14 +79,19 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
 
 /**
  * Runs one Copilot turn. A first turn pre-assigns the session id. The role state keeps it when the
- * result event reports it, or when the turn fails after Copilot saved a turn under it, marked
- * `state.sessionUnconfirmed` (issue #642, ADR 0030). A failure that saved no turn keeps no id, so
- * the next worker turn carries its preamble. A resume of an unconfirmed id first checks that the
- * session holds a turn, and a missing one raises a `sessionMissing` error before any CLI starts, so
- * the runtime reruns the turn as a first turn. A result or a reported id clears the mark.
+ * result event reports it. It also keeps it when the turn fails after Copilot saved a turn under
+ * it, marked `state.sessionUnconfirmed` (issue #642, ADR 0030). A failure that saved no turn keeps
+ * no id, so the next worker turn carries its preamble.
+ *
+ * A resume of an unconfirmed id first checks that the session holds a turn. A missing one raises a
+ * `sessionMissing` error before any CLI starts, so the runtime reruns the turn as a first turn.
+ * A result or a reported id clears the mark.
  * A turn whose assistant text holds the denial text of a refused tool call sets
  * `state.shellDenied` for the runtime to report (issue #713, ADR 0035). known-limit: a denial that
- * the text does not repeat is not flagged, because no recorded event stream shows the denial.
+ * the text does not repeat is not flagged.
+ *
+ * A turn that is not read-only passes `--allow-tool write`, so a worker creates and modifies files
+ * (issue #1916, ADR 0141).
  */
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly } = options;
@@ -103,6 +108,10 @@ export async function runCopilot(state, prompt, options = {}) {
 
   if (readOnly) {
     args.push("--deny-tool", "write");
+  } else {
+    // A non-interactive Copilot turn denies a write request that no allow rule approves, and a
+    // worker needs file edits (issue #1916, ADR 0141).
+    args.push("--allow-tool", "write");
   }
 
   if (state.model) {

@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Decision 1 is replaced by [ADR 0141: Allow the Copilot write tool on a worker turn](0141-allow-the-copilot-write-tool-on-a-worker-turn.md), which passes `--allow-tool write` on a non-read-only Copilot turn. Decisions 2 to 5 hold. ADR 0141 records the live probe.
 
 ## Date
 
@@ -72,6 +74,18 @@ dispatch cleared the inherited test-slot marker, and `COPILOT_ALLOW_ALL` was uns
 - The record saved `copilot --version`, `sw_vers`, `uname -a`, `node --version`, and the work tree head before and after the probe. Copilot CLI 1.0.106-2 was reported inside the turn.
 - A saved copy of the envelope with `shellDenied` removed failed the check with exit 1.
 - A saved copy with Copilot CLI 1.0.105-2 failed the version check with exit 1.
+
+### File edit under the runtime arguments (issue #1916)
+
+The host was macOS 27.3 (build 26C5035r, arm64), Node v27.0.0-alpha.0.1.0, and GitHub Copilot CLI 1.0.110-3 and 1.0.111-0. Each probe ran a live `role dispatch` init with `--worker copilot` in a disposable Git repository. The task asked for `note.txt` in the repository root with the line `hello`, and no allow rule was named.
+
+- On 1.0.110-3 with no allow rule, the `create` tool was denied with `data.error.code` `denied`. A `bash` write command was denied with the same code. `permission.completed` held `result.kind` `denied-no-approval-rule-and-could-not-request-from-user` and `decisionSource` `unattended_fallback`. `note.txt` did not exist.
+- On 1.0.111-0 with no allow rule, the `create` tool was denied with the same result kind, and `note.txt` did not exist.
+- On 1.0.111-0 with `--allow-tool write`, the `create` tool succeeded, the stream held no `permission.requested` event, and `note.txt` held `hello`.
+- The executed model in `session.start` and `assistant.message` was `mai-code-1.1-flash`.
+- The turn 1 envelope carried no `shellDenied`, because the final assistant text paraphrased the denial. The turn 3 envelope carried `shellDenied: true`, because its text quoted the denial whole.
+
+The stream therefore shows how a denial is reported. Decision 5 keeps the text match, and [ADR 0141](0141-allow-the-copilot-write-tool-on-a-worker-turn.md) changes decision 1.
 
 ## Alternatives
 
