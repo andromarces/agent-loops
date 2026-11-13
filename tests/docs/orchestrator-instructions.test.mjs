@@ -289,6 +289,10 @@ const SHARED_PARENT_RULES = [
   // finish. A missing issue gets a worker turn before the final reviewer turn.
   (text) => expectRule(text, /closingIssuesReferences/, /before finish/i),
   (text) => expectRule(text, /missing issue/i, /worker turn/i, /final reviewer turn/i),
+  // Issue #1924: a non-default PR base records no closing link. The parent skips the read and
+  // records the manual close under open.
+  (text) => expectRule(text, /base is not the default branch/i, /skip that read/i),
+  (text) => expectRule(text, /open/, /manual close after the merge/i, /Development-panel link/i),
   // Issue #1162: a task whose change is outside the work tree has an accept that is a reviewer
   // report, a reviewer prompt that names the read-only limits, and a `verified` that says
   // `reviewed` identifies no change.
@@ -371,6 +375,19 @@ test("interactive instructions and headless prompt share the reviewed-state rule
   }
   expectReviewerGateRule(instructions);
   expectReviewerGateRule(prompt);
+});
+
+// Usefulness: verifies acceptance #1924: selection reads a non-default-base PR body for closing keywords and excludes the issues it names.
+test("the selection section excludes issues that a non-default-base PR body closes", async () => {
+  const instructions = (await readFile(instructionsPath, "utf8")).replace(/\s+/g, " ");
+  expect(instructions).toContain(
+    "gh pr list --state open --json number,closingIssuesReferences,baseRefName,body --limit 1000",
+  );
+  expect(instructions).toContain(
+    "gh repo view --json defaultBranchRef --jq .defaultBranchRef.name",
+  );
+  expectRule(instructions, /baseRefName/, /not that default branch/i, /body/i, /closing keywords/i);
+  expectRule(instructions, /exclude every issue/i, /body closes/i);
 });
 
 // Usefulness: verifies the headless prompt states the gate outcome on a base branch whose

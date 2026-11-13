@@ -545,6 +545,7 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - Require reviewed.clean: true for PR work.
 - When a PR resolves its issue only in part, read the commit messages of the PR branch before finish. A closing keyword in one, such as \`Closes #N\`, closes the issue at merge, even after the PR body says \`Refs\`. Dispatch a worker to remove it.
 - For PR work that must close an issue, read \`closingIssuesReferences\` on the PR before finish. A missing issue gets a worker turn before the final reviewer turn.
+  - When the PR base is not the default branch, skip that read. Record under \`open\` that the issue needs a manual close after the merge or a Development-panel link.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
 - A later dispatch envelope carries localFilesDiffer only when a copied local file changed. The field lists \`{path, changed}\` entries. \`changed\` is \`source\`, \`copy\`, \`both\`, or \`unknown\`. \`unknown\` means the runtime cannot prove a side, and it never means no change.
   - For \`source\`, the main work tree changed after init: report the path under open and do not refresh the copy.
