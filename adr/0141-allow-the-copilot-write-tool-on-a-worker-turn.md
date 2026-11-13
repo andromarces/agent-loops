@@ -12,7 +12,7 @@ Partially supersedes [ADR 0035: State that a Copilot worker cannot run shell com
 
 ## Context
 
-The Copilot adapter passes `--session-id <id> -s --no-ask-user --output-format json` and no allow rule (`src/agents/copilot.mjs`). Copilot asks before it creates or modifies a file. The runtime sends the prompt on standard input with no terminal. The CLI answers a permission request that no allow rule approves with a denial. ADR 0035 decision 1 accepted that gap, and decision 3 assumed that a turn still finishes useful edits.
+The Copilot adapter passes `--session-id <id> -s --no-ask-user --output-format json` and no allow rule (`src/agents/copilot.mjs`). Copilot asks before it writes a file. The runtime sends the prompt on standard input with no terminal. The CLI answers a permission request that no allow rule approves with a denial. ADR 0035 decision 1 accepted that gap, and decision 3 assumed that a turn still finishes useful edits.
 
 Issue #1916 asked whether the file edit tool can write under the runtime arguments. Three live worker turns on 2026-11-13 recorded the answer. The host was macOS 27.3 (build 26C5035r, arm64) with Node v27.0.0-alpha.0.1.0. Each turn ran through `role dispatch` in a fresh disposable Git repository with `--worker copilot`, a fresh `--parent-session`, and `--max-steps 2`. The task asked only for `note.txt` in the repository root with the line `hello`. The `session.start` and `assistant.message` events named the executed model `mai-code-1.1-flash`.
 
@@ -24,16 +24,16 @@ The CLI auto-updated from 1.0.110-3 to 1.0.111-0 between turns 1 and 2, so turn 
 
 ## Decision
 
-1. A Copilot turn that is not read-only passes `--allow-tool write`. This rule grants the file create and modify tools, and it grants no shell command.
+1. A Copilot turn that is not read-only passes `--allow-tool write`. The adapter adds no shell rule.
 2. A reviewer turn and an orchestrator turn stay read-only and keep `--deny-tool write`.
-3. No shell allow rule is added. ADR 0035 decisions 2 to 5 hold, so a Copilot worker turn still cannot rely on a shell command.
+3. No shell allow rule is added. ADR 0035 decisions 2 to 5 hold, so a Copilot worker turn still cannot rely on a shell command. A shell call under the rule is not verified.
 4. ADR 0035 decision 1 no longer holds for a worker turn. Its `--allow-all-tools` rejection stands.
 
 ## Consequences
 
-- A Copilot worker creates and modifies files under the runtime arguments on CLI 1.0.111-0.
+- A Copilot worker created `note.txt` with the `create` tool under the runtime arguments on CLI 1.0.111-0. A file modification and a shell call under the rule are not verified.
 - The rule is not scoped by path, so it matches a write anywhere that the CLI can access. The default CLI access is the work tree and the system temp directory.
-- A shell write stays refused. An unscoped `write` rule approves a shell command's redirection into a file, and not the command. A shell write still needs a shell rule.
+- The adapter adds no shell rule. Turn 2 invoked no shell call, so a shell write under the flag is not verified.
 - `shellDenied` still covers a shell denial that the assistant text repeats. Turn 1 recorded a write denial in `tool.execution_complete` that the text paraphrased, so the envelope carried no field then. That is the ADR 0035 decision 5 limit.
 - A worker that runs a validation command still needs the parent or another CLI, as ADR 0035 decision 2 states.
 

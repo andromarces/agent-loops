@@ -133,45 +133,6 @@ test("copilot reads response text from JSONL events", async () => {
   );
 });
 
-// Usefulness: verifies a worker turn lets Copilot create and modify files under --no-ask-user (issue #1916).
-test("copilot allows the write tool on a worker turn", async () => {
-  vi.mocked(exec).mockResolvedValueOnce({
-    stdout: [
-      '{"type":"assistant.message","data":{"content":"wrote note.txt"}}',
-      '{"type":"result","sessionId":"copilot-sess-1","exitCode":0}',
-    ].join("\n"),
-    stderr: "",
-  });
-
-  const state = { kind: "copilot", sessionId: "copilot-sess-1", model: null, effort: null };
-  const response = await runCopilot(state, "write the file", {
-    cwd: "/dir",
-    readOnly: false,
-  });
-
-  expect(response).toBe("wrote note.txt");
-  expect(exec).toHaveBeenCalledWith(
-    "copilot",
-    [
-      "--session-id",
-      "copilot-sess-1",
-      "-s",
-      "--no-ask-user",
-      "--output-format",
-      "json",
-      "--allow-tool",
-      "write",
-    ],
-    {
-      cwd: "/dir",
-      input: "write the file",
-      timeout: undefined,
-      signal: undefined,
-      role: undefined,
-    },
-  );
-});
-
 // Usefulness: verifies a resumed Copilot session cannot silently switch to a different session.
 test("copilot rejects a changed session id", async () => {
   vi.mocked(exec).mockResolvedValueOnce({

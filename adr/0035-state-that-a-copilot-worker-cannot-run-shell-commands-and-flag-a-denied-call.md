@@ -85,7 +85,7 @@ The host was macOS 27.3 (build 26C5035r, arm64), Node v27.0.0-alpha.0.1.0, and G
 - The executed model in `session.start` and `assistant.message` was `mai-code-1.1-flash`.
 - The turn 1 envelope carried no `shellDenied`, because the final assistant text paraphrased the denial. The turn 3 envelope carried `shellDenied: true`, because its text quoted the denial whole.
 
-The stream therefore shows how a denial is reported. Decision 5 keeps the text match, and [ADR 0141](0141-allow-the-copilot-write-tool-on-a-worker-turn.md) changes decision 1.
+The saved allowed turn invoked only `create`, so a file modification and a shell call under `--allow-tool write` are not verified. The stream therefore shows how a denial is reported. Decision 5 keeps the text match, and [ADR 0141](0141-allow-the-copilot-write-tool-on-a-worker-turn.md) changes decision 1.
 
 ## Alternatives
 
