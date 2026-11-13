@@ -13,7 +13,6 @@ const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
 const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const BLOCK_LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])( +)(?=\S)/;
-const COMMENT_START = /^ {0,3}<!--/;
 
 /** The content column of a list item start, or null when the line starts no item. */
 function listItemColumn(text) {
@@ -28,8 +27,7 @@ function isBlockStart(line) {
     FENCE_OPEN.test(line) ||
     HEADING.test(line) ||
     THEMATIC_BREAK.test(line) ||
-    BLOCK_LIST_ITEM.test(line) ||
-    COMMENT_START.test(line)
+    BLOCK_LIST_ITEM.test(line)
   );
 }
 
@@ -41,129 +39,148 @@ function maskRange(ignored, start, end) {
   for (let index = start; index < end; index += 1) ignored[index] = true;
 }
 
-function fullyIgnored(ignored, start, end) {
-  for (let index = start; index < end; index += 1) {
-    if (!ignored[index]) return false;
-  }
-  return true;
+function leadingSpaces(line) {
+  return /^ */.exec(line)[0].length;
 }
 
-/** Masks fenced and indented code blocks and block quote lines. */
-function maskBlocks(body, ignored) {
-  let offset = 0;
-  let fence = null;
-  let inQuote = false;
-  let paragraph = false;
-  let items = [];
-  let itemBlank = false;
-  for (const line of body.split("\n")) {
-    const lineStart = offset;
-    offset = lineStart + line.length + 1;
+/** Removes HTML comments, keeping line breaks. An unclosed comment runs to the end. */
+function stripComments(body) {
+  let text = "";
+  let index = 0;
+  while (index < body.length) {
+    if (!body.startsWith("<!--", index)) {
+      text += body[index];
+      index += 1;
+      continue;
+    }
+    const close = body.indexOf("-->", index + 4);
+    const end = close === -1 ? body.length : close + 3;
+    for (let inside = index; inside < end; inside += 1) {
+      if (body[inside] === "\n" || body[inside] === "\r") text += body[inside];
+    }
+    index = end;
+  }
+  return text;
+}
+
+/** The lines of one list item, with the item indent removed from every line that carries it. */
+function collectItem(lines, index, column) {
+  const itemLines = [lines[index].slice(column)];
+  let cursor = index + 1;
+  let blank = false;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
     if (line.trim() === "") {
-      paragraph = false;
-      inQuote = false;
-      itemBlank = items.length > 0;
+      itemLines.push("");
+      blank = true;
+      cursor += 1;
       continue;
     }
-
-    let text = line;
-    let base = lineStart;
-    if (items.length > 0) {
-      const indent = /^ */.exec(line)[0].length;
-      while (items.length > 0 && indent < items[items.length - 1]) {
-        if (!itemBlank && !isBlockStart(line)) break;
-        items.pop();
-      }
-      if (items.length > 0 && indent >= items[items.length - 1]) {
-        const column = items[items.length - 1];
-        text = line.slice(column);
-        base = lineStart + column;
-      }
-      itemBlank = false;
+    if (leadingSpaces(line) >= column) {
+      itemLines.push(line.slice(column));
+      blank = false;
+      cursor += 1;
+      continue;
     }
+    if (!blank && !isBlockStart(line)) {
+      itemLines.push(line);
+      cursor += 1;
+      continue;
+    }
+    break;
+  }
+  return { itemLines, next: cursor };
+}
 
-    const end = base + text.length;
+/** The paragraph and heading text that counts. List item content is scanned recursively. */
+function scanBlocks(lines) {
+  const blocks = [];
+  const paragraph = [];
+  let fence = null;
+  let quote = false;
+  let index = 0;
+  const flush = () => {
+    if (paragraph.length === 0) return;
+    blocks.push(paragraph.join("\n"));
+    paragraph.length = 0;
+  };
+  while (index < lines.length) {
+    const line = lines[index];
     if (fence !== null) {
-      maskRange(ignored, base, end);
-      const close = FENCE_CLOSE.exec(text);
+      const close = FENCE_CLOSE.exec(line);
       if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
-      paragraph = false;
+      index += 1;
       continue;
     }
-    if (inQuote && !/^ {0,3}>/.test(text)) {
-      const lazy = !isBlockStart(text);
-      if (lazy) {
-        maskRange(ignored, base, end);
+    if (line.trim() === "") {
+      flush();
+      quote = false;
+      index += 1;
+      continue;
+    }
+    if (quote) {
+      if (/^ {0,3}>/.test(line) || !isBlockStart(line)) {
+        index += 1;
         continue;
       }
-      inQuote = false;
+      quote = false;
     }
-    const open = FENCE_OPEN.exec(text);
+    const open = FENCE_OPEN.exec(line);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
-      fence = { char: open[2][0], length: open[2].length };
-      maskRange(ignored, base, end);
-      paragraph = false;
-      inQuote = false;
-      continue;
-    }
-    if (/^ {0,3}>/.test(text)) {
-      maskRange(ignored, base, end);
-      paragraph = false;
-      inQuote = true;
-      continue;
-    }
-    if (THEMATIC_BREAK.test(text)) {
-      paragraph = false;
-      inQuote = false;
-      continue;
-    }
-    const column = listItemColumn(text);
-    if (column !== null) {
-      items.push(base - lineStart + column);
-      paragraph = true;
-      inQuote = false;
-      continue;
-    }
-    if (HEADING.test(text) || COMMENT_START.test(text)) {
-      paragraph = false;
-      inQuote = false;
-      continue;
-    }
-    if (!paragraph && /^(?: {4}|\t)/.test(text)) {
-      maskRange(ignored, base, end);
-      paragraph = false;
-      continue;
-    }
-    paragraph = true;
-  }
-}
-
-/** Masks a backtick run through the next run of the same length inside one paragraph. */
-function maskCodeSpans(body, ignored) {
-  const lines = body.split("\n");
-  let offset = 0;
-  let runStart = null;
-  let runEnd = null;
-  const flush = () => {
-    if (runStart === null) return;
-    maskSpansInRun(body, runStart, runEnd, ignored);
-    runStart = null;
-    runEnd = null;
-  };
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const start = offset;
-    const end = start + line.length;
-    offset = end + 1;
-    const blockLine = line.trim() === "" || fullyIgnored(ignored, start, end);
-    if (blockLine) {
       flush();
+      fence = { char: open[2][0], length: open[2].length };
+      quote = false;
+      index += 1;
       continue;
     }
-    if (runStart === null) runStart = start;
-    runEnd = end;
+    if (/^ {0,3}>/.test(line)) {
+      flush();
+      quote = true;
+      index += 1;
+      continue;
+    }
+    if (THEMATIC_BREAK.test(line)) {
+      flush();
+      quote = false;
+      index += 1;
+      continue;
+    }
+    const column = listItemColumn(line);
+    if (column !== null) {
+      flush();
+      const item = collectItem(lines, index, column);
+      blocks.push(...scanBlocks(item.itemLines));
+      index = item.next;
+      quote = false;
+      continue;
+    }
+    if (HEADING.test(line)) {
+      flush();
+      blocks.push(line);
+      quote = false;
+      index += 1;
+      continue;
+    }
+    if (paragraph.length === 0 && /^(?: {4}|\t)/.test(line)) {
+      index += 1;
+      continue;
+    }
+    paragraph.push(line);
+    index += 1;
   }
   flush();
+  return blocks;
+}
+
+/** Masks a backtick run through the next run of the same length inside one block. */
+function maskInline(text) {
+  const ignored = Array.from({ length: text.length }, () => false);
+  maskSpansInRun(text, 0, text.length, ignored);
+  let visible = "";
+  for (let index = 0; index < text.length; index += 1) {
+    visible += ignored[index] ? " " : text[index];
+  }
+  return visible;
 }
 
 function maskSpansInRun(body, start, end, ignored) {
@@ -200,21 +217,6 @@ function maskSpansInRun(body, start, end, ignored) {
   }
 }
 
-/** Masks an HTML comment through its close, or to the end of an unclosed comment. */
-function maskComments(body, ignored) {
-  let index = 0;
-  while (index < body.length) {
-    if (ignored[index] || !body.startsWith("<!--", index)) {
-      index += 1;
-      continue;
-    }
-    const close = body.indexOf("-->", index + 4);
-    const end = close === -1 ? body.length : close + 3;
-    maskRange(ignored, index, end);
-    index = end;
-  }
-}
-
 /**
  * The issue numbers that `body` closes in `repository`. A keyword inside inline code, fenced or
  * indented code, a block quote, or an HTML comment names none.
@@ -229,20 +231,15 @@ export function closingIssueNumbers(body, repository) {
     `^(?:#(\\d+)|${slug}#(\\d+)|https://github\\.com/${slug}/issues/(\\d+))(?!\\w|/)`,
     "i",
   );
-  const ignored = Array.from({ length: body.length }, () => false);
-  maskBlocks(body, ignored);
-  maskCodeSpans(body, ignored);
-  maskComments(body, ignored);
-  let visible = "";
-  for (let index = 0; index < body.length; index += 1) {
-    visible += ignored[index] ? " " : body[index];
-  }
   const closed = [];
-  for (const match of visible.matchAll(BODY_KEYWORD)) {
-    const found = reference.exec(visible.slice(match.index + match[0].length));
-    if (!found) continue;
-    const number = Number(found[1] ?? found[2] ?? found[3]);
-    if (Number.isInteger(number) && number > 0) closed.push(number);
+  for (const block of scanBlocks(stripComments(body).split("\n"))) {
+    const visible = maskInline(block);
+    for (const match of visible.matchAll(BODY_KEYWORD)) {
+      const found = reference.exec(visible.slice(match.index + match[0].length));
+      if (!found) continue;
+      const number = Number(found[1] ?? found[2] ?? found[3]);
+      if (Number.isInteger(number) && number > 0) closed.push(number);
+    }
   }
   return [...new Set(closed)];
 }

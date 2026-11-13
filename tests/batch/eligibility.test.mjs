@@ -388,6 +388,14 @@ test("a list item content column keeps indented lines in the item", () => {
   expect(closingIssueNumbers("1. item\n   Closes #7", "o/r")).toEqual([7]);
 });
 
+// Usefulness: a fence, quote, heading, or nested list inside a list item follows the top-level rules.
+test("a block inside a list item follows the top-level rules", () => {
+  expect(closingIssueNumbers("- ```text\n  Closes #7\n  ````", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("- > Closes #7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("- ## Example\n      Closes #7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("- a\n  - b\n    Closes #7", "o/r")).toEqual([7]);
+});
+
 // Usefulness: a block quote line hides a keyword with up to three leading spaces.
 test("a block quote hides a closing keyword", () => {
   expect(closingIssueNumbers("> Closes #7\n", "o/r")).toEqual([]);
