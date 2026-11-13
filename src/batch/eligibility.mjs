@@ -12,7 +12,15 @@ const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
 const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
 const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const BLOCK_LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])( +)(?=\S)/;
 const COMMENT_START = /^ {0,3}<!--/;
+
+/** The content column of a list item start, or null when the line starts no item. */
+function listItemColumn(text) {
+  const match = LIST_MARKER.exec(text);
+  if (match === null) return null;
+  return match[1].length + match[2].length + match[3].length;
+}
 
 /** True for a line that starts a new block and so ends a paragraph or a quote continuation. */
 function isBlockStart(line) {
@@ -46,51 +54,83 @@ function maskBlocks(body, ignored) {
   let fence = null;
   let inQuote = false;
   let paragraph = false;
+  let items = [];
+  let itemBlank = false;
   for (const line of body.split("\n")) {
-    const start = offset;
-    const end = start + line.length;
-    offset = end + 1;
+    const lineStart = offset;
+    offset = lineStart + line.length + 1;
+    if (line.trim() === "") {
+      paragraph = false;
+      inQuote = false;
+      itemBlank = items.length > 0;
+      continue;
+    }
+
+    let text = line;
+    let base = lineStart;
+    if (items.length > 0) {
+      const indent = /^ */.exec(line)[0].length;
+      while (items.length > 0 && indent < items[items.length - 1]) {
+        if (!itemBlank && !isBlockStart(line)) break;
+        items.pop();
+      }
+      if (items.length > 0 && indent >= items[items.length - 1]) {
+        const column = items[items.length - 1];
+        text = line.slice(column);
+        base = lineStart + column;
+      }
+      itemBlank = false;
+    }
+
+    const end = base + text.length;
     if (fence !== null) {
-      maskRange(ignored, start, end);
-      const close = FENCE_CLOSE.exec(line);
+      maskRange(ignored, base, end);
+      const close = FENCE_CLOSE.exec(text);
       if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
       paragraph = false;
       continue;
     }
-    if (line.trim() === "") {
-      paragraph = false;
-      inQuote = false;
-      continue;
-    }
-    if (inQuote && !/^ {0,3}>/.test(line)) {
-      const lazy = !isBlockStart(line);
+    if (inQuote && !/^ {0,3}>/.test(text)) {
+      const lazy = !isBlockStart(text);
       if (lazy) {
-        maskRange(ignored, start, end);
+        maskRange(ignored, base, end);
         continue;
       }
       inQuote = false;
     }
-    const open = FENCE_OPEN.exec(line);
+    const open = FENCE_OPEN.exec(text);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
       fence = { char: open[2][0], length: open[2].length };
-      maskRange(ignored, start, end);
+      maskRange(ignored, base, end);
       paragraph = false;
       inQuote = false;
       continue;
     }
-    if (/^ {0,3}>/.test(line)) {
-      maskRange(ignored, start, end);
+    if (/^ {0,3}>/.test(text)) {
+      maskRange(ignored, base, end);
       paragraph = false;
       inQuote = true;
       continue;
     }
-    if (isBlockStart(line)) {
+    if (THEMATIC_BREAK.test(text)) {
       paragraph = false;
       inQuote = false;
       continue;
     }
-    if (!paragraph && /^(?: {4}|\t)/.test(line)) {
-      maskRange(ignored, start, end);
+    const column = listItemColumn(text);
+    if (column !== null) {
+      items.push(base - lineStart + column);
+      paragraph = true;
+      inQuote = false;
+      continue;
+    }
+    if (HEADING.test(text) || COMMENT_START.test(text)) {
+      paragraph = false;
+      inQuote = false;
+      continue;
+    }
+    if (!paragraph && /^(?: {4}|\t)/.test(text)) {
+      maskRange(ignored, base, end);
       paragraph = false;
       continue;
     }

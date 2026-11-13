@@ -366,19 +366,26 @@ test("an indented code block hides a closing keyword", () => {
   expect(closingIssueNumbers("Text\n    Closes #7\n", "o/r")).toEqual([7]);
 });
 
-// Usefulness: a heading, break, list item, comment, fence close, or blank line leaves no paragraph.
+// Usefulness: a heading, break, comment, fence close, or blank line leaves no paragraph.
 test("a block start leaves no open paragraph for an indented line", () => {
   const bodies = [
     "## Closing syntax example\n    Closes #7",
     "Text\n## Closing syntax example\n    Closes #7",
     "---\n    Closes #7",
     "Text\n---\n    Closes #7",
-    "- item\n    Closes #7",
     "<!-- note -->\n    Closes #7",
     "```\ncode\n```\n    Closes #7",
     "Text\n\n    Closes #7",
   ];
   for (const body of bodies) expect(closingIssueNumbers(body, "o/r"), body).toEqual([]);
+});
+
+// Usefulness: a list item content column keeps its indented lines as item text, and code stays code.
+test("a list item content column keeps indented lines in the item", () => {
+  expect(closingIssueNumbers("- item\n    Closes #7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("- item\n\n  Closes #7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("- item\n\n      Closes #7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("1. item\n   Closes #7", "o/r")).toEqual([7]);
 });
 
 // Usefulness: a block quote line hides a keyword with up to three leading spaces.
