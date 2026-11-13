@@ -230,6 +230,8 @@ in order. Each failure records one skip reason and names the evidence:
   `gh pr list --state open --json number,closingIssuesReferences --limit 1000`, then the
   commit messages of each open pull request. A commit page of 250 entries is incomplete, so
   the batch stops launching and reports the pull request for the owner's decision.
+  Note: issue #1924 adds `baseRefName` and `body` to this read, so a non-default-base PR body
+  closes its issues for selection.
 - `not-specified`: the body has no `## Acceptance` heading with at least one list item, or
   has neither a `## Problem` nor a `## Scope` heading. This is a structural minimum only.
   Whether an issue is semantically clear enough is the skill's selection judgment; the
@@ -666,6 +668,7 @@ Andro Marces
 - [Issue #1711: Release loop slots on owner decisions, resume after owner merges, and notify](https://github.com/andromarces/agent-loops/issues/1711)
 - [Issue #1486: State how to find the issues that open PRs close before a batch selects issues](https://github.com/andromarces/agent-loops/issues/1486)
 - [Issue #1560: Check that a PR body closing keyword reached closingIssuesReferences](https://github.com/andromarces/agent-loops/issues/1560)
+- [Issue #1924: Handle closing keywords on PRs whose base is not the default branch](https://github.com/andromarces/agent-loops/issues/1924)
 - [PR #1719: Propose the ADR for foreground batch scheduling](https://github.com/andromarces/agent-loops/pull/1719)
 - [PR #1724: Accept ADR 0106 and settle its owner decisions](https://github.com/andromarces/agent-loops/pull/1724)
 - [PR #1727: Implement foreground batch scheduling](https://github.com/andromarces/agent-loops/pull/1727)
