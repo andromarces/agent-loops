@@ -195,6 +195,7 @@ const slotCommandForms = (options) =>
 
 // Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611, issue #1919, ADR 0138.
 // The rule also bars a load generator and a process that outlives the turn (issue #934).
+
 // A targeted run covers at most 10 files. The order is the mirror files, then the files that import
 // a changed source file directly. Then come the files of direct importers, then the files that name
 // a changed non-module file. The argument-vector form is the default from Git Bash on Windows, with
