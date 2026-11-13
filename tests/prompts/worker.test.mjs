@@ -343,7 +343,7 @@ test("first worker turn bars contact with an unnamed host or service", () => {
 test("first worker turn routes a full suite through the test slot wrapper of this run", async () => {
   const prompt = workerPrompt("do the task", true);
   expect(prompt).toMatch(/Run a targeted test file through the test slot wrapper with --if-held/);
-  expect(prompt).toContain("or rely on the required CI checks");
+  expect(prompt).toContain("Or rely on the required CI checks.");
   const match = prompt.match(
     /"([^"]+)" "([^"]+)" test-slot -- <suite command as separate arguments>/,
   );

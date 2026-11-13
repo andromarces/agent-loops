@@ -569,6 +569,15 @@ test("role worker and reviewer dispatches carry the test slot rule", async () =>
   expect(reviewer.recorded[0].prompt).toContain(testSlotRule());
   expect(agents.fake1.recorded[0].prompt).toMatch(/at most 10 test files/);
   expect(reviewer.recorded[0].prompt).toMatch(/broader run through the test slot wrapper/);
+  for (const prompt of [agents.fake1.recorded[0].prompt, reviewer.recorded[0].prompt]) {
+    expect(prompt).toContain("Run one test command at a time.");
+    expect(prompt).toContain(
+      "Start no concurrent copy of a test run and no test run in the background, also when it ends inside the same command.",
+    );
+    expect(prompt).toContain(
+      "A single-test run is a targeted run and takes the --if-held wrapper form.",
+    );
+  }
 });
 
 // Usefulness: verifies the interactive role path bars load generators for the worker and the reviewer (issue #934), a path the prompt-builder tests do not reach.

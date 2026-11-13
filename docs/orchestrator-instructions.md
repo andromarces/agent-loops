@@ -541,6 +541,8 @@ Exclude every issue that a commit message closes. The commits endpoint returns a
 Every command for a run passes that run's `--cwd`. Each run ends with its own
 `finish` or `abort`, and the guard releases only after every run is terminal.
 
+A turn runs one test command at a time, with no concurrent copy of a test run and no test run in the background.
+
 Runs on one host share the test slot table, whose default count is 1.
 A targeted test run with `--if-held` waits while any slot is held. When a
 reviewer turn has no local test run, the required CI checks are its only test evidence, as
