@@ -123,7 +123,11 @@ A table pair is a line with a `|` and a delimiter row directly below it. A Markd
 
 A parsed worker or reviewer report can hold a label that points at response text outside the closing block. One example is `Why: the inference above`. The runtime adds `reportOutsideBlockLabels`, which names each such label and holds no response text, for example `["Why"]`. A turn with no match carries no field. The report stays in the envelope unchanged, and the step stays charged.
 
+Nothing outside the block exists, so a response with empty or whitespace-only text before the block carries no field.
+
 Dispatch one worker turn that asks for the named result inside the closing block. On a reviewer envelope with the field, dispatch one reviewer turn for that named result inside the block.
+
+The parent dispatches no restatement turn when the pointer names the content of another label of the same report that holds the result.
 
 The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase whose `above` ends it, a verb before `above`, or a reference to the closing block. A word after `above`, such as `above target` or `above the limit`, reads as a comparison and stays out. A value that names a report label stays inside the block, for example `Why: as shown above in Conclusion`. A pointer that the list misses stays undetected.
 
