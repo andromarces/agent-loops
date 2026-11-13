@@ -2234,6 +2234,8 @@ test("outsideBlockReportLabels names two labels that point above the block", () 
 // parent outside the block is detected (issue #1907).
 test("outsideBlockReportLabels names a pointer to the text before the closing block", () => {
   const response = [
+    "The gate listing holds no failing line.",
+    "",
     "Conclusion: done",
     "Why: the evidence before the closing block",
     "Blockers: none",
@@ -2303,7 +2305,7 @@ test("outsideBlockReportLabels leaves a comparison after above out", () => {
     "the coverage is above the limit",
     "the coverage is above 80 %",
   ]) {
-    const response = `Conclusion: done\nWhy: ${value}\nBlockers: none`;
+    const response = `The gate listing is green.\n\nConclusion: done\nWhy: ${value}\nBlockers: none`;
     expect(outsideBlockReportLabels(response, parseReportBlock(response)), value).toEqual([]);
   }
 });
@@ -2311,9 +2313,9 @@ test("outsideBlockReportLabels leaves a comparison after above out", () => {
 // Usefulness: verifies a pointer that names a block label before or after above stays internal
 // (issue #1907).
 test("outsideBlockReportLabels leaves a pointer that names a block label out", () => {
-  const after = "Conclusion: done\nWhy: as shown above in Conclusion\nBlockers: none";
+  const after = `The gate listing is green.\n\nConclusion: done\nWhy: as shown above in Conclusion\nBlockers: none`;
   expect(outsideBlockReportLabels(after, parseReportBlock(after))).toEqual([]);
-  const before = "Conclusion: done\nWhy: see the Why line above\nBlockers: none";
+  const before = `The gate listing is green.\n\nConclusion: done\nWhy: see the Why line above\nBlockers: none`;
   expect(outsideBlockReportLabels(before, parseReportBlock(before))).toEqual([]);
 });
 
@@ -2332,7 +2334,15 @@ test("outsideBlockReportLabels keeps the quoted-text exception with a comparison
 
 // Usefulness: verifies a value that points nowhere stays unmatched (issue #1907).
 test("outsideBlockReportLabels leaves a value that points nowhere out", () => {
-  const response = "Conclusion: done\nWhy: tests pass\nBlockers: none";
+  const response =
+    "The gate listing is green.\n\nConclusion: done\nWhy: tests pass\nBlockers: none";
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies whitespace-only text before the block counts as no outside text, so the
+// pointer names no label (issue #1918).
+test("outsideBlockReportLabels leaves a pointer out when only whitespace precedes the block", () => {
+  const response = `\n   \n\nConclusion: done\nWhy: the evidence above\nBlockers: none`;
   expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 

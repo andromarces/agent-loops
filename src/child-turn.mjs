@@ -561,7 +561,7 @@ export async function runChild(options) {
     }
     // A parsed report names each label that points outside the block. The parent can then ask for
     // that result (issues #1907 and #1910). The worker keeps its exception, and the reviewer names
-    // the pointer.
+    // the pointer. A response with no text outside the block names no label (issue #1918).
     const outsideBlockLabels =
       report !== null ? outsideBlockReportLabels(response, report, { exception: isWorker }) : [];
     if (outsideBlockLabels.length > 0) {
