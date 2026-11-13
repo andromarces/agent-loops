@@ -8,6 +8,8 @@ Partially supersedes [ADR 0040: Run the test command in a test slot and route ch
 
 Superseded by [ADR 0099: Let a targeted run include tests that read a changed non-module file by path](0099-let-a-targeted-run-include-tests-that-read-a-changed-non-module-file-by-path.md). ADR 0099 replaces decision 7: it adds the test files that name the path or file name of a changed file that is not an importable module. Decision 7's earlier tiers (the mirror test files, the test files that import a changed source file directly, and the test files of its direct importers), its 10-file bound, and every other decision remain in force.
 
+Partially superseded by [ADR 0138: Run one test command at a time in the child test-run rule](0138-run-one-test-command-at-a-time-in-the-child-test-run-rule.md). ADR 0138 replaces decision 6's bar list: it adds a bar on concurrent copies of a test run and a background test run. Every other part of decision 6 remains in force.
+
 ## Date
 
 2026-10-18
