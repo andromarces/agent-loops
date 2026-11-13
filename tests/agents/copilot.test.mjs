@@ -113,7 +113,16 @@ test("copilot reads response text from JSONL events", async () => {
   expect(state.usage).toEqual({ mainLoop: { premiumRequests: 1 } });
   expect(exec).toHaveBeenCalledWith(
     "copilot",
-    ["--session-id", "copilot-sess-1", "-s", "--no-ask-user", "--output-format", "json"],
+    [
+      "--session-id",
+      "copilot-sess-1",
+      "-s",
+      "--no-ask-user",
+      "--output-format",
+      "json",
+      "--allow-tool",
+      "write",
+    ],
     {
       cwd: "/dir",
       input: "copilot prompt 3",
@@ -254,7 +263,16 @@ test("copilot initializes session and runs with readOnly false", async () => {
   expect(state.sessionId).toBe(requestedSessionId);
   expect(exec).toHaveBeenCalledWith(
     "copilot",
-    ["--session-id", requestedSessionId, "-s", "--no-ask-user", "--output-format", "json"],
+    [
+      "--session-id",
+      requestedSessionId,
+      "-s",
+      "--no-ask-user",
+      "--output-format",
+      "json",
+      "--allow-tool",
+      "write",
+    ],
     {
       cwd: "/dir",
       input: "copilot prompt 2",

@@ -78,19 +78,19 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
 }
 
 /**
- * Runs one Copilot turn. A first turn pre-assigns the session id. The role state keeps it when the
- * result event reports it, or when the turn fails after Copilot saved a turn under it, marked
- * `state.sessionUnconfirmed` (issue #642, ADR 0030). A failure that saved no turn keeps no id, so
- * the next worker turn carries its preamble. A resume of an unconfirmed id first checks that the
- * session holds a turn, and a missing one raises a `sessionMissing` error before any CLI starts, so
- * the runtime reruns the turn as a first turn. A result or a reported id clears the mark.
- * A turn whose assistant text holds the denial text of a refused tool call sets
- * `state.shellDenied` for the runtime to report (issue #713, ADR 0035). known-limit: a denial that
- * the text does not repeat is not flagged, because no recorded event stream shows the denial.
+ * Runs one Copilot turn, and a first turn pre-assigns the session id.
+ * The role state keeps a reported id or one that a failed turn saved, marked
+ * `state.sessionUnconfirmed` (issue #642, ADR 0030).
+ * A resume of an unconfirmed id checks for a saved turn, and a missing one reruns the turn as a
+ * first turn. A result or a reported id clears the mark.
+ * A refused tool call in the assistant text sets `state.shellDenied` (issue #713, ADR 0035).
+ * A turn that is not read-only passes `--allow-tool write` (issue #1916, ADR 0141).
  */
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly } = options;
   const requestedSessionId = state.sessionId;
+  // A missing saved turn raises `sessionMissing` before any CLI starts, so the turn reruns as a
+  // first turn.
   await requireHeldUnconfirmedSession(
     state,
     requestedSessionId,
@@ -103,6 +103,12 @@ export async function runCopilot(state, prompt, options = {}) {
 
   if (readOnly) {
     args.push("--deny-tool", "write");
+  } else {
+    // A non-interactive Copilot turn denies a write request that no allow rule approves, and a
+    // worker needs file edits (issue #1916, ADR 0141).
+    // A worker created a file with this rule (issue #1916, ADR 0141). A file modification and a
+    // shell call under the rule are not verified.
+    args.push("--allow-tool", "write");
   }
 
   if (state.model) {
@@ -139,6 +145,7 @@ export async function runCopilot(state, prompt, options = {}) {
     const reportedId = asSessionId(rawId);
     keepFailedSessionId(state, reportedId);
     if (rawId == null) {
+      // A failure that saved no turn keeps no id, so the next worker turn carries its preamble.
       await keepSavedPreassignedId(state, sessionId, error, cwd);
     } else if (reportedId === state.sessionId) {
       // Only the id that the result confirms loses the mark.
@@ -183,6 +190,8 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   if (messages.some((message) => message.includes(SHELL_DENIAL_TEXT))) {
+    // The runtime reports this flag on the result. A denial that the text does not repeat is not
+    // flagged.
     state.shellDenied = true;
     logWarn("Copilot refused a tool call for lack of an interactive approval");
   }
