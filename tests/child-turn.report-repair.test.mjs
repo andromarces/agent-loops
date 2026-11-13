@@ -625,3 +625,94 @@ test("a worker report keeps the quoted-text exception", async () => {
   expect(result.report).not.toBeNull();
   expect(result).not.toHaveProperty("reportOutsideBlockLabels");
 });
+
+// A task that holds report label lines, so a plain copy parses as a report.
+const COPIED_TASK = [
+  "Conclusion: TASK-LABEL-CONCLUSION-1914",
+  "Why: TASK-LABEL-WHY-1914",
+  "Blockers: none",
+  "Checks: TASK-LABEL-CHECKS-1914",
+].join("\n");
+
+// Usefulness: verifies a first worker turn that copies the task label lines names each copied
+// label on its result (issue #1914).
+test("a first worker turn names each label copied from the init task", async () => {
+  const agent = scripted([COPIED_TASK]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    task: COPIED_TASK,
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
+});
+
+// Usefulness: verifies a later turn of the same conversation still names the copied labels, and
+// its prompt carries no init task (issue #1914).
+test("a later turn of the same conversation names the copied labels", async () => {
+  const agent = scripted([REPAIRED, COPIED_TASK]);
+  const role = { kind: "fake", sessionId: null };
+  const options = {
+    agents: { fake: agent },
+    role,
+    roleName: "worker",
+    prompt: "go",
+    task: COPIED_TASK,
+    cwd: repo,
+  };
+  const first = await runChild(options);
+  const later = await runChild(options);
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(agent.recorded[1].sessionId).toBe(agent.recorded[0].sessionId);
+  expect(agent.recorded[1].prompt).not.toContain("Init task:");
+  expect(first.report).not.toBeNull();
+  expect(later.report).not.toBeNull();
+  expect(first).not.toHaveProperty("reportCopiedTaskLabels");
+  expect(later.reportCopiedTaskLabels).toEqual(["Conclusion", "Why", "Checks"]);
+});
+
+// Usefulness: verifies a worker report whose values differ from the task carries no field, so the
+// parent reads an ordinary report (issue #1914).
+test("a worker report whose values differ from the task carries no field", async () => {
+  const agent = scripted([REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    task: COPIED_TASK,
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result).not.toHaveProperty("reportCopiedTaskLabels");
+});
+
+// Usefulness: verifies a reviewer Verdict line equal to a task Verdict line carries no field,
+// because accept is a normal reviewer answer (issue #1914).
+test("a reviewer Verdict line equal to the task verdict carries no field", async () => {
+  const task = "Conclusion: TASK-CONCLUSION-1914\nWhy: TASK-WHY-1914\nVerdict: accept";
+  const reply = [
+    "Conclusion: the fix passes",
+    "Why: the new test passes",
+    "Blockers: none",
+    "Verdict: accept",
+  ].join("\n");
+  const agent = scripted([reply]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    task,
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result).not.toHaveProperty("reportCopiedTaskLabels");
+});

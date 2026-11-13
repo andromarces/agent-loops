@@ -748,6 +748,11 @@ function dispatchPayload(roleName, result) {
     ...(result.reportOutsideBlockLabels?.length > 0
       ? { reportOutsideBlockLabels: result.reportOutsideBlockLabels }
       : {}),
+    // A parsed report of either role names each label whose value equals the value of the same
+    // label in the init task (issue #1914).
+    ...(result.reportCopiedTaskLabels?.length > 0
+      ? { reportCopiedTaskLabels: result.reportCopiedTaskLabels }
+      : {}),
     ...turnResultFields(result, ["shellDenied", "workTree", ...TURN_EVIDENCE_FIELDS]),
   };
   if (roleName === "reviewer") {

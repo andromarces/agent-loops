@@ -2,7 +2,15 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+This ADR is partially superseded by [ADR 0137: Name a report value copied from the init task](0137-name-a-report-value-copied-from-the-init-task.md). The superseded parts are:
+
+- Decision 5's rule that the plain-prose limit stays and the prompt rule is the only barrier.
+- The third consequence's rule that a plain task quotation still parses as a block with the prompt rule as the mitigation.
+- Alternative 3's rejection of an envelope field for the copied label.
+
+Decisions 1, 2, 3, 4, and 6 stay in force.
 
 This ADR supersedes no earlier decision. It records the choices of issue #1909: a parser fix for a fenced quotation and a prompt rule at the init task block.
 
