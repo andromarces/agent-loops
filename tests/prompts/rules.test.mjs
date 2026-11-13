@@ -158,7 +158,9 @@ test("the closing-block rule names the required report labels", () => {
 
 // Usefulness: verifies the closing-block rule states that every sub-item level folds, and other nesting fails, for #870, #1603, and #1917.
 test("the closing-block rule states the sub-item fold at every level", () => {
-  expect(reportBlock).toMatch(/Every nesting level of sub-items folds into its parent item/);
+  expect(reportBlock).toMatch(
+    /Every nesting level of sub-items folds into its parent item with a comma/,
+  );
   expect(reportBlock).not.toMatch(/One level of sub-items folds/);
   expect(reportBlock).toMatch(
     /spaces to the parent text column, a dash or `N\. ` marker, one space/,

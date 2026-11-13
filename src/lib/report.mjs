@@ -807,8 +807,8 @@ function takeSubitems(lines, start, marker) {
 
 /**
  * The items that match `pattern` and directly follow line `start`, and the last line used. Each
- * item absorbs its sub-items at every deeper level, joined with ", ", then the continuation lines
- * after them, joined with a space like a Markdown lazy continuation.
+ * item absorbs its sub-items at every deeper level, joined with ", ". The continuation lines after
+ * them join with a space, like a Markdown lazy continuation.
  */
 function takeItems(lines, start, pattern, { refuseOrderedVerdict = false } = {}) {
   let i = start;
