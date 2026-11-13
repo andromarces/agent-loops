@@ -12,7 +12,7 @@ Partially supersedes [ADR 0035: State that a Copilot worker cannot run shell com
 
 ## Context
 
-The Copilot adapter passes `--session-id <id> -s --no-ask-user --output-format json` and no allow rule (`src/agents/copilot.mjs`). Copilot asks before it creates or modifies a file. The runtime sends the prompt on standard input with no terminal, so the CLI answers a permission request that no allow rule approves with a denial. ADR 0035 decision 1 accepted that gap, and decision 3 assumed that a turn could still finish useful edits.
+The Copilot adapter passes `--session-id <id> -s --no-ask-user --output-format json` and no allow rule (`src/agents/copilot.mjs`). Copilot asks before it creates or modifies a file. The runtime sends the prompt on standard input with no terminal. The CLI answers a permission request that no allow rule approves with a denial. ADR 0035 decision 1 accepted that gap, and decision 3 assumed that a turn still finishes useful edits.
 
 Issue #1916 asked whether the file edit tool can write under the runtime arguments. Three live worker turns on 2026-11-13 recorded the answer. The host was macOS 27.3 (build 26C5035r, arm64) with Node v27.0.0-alpha.0.1.0. Each turn ran through `role dispatch` in a fresh disposable Git repository with `--worker copilot`, a fresh `--parent-session`, and `--max-steps 2`. The task asked only for `note.txt` in the repository root with the line `hello`. The `session.start` and `assistant.message` events named the executed model `mai-code-1.1-flash`.
 
@@ -51,8 +51,9 @@ Andro Marces
 ## Links
 
 - [Issue #1916: Check whether a Copilot worker can write files under the runtime arguments](https://github.com/andromarces/agent-loops/issues/1916)
+- [Pull request #1923](https://github.com/andromarces/agent-loops/pull/1923)
 - [Issue #710: Verification checklist: live runs](https://github.com/andromarces/agent-loops/issues/710)
 - [Pull request #1912](https://github.com/andromarces/agent-loops/pull/1912)
 - [ADR 0035: State that a Copilot worker cannot run shell commands and flag a denied call](0035-state-that-a-copilot-worker-cannot-run-shell-commands-and-flag-a-denied-call.md)
-- Implementation: `runCopilot` in `src/agents/copilot.mjs`; tests in `tests/agents/copilot.test.mjs`. Documented in [Supported agents](../docs/reference/architecture.md#supported-agents).
+- Implementation: `runCopilot` in `src/agents/copilot.mjs` and tests in `tests/agents/copilot.test.mjs`. Documented in [Supported agents](../docs/reference/architecture.md#supported-agents).
 - [ADR Index](README.md)
