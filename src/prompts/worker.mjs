@@ -24,7 +24,7 @@ const prBodyRule = `After each push, if the branch has an open pull request, upd
 // A worker wrote a PR body whose closing keyword sat inside a code span, so GitHub recorded no link.
 // The issue stayed unlinked (issue #1560).
 const closingIssuesRule =
-  "After you set or edit a pull request body that links an issue with a closing keyword, read `gh pr view <pr> --json closingIssuesReferences`. Fix the body until the issue is listed.";
+  "After you set or edit a pull request body that links an issue with a closing keyword, read `gh pr view <pr> --json closingIssuesReferences`. Fix the body until the issue is listed. When the PR base is not the default branch, GitHub lists no issue. Skip that read, and never report the empty list as a blocker. Name the manual close in `Notes`.";
 
 // A worker ran the test suite and committed an unignored Vitest report with `git add -A`
 // (issue #1510).

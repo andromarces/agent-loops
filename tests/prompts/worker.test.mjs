@@ -615,3 +615,13 @@ test("worker turns check that a PR body closing keyword reached closingIssuesRef
     expect(prompt).toContain("Fix the body until the issue is listed.");
   }
 });
+
+// Usefulness: verifies acceptance #1924: a non-default PR base never records a closing link, so the worker skips the read and names the manual close.
+test("worker turns skip the closingIssuesReferences read on a non-default PR base", () => {
+  for (const first of [true, false]) {
+    const prompt = workerPrompt("do the task", first).replace(/\s+/g, " ");
+    expect(prompt).toContain("When the PR base is not the default branch, GitHub lists no issue.");
+    expect(prompt).toContain("Skip that read, and never report the empty list as a blocker.");
+    expect(prompt).toContain("Name the manual close in `Notes`.");
+  }
+});

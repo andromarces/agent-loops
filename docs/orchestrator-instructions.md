@@ -203,6 +203,8 @@ Apply these parent rules:
   PR body says `Refs`. Dispatch a worker to remove it.
 - For PR work that must close an issue, read `closingIssuesReferences` on the PR before finish.
   A missing issue gets a worker turn before the final reviewer turn.
+  - When the PR base is not the default branch, skip that read. Record under `open` that the
+    issue needs a manual close after the merge or a Development-panel link.
 - A worker envelope carries `workTree`, the runtime-owned `head` and `clean` state read after
   the turn. For PR work, when `workTree` shows `clean: false`, dispatch a worker to commit or
   discard the leftover change, not a reviewer.
@@ -518,10 +520,18 @@ of this file.
 A batch task that excludes issues with open PRs reads the links that GitHub has recorded before it selects. The list command defaults to 30 entries, so pass a limit at least as large as the open PR count. `--limit 1000` covers every open PR of a repository with 1000 or fewer:
 
 ```bash
-gh pr list --state open --json number,closingIssuesReferences --limit 1000
+gh pr list --state open --json number,closingIssuesReferences,baseRefName,body --limit 1000
 ```
 
 Exclude every issue that the list names in `closingIssuesReferences`.
+
+GitHub records a closing link only when the PR base is the default branch. Read the default branch name before you compare:
+
+```bash
+gh repo view --json defaultBranchRef --jq .defaultBranchRef.name
+```
+
+For each open PR whose `baseRefName` is not that default branch, read its `body` for closing keywords. Exclude every issue that the body closes.
 
 A closing keyword in a PR commit message also closes an issue at merge. `closingIssuesReferences` shows only the links that GitHub has recorded, so read the commit messages of each open PR number from the first reply. The paginated read covers every page that the API returns:
 
