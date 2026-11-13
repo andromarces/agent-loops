@@ -44,6 +44,7 @@ Andro Marces
 ## Links
 
 - [Issue #1919](https://github.com/andromarces/agent-loops/issues/1919)
+- [PR #1921](https://github.com/andromarces/agent-loops/pull/1921)
 - Partially supersedes [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md) decision 6
 - Related issues: #872, [#934](https://github.com/andromarces/agent-loops/issues/934), #1602
 - Implementation:
