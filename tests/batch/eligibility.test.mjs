@@ -1,6 +1,7 @@
 import { expect, test } from "vite-plus/test";
 import {
   checkEligibility,
+  closingIssueNumbers,
   hasStructuralMinimum,
   readOpenPrClosures,
 } from "../../src/batch/eligibility.mjs";
@@ -78,20 +79,35 @@ test("one eligibility check reads the issue once", async () => {
   expect(issueReads[0]).toContain("state,blockedBy,body,title");
 });
 
-// Usefulness: a cached repository slug skips the repo view on the next closure read.
-test("a cached repository slug skips the repository read", async () => {
+// Usefulness: a cached repository read skips both the name and default branch on the next read.
+test("a cached repository read skips the repository read", async () => {
   let repositoryReads = 0;
   const gh = (args) => {
     if (args[0] === "pr" && args[1] === "list") {
       return {
         status: 0,
-        stdout: JSON.stringify([{ number: 5, closingIssuesReferences: [], headRefName: "b" }]),
+        stdout: JSON.stringify([
+          {
+            number: 5,
+            closingIssuesReferences: [],
+            headRefName: "b",
+            baseRefName: "main",
+            body: "",
+          },
+        ]),
         stderr: "",
       };
     }
     if (args[0] === "repo" && args[1] === "view") {
       repositoryReads += 1;
-      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          nameWithOwner: "o/r",
+          defaultBranchRef: { name: "main" },
+        }),
+        stderr: "",
+      };
     }
     if (args[0] === "api") {
       return { status: 0, stdout: JSON.stringify([]), stderr: "" };
@@ -99,7 +115,7 @@ test("a cached repository slug skips the repository read", async () => {
     throw new Error(`unexpected gh call: ${args.join(" ")}`);
   };
   const first = await readOpenPrClosures({ gh, repo: "C:\\repo" });
-  await readOpenPrClosures({ gh, repo: "C:\\repo", slug: first.slug });
+  await readOpenPrClosures({ gh, repo: "C:\\repo", repository: first.repository });
   expect(repositoryReads).toBe(1);
 });
 
@@ -210,12 +226,18 @@ test("a 250-commit page stops the queue", async () => {
     if (args[0] === "pr" && args[1] === "list") {
       return {
         status: 0,
-        stdout: JSON.stringify([{ number: 42, closingIssuesReferences: [] }]),
+        stdout: JSON.stringify([
+          { number: 42, closingIssuesReferences: [], baseRefName: "main", body: "" },
+        ]),
         stderr: "",
       };
     }
     if (args[0] === "repo" && args[1] === "view") {
-      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" } }),
+        stderr: "",
+      };
     }
     if (args[0] === "api" && args[1].includes("/pulls/42/commits")) {
       const page = Number(new URL(`https://x/${args[1]}`).searchParams.get("page"));
@@ -240,12 +262,18 @@ test("a closing keyword in a commit message is read", async () => {
     if (args[0] === "pr" && args[1] === "list") {
       return {
         status: 0,
-        stdout: JSON.stringify([{ number: 5, closingIssuesReferences: [] }]),
+        stdout: JSON.stringify([
+          { number: 5, closingIssuesReferences: [], baseRefName: "main", body: "" },
+        ]),
         stderr: "",
       };
     }
     if (args[0] === "repo" && args[1] === "view") {
-      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" } }),
+        stderr: "",
+      };
     }
     if (args[0] === "api") {
       return {
@@ -259,4 +287,161 @@ test("a closing keyword in a commit message is read", async () => {
   const closures = await readOpenPrClosures({ gh, repo: "C:\\repo" });
   expect([...closures.closed]).toEqual([12]);
   expect(closures.incompletePr).toBe(null);
+});
+
+/** The gh double of a closure read over `entries` on repository `o/r`, with default branch `main`. */
+function closureGh(entries, { defaultBranch = "main" } = {}) {
+  return (args) => {
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify(entries), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      const reply = { nameWithOwner: "o/r" };
+      if (defaultBranch !== null) reply.defaultBranchRef = { name: defaultBranch };
+      return { status: 0, stdout: JSON.stringify(reply), stderr: "" };
+    }
+    if (args[0] === "api") return { status: 0, stdout: "[]", stderr: "" };
+    throw new Error(`unexpected gh call: ${args.join(" ")}`);
+  };
+}
+
+// Usefulness: every closing keyword form, an optional colon, and case differences close the issue.
+test("the parser reads every closing keyword form and an optional colon", () => {
+  for (const keyword of [
+    "close",
+    "closes",
+    "closed",
+    "fix",
+    "fixes",
+    "fixed",
+    "resolve",
+    "resolves",
+    "resolved",
+  ]) {
+    expect(closingIssueNumbers(`${keyword} #7`, "o/r"), keyword).toEqual([7]);
+    expect(closingIssueNumbers(`${keyword}: #7`, "o/r"), keyword).toEqual([7]);
+  }
+  expect(closingIssueNumbers("CLOSES #7", "o/r")).toEqual([7]);
+});
+
+// Usefulness: this repository's three reference forms close an issue, and a reference to another
+// repository never does.
+test("the parser reads this repository's reference forms only", () => {
+  expect(closingIssueNumbers("Closes #7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("Fixes O/R#7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("Resolves https://github.com/o/r/issues/7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("Closes other/repo#7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("Closes https://github.com/other/repo/issues/7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("Closes #12abc", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("Closes https://github.com/o/r/issues/12/x", "o/r")).toEqual([]);
+});
+
+// Usefulness: a negated closing phrase still names the issue, as GitHub links it on a default base.
+test("the parser reads a negated closing phrase", () => {
+  expect(closingIssueNumbers("This does not fix #7 yet", "o/r")).toEqual([7]);
+});
+
+// Usefulness: a keyword inside an inline code span is not a closure, across a line or a longer run.
+test("an inline code span hides a closing keyword", () => {
+  expect(closingIssueNumbers("`Closes #7`", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("Closes `#7`", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("`Closes\n#7`", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("``Closes `#7` again``", "o/r")).toEqual([]);
+});
+
+// Usefulness: a fenced block hides a keyword for backtick and tilde fences, lengths, and no info string.
+test("a fenced code block hides a closing keyword", () => {
+  expect(closingIssueNumbers("```\nCloses #7\n```\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("~~~\nCloses #7\n~~~\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("````\n```js\nCloses #7\n````\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("   ```\nCloses #7\n   ```\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("```\nCloses #7\n", "o/r")).toEqual([]);
+});
+
+// Usefulness: an indented code block hides a keyword, while a paragraph continuation keeps it.
+test("an indented code block hides a closing keyword", () => {
+  expect(closingIssueNumbers("    Closes #7\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("\tCloses #7\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("Closes #6\n\n    Closes #7\n", "o/r")).toEqual([6]);
+  expect(closingIssueNumbers("Text\n    Closes #7\n", "o/r")).toEqual([7]);
+});
+
+// Usefulness: a block quote line hides a keyword with up to three leading spaces.
+test("a block quote hides a closing keyword", () => {
+  expect(closingIssueNumbers("> Closes #7\n", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("   > Closes #7\n", "o/r")).toEqual([]);
+});
+
+// Usefulness: an HTML comment hides a keyword across lines, and an unclosed comment runs to the end.
+test("an HTML comment hides a closing keyword", () => {
+  expect(closingIssueNumbers("<!-- Closes #7 -->", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("<!--\nCloses #7\n-->", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("<!-- Closes #7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("<!-- note --> Closes #8", "o/r")).toEqual([8]);
+});
+
+// Usefulness: a CRLF body reads the same keyword and ignored comment as an LF body.
+test("the parser reads a CRLF body", () => {
+  expect(closingIssueNumbers("Closes #7\r\n<!-- Closes #8 -->\r\n", "o/r")).toEqual([7]);
+});
+
+// Usefulness: a non-default-base PR body skips the issue it closes and names the PR as source.
+test("a non-default-base PR body closes the issue", async () => {
+  const gh = closureGh(
+    [
+      {
+        number: 42,
+        headRefName: "b",
+        closingIssuesReferences: [],
+        baseRefName: "develop",
+        body: "Closes #7",
+      },
+    ],
+    { defaultBranch: "main" },
+  );
+  const closures = await readOpenPrClosures({ gh, repo: "C:\\repo" });
+  expect([...closures.closed]).toEqual([7]);
+  expect(closures.sources.get(7)).toEqual([{ number: 42, headRefName: "b" }]);
+  expect(closures.repository).toEqual({ nameWithOwner: "o/r", defaultBranch: "main" });
+});
+
+// Usefulness: a default-base PR body is never parsed, as GitHub alone records that link.
+test("a default-base PR body is not a skip source", async () => {
+  const gh = closureGh(
+    [
+      {
+        number: 42,
+        headRefName: "b",
+        closingIssuesReferences: [],
+        baseRefName: "main",
+        body: "Closes #7",
+      },
+    ],
+    { defaultBranch: "main" },
+  );
+  const closures = await readOpenPrClosures({ gh, repo: "C:\\repo" });
+  expect([...closures.closed]).toEqual([]);
+});
+
+// Usefulness: a malformed base, body, or default branch reply fails closed instead of skipping.
+test("a malformed body read fails closed", async () => {
+  const base = {
+    number: 42,
+    headRefName: "b",
+    closingIssuesReferences: [],
+    baseRefName: "develop",
+    body: "",
+  };
+  await expect(
+    readOpenPrClosures({
+      gh: closureGh([{ ...base, baseRefName: null }]),
+      repo: "C:\\repo",
+    }),
+  ).rejects.toThrow();
+  await expect(
+    readOpenPrClosures({ gh: closureGh([{ ...base, body: null }]), repo: "C:\\repo" }),
+  ).rejects.toThrow();
+  await expect(
+    readOpenPrClosures({ gh: closureGh([base], { defaultBranch: null }), repo: "C:\\repo" }),
+  ).rejects.toThrow();
 });

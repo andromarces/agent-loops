@@ -1011,7 +1011,13 @@ describe("batch decisions and waits", () => {
         return {
           status: 0,
           stdout: JSON.stringify([
-            { number: 42, headRefName: ownBranch, closingIssuesReferences: [{ number: 226 }] },
+            {
+              number: 42,
+              headRefName: ownBranch,
+              closingIssuesReferences: [{ number: 226 }],
+              baseRefName: "main",
+              body: "",
+            },
           ]),
           stderr: "",
         };
@@ -1144,6 +1150,8 @@ describe("batch decisions and waits", () => {
               number: 99,
               headRefName: "another-branch",
               closingIssuesReferences: [{ number: 230 }],
+              baseRefName: "main",
+              body: "",
             },
           ]),
           stderr: "",

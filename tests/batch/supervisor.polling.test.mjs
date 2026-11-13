@@ -664,13 +664,25 @@ test("one repository read serves every issue launch", async () => {
     if (args[0] === "pr" && args[1] === "list") {
       return {
         status: 0,
-        stdout: JSON.stringify([{ number: 99, closingIssuesReferences: [], headRefName: "b" }]),
+        stdout: JSON.stringify([
+          {
+            number: 99,
+            closingIssuesReferences: [],
+            headRefName: "b",
+            baseRefName: "main",
+            body: "",
+          },
+        ]),
         stderr: "",
       };
     }
     if (args[0] === "repo" && args[1] === "view") {
       repositoryReads += 1;
-      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" } }),
+        stderr: "",
+      };
     }
     if (args[0] === "api") return { status: 0, stdout: JSON.stringify([]), stderr: "" };
     if (args[0] === "issue" && args[1] === "view") {

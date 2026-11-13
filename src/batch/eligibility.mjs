@@ -5,7 +5,174 @@ import { isJsonObject } from "../lib/json.mjs";
 import { readGhJson } from "./gh-read.mjs";
 
 const CLOSING_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+const BODY_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+/gi;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+\S/;
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function maskRange(ignored, start, end) {
+  for (let index = start; index < end; index += 1) ignored[index] = true;
+}
+
+function fullyIgnored(ignored, start, end) {
+  for (let index = start; index < end; index += 1) {
+    if (!ignored[index]) return false;
+  }
+  return true;
+}
+
+/** Masks fenced and indented code blocks and block quote lines. */
+function maskBlocks(body, ignored) {
+  let offset = 0;
+  let fence = null;
+  let paragraph = false;
+  for (const line of body.split("\n")) {
+    const start = offset;
+    const end = start + line.length;
+    offset = end + 1;
+    if (fence !== null) {
+      maskRange(ignored, start, end);
+      const close = FENCE_CLOSE.exec(line);
+      if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
+      paragraph = false;
+      continue;
+    }
+    const open = FENCE_OPEN.exec(line);
+    if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
+      fence = { char: open[2][0], length: open[2].length };
+      maskRange(ignored, start, end);
+      paragraph = false;
+      continue;
+    }
+    if (/^ {0,3}>/.test(line)) {
+      maskRange(ignored, start, end);
+      paragraph = false;
+      continue;
+    }
+    if (line.trim() === "") {
+      paragraph = false;
+      continue;
+    }
+    if (!paragraph && /^(?: {4}|\t)/.test(line)) {
+      maskRange(ignored, start, end);
+      continue;
+    }
+    paragraph = true;
+  }
+}
+
+/** Masks a backtick run through the next run of the same length inside one paragraph. */
+function maskCodeSpans(body, ignored) {
+  const lines = body.split("\n");
+  let offset = 0;
+  let runStart = null;
+  let runEnd = null;
+  const flush = () => {
+    if (runStart === null) return;
+    maskSpansInRun(body, runStart, runEnd, ignored);
+    runStart = null;
+    runEnd = null;
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const start = offset;
+    const end = start + line.length;
+    offset = end + 1;
+    const blockLine = line.trim() === "" || fullyIgnored(ignored, start, end);
+    if (blockLine) {
+      flush();
+      continue;
+    }
+    if (runStart === null) runStart = start;
+    runEnd = end;
+  }
+  flush();
+}
+
+function maskSpansInRun(body, start, end, ignored) {
+  let index = start;
+  while (index < end) {
+    if (ignored[index] || body[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let openEnd = index;
+    while (openEnd < end && body[openEnd] === "`") openEnd += 1;
+    const length = openEnd - index;
+    let scan = openEnd;
+    let closeEnd = -1;
+    while (scan < end) {
+      if (ignored[scan] || body[scan] !== "`") {
+        scan += 1;
+        continue;
+      }
+      let runEnd = scan;
+      while (runEnd < end && body[runEnd] === "`") runEnd += 1;
+      if (runEnd - scan === length) {
+        closeEnd = runEnd;
+        break;
+      }
+      scan = runEnd;
+    }
+    if (closeEnd === -1) {
+      index = openEnd;
+      continue;
+    }
+    maskRange(ignored, index, closeEnd);
+    index = closeEnd;
+  }
+}
+
+/** Masks an HTML comment through its close, or to the end of an unclosed comment. */
+function maskComments(body, ignored) {
+  let index = 0;
+  while (index < body.length) {
+    if (ignored[index] || !body.startsWith("<!--", index)) {
+      index += 1;
+      continue;
+    }
+    const close = body.indexOf("-->", index + 4);
+    const end = close === -1 ? body.length : close + 3;
+    maskRange(ignored, index, end);
+    index = end;
+  }
+}
+
+/**
+ * The issue numbers that `body` closes in `repository`. A keyword inside inline code, fenced or
+ * indented code, a block quote, or an HTML comment names none.
+ * @returns {number[]}
+ */
+export function closingIssueNumbers(body, repository) {
+  if (typeof body !== "string" || typeof repository !== "string") return [];
+  const [owner, name] = repository.split("/");
+  if (!owner || !name) return [];
+  const slug = `${escapeRegExp(owner)}/${escapeRegExp(name)}`;
+  const reference = new RegExp(
+    `^(?:#(\\d+)|${slug}#(\\d+)|https://github\\.com/${slug}/issues/(\\d+))(?!\\w|/)`,
+    "i",
+  );
+  const ignored = Array.from({ length: body.length }, () => false);
+  maskBlocks(body, ignored);
+  maskCodeSpans(body, ignored);
+  maskComments(body, ignored);
+  let visible = "";
+  for (let index = 0; index < body.length; index += 1) {
+    visible += ignored[index] ? " " : body[index];
+  }
+  const closed = [];
+  for (const match of visible.matchAll(BODY_KEYWORD)) {
+    const found = reference.exec(visible.slice(match.index + match[0].length));
+    if (!found) continue;
+    const number = Number(found[1] ?? found[2] ?? found[3]);
+    if (Number.isInteger(number) && number > 0) closed.push(number);
+  }
+  return [...new Set(closed)];
+}
 
 function blockedNumbers(value) {
   if (Array.isArray(value)) return value;
@@ -66,11 +233,11 @@ export function hasStructuralMinimum(body) {
 /**
  * Reads every open pull request and the issues its body or commit messages close. Throws when a
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
- * commit read reached the API's 250-commit page. The caller then stops launching. `slug` is the
- * repository name, read when it is null and returned for the next call.
- * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, slug: string | null }>}
+ * commit read reached the API's 250-commit page. The caller then stops launching. `repository` is
+ * the cached name and default branch, read when it is null and returned for the next call.
+ * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, repository: { nameWithOwner: string, defaultBranch: string } | null }>}
  */
-export async function readOpenPrClosures({ gh, repo, slug = null }) {
+export async function readOpenPrClosures({ gh, repo, repository = null }) {
   const list = await readGhJson(
     gh,
     [
@@ -79,7 +246,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
       "--state",
       "open",
       "--json",
-      "number,closingIssuesReferences,headRefName",
+      "number,closingIssuesReferences,headRefName,baseRefName,body",
       "--limit",
       "1000",
     ],
@@ -99,6 +266,9 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
     if (!isJsonObject(entry) || !Number.isInteger(entry.number)) {
       throw new Error("gh pr list returned a malformed entry");
     }
+    if (typeof entry.baseRefName !== "string") {
+      throw new Error("gh pr list returned a malformed base branch");
+    }
     const references = entry.closingIssuesReferences;
     if (references !== undefined && !Array.isArray(references)) {
       throw new Error("gh pr list returned malformed closing references");
@@ -110,15 +280,32 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
       }
     }
   }
-  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources, slug };
+  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources, repository };
 
-  let repositorySlug = slug;
-  if (repositorySlug === null) {
-    const repository = await readGhJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
-    if (!isJsonObject(repository) || typeof repository.nameWithOwner !== "string") {
+  let cached = repository;
+  if (cached === null) {
+    const view = await readGhJson(
+      gh,
+      ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"],
+      repo,
+    );
+    if (!isJsonObject(view) || typeof view.nameWithOwner !== "string") {
       throw new Error("gh repo view returned no repository name");
     }
-    repositorySlug = repository.nameWithOwner;
+    if (!isJsonObject(view.defaultBranchRef) || typeof view.defaultBranchRef.name !== "string") {
+      throw new Error("gh repo view returned no default branch name");
+    }
+    cached = { nameWithOwner: view.nameWithOwner, defaultBranch: view.defaultBranchRef.name };
+  }
+  for (const entry of list) {
+    if (entry.baseRefName === cached.defaultBranch) continue;
+    if (typeof entry.body !== "string") {
+      throw new Error("gh pr list returned a malformed body");
+    }
+    for (const issueNumber of closingIssueNumbers(entry.body, cached.nameWithOwner)) {
+      closed.add(issueNumber);
+      addSource(issueNumber, entry);
+    }
   }
   let incompletePr = null;
   for (const entry of list) {
@@ -126,7 +313,10 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
     for (let page = 1; page <= 3 && count < 250; page += 1) {
       const commits = await readGhJson(
         gh,
-        ["api", `repos/${repositorySlug}/pulls/${entry.number}/commits?per_page=100&page=${page}`],
+        [
+          "api",
+          `repos/${cached.nameWithOwner}/pulls/${entry.number}/commits?per_page=100&page=${page}`,
+        ],
         repo,
       );
       if (!Array.isArray(commits)) throw new Error("the commit read returned no list");
@@ -150,7 +340,7 @@ export async function readOpenPrClosures({ gh, repo, slug = null }) {
   }
   const first = [...closed].sort((a, b) => a - b)[0];
   const firstSource = first === undefined ? null : (sources.get(first)?.[0]?.number ?? null);
-  return { closed, pr: firstSource, incompletePr, sources, slug: repositorySlug };
+  return { closed, pr: firstSource, incompletePr, sources, repository: cached };
 }
 
 /**
