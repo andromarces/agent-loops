@@ -2,9 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
 
-This ADR supersedes no earlier decision. It keeps [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md) as a narrow accounting exception for a first Codex model refusal and adds no general refund policy.
+This ADR supersedes no earlier decision. It keeps [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md) as a narrow accounting exception for a first Codex model refusal and adds no general refund policy. Decision 9 is superseded by [ADR 0140](0140-fold-every-closing-block-list-level.md), which folds every closing-block list level. The other decisions stay in force.
 
 ## Date
 

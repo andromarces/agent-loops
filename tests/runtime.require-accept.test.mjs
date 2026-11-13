@@ -97,6 +97,56 @@ test("--require-accept accepts a reviewer Verdict line above the closing block",
   }
 });
 
+// Usefulness: verifies --require-accept accepts a reviewer report with a deeper list level, so the
+// report needs no repair turn (issue #1917).
+test("--require-accept accepts a reviewer report with a deeper list level", async () => {
+  gitDouble.answer = cleanRepoGit;
+  const repo = await createCleanRepoDir();
+  try {
+    const deepWhy = [
+      "Conclusion: the state passes.",
+      "Why:",
+      "- **Check one:**",
+      "  - It passes.",
+      "  - It is green.",
+      "- **Check two:**",
+      "  - It passes.",
+      "  - It is green.",
+      "    - A deeper note.",
+      "Blockers: none.",
+      "Checks: npm test",
+      "Verdict: accept",
+    ].join("\n");
+    const orchReplies = [
+      JSON.stringify({ action: "run_worker", prompt: "work" }),
+      JSON.stringify({ action: "run_reviewer", prompt: "review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+      JSON.stringify({ action: "run_reviewer", prompt: "re-review" }),
+      JSON.stringify({ action: "finish", summary: SUMMARY }),
+    ];
+    const reviewerAdapter = scripted([deepWhy, deepWhy, REVIEW_ACCEPT]);
+
+    const result = await runLoop({
+      task: "Task 29b",
+      cwd: repo,
+      maxSteps: 5,
+      requireAccept: true,
+      roles: gateRoles(),
+      agents: {
+        orch: scripted(orchReplies),
+        work: scripted(["worker changed"]),
+        rev: reviewerAdapter,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(reviewerAdapter.recorded.length).toBe(1);
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
+});
+
 // 30. Usefulness: verifies the gate treats a reviewer reject as not accepted, and
 // a later reviewer accept on the same state allows the finish (issue #234).
 test("--require-accept treats a reviewer reject as not accepted", async () => {
