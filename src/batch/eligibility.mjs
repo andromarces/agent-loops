@@ -13,6 +13,7 @@ const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
 const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const BLOCK_LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 const LIST_MARKER = /^( {0,3})([-*+]|\d{1,9}[.)])( +)(?=\S)/;
+const BLOCK_COMMENT = /^ {0,3}<!--/;
 
 /** The content column of a list item start, or null when the line starts no item. */
 function listItemColumn(text) {
@@ -43,26 +44,6 @@ function leadingSpaces(line) {
   return /^ */.exec(line)[0].length;
 }
 
-/** Removes HTML comments, keeping line breaks. An unclosed comment runs to the end. */
-function stripComments(body) {
-  let text = "";
-  let index = 0;
-  while (index < body.length) {
-    if (!body.startsWith("<!--", index)) {
-      text += body[index];
-      index += 1;
-      continue;
-    }
-    const close = body.indexOf("-->", index + 4);
-    const end = close === -1 ? body.length : close + 3;
-    for (let inside = index; inside < end; inside += 1) {
-      if (body[inside] === "\n" || body[inside] === "\r") text += body[inside];
-    }
-    index = end;
-  }
-  return text;
-}
-
 /** The lines of one list item, with the item indent removed from every line that carries it. */
 function collectItem(lines, index, column) {
   const itemLines = [lines[index].slice(column)];
@@ -90,6 +71,17 @@ function collectItem(lines, index, column) {
     break;
   }
   return { itemLines, next: cursor };
+}
+
+/** The index after a block comment that opens at `index`, or the end of its container. */
+function skipCommentBlock(lines, index) {
+  let cursor = index;
+  while (cursor < lines.length) {
+    const close = lines[cursor].includes("-->");
+    cursor += 1;
+    if (close) break;
+  }
+  return cursor;
 }
 
 /** The paragraph and heading text that counts. List item content is scanned recursively. */
@@ -124,6 +116,18 @@ function scanBlocks(lines) {
         continue;
       }
       quote = false;
+    }
+    if (BLOCK_COMMENT.test(line)) {
+      flush();
+      quote = false;
+      if (line.includes("-->")) {
+        const rest = line.slice(line.indexOf("-->") + 3);
+        if (rest.trim() !== "") paragraph.push(rest);
+        index += 1;
+      } else {
+        index = skipCommentBlock(lines, index);
+      }
+      continue;
     }
     const open = FENCE_OPEN.exec(line);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
@@ -172,10 +176,24 @@ function scanBlocks(lines) {
   return blocks;
 }
 
-/** Masks a backtick run through the next run of the same length inside one block. */
+/** Masks inline code spans, then each closed HTML comment outside them, inside one block. */
 function maskInline(text) {
   const ignored = Array.from({ length: text.length }, () => false);
   maskSpansInRun(text, 0, text.length, ignored);
+  let index = 0;
+  while (index < text.length) {
+    if (ignored[index] || !text.startsWith("<!--", index)) {
+      index += 1;
+      continue;
+    }
+    const close = text.indexOf("-->", index + 4);
+    if (close === -1) {
+      index += 1;
+      continue;
+    }
+    maskRange(ignored, index, close + 3);
+    index = close + 3;
+  }
   let visible = "";
   for (let index = 0; index < text.length; index += 1) {
     visible += ignored[index] ? " " : text[index];
@@ -232,7 +250,7 @@ export function closingIssueNumbers(body, repository) {
     "i",
   );
   const closed = [];
-  for (const block of scanBlocks(stripComments(body).split("\n"))) {
+  for (const block of scanBlocks(body.split("\n"))) {
     const visible = maskInline(block);
     for (const match of visible.matchAll(BODY_KEYWORD)) {
       const found = reference.exec(visible.slice(match.index + match[0].length));

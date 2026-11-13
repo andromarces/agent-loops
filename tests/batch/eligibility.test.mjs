@@ -419,6 +419,15 @@ test("an HTML comment hides a closing keyword", () => {
   expect(closingIssueNumbers("<!-- note --> Closes #8", "o/r")).toEqual([8]);
 });
 
+// Usefulness: comments follow block and inline context for code, inline text, a block, and an opener.
+test("HTML comments follow block and inline context", () => {
+  expect(closingIssueNumbers("Preserve the `<!--` marker.\n\nCloses #7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("```text\n<!--\n```\n\nCloses #7", "o/r")).toEqual([7]);
+  expect(closingIssueNumbers("text <!-- Closes #7 --> more", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("<!--\nCloses #7\n-->\n\nCloses #8", "o/r")).toEqual([8]);
+  expect(closingIssueNumbers("text <!-- Closes #7", "o/r")).toEqual([7]);
+});
+
 // Usefulness: a CRLF body reads the same keyword and ignored comment as an LF body.
 test("the parser reads a CRLF body", () => {
   expect(closingIssueNumbers("Closes #7\r\n<!-- Closes #8 -->\r\n", "o/r")).toEqual([7]);
