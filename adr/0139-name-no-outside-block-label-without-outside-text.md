@@ -34,7 +34,7 @@ The detection read a verb before `above` as a pointer to text outside the block,
 
 ## Consequences
 
-- Turn A and turn B carry no field, so the parent dispatches no restatement turn for them.
+- Turn A and turn B carry no field when no text stood outside the block, so the parent dispatches no restatement turn for them.
 - A response with prose before the block keeps the origin/main field and the origin/main parent action.
 - A pointer into the same report costs no turn when the block holds every result, and the runtime starts no new turn.
 - The detection stays a heuristic over a pattern list, and a pointer that the list misses stays undetected.
@@ -58,6 +58,7 @@ Andro Marces
 ## Links
 
 - [Issue #1918](https://github.com/andromarces/agent-loops/issues/1918)
+- [PR #1920](https://github.com/andromarces/agent-loops/pull/1920)
 - [ADR 0134: Detect a worker report label that points outside the closing block](0134-detect-a-worker-report-label-outside-the-closing-block.md)
 - [ADR 0135: Detect an outside-block report label for every child role](0135-detect-an-outside-block-report-label-for-every-child-role.md)
 - Implementation:
