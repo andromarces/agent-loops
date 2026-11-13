@@ -53,6 +53,7 @@ Andro Marces
 ## Links
 
 - [Issue #1917](https://github.com/andromarces/agent-loops/issues/1917)
+- [PR #1922](https://github.com/andromarces/agent-loops/pull/1922)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md)
 - Implementation:
   - Fold: `takeSubitems` and `takeItems` in `src/lib/report.mjs`
