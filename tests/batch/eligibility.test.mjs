@@ -366,10 +366,34 @@ test("an indented code block hides a closing keyword", () => {
   expect(closingIssueNumbers("Text\n    Closes #7\n", "o/r")).toEqual([7]);
 });
 
+// Usefulness: a heading, break, list item, comment, fence close, or blank line leaves no paragraph.
+test("a block start leaves no open paragraph for an indented line", () => {
+  const bodies = [
+    "## Closing syntax example\n    Closes #7",
+    "Text\n## Closing syntax example\n    Closes #7",
+    "---\n    Closes #7",
+    "Text\n---\n    Closes #7",
+    "- item\n    Closes #7",
+    "<!-- note -->\n    Closes #7",
+    "```\ncode\n```\n    Closes #7",
+    "Text\n\n    Closes #7",
+  ];
+  for (const body of bodies) expect(closingIssueNumbers(body, "o/r"), body).toEqual([]);
+});
+
 // Usefulness: a block quote line hides a keyword with up to three leading spaces.
 test("a block quote hides a closing keyword", () => {
   expect(closingIssueNumbers("> Closes #7\n", "o/r")).toEqual([]);
   expect(closingIssueNumbers("   > Closes #7\n", "o/r")).toEqual([]);
+});
+
+// Usefulness: a lazy continuation line stays in the block quote until a blank line or block start.
+test("a lazy block quote continuation hides a closing keyword", () => {
+  expect(closingIssueNumbers("> The previous PR said:\nCloses #7", "o/r")).toEqual([]);
+  expect(closingIssueNumbers("> The previous PR said:\nCloses #7\n\nCloses #8", "o/r")).toEqual([
+    8,
+  ]);
+  expect(closingIssueNumbers("> The previous PR said:\n## Heading\nCloses #8", "o/r")).toEqual([8]);
 });
 
 // Usefulness: an HTML comment hides a keyword across lines, and an unclosed comment runs to the end.
@@ -444,4 +468,18 @@ test("a malformed body read fails closed", async () => {
   await expect(
     readOpenPrClosures({ gh: closureGh([base], { defaultBranch: null }), repo: "C:\\repo" }),
   ).rejects.toThrow();
+});
+
+// Usefulness: a non-string body on a default-base entry fails closed even though its body is not parsed.
+test("a default-base entry with a non-string body fails closed", async () => {
+  const gh = closureGh([
+    {
+      number: 42,
+      headRefName: "b",
+      closingIssuesReferences: [],
+      baseRefName: "main",
+      body: null,
+    },
+  ]);
+  await expect(readOpenPrClosures({ gh, repo: "C:\\repo" })).rejects.toThrow();
 });

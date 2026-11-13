@@ -9,6 +9,21 @@ const BODY_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+/gi;
 const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+\S/;
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
+const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
+const THEMATIC_BREAK = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+const BLOCK_LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const COMMENT_START = /^ {0,3}<!--/;
+
+/** True for a line that starts a new block and so ends a paragraph or a quote continuation. */
+function isBlockStart(line) {
+  return (
+    FENCE_OPEN.test(line) ||
+    HEADING.test(line) ||
+    THEMATIC_BREAK.test(line) ||
+    BLOCK_LIST_ITEM.test(line) ||
+    COMMENT_START.test(line)
+  );
+}
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,6 +44,7 @@ function fullyIgnored(ignored, start, end) {
 function maskBlocks(body, ignored) {
   let offset = 0;
   let fence = null;
+  let inQuote = false;
   let paragraph = false;
   for (const line of body.split("\n")) {
     const start = offset;
@@ -41,24 +57,41 @@ function maskBlocks(body, ignored) {
       paragraph = false;
       continue;
     }
+    if (line.trim() === "") {
+      paragraph = false;
+      inQuote = false;
+      continue;
+    }
+    if (inQuote && !/^ {0,3}>/.test(line)) {
+      const lazy = !isBlockStart(line);
+      if (lazy) {
+        maskRange(ignored, start, end);
+        continue;
+      }
+      inQuote = false;
+    }
     const open = FENCE_OPEN.exec(line);
     if (open && !(open[2][0] === "`" && open[3].includes("`"))) {
       fence = { char: open[2][0], length: open[2].length };
       maskRange(ignored, start, end);
       paragraph = false;
+      inQuote = false;
       continue;
     }
     if (/^ {0,3}>/.test(line)) {
       maskRange(ignored, start, end);
       paragraph = false;
+      inQuote = true;
       continue;
     }
-    if (line.trim() === "") {
+    if (isBlockStart(line)) {
       paragraph = false;
+      inQuote = false;
       continue;
     }
     if (!paragraph && /^(?: {4}|\t)/.test(line)) {
       maskRange(ignored, start, end);
+      paragraph = false;
       continue;
     }
     paragraph = true;
@@ -269,6 +302,9 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
     if (typeof entry.baseRefName !== "string") {
       throw new Error("gh pr list returned a malformed base branch");
     }
+    if (typeof entry.body !== "string") {
+      throw new Error("gh pr list returned a malformed body");
+    }
     const references = entry.closingIssuesReferences;
     if (references !== undefined && !Array.isArray(references)) {
       throw new Error("gh pr list returned malformed closing references");
@@ -299,9 +335,6 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
   }
   for (const entry of list) {
     if (entry.baseRefName === cached.defaultBranch) continue;
-    if (typeof entry.body !== "string") {
-      throw new Error("gh pr list returned a malformed body");
-    }
     for (const issueNumber of closingIssueNumbers(entry.body, cached.nameWithOwner)) {
       closed.add(issueNumber);
       addSource(issueNumber, entry);
