@@ -71,7 +71,8 @@ test("the rule routes a targeted run through the wrapper with --if-held", () => 
   );
   expect(rule).toMatch(/at most 10 test files/);
   expect(rule).toMatch(/full test suite only through the test slot wrapper, which waits/);
-  expect(rule).toMatch(/Exit code 75[^.]*unresolved, not as a pass or a failure/);
+  expect(rule).toMatch(/Exit code 75[^.]*did not run/);
+  expect(rule).toContain("Report it as unresolved, not as a pass or a failure.");
 });
 
 // Usefulness: verifies requirement "a targeted run may include the test files of direct importers of
