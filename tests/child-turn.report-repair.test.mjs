@@ -512,6 +512,93 @@ test("a worker report that points above the block carries its label", async () =
   expect(result.reportOutsideBlockLabels).toEqual(["Why"]);
 });
 
+// The turn A shape of issue #1918: Checks points at the mutation list in Why of the same report.
+const SAME_REPORT_POINTER = [
+  "Conclusion: the fix is complete.",
+  "Why:",
+  "- **Mutations:** every mutant failed the guard.",
+  "  - mutant 1: two failures",
+  "  - mutant 2: one failure",
+  "Blockers: none",
+  "Checks:",
+  "- Mutation runs: all fail as listed above.",
+].join("\n");
+
+// Usefulness: verifies the turn A shape with no text outside the block carries no field, because
+// nothing outside the block exists (issue #1918).
+test("a report whose pointer names an earlier label carries no field with no outside text", async () => {
+  const agent = scripted([SAME_REPORT_POINTER]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(1);
+  expect(result.report).not.toBeNull();
+  expect(result.report.checks).toBe("Mutation runs: all fail as listed above.");
+  expect(result).not.toHaveProperty("reportOutsideBlockLabels");
+});
+
+// Usefulness: verifies the turn A shape with prose before the block keeps the origin/main field,
+// because the response holds text outside the block (issue #1918).
+test("a report whose pointer names an earlier label keeps the field with outside text", async () => {
+  const response = ["The mutation runs are complete.", "", SAME_REPORT_POINTER].join("\n");
+  const agent = scripted([response]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Checks"]);
+});
+
+// The turn B shape of issue #1918: Notes points at the description in Why of the same report.
+const SAME_REPORT_NOTES = [
+  "Conclusion: fixed.",
+  "Why: the six deliberate concurrent copies ran in separate work trees.",
+  "Blockers: none",
+  "Checks: npm test",
+  'Notes: "<quoted phrase>" meant the six deliberate concurrent copies described above.',
+].join("\n");
+
+// Usefulness: verifies the turn B shape with no text outside the block carries no field, because
+// nothing outside the block exists (issue #1918).
+test("a report whose Notes names an earlier label carries no field with no outside text", async () => {
+  const result = await runChild({
+    agents: { fake: scripted([SAME_REPORT_NOTES]) },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result).not.toHaveProperty("reportOutsideBlockLabels");
+});
+
+// Usefulness: verifies the turn B shape with prose before the block keeps the origin/main field,
+// because the response holds text outside the block (issue #1918).
+test("a report whose Notes names an earlier label keeps the field with outside text", async () => {
+  const response = ["The copies are listed in the record.", "", SAME_REPORT_NOTES].join("\n");
+  const result = await runChild({
+    agents: { fake: scripted([response]) },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(result.report).not.toBeNull();
+  expect(result.reportOutsideBlockLabels).toEqual(["Notes"]);
+});
+
 // Usefulness: verifies a parsed worker report that points nowhere carries no field, so the parent
 // reads an ordinary report (issue #1907).
 test("a worker report that points nowhere carries no outside-block field", async () => {

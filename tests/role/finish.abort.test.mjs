@@ -442,6 +442,37 @@ test("--require-accept accepts a Verdict line above the closing block", async ()
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// Usefulness: verifies interactive --require-accept accepts a reviewer report with a deeper list
+// level, so the finish closes on the first reviewer turn (issue #1917).
+test("--require-accept accepts a reviewer report with a deeper list level", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  await dispatchReviewer(
+    repo,
+    [
+      "Conclusion: the state passes.",
+      "Why: the tests pass.",
+      "Blockers: none",
+      "Checks: npm test",
+      "Notes:",
+      "- Step one:",
+      "  - Decision one:",
+      "    - Accept the helper.",
+      "    - Add the test.",
+      "  - Decision two:",
+      "    - Keep the name.",
+      "- Step two",
+      "Deferred: none",
+      "Verdict: accept",
+    ].join("\n"),
+  );
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
 // A `git` answer that reports a cancel for a call that carries an aborted signal, as execa does,
 // and answers as `cleanRepoGit` otherwise.
 const cancelAwareGit = (command, args, options) =>

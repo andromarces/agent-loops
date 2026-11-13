@@ -29,6 +29,37 @@ test("the rule bounds a direct targeted run and sends a broader run through the 
   expect(withoutWrapper).toMatch(/broader run[\s\S]*?rely on the required CI checks/i);
 });
 
+// Usefulness: issue #1919: the rule bars concurrent copies and a background test run, and sends a
+// single test through --if-held. No other test pins this.
+test("the rule runs one test command at a time", () => {
+  // Explicit paths render each command form on every host, whatever its path separators.
+  const forms = [
+    testSlotRule({
+      execPath: "/opt/node",
+      cliPath: "/repo/src/cli.mjs",
+      platform: "linux",
+    }),
+    testSlotRule({
+      execPath: "C:/node/node.exe",
+      cliPath: "C:/repo/src/cli.mjs",
+      platform: "win32",
+    }),
+  ];
+  for (const rule of forms) {
+    expect(rule).toContain("Run one test command at a time.");
+    expect(rule).toContain(
+      "Start no concurrent copy of a test run and no test run in the background, also when it ends inside the same command.",
+    );
+    expect(rule).toContain(
+      "A single-test run is a targeted run and takes the --if-held wrapper form.",
+    );
+  }
+  const fallback = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
+  expect(fallback).toContain("Run one test command at a time.");
+  expect(fallback).toContain("Start no concurrent copy of a test run");
+  expect(fallback).not.toContain("--if-held");
+});
+
 // Usefulness: verifies requirement "a targeted run goes through the slot only while a slot is held"
 // (issue #921, ADR 0044): the rule sends a targeted run through the wrapper with --if-held, keeps
 // a full suite on the plain wrapper, and keeps the 10-file bound and the exit 75 handling.
@@ -40,7 +71,8 @@ test("the rule routes a targeted run through the wrapper with --if-held", () => 
   );
   expect(rule).toMatch(/at most 10 test files/);
   expect(rule).toMatch(/full test suite only through the test slot wrapper, which waits/);
-  expect(rule).toMatch(/Exit code 75[^.]*unresolved, not as a pass or a failure/);
+  expect(rule).toMatch(/Exit code 75[^.]*did not run/);
+  expect(rule).toContain("Report it as unresolved, not as a pass or a failure.");
 });
 
 // Usefulness: verifies requirement "a targeted run may include the test files of direct importers of
@@ -156,9 +188,12 @@ test("the closing-block rule names the required report labels", () => {
   expect(reportBlock).toMatch(/a block that lacks one does not parse/);
 });
 
-// Usefulness: verifies the closing-block rule states the one-level sub-item fold, and other nesting fails, for #870 and #1603.
-test("the closing-block rule states the one-level sub-item fold", () => {
-  expect(reportBlock).toMatch(/One level of sub-items folds into its parent item with a comma/);
+// Usefulness: verifies the closing-block rule states that every sub-item level folds, and other nesting fails, for #870, #1603, and #1917.
+test("the closing-block rule states the sub-item fold at every level", () => {
+  expect(reportBlock).toMatch(
+    /Every nesting level of sub-items folds into its parent item with a comma/,
+  );
+  expect(reportBlock).not.toMatch(/One level of sub-items folds/);
   expect(reportBlock).toMatch(
     /spaces to the parent text column, a dash or `N\. ` marker, one space/,
   );

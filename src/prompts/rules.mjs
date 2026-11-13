@@ -11,7 +11,7 @@ A paragraph holds a bold lead and more prose on the same line. With its own dash
 
 Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one label with a short line. The label keeps the short result that the parent reads. A quoted paragraph alone is dropped from the block, and a dash list directly under a quoted prose line makes the block unparseable.
 
-One level of sub-items folds into its parent item with a comma. Each sub-item line holds spaces to the parent text column, a dash or \`N. \` marker, one space, then the text. An ordered list (\`1. item\`) under a label joins that label's value the same way. Its sub-items sit at the column where the item text starts. A dash or ordered list under a label after one blank line joins that label's value too, with \`; \` when the label holds text. An ordered list under that plain prose line stays unparseable, and two blank lines under a label before a list make the block unparseable.
+Every nesting level of sub-items folds into its parent item with a comma. Each sub-item line holds spaces to the parent text column, a dash or \`N. \` marker, one space, then the text. An ordered list (\`1. item\`) under a label joins that label's value the same way. Its sub-items sit at the column where the item text starts. A dash or ordered list under a label after one blank line joins that label's value too, with \`; \` when the label holds text. An ordered list under that plain prose line stays unparseable, and two blank lines under a label before a list make the block unparseable.
 
 An indented prose line directly after an item or its sub-items folds into that item with a space, unless it reads as a label line: after Unicode NFKC normalization, skip every leading character that is no letter or digit and one optional number, then a report label name or \`Verdict\`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow. Any colon variant, separator, or markup count therefore refuses, and a label word that a letter, or whitespace and a letter, follows is prose.
 
@@ -169,14 +169,17 @@ export function cliCommandForms(
   ];
 }
 
+const ONE_TEST_AT_A_TIME =
+  "Run one test command at a time. Start no concurrent copy of a test run and no test run in the background, also when it ends inside the same command.";
+
+// Only the form that renders a wrapper can name the `--if-held` form of a single-test run.
+const SINGLE_TEST_TARGETED =
+  "A single-test run is a targeted run and takes the --if-held wrapper form.";
+
 const NO_LOAD_GENERATORS =
   "Start no CPU or memory load generator, no busy loop, and no detached or background process that can outlive the turn. Use the required CI checks as the evidence under load.";
 
-const TARGETED_RUN_BOUND =
-  "A targeted run covers the test files that mirror the changed source files first, then the test files that import a changed source file directly, then the test files of the direct importers of a changed source file, then the test files that name the path or file name of a changed file that is not an importable module, for example a script, a config file, or a template, at most 10 test files in total, never a whole directory.";
-
-// The same bound for a run that cannot render a wrapper command, split to the sentence limit.
-const TARGETED_RUN_BOUND_FALLBACK = `
+const TARGETED_RUN_BOUND_ITEMS = `
   - A targeted run covers the test files that mirror the changed source files first.
   - Then come the test files that import a changed source file directly.
   - Then come the test files of the direct importers of a changed source file.
@@ -190,30 +193,48 @@ const TARGETED_RUN_BOUND_FALLBACK = `
 const slotCommandForms = (options) =>
   cliCommandForms(() => "test-slot -- <suite command as separate arguments>", options);
 
-// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611.
+// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611, issue #1919, ADR 0138.
 // The rule also bars a load generator and a process that outlives the turn (issue #934).
+
+// A targeted run covers at most 10 files. The order is the mirror files, then the files that import
+// a changed source file directly. Then come the files of direct importers, then the files that name
+// a changed non-module file. The argument-vector form is the default from Git Bash on Windows, with
+// the Windows executable limit. The one-string form stays, and the rule names the platform shell
+// that runs it.
 /**
  * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
- * A targeted run covers at most 10 files. The order is the mirror files, then the test files that
- * import a changed source file directly, then the test files of direct importers, then the test
- * files that name a changed non-module file by path. It goes through
- * the `test-slot` wrapper of this process with `--if-held`, which runs directly while all slots are
- * free. While any slot is held, the wrapper waits for a slot. Any broader run is a full suite and
- * runs only through the plain wrapper, or the required CI checks stand in for it. A path that cannot
- * be quoted leaves a direct targeted run, and a broader run relies on the CI checks. The rule names
- * the argument-vector form as the default from Git Bash on Windows, so the child passes the suite
- * command without a quoting step, and states the Windows executable limit. The one-string form
- * stays, and the rule names the platform shell that runs it.
+ * It runs a targeted test file through the `test-slot` wrapper with `--if-held`, directly while
+ * all slots are free. While any slot is held, the wrapper waits for a slot. Any broader run is a
+ * full suite and runs only through the plain wrapper, or the required CI checks stand in for it.
+ * A path that cannot be quoted leaves a direct targeted run, and a broader run relies on the CI
+ * checks. It also runs one test command at a time, with no concurrent copy and no background test
+ * run.
  */
 export function testSlotRule(options) {
   const forms = slotCommandForms(options);
   if (forms === null) {
-    return `Run a targeted test file directly.${TARGETED_RUN_BOUND_FALLBACK}
+    return `Run a targeted test file directly.${TARGETED_RUN_BOUND_ITEMS}
+  - ${ONE_TEST_AT_A_TIME}
   - Do not run a broader run or a full test suite in this run. Rely on the required CI checks. This run cannot render a test slot command for its paths.
   - ${NO_LOAD_GENERATORS}`;
   }
   const commands = forms.map(({ shell, command }) => `${shell}: ${command}`).join(" ; ");
-  return `Run a targeted test file through the test slot wrapper with --if-held, which runs it directly while all slots are free and waits for a slot while any slot is held. ${TARGETED_RUN_BOUND} Run any broader run through the test slot wrapper, as a full suite. Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot, or rely on the required CI checks. Use the command for the shell that your shell tool runs, with the suite command as an argument vector after --: ${commands}. Two or more arguments after -- form an argument vector that runs without a shell, so no shell quoting applies. From Git Bash on Windows, use this argument-vector form as the default. On Windows, the vector must start with a real executable such as node, not a .cmd or .bat shim. One argument after -- keeps the shell-string form. The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool: from Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths. For a targeted run, put --if-held after test-slot and pass the targeted command as the same vector. Exit code 75 means that no slot was free within the wait bound and the command did not run: report it as unresolved, not as a pass or a failure. ${NO_LOAD_GENERATORS}`;
+  return `Run a targeted test file through the test slot wrapper with --if-held. The wrapper runs directly while all slots are free and waits for a slot while any slot is held.
+${TARGETED_RUN_BOUND_ITEMS}
+  - Run any broader run through the test slot wrapper, as a full suite.
+  - Run a full test suite only through the test slot wrapper, which waits for a free machine-wide test slot. Or rely on the required CI checks.
+  - Use the command for the shell that your shell tool runs. Pass the suite command as an argument vector after --.
+  - ${commands}
+  - Two or more arguments after -- form an argument vector that runs without a shell, so no shell quoting applies.
+  - From Git Bash on Windows, use this argument-vector form as the default.
+  - On Windows, the vector must start with a real executable such as node, not a .cmd or .bat shim.
+  - One argument after -- keeps the shell-string form.
+  - The wrapper runs the quoted command in cmd.exe on Windows and /bin/sh on POSIX, not in your shell tool. From Git Bash on Windows, pass \`bash -c '<command>'\` or use absolute paths.
+  - For a targeted run, put --if-held after test-slot and pass the targeted command as the same vector.
+  - Exit code 75 means that no slot was free within the wait bound and the command did not run. Report it as unresolved, not as a pass or a failure.
+  - ${ONE_TEST_AT_A_TIME}
+  - ${SINGLE_TEST_TARGETED}
+  - ${NO_LOAD_GENERATORS}`;
 }
 
 // A held test slot made two workers skip or reorder the TDD red run, and no report recorded it

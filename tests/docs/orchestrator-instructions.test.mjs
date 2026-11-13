@@ -1487,6 +1487,14 @@ test("the instructions name the outside-block report label field", async () => {
   expectRule(detail, /quoted text/i, /two paragraphs/i);
 });
 
+// Usefulness: verifies the closing-block detail skips the restatement turn for a same-report
+// pointer, and states the whitespace rule (issue #1918).
+test("the closing-block detail states the same-report pointer rule", async () => {
+  const detail = await readFile(join(referenceSectionsDir, "closing-block.md"), "utf8");
+  expectRule(detail, /parent/i, /no restatement turn/i, /another label of the same report/i);
+  expectRule(detail, /whitespace/i, /no field/i);
+});
+
 // Usefulness: verifies the core and the closing-block detail name the copied task value field, its
 // no-comparison values, and its restatement turn (issue #1914).
 test("the instructions name the copied task value field", async () => {

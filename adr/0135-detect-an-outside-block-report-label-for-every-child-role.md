@@ -2,7 +2,14 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+This ADR is partially superseded by [ADR 0139: Name no outside-block label without outside text](0139-name-no-outside-block-label-without-outside-text.md). The superseded parts are:
+
+- Decision 2's rule that a worker pointer returns no label in one case. ADR 0139 adds a second case for every role: a response with no text outside the block names no label.
+- Decision 6's dispatch rule. ADR 0139 adds that the parent dispatches no restatement turn when the pointer names another label of the same report.
+
+Decisions 1, 3, 4, and 5 stay in force. Decision 2's worker exception and its reviewer rule stay in force.
 
 ## Supersedes
 

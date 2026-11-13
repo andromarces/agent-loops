@@ -157,6 +157,10 @@ the flag is unchanged.
     reports as unresolved. The rule also bars a CPU or memory load generator, a busy
     loop, and a detached or background process that can outlive the turn. The
     required CI checks are the evidence under load.
+  - The rule also runs one test command at a time. It starts no concurrent copy of
+    a test run and no test run in the background, also when it ends inside the same
+    command. A single-test run is a targeted run and takes the `--if-held` wrapper
+    form.
 - A reviewer in a sandboxed mode sees the result of the whole command only. It
   cannot run a targeted test, unless the run set `--reviewer-sandbox
   workspace-write` or runs with no sandbox ([Codex reviewer sandbox mode](reviewer-sandbox.md)).
