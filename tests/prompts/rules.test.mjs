@@ -29,6 +29,25 @@ test("the rule bounds a direct targeted run and sends a broader run through the 
   expect(withoutWrapper).toMatch(/broader run[\s\S]*?rely on the required CI checks/i);
 });
 
+// Usefulness: issue #1919: the rule bars concurrent copies and a background test run, and sends a
+// single test through --if-held. No other test pins this.
+test("the rule runs one test command at a time", () => {
+  const forms = [testSlotRule({ platform: "linux" }), testSlotRule({ platform: "win32" })];
+  for (const rule of forms) {
+    expect(rule).toContain("Run one test command at a time.");
+    expect(rule).toContain(
+      "Start no concurrent copy of a test run and no test run in the background, also when it ends inside the same command.",
+    );
+    expect(rule).toContain(
+      "A single-test run is a targeted run and takes the --if-held wrapper form.",
+    );
+  }
+  const fallback = testSlotRule({ execPath: '/opt/no"de', platform: "linux" });
+  expect(fallback).toContain("Run one test command at a time.");
+  expect(fallback).toContain("Start no concurrent copy of a test run");
+  expect(fallback).not.toContain("--if-held");
+});
+
 // Usefulness: verifies requirement "a targeted run goes through the slot only while a slot is held"
 // (issue #921, ADR 0044): the rule sends a targeted run through the wrapper with --if-held, keeps
 // a full suite on the plain wrapper, and keeps the 10-file bound and the exit 75 handling.
