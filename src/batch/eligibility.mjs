@@ -323,7 +323,7 @@ export function hasStructuralMinimum(body) {
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
  * commit read reached the API's 250-commit page. The caller then stops launching. `repository` is
  * the cached name and default branch, read when it is null and returned for the next call.
- * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, pr: number | null, incompletePr: number | null, repository: { nameWithOwner: string, defaultBranch: string } | null }>}
+ * @returns {Promise<{ closed: Set<number>, sources: Map<number, { number: number, headRefName: string | null }[]>, incompletePr: number | null, repository: { nameWithOwner: string, defaultBranch: string } | null }>}
  */
 export async function readOpenPrClosures({ gh, repo, repository = null }) {
   const list = await readGhJson(
@@ -371,7 +371,7 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
       }
     }
   }
-  if (list.length === 0) return { closed, pr: null, incompletePr: null, sources, repository };
+  if (list.length === 0) return { closed, incompletePr: null, sources, repository };
 
   let cached = repository;
   if (cached === null) {
@@ -426,9 +426,7 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
       break;
     }
   }
-  const first = [...closed].sort((a, b) => a - b)[0];
-  const firstSource = first === undefined ? null : (sources.get(first)?.[0]?.number ?? null);
-  return { closed, pr: firstSource, incompletePr, sources, repository: cached };
+  return { closed, incompletePr, sources, repository: cached };
 }
 
 /**
@@ -528,7 +526,7 @@ export async function checkEligibility({
       const named =
         others.length > 0
           ? `pull request${others.length === 1 ? "" : "s"} ${others.join(", ")}`
-          : `pull request ${openPrClosures.pr ?? "unknown"}`;
+          : "an unrecorded pull request";
       return {
         ok: false,
         reason: "closed-by-open-pr",
