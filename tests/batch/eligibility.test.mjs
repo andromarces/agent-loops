@@ -182,17 +182,41 @@ test("a claim of the current batch is not a skip", async () => {
   expect(result.ok).toBe(true);
 });
 
-// Usefulness: an issue closed by an open pull request body is skipped.
+// Usefulness: an issue closed by an open pull request body is skipped and the source is named.
 test("an issue closed by an open pull request is skipped", async () => {
   const result = await checkEligibility({
     issue: 7,
     gh: issueReply("OPEN"),
     repo: "C:\\repo",
     claim: { exists: false },
-    openPrClosures: { closed: new Set([7]), pr: 42, incompletePr: null },
+    openPrClosures: {
+      closed: new Set([7]),
+      sources: new Map([[7, [{ number: 42, headRefName: null }]]]),
+      incompletePr: null,
+    },
   });
   expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
   expect(result.evidence).toContain("42");
+});
+
+// Usefulness: the closure read carries no dead pr field, so source-based callers see one shape.
+test("the closure read returns no pr field", async () => {
+  const closures = await readOpenPrClosures({ gh: closureGh([]), repo: "C:\\repo" });
+  expect(Object.hasOwn(closures, "pr")).toBe(false);
+});
+
+// Usefulness: a closure with no recorded source still reports defined evidence, never undefined.
+test("a closure with no recorded source reports defined evidence", async () => {
+  const result = await checkEligibility({
+    issue: 7,
+    gh: issueReply("OPEN"),
+    repo: "C:\\repo",
+    claim: { exists: false },
+    openPrClosures: { closed: new Set([7]), sources: new Map(), incompletePr: null },
+  });
+  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+  expect(result.evidence).toContain("closes it");
+  expect(result.evidence).not.toContain("undefined");
 });
 
 // Usefulness: the skip names the pull request that closes its issue, not another issue's pull request.

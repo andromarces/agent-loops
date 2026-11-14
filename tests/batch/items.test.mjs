@@ -165,7 +165,7 @@ test("a pull request number given as an issue item is skipped", async () => {
     gh,
     repo: "C:/repo",
     claim: { exists: false },
-    openPrClosures: { closed: new Set(), pr: null, incompletePr: null },
+    openPrClosures: { closed: new Set(), sources: new Map(), incompletePr: null },
   });
   expect(result).toMatchObject({ ok: false, reason: "is-pull-request" });
   expect(result.evidence).toContain("7");
@@ -201,7 +201,7 @@ test("the not-specified check is opt-in", async () => {
     throw new Error(`unexpected ${args.join(" ")}`);
   };
   const item = { kind: "issue", key: 1, number: 1, mode: "work-first" };
-  const closures = { closed: new Set(), pr: null, incompletePr: null };
+  const closures = { closed: new Set(), sources: new Map(), incompletePr: null };
   const byDefault = await checkItemEligibility({
     item,
     gh,
@@ -627,7 +627,7 @@ test("a failed PR lookup skips an issue item instead of launching it", async () 
     gh,
     repo: "C:/repo",
     claim: { exists: false },
-    openPrClosures: { closed: new Set(), pr: null, incompletePr: null },
+    openPrClosures: { closed: new Set(), sources: new Map(), incompletePr: null },
   });
   expect(result).toMatchObject({ ok: false, reason: "eligibility-unverified" });
   expect(result.evidence).toContain("pull request lookup failed");
