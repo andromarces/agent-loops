@@ -520,18 +520,19 @@ export async function checkEligibility({
   }
   if (openPrClosures.closed.has(issue)) {
     const sources = openPrClosures.sources?.get(issue) ?? [];
-    const own =
-      sources.length > 0 &&
-      sources.every(
-        (source) =>
-          (ownPr !== null && source.number === ownPr) ||
-          (ownBranch !== null && source.headRefName === ownBranch),
-      );
-    if (!own) {
+    const isOwn = (source) =>
+      (ownPr !== null && source.number === ownPr) ||
+      (ownBranch !== null && source.headRefName === ownBranch);
+    if (!(sources.length > 0 && sources.every(isOwn))) {
+      const others = sources.filter((source) => !isOwn(source)).map((source) => source.number);
+      const named =
+        others.length > 0
+          ? `pull request${others.length === 1 ? "" : "s"} ${others.join(", ")}`
+          : `pull request ${openPrClosures.pr ?? "unknown"}`;
       return {
         ok: false,
         reason: "closed-by-open-pr",
-        evidence: `pull request ${openPrClosures.pr ?? "unknown"} closes it`,
+        evidence: `${named} ${others.length > 1 ? "close" : "closes"} it`,
       };
     }
   }

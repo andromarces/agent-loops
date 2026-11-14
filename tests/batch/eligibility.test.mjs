@@ -195,6 +195,114 @@ test("an issue closed by an open pull request is skipped", async () => {
   expect(result.evidence).toContain("42");
 });
 
+// Usefulness: the skip names the pull request that closes its issue, not another issue's pull request.
+test("a skip names the pull request that closes its issue", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 3 }],
+        baseRefName: "main",
+        body: "",
+      },
+      {
+        number: 20,
+        headRefName: "b",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:\\repo",
+  });
+  const result = await checkEligibility({
+    issue: 9,
+    gh: issueReply("OPEN"),
+    repo: "C:\\repo",
+    claim: { exists: false },
+    openPrClosures: closures,
+  });
+  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+  expect(result.evidence).toContain("20");
+  expect(result.evidence).not.toContain("15");
+});
+
+// Usefulness: an issue that two open pull requests close names both of them.
+test("a skip names both pull requests that close its issue", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 3 }],
+        baseRefName: "main",
+        body: "",
+      },
+      {
+        number: 20,
+        headRefName: "b",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+      {
+        number: 30,
+        headRefName: "c",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:\\repo",
+  });
+  const result = await checkEligibility({
+    issue: 9,
+    gh: issueReply("OPEN"),
+    repo: "C:\\repo",
+    claim: { exists: false },
+    openPrClosures: closures,
+  });
+  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+  expect(result.evidence).toContain("20");
+  expect(result.evidence).toContain("30");
+  expect(result.evidence).not.toContain("15");
+});
+
+// Usefulness: the skip names only another branch's pull request, not the loop's own.
+test("a skip leaves out the loop's own pull request", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 42,
+        headRefName: "own",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+      {
+        number: 43,
+        headRefName: "other",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:\\repo",
+  });
+  const result = await checkEligibility({
+    issue: 9,
+    gh: issueReply("OPEN"),
+    repo: "C:\\repo",
+    claim: { exists: false },
+    openPrClosures: closures,
+    ownPr: 42,
+  });
+  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+  expect(result.evidence).toContain("43");
+  expect(result.evidence).not.toContain("42");
+});
+
 // Usefulness: the structural minimum needs an acceptance list and a problem or scope heading.
 test("an issue with no acceptance section is skipped", () => {
   expect(hasStructuralMinimum("## Problem\n\nText.\n")).toBe(false);
