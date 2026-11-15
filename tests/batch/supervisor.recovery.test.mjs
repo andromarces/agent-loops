@@ -39,6 +39,7 @@ test("a resume with 3 of 10 steps spent passes --max-steps 7 and the same transc
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -50,14 +51,18 @@ test("a resume with 3 of 10 steps spent passes --max-steps 7 and the same transc
     await run;
     const first = child.calls[0];
     expect(first.maxSteps).toBe("10");
-    await pushLoop(prepared);
 
     const childResume = childDouble({ steps: 2 });
     const resumed = await runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: childResume.spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childResume.spawn,
+        installSignal: false,
+      },
     });
     expect(childResume.calls).toHaveLength(1);
     expect(childResume.calls[0].transcript).toBe(first.transcript);
@@ -117,6 +122,7 @@ test("an answered decision resumes the loop after the owner resolves the state",
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -126,7 +132,6 @@ test("an answered decision resumes the loop after the owner resolves the state",
     await waitForLaunch(child);
     controller.abort();
     await run;
-    await pushLoop(prepared);
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
       status: "needs-owner",
@@ -140,7 +145,12 @@ test("an answered decision resumes the loop after the owner resolves the state",
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: pendingChild.spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: pendingChild.spawn,
+        installSignal: false,
+      },
     });
     expect(pendingChild.calls).toHaveLength(0);
     expect(pending.exitCode).toBe(1);
@@ -162,7 +172,12 @@ test("an answered decision resumes the loop after the owner resolves the state",
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: resumeChild.spawn,
+        installSignal: false,
+      },
     });
     expect(resumeChild.calls).toHaveLength(1);
     expect(resumed.summary.loops[0].status).toBe("succeeded");
@@ -475,6 +490,7 @@ test("two simultaneous resumes launch a loop once", async () => {
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: child.spawn,
         installSignal: false,
@@ -484,19 +500,28 @@ test("two simultaneous resumes launch a loop once", async () => {
     await waitForLaunch(child);
     controller.abort();
     await run;
-    await pushLoop(prepared);
     const resumeChild = childDouble({ hold: true });
     const a = runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: resumeChild.spawn,
+        installSignal: false,
+      },
     });
     const b = runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: resumeChild.spawn, installSignal: false },
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: resumeChild.spawn,
+        installSignal: false,
+      },
     });
     await waitForLaunch(resumeChild);
     resumeChild.pending[0]?.resolve({ exitCode: 0 });
@@ -667,6 +692,8 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
     await waitForLaunch(child);
     controller.abort();
     await run;
+    // Process: the case resumes a declared pull request, so reconcileLoop fetches the pushed
+    // branch and compares the remote head with the local head; a fake remote would not exercise it.
     await pushLoop(prepared);
     const workTree = join(prepared.workTreeRoot, "issue-1");
     const head = (await git(["rev-parse", "HEAD"], workTree)).stdout;
