@@ -41,7 +41,7 @@ const ALLOWED_STATUSES = new Set([
   "superseded",
   "partially-superseded",
 ]);
-const INDEX_ENTRY = /^- (\d{4}) — \[[^\]]+\]\(([^)]+)\) — (\S+) — /;
+const INDEX_ENTRY = /^- (\d{4}) — \[[^\]]+\]\(([^)]+)\) — (\S+)(?: — |$)/;
 const ADR_LINK = /\[([^\]]*)\]\(([^)]+)\)/g;
 const SUPERSEDED_BY_ALL = /\b(?:partially )?superseded by\b/gi;
 const SUPERSEDES_STATEMENT = /^(?:this adr(?: also)? |it(?: also)? )?(?:partially )?supersedes\b/i;
@@ -218,7 +218,9 @@ test("the ADR index and supersede links follow the ADR rules", async () => {
     if (!/^- \d{4} — /.test(line)) continue;
     const match = line.match(INDEX_ENTRY);
     if (!match) {
-      problems.add(`index entry has no file, status, and summary form: ${line.slice(0, 80)}`);
+      problems.add(
+        `index entry has no file, status, and supersede-link form: ${line.slice(0, 80)}`,
+      );
       continue;
     }
     entries.set(match[1], { path: match[2], status: match[3] });
@@ -381,7 +383,12 @@ test("ADR 0095 supersedes the temporary directory reporting rules and keeps the 
   const readme = await readFile(join(adrDir, "README.md"), "utf8");
   const adr68 = readme.split("\n").find((line) => line.startsWith("- 0068"));
   expect(adr68).not.toContain("qualified by ADR 0076");
-  expect(adr68).toContain("ADR 0095");
+  expect(adr68).not.toContain("every entry");
+  const adr68Text = await readFile(
+    join(adrDir, "0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md"),
+    "utf8",
+  );
+  expect(adr68Text).toContain("ADR 0095");
 });
 
 // Usefulness: verifies ADR 0019 names all five accepted gaps of the issue, so the record of what
@@ -442,5 +449,18 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   expect(row("0001")).toMatch(/ — superseded — /);
   expect(row("0001")).toMatch(/ADR 0019/);
   expect(row("0019")).toMatch(/ — partially-superseded — /);
-  expect(row("0019")).toMatch(/Supersedes ADR 0001/);
+  expect(row("0019")).toMatch(/Partially superseded by \[ADR 0038\]/);
+});
+
+const INDEX_ROW =
+  /^- \d{4} — \[[^\]]+\]\(\d{4}-[^)]+\.md\) — (?:proposed|accepted|deprecated|superseded|partially-superseded)(?: — (?:(?:Partially )?[Ss]uperseded by \[ADR \d{4}\]\(\d{4}-[^)]+\.md\)\. ?)+)?$/;
+
+// Usefulness: keeps every index row to number, linked title, status, and its Superseded by links.
+// It fails if a summary sentence or a second row shape returns (issue #1939), which no other test
+// covers.
+test("the ADR index holds no summary text", async () => {
+  const readme = await readFile(join(adrDir, "README.md"), "utf8");
+  const rows = readme.split("\n").filter((line) => /^- \d{4} /.test(line));
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.filter((line) => !INDEX_ROW.test(line))).toEqual([]);
 });

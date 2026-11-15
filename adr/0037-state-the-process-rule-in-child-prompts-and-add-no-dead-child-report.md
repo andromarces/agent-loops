@@ -44,5 +44,6 @@ Andro Marces
 ## Links
 
 - [Issue #762: Forbid child turns from killing processes by name or command-line match](https://github.com/andromarces/agent-loops/issues/762)
+- [PR #765: Forbid child turns from ending processes by name or command-line match](https://github.com/andromarces/agent-loops/pull/765)
 - Implementation: `processRule` in `src/prompts/rules.mjs`, `workerPrompt` in `src/prompts/worker.mjs`, `reviewerPrompt` in `src/prompts/reviewer.mjs`. The `dispatched` to `interrupted` path is in `src/role/dispatch.mjs`.
 - [ADR Index](README.md)

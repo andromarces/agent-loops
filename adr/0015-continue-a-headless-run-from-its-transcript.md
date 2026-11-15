@@ -77,6 +77,7 @@ Andro Marces
 ## Links
 
 - [Issue #362: Continue a headless run with a new step budget and its earlier role sessions](https://github.com/andromarces/agent-loops/issues/362)
+- [PR #390: Continue a headless run from its transcript](https://github.com/andromarces/agent-loops/pull/390)
 - Implementation:
   - Source: `src/lib/continuation.mjs`
   - Source: The `continued` input of `runLoop` and `initialPrompt`
