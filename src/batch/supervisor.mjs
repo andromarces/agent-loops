@@ -9,7 +9,12 @@ import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
 import { declaredPrFromTranscript, undeclaredPrFromTranscript } from "../lib/gate.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
-import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
+import {
+  pidAlive,
+  processStartTime,
+  ownerAlive,
+  startTimeCache,
+} from "../lib/process-identity.mjs";
 import { logError, logInfo, logWarn } from "../lib/log.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
@@ -173,9 +178,9 @@ function isLive(loop) {
   return loop.pid != null;
 }
 
-async function ownerStillLive(loop) {
+async function ownerStillLive(loop, cache) {
   if (!isLive(loop)) return false;
-  return ownerAlive({ pid: loop.pid, startTime: loop.startTime });
+  return ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache);
 }
 
 /**
@@ -658,6 +663,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const planTree = deps.planPrWorkTree ?? planPrWorkTree;
   const reconcile = deps.reconcileLoop ?? reconcileLoop;
   const cleanupWorkTree = deps.cleanupLoop ?? cleanupLoop;
+  const probeStartTime = deps.processStartTime ?? processStartTime;
   const verifyRecordedWorkTree = async (loop) => {
     const workTree = loop.workTree;
     if (!workTree?.path) return "the recorded work tree is missing";
@@ -1571,7 +1577,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (isLive(loop)) {
       // A recorded live PID is never restarted. Without a readable identity the loop needs its
       // owner instead of waiting forever (adr/0106-foreground-batch-scheduling.md decision 10).
-      const current = await processStartTime(loop.pid);
+      const current = await probeStartTime(loop.pid);
       if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
         // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
         await markNeedsOwner(issue, "unverified-process-identity", {
@@ -1580,7 +1586,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         });
         return;
       }
-      while (await ownerStillLive(loop)) {
+      // One cache per wait, so a live owner's start time is probed once per cache age window
+      // and not on every 250 ms poll. The first check above stays fresh.
+      const cache = startTimeCache({ probe: probeStartTime });
+      while (await ownerStillLive(loop, cache)) {
         if (interrupted || hard) return;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
@@ -1767,7 +1776,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   for (const issue of manifest.issues) {
     const loop = loops.get(issue);
     if (loop !== null && isLive(loop)) {
-      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime })) slots.add(issue);
+      // This check and the pre-wait identity check read the injectable probe. A fresh cache
+      // keeps this read fresh.
+      const cache = startTimeCache({ probe: probeStartTime });
+      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache)) slots.add(issue);
     }
   }
   await refreshPendingDecisions();
