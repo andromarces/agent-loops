@@ -70,6 +70,7 @@ while the entry was absent.
 ## Links
 
 - [Issue #1984: Keep Windows batch notifications in Notification Center](https://github.com/andromarces/agent-loops/issues/1984)
+- [PR #1985: Keep Windows batch notifications in Notification Center](https://github.com/andromarces/agent-loops/pull/1985)
 - [ADR 0110: Release batch loop slots on owner decisions, resume after merges, and notify](0110-release-batch-slots-on-owner-decisions.md)
 - [Implementation: batch notifier](../src/batch/notifier.mjs)
 - [Tests: batch notifier](../tests/batch/notifier.test.mjs)
