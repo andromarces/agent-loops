@@ -1,4 +1,4 @@
-// OpenCode parent-guard plugin factory (#75, packaged by #139). The shipped
+// OpenCode parent-guard plugin factory. The shipped
 // entry point is the rendered template at
 // `src/install/templates/opencode/plugins/parent-guard.ts`, which imports this
 // factory and the shared decision logic by absolute URL. Keeping the behavior
@@ -16,7 +16,7 @@
 // The shared Claude and Codex skills set `metadata.opencode/autoinvoke: false`,
 // so OpenCode drops them from the model's skill list and the model cannot
 // auto-invoke one for an /agent-loop request. This command is then the only
-// `/agent-loop` entry point that carries the OpenCode session id (#150).
+// `/agent-loop` entry point that carries the OpenCode session id.
 //
 // The guard resolves the runs root from this server process's environment, so
 // an out-of-process `AGENT_LOOP_RUNS_ROOT` override (test-only) would desync

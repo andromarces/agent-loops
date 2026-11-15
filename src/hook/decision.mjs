@@ -1,4 +1,4 @@
-// Decision logic and the shared command-hook flow for the #57 parent guard.
+// Decision logic and the shared command-hook flow for the parent guard.
 // `decideParentGuard` denies a tool call from a session only when a readable run
 // entry for the hook session id resolves to a state with `parentSession` equal to
 // that session and a non-terminal lifecycle. The harness matchers and `isGuarded`
