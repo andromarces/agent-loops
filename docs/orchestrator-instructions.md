@@ -305,9 +305,11 @@ Apply these parent rules:
   content, at most 20. It is a diagnostic. The directories are shared with other processes.
   The runtime cannot attribute an entry to the turn, and it does not delete one. The runtime reads
   them once after the turn, with no re-read and no wait. The field creates no `open` item by
-  itself, and it never refuses a finish. An entry that no turn reports as its own leftover goes
-  nowhere in the finish summary: it adds no `open` item and no `notes` item, and `open` stays
-  `none` when nothing else is open.
+  itself, and it never refuses a finish. An unattributed name with the `literal-tmp/` prefix goes
+  under `notes` in the finish summary, by name, and never under `open`. Every other unattributed
+  entry, a `registered/` name and a foreign file such as an SQLite `-shm` or `-wal` sidecar
+  included, goes nowhere in the finish summary: it adds no `open` item and no `notes` item. `open`
+  stays `none` when nothing else is open.
   - The literal system temporary directories are `/tmp` and `/private/tmp` on POSIX. There are none on
     Windows, where a Git Bash `/tmp` resolves to the inherited directory. The runtime leaves out a
     literal root that resolves to the inherited directory while it reads that directory too. A root

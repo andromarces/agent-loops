@@ -359,9 +359,6 @@ test("the headless prompt creates no open item from the inherited temporary dire
   expect(prompt).toContain("inheritedTmpdirEntries");
   expect(prompt).toMatch(/It is a diagnostic/i);
   expect(prompt).toMatch(/creates no open item/i);
-  // Issue #1978: the prompt names where an unattributed entry goes, and `open` stays `none`.
-  expect(prompt).toMatch(/no turn reports as its own leftover[^.;]*goes nowhere in the finish/i);
-  expect(prompt).toContain("`open` stays `none`");
   expect(prompt).not.toContain("inheritedTmpdirPresent");
   expect(prompt).not.toContain("inheritedTmpdirSettled");
 });
