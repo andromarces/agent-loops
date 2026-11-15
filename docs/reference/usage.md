@@ -225,7 +225,8 @@ leaves the marker path.
 A worker-opened PR is never declared in such a run, because the flag names the PR at
 start. A run without the flag needs none for a PR that the worker opens (#1111, ADR
 0053): the runtime refuses to declare it, records a `pr-undeclared` event, and
-applies the same compare at finish. A finish with `unresolvedCompare` is refused for
+applies the same compare at finish. The result prompt of that event states the same
+required and all-checks waits as a `--compare-head` run. A finish with `unresolvedCompare` is refused for
 it, and a closed or merged PR refuses the finish even when its head is unchanged. A continuation does not restore the undeclared PR and resolves it again after its
 own worker turn, and a continuation with no worker turn keeps the marker path.
 
