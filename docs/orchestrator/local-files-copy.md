@@ -10,7 +10,12 @@ The init envelope reports the paths as `localFiles: {copied, skipped}`,
 by name only. A path in `skipped` is untracked in the main work tree but not
 copied: the child does not have it. Do not read, print, or quote any copied file.
 
-Remove the run work tree when the run ends. Pass `--no-copy-local-files` on the init
+Remove the run work tree when the run ends, unless the
+[core removal rule](../orchestrator-instructions.md#work-tree-ownership) keeps it. That rule
+keeps a work tree the parent did not create for this run, or one that holds uncommitted or
+unpushed work the run did not create, until the work is committed or the user decides, and
+reports it under `open` in the finish summary. The local files copied into a kept work tree
+stay until the work tree is removed. Pass `--no-copy-local-files` on the init
 call to turn the copy off. It is an init field, so a later call cannot change it.
 
 The task can need other ignored reference data of the main work tree. Pass

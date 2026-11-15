@@ -355,8 +355,9 @@ The hold ignores a workflow that runs only on `push`. That workflow never holds 
 
 ## Work tree ownership
 
-The parent creates the run's work tree and owns it. Keep that work tree in place
-for the whole run, and never tell a worker to remove it.
+The parent creates the run's work tree and owns it, or uses a pre-existing work
+tree that the user passes as `--cwd`. Keep that work tree in place for the whole
+run, and never tell a worker to remove it.
 
 When a worker report says its edit landed in another checkout, stop the run,
 and leave that checkout to the user. Report the paths under `open` in the finish
@@ -406,7 +407,7 @@ once as a first turn, with the worker preamble and the `Init task:` block. A rev
 
 When `--cwd` is a linked work tree, the init call copies the untracked local files of the
 main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent
-instructions and `.env`. Do not read, print, or quote any copied file. Remove that work tree when the run ends. The
+instructions and `.env`. Do not read, print, or quote any copied file. Remove that work tree when the run ends, unless the removal rule below keeps it. The
 copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in
 [Local files copied into the work tree](orchestrator/local-files-copy.md).
 
@@ -426,6 +427,13 @@ or snapshot error) also prints no `lifecycle`, as does a child error that leaves
 Read the state file ([Recovery](#recovery-after-compaction-or-restart)):
 remove the work tree after it reads `halted`. Run the removal as a separate command
 after you read the result. Never chain it after `finish` or `abort` in one command.
+
+The parent removes only the work tree that it created for this run. A work tree
+that it did not create for this run, such as a linked work tree that a user passes
+as `--cwd`, stays, and so does one that holds uncommitted or unpushed work that the
+run did not create. Keep that work tree until the work is committed or the user
+decides, and report it under `open` in the finish summary. The local files that init
+copied into a kept work tree stay until the work tree is removed.
 
 Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states.
 Never delete it with a recursive delete that follows junctions.
