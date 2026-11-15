@@ -73,7 +73,7 @@ function readWindowStart() {
 
 /**
  * Starts a recursive watch and returns it with a `ready` promise for the watch factory. A write right
- * after `watch` can miss before the next event-loop turn, so the macOS `ready` resolves after one
+ * after `watch` can miss before `ready` resolves, so the macOS `ready` resolves after one event-loop
  * turn. The other platforms return no `ready`, so their event handling does not change.
  * @param {string} root
  * @param {(type: string, filename: string | Buffer) => void} onEvent

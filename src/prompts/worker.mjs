@@ -62,8 +62,7 @@ const pnpmRunRule =
 const ownNodeModulesRule =
   "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.";
 
-// A code index can return an absolute path of another checkout, so an edit there lands outside the
-// run work tree.
+// An absolute path can name another checkout, so an edit must stay under the run work tree root.
 const workTreeEditRule =
   "Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.";
 
@@ -83,8 +82,7 @@ const tmpdirRule = tempPathRule(
   ", such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory. Another run can hold the same name",
 );
 
-// A background shell task can outlive the foreground bound, and the turn then ends with no closing
-// block.
+// A background shell task can outlive the foreground bound, so its result never reaches `Checks`.
 const longSuiteRule =
   "Never end the turn while a command that you started is still running. When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.";
 
@@ -92,13 +90,14 @@ const longSuiteRule =
 const ciWaitRule =
   "Never wait for CI with an unbounded command, such as `gh pr checks --watch`. The run waits for the required checks outside the worker turn with `role wait-checks`, where the run permits it. A worker that must read CI, for example for a flaky check, uses a bounded read.";
 
-// An unlabeled `Verification:` heading leaves the block with no `Why:` label, so the report parses
-// to null. A prose or bold-lead list repeats the omission, so every turn carries the rule.
+// `Verification:` is not a report label, so reasons placed there leave the required `Why:` label
+// absent, and the report parses to null. A prose or bold-lead list repeats the omission, so every
+// turn carries the rule.
 const reasonsUnderWhyRule =
   "Put the reasons under `Why:`, never under another heading such as `Verification:`.";
 
-// A prose sentence before the labels, or a requested value on its own line, leaves the response
-// with no `Conclusion:` line, so the report parses to null.
+// With no `Conclusion:` line, the runtime takes the nearest plain prose line above the first report
+// label as `Conclusion`; a bold-lead narration paragraph alone supplies none, and the report is null.
 const conclusionFirstRule =
   "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 

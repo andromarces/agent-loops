@@ -104,8 +104,8 @@ export async function runCopilot(state, prompt, options = {}) {
     args.push("--deny-tool", "write");
   } else {
     // A non-interactive Copilot turn denies a write request that no allow rule approves, and a
-    // worker needs file edits (ADR 0141). The rule allows a file creation; a file modification and
-    // a shell call under it are not verified.
+    // worker needs file edits (ADR 0141). known-limit: a file modification and a shell call under
+    // the `write` rule are not verified.
     args.push("--allow-tool", "write");
   }
 
