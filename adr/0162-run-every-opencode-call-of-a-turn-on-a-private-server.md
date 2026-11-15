@@ -59,6 +59,7 @@ of a live root, so a process whose root has exited is unreachable (ADR 0028).
 ## Links
 
 - [Issue #1992: An OpenCode worker turn leaves a detached opencode serve process alive on Windows](https://github.com/andromarces/agent-loops/issues/1992)
+- [PR #1994: Run the session export on a private server](https://github.com/andromarces/agent-loops/pull/1994)
 - [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)
 - [ADR 0028: End the Windows process tree of a child when the runtime exits](0028-end-the-windows-process-tree-when-the-runtime-exits.md)
 - [Implementation: OpenCode adapter](../src/agents/opencode.mjs)
