@@ -55,7 +55,7 @@ Subcommands:
                                 Accepts -y, --dry-run, and --verbose.
   agent-loop uninstall          Remove the installed entry points and guards. Restores
                                 files that install changed.
-                                Accepts -y, --dry-run, and --verbose.
+                                Accepts --harness <list>, -y, --dry-run, and --verbose.
   agent-loop test-slot          Run one command while fewer than N machine-wide test
                                 slots are held by live owners. One quoted argument runs
                                 through the platform shell, and two or more arguments
@@ -84,8 +84,9 @@ Subcommands:
                                 --loops <1-64>, and --max-steps. Accepts --base,
                                 --work-tree-root, --task-template, --require-specification,
                                 --setup-cmd, --setup-timeout, --test-cmd,
-                                --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
-                                --<role>-model and --<role>-effort flags. A linked --repo, two
+                                --test-cmd-timeout, --timeout, --reviewer-sandbox,
+                                --reviewer-workspace-write, and the --<role>-model and
+                                --<role>-effort flags. A linked --repo, two
                                 selection flags, a duplicate item, an unknown kind or mode, a
                                 task item without a unique id, a paused or needs-owner
                                 audit, an unreconciled audit write, an unknown task placeholder,
@@ -111,8 +112,9 @@ Subcommands:
                                 --repo <main work tree>, --reviewer <cli> (repeatable, at
                                 least twice), and --worker. Accepts --base,
                                 --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
-                                --reviewer-sandbox, a --reviewer-model or --reviewer-effort
-                                after each --reviewer, --worker-model or --worker-effort,
+                                --reviewer-sandbox, --reviewer-workspace-write, a
+                                --reviewer-model or --reviewer-effort after each
+                                --reviewer, --worker-model or --worker-effort,
                                 and --focus <text> or --focus-file <path>. The two focus
                                 flags are mutually exclusive, and an empty focus is refused.
                                 A focus is the only reviewer goal; without one, reviewers

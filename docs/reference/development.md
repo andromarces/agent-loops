@@ -61,6 +61,17 @@ Vite+ hook dispatcher (`vp config`). The hook scripts live in `.vite-hooks/`.
 install fails, it writes one warning line to stderr and still exits 0. `prepare`
 changes no `core.hooksPath` value.
 
+A clone that still holds the Husky `core.hooksPath` (`<repo>/.husky/_`) runs no
+hook: `vp config` skips the install, and no warning appears. Clear the local value,
+then run `pnpm install` again:
+
+```bash
+git config --local --unset core.hooksPath
+pnpm install
+```
+
+[ADR 0133](https://github.com/andromarces/agent-loops/blob/main/adr/0133-drop-the-husky-hooks-path-migration.md) is the record of that change.
+
 ## Releasing
 
 The release workflow stages a version on a published GitHub release or a manual dispatch, authenticated by OIDC trusted publishing. No npm token is stored.

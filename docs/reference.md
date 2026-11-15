@@ -87,7 +87,9 @@ Other documents:
   interactive parent session. The core names the reference sections under
   `orchestrator/` and when to read each.
 - [Init task delivery](orchestrator/task-delivery.md#init-task-in-a-child-prompt): when
-  the init task reaches a child conversation, and the live check of its `Init task:` block.
+  the init task reaches a child conversation, and the prompt rule that keeps its label lines
+  out of the child report. The live check of the `Init task:` block is in
+  [ADR 0105](https://github.com/andromarces/agent-loops/blob/main/adr/0105-keep-probe-evidence-in-the-linked-issue-or-adr.md#init-task-block-live-check).
 - [Parent guard details](reference/parent-guard.md): every guard target and matcher.
   - [Pre-tool hook availability by harness](reference/parent-guard.md#pre-tool-hook-availability-by-harness)
 - [Architecture Decision Records](https://github.com/andromarces/agent-loops/blob/main/adr/README.md).
