@@ -75,7 +75,7 @@ export function validateAction(value) {
       }
 
       // A dropped key would hide a misspelled `unresolvedCompare` marker behind a
-      // finish that reads as verified (#1021).
+      // finish that reads as verified.
       const unknown = [
         ...unknownKeys(value, FINISH_KEYS),
         ...unknownKeys(value.summary, SUMMARY_KEYS),
@@ -113,13 +113,12 @@ export function validateAction(value) {
 
       // Optional marker the parent sets when it recorded an unresolved PR-head
       // compare instead of verifying it. The runtime emits a distinct
-      // `unresolved-compare` transcript event on this field (#266).
+      // `unresolved-compare` transcript event on this field.
       //
       // known-limit: the marker is parent-set. In a run that declares no PR, an
       // omitted marker reads as a verified finish: one unverified claim per such
       // run. `--require-ci <pr>` and `--pr <pr>` close the gap by gating the
-      // finish on the PR head, and both refuse a finish that sets this field
-      // (issues #286, #293, #302, #336).
+      // finish on the PR head, and both refuse a finish that sets this field.
       if (value.unresolvedCompare !== undefined) {
         if (typeof value.unresolvedCompare !== "boolean") {
           return { ok: false, error: "finish unresolvedCompare must be a boolean." };
