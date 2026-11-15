@@ -507,7 +507,6 @@ export async function prepareBatch(options, { gitRun = gitOrThrow } = {}) {
   };
 }
 
-/** Renders the task template for one issue. */
 export function renderTask(template, { issue, title, branch, repo }) {
   return template
     .replaceAll("{issue}", String(issue))

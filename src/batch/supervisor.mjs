@@ -1259,8 +1259,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
     // One read of the declared pull request serves every exit path. An unreadable
-    // declaration keeps the needs-owner handling of the exit 4 path (#1791). The
-    // undeclared pull request of an unreadable required-check source is read beside it (#1899).
+    // declaration keeps the needs-owner handling of the exit 4 path. The
+    // undeclared pull request of an unreadable required-check source is read beside it.
     let declaredPr = loop.pr;
     let prUndeclared = null;
     try {
@@ -1414,8 +1414,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
   };
 
-  // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
-  // requires. A null result means another resume owns the loop and the caller keeps it pending.
+  // A pending-decision refresh takes the loop lock so a held lock reports paused.
+  // A null result means another resume owns the loop and the caller keeps it pending.
   const withLoopResult = async (issue, fn) => {
     const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
     const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
