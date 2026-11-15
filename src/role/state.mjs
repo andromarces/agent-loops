@@ -8,7 +8,7 @@ import { lockWorkTree, unlockWorkTree } from "../lib/work-tree-lock.mjs";
 import { RoleError } from "./envelope.mjs";
 
 // The recovery that the interactive path owns when it cannot declare the PR. The runtime compares
-// the head, where the headless path has only the parent's marker (#1098).
+// the head, where the headless path has only the parent's marker.
 const ROLE_UNREADABLE_FINISH =
   "compare the PR head with the reviewed commit through `role finish --compare-head <pr>`, or finish with the unresolvedCompare marker after you compare it yourself";
 
@@ -18,7 +18,7 @@ const ROLE_UNREADABLE_FINISH =
  * `needsBudget` refuses an unsafe stored `maxSteps` before the operation runs.
  * A later dispatch, `finish`, and `extend` set it. `abort` leaves it unset.
  * Refusing it blocks the only route to a terminal lifecycle, because a new init
- * refuses over a non-terminal run (#312).
+ * refuses over a non-terminal run.
  */
 export function requireState(state, cwd, { needsBudget = false } = {}) {
   if (!state) {
@@ -38,7 +38,7 @@ export function requireState(state, cwd, { needsBudget = false } = {}) {
  * guard without `--max-steps` validation. Outside the safe integer range the
  * step counter cannot advance by one, so no accepted value holds the bound on
  * `turns`. The refusal names the state file field, which is what a maintainer
- * must correct (#312).
+ * must correct.
  */
 function assertStateMaxSteps(state) {
   if (!Number.isSafeInteger(state.maxSteps) || state.maxSteps < 1) {
@@ -48,7 +48,7 @@ function assertStateMaxSteps(state) {
   }
 }
 
-/** Refuses a PR declaration whose required-check sources the finish gate cannot read (#1092). */
+/** Refuses a PR declaration whose required-check sources the finish gate cannot read. */
 export async function refuseUnreadableGate(label, { pr, cwd, gh, signal }) {
   const reason = await unreadableGateReason({ pr, cwd, gh, signal });
   if (reason) {

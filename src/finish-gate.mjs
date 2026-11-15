@@ -15,7 +15,7 @@ import { refusalPrompt } from "./prompts/orchestrator.mjs";
  * run `active` for the parent to retry. The headless run has no retry outside this refusal, so
  * throwing would discard a run that a later turn could pass. The refusal fails closed either way,
  * and any child turn clears the prior-refusal flag, so a retry costs a step rather than ending the
- * run (#293).
+ * run.
  * @param {object} options
  * @param {() => Promise<{ ok: boolean, reason?: string }>} options.read The gate read.
  * @param {string} options.failedLog Log label for a read that threw.
@@ -82,28 +82,28 @@ export async function evaluateFinish({
   // prompt, because the run grants a single corrective turn and a second
   // refused finish ends it. Reporting one condition at a time would spend
   // that turn on a condition the next refusal names instead, which is how a
-  // prompt that says "finish again" becomes an exit 1 (#293). The order is
+  // prompt that says "finish again" becomes an exit 1. The order is
   // the marker condition, the `review-only` reviewer-turn condition, the
   // completion rule, the declared-PR gate condition, then the PR gate. It
   // matches the interactive `role finish` except for the `review-only`
   // condition, which that path cannot reach because its init dispatch is
-  // itself a reviewer turn (#337). The
+  // itself a reviewer turn. The
   // `--pr` declaration is the PR input, so its refusal sits where the gate
-  // sits (#302).
+  // sits.
   const refusals = [];
   // The marker is satisfied by editing the finish action itself, so it is the
   // one refusal that a re-finish can satisfy without a child turn. Every other
   // refusal needs one, and forcing it on the marker would spend a step and
-  // start a review cycle the run did not need (#293).
+  // start a review cycle the run did not need.
   let needsChildTurn = false;
   // The absence the gate established on a base branch with no required check.
   // It is recorded on the accepted finish only, because another refusal in
   // this same decision means the run did not finish, and a finish that never
-  // happened verified nothing (#336 review).
+  // happened verified nothing.
   let noRequiredChecks = false;
   // The marker condition applies to a run that carries the gate and to a run
   // that declares its PR, because both require the gate that resolves the
-  // compare. A run that declares neither keeps the marker (#302).
+  // compare. A run that declares neither keeps the marker.
   const markerReason = unresolvedCompareReason({ pr, requireCi });
   if (markerReason !== null && action.unresolvedCompare === true) {
     refusals.push({
@@ -119,7 +119,7 @@ export async function evaluateFinish({
   // the interactive finish is accepted after any reviewer turn, including one
   // that ended in a handled error, because the summary records what that turn
   // returned. It sits where `--require-accept` sits, so it takes the same
-  // corrective turn and repeated-refusal rule (#337).
+  // corrective turn and repeated-refusal rule.
   if (mode === "review-only" && !gate.reviewerTurnDispatched) {
     needsChildTurn = true;
     refusals.push({
@@ -148,7 +148,7 @@ export async function evaluateFinish({
   // The `--pr` declaration is the run's PR input, so the gate is the only
   // way such a run ends. A declaration with no gate, or with a gate for
   // another PR, refuses the finish: the flag cannot arrive mid-run, so no
-  // child turn satisfies it and the run ends on the refusal (#302).
+  // child turn satisfies it and the run ends on the refusal.
   const missingGate = missingGateRefusal(pr, requireCi);
   if (missingGate) {
     refusals.push(missingGate);
@@ -157,7 +157,7 @@ export async function evaluateFinish({
     // The gate resolves the PR head in the runtime, which is what the parent
     // can no longer misreport. Its own failure is a refusal rather than a
     // thrown error, so a `gh` failure does not discard a run that a later
-    // turn could pass (#293).
+    // turn could pass.
     const ci = await ciGate({
       pr: requireCi,
       reviewed: gate.lastReviewed,
@@ -168,7 +168,7 @@ export async function evaluateFinish({
     });
     if (ci.refusal) {
       // The gate reads the reviewed state, which only a reviewer turn
-      // establishes, so a gate refusal always needs a child turn (#293).
+      // establishes, so a gate refusal always needs a child turn.
       needsChildTurn = true;
       refusals.push(ci.refusal);
     } else {
@@ -177,7 +177,7 @@ export async function evaluateFinish({
   }
   if (compareHead !== null) {
     // The compare runs in the runtime, so the parent cannot misreport it. The input has no
-    // marker, because the compare either resolved the PR head or refused (#1104).
+    // marker, because the compare either resolved the PR head or refused.
     const conflict = compareHeadConflict({
       requireCi: null,
       unresolvedCompare: action.unresolvedCompare === true,
@@ -222,17 +222,16 @@ export async function evaluateFinish({
       // A base branch with no required check leaves the gate verifying the PR
       // head, the clean reviewed tree, and the merge state only. The event is
       // emitted here, on the accepted finish, so a refused finish never
-      // reports an absence for a run that did not finish (#336 review).
+      // reports an absence for a run that did not finish.
       onEvent({ type: "no-required-checks", pr: requireCi, stepsUsed });
     }
     // A finish the parent marks as an unresolved PR-head compare stays on
     // the loop's own recorded-finish code 0, but it emits a
     // machine-readable event and reports the marker, so it never reads the
-    // same as a verified finish (#266). The headless process exit code is
-    // the CLI's decision: UNRESOLVED_COMPARE_EXIT (#279). The marker stays
+    // same as a verified finish. The headless process exit code is
+    // the CLI's decision: UNRESOLVED_COMPARE_EXIT. The marker stays
     // the only signal for a run without the gate, where the loop has no PR
-    // input, so an omitted marker still reads as a verified finish there
-    // (#286, #293).
+    // input, so an omitted marker still reads as a verified finish there.
     const unresolvedCompare = action.unresolvedCompare === true;
     if (unresolvedCompare) {
       onEvent({ type: "unresolved-compare", stepsUsed });
@@ -245,7 +244,7 @@ export async function evaluateFinish({
   onEvent({ type: "refusal", reason, stepsUsed });
   // A refusal gets one corrective turn. With no step budget left that turn
   // cannot run a child, so the refusal resolves here on the exit-1 path
-  // instead of reaching the step-limit exit 2 (#248). A refusal with no child
+  // instead of reaching the step-limit exit 2. A refusal with no child
   // turn since the last one also resolves here, because no other event
   // clears the prior-refusal flag.
   if (finishRefused || stepsUsed >= maxSteps) {
@@ -255,9 +254,9 @@ export async function evaluateFinish({
   // Two distinct things are described here and need distinct words: any child
   // turn clears the prior-refusal flag, which is not the same as satisfying
   // the condition that refused. The ending states the flag rule, and each
-  // recovery states what satisfies its own condition (#293). The missing gate
+  // recovery states what satisfies its own condition. The missing gate
   // needs its own ending, because a child turn cannot clear it and the
-  // marker wording would name a condition the finish does not carry (#302).
+  // marker wording would name a condition the finish does not carry.
   const ending = missingGate
     ? " No child turn clears the missing gate, so this refusal ends the run: a re-finish repeats it, and the run ends on exit 1. Abort with the missing gate named in the reason, or report to the caller that the run needs the gate."
     : needsChildTurn
@@ -292,8 +291,7 @@ async function headCompareGate({ pr, reviewed, workerAfterReview, cwd, gh, signa
  * The outcome of the `--require-ci` gate for one finish: a refusal when the gate
  * refuses, and the base-branch absence when it passes on a branch with no
  * required check. The shared `checkCi` gate resolves the PR head in the runtime,
- * so the outcome comes from a gate result and not from a field the parent set
- * (#293).
+ * so the outcome comes from a gate result and not from a field the parent set.
  * @param {object} options
  * @returns {Promise<{ refusal: { reason: string, recovery: string } | null, noRequiredChecks: boolean }>}
  */
@@ -311,7 +309,7 @@ async function ciGate({ pr, reviewed, workerAfterReview, cwd, gh, signal }) {
     // A reviewer turn is what the gate needs, because only a reviewer turn
     // establishes the reviewed state the gate reads. A worker turn is needed
     // first only when the condition is about the change itself, and it needs a
-    // reviewer turn after it either way (#293).
+    // reviewer turn after it either way.
     refusedRecovery: `That condition is read from PR ${pr} by the gate, so the finish carries no unresolvedCompare marker. Dispatch the reviewer to re-read the state and re-run the gate, then finish. If the condition is about the change rather than the checks, dispatch the worker first and then the reviewer on the new state: a worker turn resets the reviewed state to none, so on its own it satisfies neither the gate nor the completion rule.`,
   });
   return { refusal, noRequiredChecks: result?.ok === true && result.noRequiredChecks === true };

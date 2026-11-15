@@ -1,7 +1,7 @@
 import { settleInOrder } from "../map-in-batches.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
 import { errorLine, readProp } from "../error-message.mjs";
-import { logInfo, logWarn } from "../log.mjs";
+import { logDebug, logInfo, logWarn } from "../log.mjs";
 import {
   appearedInInheritedTmpdir,
   literalTmpdirRoots,
@@ -47,9 +47,9 @@ import { reviewedState, snapshot } from "../snapshot.mjs";
 /**
  * Reads the pre-turn baselines that the post-turn evidence reads compare against. A linked work
  * tree shares config, hooks, and remotes with the main work tree. The work tree snapshot never
- * covers them, so a worker turn is compared on them too (issue #984). The parent installs once
+ * covers them, so a worker turn is compared on them too. The parent installs once
  * before the first dispatch, so a worker turn that changes a lockfile leaves the next reviewer on
- * stale dependencies (issue #1180). A reviewer turn reads the inherited temporary directory and
+ * stale dependencies. A reviewer turn reads the inherited temporary directory and
  * the package store. The independent reads run together, and a failed read rejects before the CLI
  * starts.
  * @param {ChildEvidenceState} state
@@ -63,7 +63,7 @@ async function readBeforeTurn(state) {
       readLockfiles(state.cwd),
       mainRead,
       // A worker turn reports a literal system temporary directory that differs from the inherited
-      // one, but not the inherited directory itself, which it may legitimately write in (#1713).
+      // one, but not the inherited directory itself, which it may legitimately write in.
       snapshotInheritedTmpdir({
         literalRoots: state.tmpdirLiteralRoots,
         includeInherited: false,
@@ -191,7 +191,7 @@ async function readMainWorkTreeChanged(state) {
 /**
  * Names of the shared Git items that differ from the pre-turn read, or [] when none or unread.
  * The read has its own time bound and takes no turn signal. A canceled turn is read too, and the
- * read never changes the cancel outcome (issue #1224).
+ * read never changes the cancel outcome.
  * @param {ChildEvidenceState} state
  */
 async function readSharedGitChanged(state) {
@@ -258,7 +258,7 @@ async function readInheritedTmpdirEntries(state) {
     includeInherited: !state.isWorker,
   });
   if (entries.length > 0) {
-    logWarn(
+    logDebug(
       state.isWorker
         ? `worker: entries appeared in a literal system temporary directory: ${entries.length}`
         : `reviewer: entries appeared in the inherited temporary directory or a literal one: ${entries.length}`,
@@ -274,7 +274,7 @@ async function readInheritedTmpdirEntries(state) {
 async function readPackageStoreEntries(state) {
   const entries = await changedInPackageStore(state.storeBefore, { cwd: state.cwd });
   if (entries.length > 0) {
-    logWarn(`reviewer: package store entries changed: ${entries.length}`);
+    logDebug(`reviewer: package store entries changed: ${entries.length}`);
   }
   return entries;
 }

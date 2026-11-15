@@ -489,6 +489,7 @@ Andro Marces
 - [Issue #395](https://github.com/andromarces/agent-loops/issues/395)
 - [Issue #396](https://github.com/andromarces/agent-loops/issues/396)
 - [Issue #398](https://github.com/andromarces/agent-loops/issues/398)
+- [PR #391: Resume the session of a failed first turn, with a fallback](https://github.com/andromarces/agent-loops/pull/391)
 - [Pull request #663](https://github.com/andromarces/agent-loops/pull/663)
 - [Issue #675](https://github.com/andromarces/agent-loops/issues/675)
 - [Issue #564](https://github.com/andromarces/agent-loops/issues/564)

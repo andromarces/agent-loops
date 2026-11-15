@@ -2,6 +2,21 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`untrackedFilesGit`): the turn snapshots a directory that holds the
+// files the case writes, and no `git` process runs.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { runChild } from "../src/child-turn.mjs";
 import {
   changedInPackageStore,
@@ -9,10 +24,11 @@ import {
 } from "../src/lib/evidence/package-store-entries.mjs";
 import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
+import { setVerbose } from "../src/lib/log.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { createCleanRepoDir, untrackedFilesGit } from "./git-helpers.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
 // #1713).
@@ -29,9 +45,11 @@ const record = async (text) => {
   await writeFile(modulesFile(), text);
 };
 const recordStore = (dir) => record(JSON.stringify({ storeDir: dir }, null, 2));
-// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
+// The directory holds the files the case writes, and `untrackedFilesGit` reports each top-level
+// file, so a mutation check still sees a leak and no `git` process runs.
 beforeEach(async () => {
-  repo = await createTempRepo();
+  repo = await createCleanRepoDir();
+  gitDouble.answer = untrackedFilesGit;
   store = await mkdtemp(join(tmpdir(), "package-store-"));
   for (const dir of ["links", "projects", "files"]) {
     await mkdir(join(store, "v11", dir), { recursive: true });
@@ -41,6 +59,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  gitDouble.answer = null;
   await removePath(repo);
   await removePath(store);
 });
@@ -188,15 +207,17 @@ test("a reviewer turn that fails after a cancel ends as a cancel", async () => {
 });
 
 // Usefulness: verifies requirement "a cancel after the post-turn reads scans each advisory list once"
-// (issue #1127): the scan warns once per list, so a second scan in the cancel path shows as a
-// repeated warning, which no other test would catch because the carried lists stay equal.
+// (issue #1127): the scan logs one debug line per list, so a second scan in the cancel path shows as
+// a repeated line, which no other test would catch because the carried lists stay equal.
 test("a cancel after the post-turn reads scans each advisory list once", async () => {
   const temp = await mkdtemp(join(tmpdir(), "package-store-inherited-"));
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
   const controller = new AbortController();
-  // The cancel lands after the post-turn reads start: the first advisory warning aborts the signal.
-  const warn = vi.spyOn(console, "error").mockImplementation((line) => {
-    if (String(line).includes("warn: reviewer:")) controller.abort();
+  // The cancel lands after the post-turn reads start: the first advisory diagnostic aborts the signal.
+  // The advisory lines are debug diagnostics, so the turn runs with verbose logging on.
+  setVerbose(true);
+  const debug = vi.spyOn(console, "log").mockImplementation((line) => {
+    if (String(line).includes("debug: reviewer:")) controller.abort();
   });
   try {
     const error = await runChild({
@@ -218,11 +239,12 @@ test("a cancel after the post-turn reads scans each advisory list once", async (
     expect(error).toMatchObject({ isCanceled: true });
     expect(failedTurnEvidence(error).packageStoreEntries).toEqual(INSTALL_NAMES);
     expect(failedTurnEvidence(error).inheritedTmpdirEntries).toEqual(["m54-3db54ca8"]);
-    const lines = warn.mock.calls.map((call) => String(call[0]));
+    const lines = debug.mock.calls.map((call) => String(call[0]));
     expect(lines.filter((line) => line.includes("inherited temporary directory"))).toHaveLength(1);
     expect(lines.filter((line) => line.includes("package store entries changed"))).toHaveLength(1);
   } finally {
-    warn.mockRestore();
+    debug.mockRestore();
+    setVerbose(false);
     await removePath(temp);
   }
 });

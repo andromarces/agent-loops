@@ -572,6 +572,78 @@ test("a live recorded process with no start stamp is not restarted", async () =>
   }
 });
 
+// Usefulness: acceptance (#1935) — a recovery wait over a live owner probes the start time once
+// per cache age window, and an owner that reports dead ends the wait and lets recovery resume.
+// Not redundant: no other test observes the probe count of the recovery wait.
+test("a recovery wait probes a live owner once per cache age window and resumes after it dies", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const stamp = "darwin-lstart:1000";
+  const holder = { pid: 2_147_400_000, alive: true };
+  // The test names a holder pid that is no real process, so the liveness probe answers for that
+  // pid here and every other pid keeps the real check.
+  const realKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    if (pid !== holder.pid) return realKill(pid, signal);
+    if (holder.alive) return true;
+    throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+  });
+  const child = childDouble({ hold: true });
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(child);
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
+      ...loop,
+      status: "running",
+      pid: holder.pid,
+      startTime: stamp,
+    }));
+    const probe = vi.fn(async () => stamp);
+    const resumeChild = childDouble();
+    const resumed = runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: resumeChild.spawn,
+        installSignal: false,
+        processStartTime: probe,
+      },
+    });
+    // The startup slot check, the fresh recovery check, and the first wait poll each probe once.
+    // Further polls inside the cache age window must not.
+    await pollUntil(() => (probe.mock.calls.length >= 2 ? true : undefined), 10_000);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(probe.mock.calls.every(([pid]) => pid === holder.pid)).toBe(true);
+    holder.alive = false;
+    const launch = await waitForLaunch(resumeChild);
+    expect(launch.args).toContain("--continue-from");
+    expect(probe).toHaveBeenCalledTimes(3);
+    const result = await resumed;
+    expect(result.summary.loops[0].status).toBe("succeeded");
+  } finally {
+    kill.mockRestore();
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: a PR declared by the earlier transcript is imported before recovery, so the resumed
 // attempt passes --pr and --require-ci for it.
 test("a transcript PR declaration reaches the resumed attempt", async () => {
@@ -1113,6 +1185,65 @@ test("a pending decision and a merge wait survive a resume", async () => {
     expect(resumed.summary.loops[1].status).toBe("needs-owner");
     expect(resumed.summary.loops[1].decision).toBeTruthy();
     expect(resumed.summary.status).toBe("waiting");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a failure after the child declares a pull request clears a stale undeclared one, so
+// the checkpoint never names the same pull request in both fields (ADR 0131).
+test("a failure after the child declares a pull request clears the stale undeclared one", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    pr: 41,
+    exitCode: 2,
+    // A record left by an earlier attempt holds an undeclared pull request when the child declares one.
+    beforeWrite: () =>
+      updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: 7 })),
+  });
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "failed",
+      reason: "exit-2",
+      pr: 41,
+      prUndeclared: null,
+    });
+    expect(await readLoop(runsRoot, prepared.id, 1)).toMatchObject({ pr: 41, prUndeclared: null });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a success after the child declares a pull request keeps the undeclared field clear,
+// so a stale record of an earlier attempt never names the same pull request in both fields (ADR 0131).
+test("a success after the child declares a pull request keeps the undeclared field clear", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    pr: 41,
+    beforeWrite: () =>
+      updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: 7 })),
+  });
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: 41,
+      prUndeclared: null,
+    });
+    expect(await readLoop(runsRoot, prepared.id, 1)).toMatchObject({ pr: 41, prUndeclared: null });
   } finally {
     await cleanupRepo();
   }

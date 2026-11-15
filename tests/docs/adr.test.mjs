@@ -2,23 +2,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
+import { readUserDocs } from "../fs-helpers.mjs";
 
 const adrDir = fileURLToPath(new URL("../../adr", import.meta.url));
 const repoRoot = resolve(adrDir, "..");
 const adr19 = "adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md";
 const readRepoFile = (path) => readFile(join(repoRoot, path), "utf8");
-
-/** The user docs as one text: the reference topic files, the reference index, then the README. */
-async function readUserDocs() {
-  const docs = join(repoRoot, "docs/reference");
-  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
-  const paths = [
-    ...topics.map((name) => join(docs, name)),
-    join(repoRoot, "docs/reference.md"),
-    join(repoRoot, "README.md"),
-  ];
-  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
-}
 
 // The five accepted gaps of issue #421, each as the phrases that identify it.
 const SANDBOX_GAPS = [
@@ -41,7 +30,7 @@ const ALLOWED_STATUSES = new Set([
   "superseded",
   "partially-superseded",
 ]);
-const INDEX_ENTRY = /^- (\d{4}) — \[[^\]]+\]\(([^)]+)\) — (\S+) — /;
+const INDEX_ENTRY = /^- (\d{4}) — \[[^\]]+\]\(([^)]+)\) — (\S+)(?: — |$)/;
 const ADR_LINK = /\[([^\]]*)\]\(([^)]+)\)/g;
 const SUPERSEDED_BY_ALL = /\b(?:partially )?superseded by\b/gi;
 const SUPERSEDES_STATEMENT = /^(?:this adr(?: also)? |it(?: also)? )?(?:partially )?supersedes\b/i;
@@ -218,7 +207,9 @@ test("the ADR index and supersede links follow the ADR rules", async () => {
     if (!/^- \d{4} — /.test(line)) continue;
     const match = line.match(INDEX_ENTRY);
     if (!match) {
-      problems.add(`index entry has no file, status, and summary form: ${line.slice(0, 80)}`);
+      problems.add(
+        `index entry has no file, status, and supersede-link form: ${line.slice(0, 80)}`,
+      );
       continue;
     }
     entries.set(match[1], { path: match[2], status: match[3] });
@@ -381,7 +372,12 @@ test("ADR 0095 supersedes the temporary directory reporting rules and keeps the 
   const readme = await readFile(join(adrDir, "README.md"), "utf8");
   const adr68 = readme.split("\n").find((line) => line.startsWith("- 0068"));
   expect(adr68).not.toContain("qualified by ADR 0076");
-  expect(adr68).toContain("ADR 0095");
+  expect(adr68).not.toContain("every entry");
+  const adr68Text = await readFile(
+    join(adrDir, "0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md"),
+    "utf8",
+  );
+  expect(adr68Text).toContain("ADR 0095");
 });
 
 // Usefulness: verifies ADR 0019 names all five accepted gaps of the issue, so the record of what
@@ -398,7 +394,7 @@ test("ADR 0019 names the five accepted gaps", async () => {
 // Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in as ADR
 // 0019 does. The text names the flag, the sandbox mode, the network option, the ADR, and each gap.
 test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0019", async () => {
-  const text = await readUserDocs();
+  const text = await readUserDocs(repoRoot);
   expect(text).toContain("--reviewer-workspace-write");
   expect(text).toContain("workspace-write");
   expect(text).toContain("network_access=false");
@@ -442,5 +438,86 @@ test("ADR 0019 supersedes ADR 0001 and restates what still holds", async () => {
   expect(row("0001")).toMatch(/ — superseded — /);
   expect(row("0001")).toMatch(/ADR 0019/);
   expect(row("0019")).toMatch(/ — partially-superseded — /);
-  expect(row("0019")).toMatch(/Supersedes ADR 0001/);
+  expect(row("0019")).toMatch(/Partially superseded by \[ADR 0038\]/);
+});
+
+const INDEX_ROW =
+  /^- \d{4} — \[[^\]]+\]\(\d{4}-[^)]+\.md\) — (?:proposed|accepted|deprecated|superseded|partially-superseded)(?: — (?:(?:Partially )?[Ss]uperseded by \[ADR \d{4}\]\(\d{4}-[^)]+\.md\)\. ?)+)?$/;
+
+// Usefulness: keeps every index row to number, linked title, status, and its Superseded by links.
+// It fails if a summary sentence or a second row shape returns (issue #1939), which no other test
+// covers.
+test("the ADR index holds no summary text", async () => {
+  const readme = await readFile(join(adrDir, "README.md"), "utf8");
+  const rows = readme.split("\n").filter((line) => /^- \d{4} /.test(line));
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.filter((line) => !INDEX_ROW.test(line))).toEqual([]);
+});
+
+/** Groups a Markdown file into its heading sections. */
+function sectionsOf(text) {
+  const sections = [];
+  let current = { heading: "", lines: [] };
+  for (const line of text.split("\n")) {
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      sections.push(current);
+      current = { heading: heading[1], lines: [] };
+    } else current.lines.push(line);
+  }
+  sections.push(current);
+  return sections;
+}
+
+/** Returns the ADR numbers that the supersede statements of `text` name as superseding this ADR. */
+function supersededByNumbers(text) {
+  const found = new Set();
+  for (const section of sectionsOf(text)) {
+    const isStatus = /^Status\b/i.test(section.heading);
+    const isSupersededBy = /^Superseded by\b/i.test(section.heading);
+    if (!isStatus && !isSupersededBy) continue;
+    if (isSupersededBy) {
+      for (const match of section.heading.matchAll(/(\d{4})-[^)]*\.md/g)) found.add(match[1]);
+    }
+    for (const block of section.lines.join("\n").split(/\n\s*\n/)) {
+      const flat = block.replace(/\s+/g, " ").trim();
+      for (const sentence of flat.split(/(?<=[.!?])\s+/)) {
+        for (const match of sentence.matchAll(
+          /\[[^\]]*\]\((\d{4})-[^)]*\.md\)[^.]{0,160}?supersedes this ADR/gi,
+        )) {
+          found.add(match[1]);
+        }
+        const phrase = sentence.match(/(?:partially )?superseded by|is replaced by/i);
+        if (!phrase) continue;
+        const after = sentence.slice(phrase.index + phrase[0].length);
+        for (const match of after.matchAll(/(\d{4})-[^)]*\.md/g)) found.add(match[1]);
+      }
+    }
+  }
+  return [...found].sort();
+}
+
+// Usefulness: requires each index row to list exactly the Superseded by links of its ADR file, so
+// the index cannot drift from the record it points at (issue #1939). No other test compares them.
+test("each ADR index row lists the Superseded by links of its ADR file", async () => {
+  const adrs = await readAdrs();
+  const readme = await readFile(join(adrDir, "README.md"), "utf8");
+  const rows = new Map();
+  for (const line of readme.split("\n")) {
+    const number = line.match(/^- (\d{4}) — /)?.[1];
+    if (!number) continue;
+    rows.set(
+      number,
+      [...line.matchAll(/\[ADR (\d{4})\]\(/g)].map((link) => link[1]),
+    );
+  }
+  const problems = [];
+  for (const adr of adrs) {
+    const expected = supersededByNumbers(adr.text);
+    const actual = [...(rows.get(adr.number) ?? [])].sort();
+    if (expected.join() !== actual.join()) {
+      problems.push(`ADR ${adr.number} row lists [${actual}] but its file lists [${expected}]`);
+    }
+  }
+  expect(problems).toEqual([]);
 });

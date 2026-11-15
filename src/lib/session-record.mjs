@@ -41,7 +41,7 @@ export const isUuid = (value) => typeof value === "string" && UUID.test(value);
  * case alias, a symlink, and a directory inside a submodule all count as inside, which a comparison
  * of path text would miss. The path as written also catches a Windows junction inside the tree that
  * points outside it: the real path is outside, but Git follows the junction and lists the file.
- * The write target of a file symlink counts too, because the write lands there (#658).
+ * The write target of a file symlink counts too, because the write lands there.
  */
 export async function isInsideByIdentity(root, path) {
   const rootId = await identity(root);
@@ -61,7 +61,7 @@ export async function isInsideByIdentity(root, path) {
 }
 
 // The key names one transcript by the identity of the directory and the lowercase file name of its
-// write target, so a case alias of the path and a file symlink to it find the same record (#658).
+// write target, so a case alias of the path and a file symlink to it find the same record.
 async function recordKey(transcript) {
   const target = await resolveWriteTarget(transcript).catch(() => resolve(transcript));
   const dir = await canonicalPath(dirname(target));

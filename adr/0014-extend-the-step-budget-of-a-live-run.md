@@ -31,7 +31,8 @@ history and provider prompt cache. `archiveState` keeps the old ids in
 1. `agent-loop role extend --cwd <dir> --parent-session <id> --max-steps <count>` raises `maxSteps` of a
    non-terminal run in place. The state file stays, so the stored role session ids
    and the first-turn tracking keep working.
-2. `--max-steps` uses the parse-time check that init uses (`readMaxSteps`, 1 to
+2. `--max-steps` uses the parse-time check that init uses (`readPositiveInt`, then
+   named `readMaxSteps`, 1 to
    `Number.MAX_SAFE_INTEGER`). The value must also exceed `stepsUsed` and the
    current `maxSteps`. The operation raises the budget only, and a refusal leaves
    the state file unchanged.

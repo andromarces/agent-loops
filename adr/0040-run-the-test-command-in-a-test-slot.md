@@ -46,6 +46,7 @@ Andro Marces
 ## Links
 
 - [Issue #848](https://github.com/andromarces/agent-loops/issues/848)
+- [PR #850: Run --test-cmd inside a test slot and route child full suites through it](https://github.com/andromarces/agent-loops/pull/850)
 - [ADR 0017: Run an operator test command before each reviewer turn](0017-run-a-test-command-before-each-reviewer-turn.md)
 - [ADR 0039: Gate full-suite test runs with a machine-wide test slot](0039-machine-wide-test-slot.md)
 - Partially superseded by [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)

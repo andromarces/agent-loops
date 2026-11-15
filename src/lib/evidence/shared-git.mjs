@@ -97,7 +97,7 @@ export async function readSharedGit(cwd, { deadlineMs, deadlineStart, signal, ..
         throw err;
       }
     },
-    // The test can gate the deadline start; production starts it at the call (issue #1465).
+    // The test can gate the deadline start; production starts it at the call.
     { start: deadlineStart ?? null },
   );
 }
@@ -229,7 +229,7 @@ function whileNotAborted(signal, request) {
   });
 }
 
-// Hashes a regular hook file in chunks, so a large hook is never held whole (issue #1858). The
+// Hashes a regular hook file in chunks, so a large hook is never held whole. The
 // stream owns the opened handle and closes it on end, error, or abort. A handle that resolves after
 // a cancel is closed in the background, and every request waits on the signal.
 async function hashHookFile(path, signal) {

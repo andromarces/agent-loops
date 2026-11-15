@@ -1,4 +1,4 @@
-// Agent-loop OpenCode parent-guard plugin (#75), installed at user scope by
+// Agent-loop OpenCode parent-guard plugin, installed at user scope by
 // `agent-loop install`. The factory and its rationale live in
 // `src/hook/opencode-plugin.mjs`; this template only wires that factory to the
 // shipped decision logic and the installed orchestrator instructions.

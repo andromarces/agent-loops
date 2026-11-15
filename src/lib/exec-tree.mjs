@@ -298,7 +298,7 @@ export function killLiveTrees() {
  * process exits while the subprocess is live. Returns `subprocess`. Only Windows needs the exit
  * handler: execa `cleanup` starts `taskkill` without waiting,
  * and `taskkill /T` cannot find the descendants of a process that already exited, so a tree
- * outlived a parent that called `process.exit` (issue #612). A `taskkill` that finishes inside
+ * outlived a parent that called `process.exit`. A `taskkill` that finishes inside
  * the `exit` event ends the tree before the parent ends. The handler skips a child that exited,
  * a pid that is not a positive integer, and a run that settled, and it runs `taskkill` from the
  * `SystemRoot` directory only. A failure is logged and never thrown. A parent that a hard kill

@@ -18,10 +18,10 @@ import {
 
 // Same closing block as reportBlock, with the verdict line inside it so the
 // model treats it as part of the mandatory block, not an optional extra. The
-// block already carries the Checks line since issue #310, so the reviewer does
-// not repeat it, and the reviewer Checks line stays the only one a gate reads.
-// The parent reads only this block, so each blocker must stand inside it (issue #434).
-// Deferred excludes the reviewer's own blockers and read-only rule (issue #1102).
+// block already carries the Checks line, so the reviewer does not repeat it, and
+// the reviewer Checks line stays the only one a gate reads. The parent reads only
+// this block, so each blocker must stand inside it. Deferred excludes the
+// reviewer's own blockers and read-only rule.
 const reviewerReportBlock = `${reportBlock}
 
 State each blocker concretely in the Blockers line. Never refer to text outside the block, for example "the defects above". The reader sees only the block.
@@ -31,12 +31,12 @@ Deferred never holds your own blockers or the fact that you apply no fix. An unf
 Verdict: accept or reject. One word, nothing else on the line.`;
 
 // A run whose required-check status is unreadable or absent must not accept on a targeted test
-// run alone. No CI result backs that run (issue #1391).
+// run alone. No CI result backs that run.
 const NO_READABLE_CHECKS_RULE =
   "When no readable required-check status covers the reviewed head, an accept needs more than a targeted test run. Run a full test suite through the test slot wrapper, or read every check on the reviewed head. A targeted test run alone does not support an accept. Report CI that is pending in Checks.";
 
 // Fixed review scope every reviewer turn carries, so a parent prompt that
-// restates the spec does not hide a weakened guard or contract (issue #216).
+// restates the spec does not hide a weakened guard or contract.
 const reviewerRules = (noReadableChecks) => `Review scope, in addition to the task below:
 - Trace each changed input, flag, or code path through the existing validators and guards that consume it.
 - Report a change that weakens an existing guard or documented contract as a blocker, unless the task explicitly approves that change.
@@ -57,7 +57,7 @@ ${noReadableChecks ? `- ${NO_READABLE_CHECKS_RULE}\n` : ""}- When the task names
 // The status a declared-PR run read for the PR head, as two lines inside the
 // required-check group. These lines replace the group's own read for this turn
 // rather than sitting beside it, so the prompt never orders a read and a
-// not-read at once (issue #320).
+// not-read at once.
 function runtimeReadLines(prChecks) {
   return [
     `  - This run read the required checks for PR ${prChecks.pr} before this turn: ${prChecks.summary}. That status is advisory evidence for this turn, in place of the read above: report it, and treat it as a report rather than a verdict. ${REQUIRE_CI_GATE_SENTENCE}`,
@@ -112,23 +112,23 @@ function testRunLines(testRun) {
 
 // A reviewer turn never writes to a remote. The runtime mutation check reads only
 // the local work tree, so this rule is advisory and the runtime does not detect a
-// breach (issue #422).
+// breach.
 const remoteWriteRule = `Do not write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS} A read-only query changes nothing, so it stays allowed.`;
 
 // The file-change rule bars a change to the work tree and Git state only. Without this scope a
-// reviewer reads it as a ban on the test suite and rejects with no code blocker (issue #837). The
-// runtime mutation check is unchanged: it does not see an ignored or outside-repository write, so
-// the cleanup sentence is the only guard against probe files piling up in the OS temp directory
-// (issue #865). A Codex reviewer often cannot delete that outside folder, so the ignored path inside
-// the repository comes first (issue #885), and the turn removes that output too, because no runtime
-// step does (issue #906). The runtime now creates and removes one scratch folder per turn, so that
-// folder comes first when the turn has one (issue #920). The other sentences stay for output outside
-// it. A Codex turn also gets a private temporary directory that the runtime removes (ADR 0047), so
-// the rule builds a temporary path from TMPDIR, TEMP, or TMP when one is set, and bars a literal
-// path to the inherited directory, which that removal does not cover (issue #1024). A reviewer that
-// is not Codex may have none of them set, so the rule keeps the platform directory as the fallback.
-// The runtime reports an entry that still appears there (`inheritedTmpdirEntries`). That path stays short, because a deep redirected temporary path fails the Cloudflare Workers
-// test runtime on Windows (issue #903).
+// reviewer reads it as a ban on the test suite, and rejects with no code blocker. The runtime
+// mutation check is unchanged: it does not see an ignored or outside-repository write, so the
+// cleanup sentence is the only guard against probe files piling up in the OS temp directory.
+// A Codex reviewer often cannot delete that outside folder, so the ignored path inside the
+// repository comes first, and the turn removes that output too, because no runtime step does.
+// The runtime creates and removes one scratch folder per turn, so that folder comes first when
+// the turn has one; the other sentences cover output outside it. A Codex turn also gets a private
+// temporary directory that the runtime removes (ADR 0047), so the rule builds a temporary path
+// from TMPDIR, TEMP, or TMP when one is set, and bars a literal path to the inherited directory,
+// which that removal does not cover. A reviewer that is not Codex may have none of them set, so
+// the rule keeps the platform directory as the fallback. The runtime reports an entry that still
+// appears there (`inheritedTmpdirEntries`). That path stays short, because a deep redirected
+// temporary path fails the Cloudflare Workers test runtime on Windows.
 const scratchPlacement = (scratchDir) =>
   scratchDir === null
     ? "Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits."
@@ -136,7 +136,7 @@ const scratchPlacement = (scratchDir) =>
 
 // The scratch folder is an ignored path inside the repository, so the removal rule names it as an
 // exception. A Codex reviewer that deletes it runs a command that automatic approval review can
-// refuse, and the runtime removes it anyway (issue #997).
+// refuse, and the runtime removes it anyway.
 const ignoredPathRemoval = (scratchDir) =>
   scratchDir === null
     ? "Before the closing block, also remove every file or directory that this turn created under an ignored path inside the repository. Name in Notes any entry that you cannot remove."
@@ -144,8 +144,8 @@ const ignoredPathRemoval = (scratchDir) =>
 
 // A tool writes its own cache to a default location whatever the scratch folder is, and the removal
 // rules above read that cache as turn output. A Codex reviewer then runs a delete that automatic
-// approval review refuses, or tries to delete a shared cache that existed before the turn (issue
-// #1171). The rule names no tool, because the prompt fits any repository.
+// approval review refuses, or tries to delete a shared cache that existed before the turn. The
+// rule names no tool, because the prompt fits any repository.
 // Output under a path that the reviewer chose stays turn output, so the exception cannot hide it
 // from the removal and Notes rules; the scratch folder joins the examples only when the turn has one.
 const chosenPathOutput = (scratchDir) =>
@@ -202,7 +202,7 @@ const sandboxNotes = {
 };
 
 // The reviewer variant of the probe-copy rule names its install ban and the runtime environment
-// (issue #1026, issue #1145). The runtime does not detect a breach.
+// The runtime does not detect a breach.
 /**
  * Builds a reviewer turn prompt from one options object.
  * `prChecks` adds the runtime-read required-check status.

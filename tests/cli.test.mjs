@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
@@ -32,6 +32,11 @@ import {
   untrackedFilesGit,
 } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();
@@ -377,7 +382,9 @@ test.each([
 ])(
   "orchestrator that throws %j records a transcript error and prints an error line",
   async (thrown, expectedText) => {
-    const repo = await createTempRepo();
+    // The directory is not a repository, so `cleanRepoGit` answers the reads and no process runs.
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     const transcriptPath = join(repo, "transcript.json");
     const origExitCode = process.exitCode;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -418,6 +425,7 @@ test.each([
     } finally {
       process.exitCode = origExitCode;
       errorSpy.mockRestore();
+      gitDouble.answer = null;
       await removePath(repo);
     }
   },

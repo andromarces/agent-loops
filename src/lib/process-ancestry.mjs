@@ -1,4 +1,4 @@
-// Process-ancestry harness detection (#139). A nested harness inherits the
+// Process-ancestry harness detection. A nested harness inherits the
 // parent's session variables, so no environment variable can identify the
 // running harness. The nearest harness process above the shell command can.
 // Returns null when the platform, the process table, or the ancestry is absent,

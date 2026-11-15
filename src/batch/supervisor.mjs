@@ -9,7 +9,12 @@ import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
 import { declaredPrFromTranscript, undeclaredPrFromTranscript } from "../lib/gate.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
-import { pidAlive, processStartTime, ownerAlive } from "../lib/process-identity.mjs";
+import {
+  pidAlive,
+  processStartTime,
+  ownerAlive,
+  startTimeCache,
+} from "../lib/process-identity.mjs";
 import { logError, logInfo, logWarn } from "../lib/log.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
@@ -25,6 +30,7 @@ import {
   recommendedOf,
 } from "./decisions.mjs";
 import {
+  blockedNumbers,
   checkItemEligibility,
   preflightItemEligibility,
   readOpenPrClosures,
@@ -145,6 +151,15 @@ function undeclaredPrOf(loop, data) {
   return undeclaredPrFromTranscript(data);
 }
 
+// The declared pull request of one transcript and the undeclared pull request that no declaration
+// leaves. An unreadable declaration throws, and the undeclared pull request of an
+// unreadable required-check source is read beside it.
+function pullRequestOf(loop, transcript) {
+  const data = transcript.ok ? transcript.data : null;
+  const declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
+  return { declaredPr, prUndeclared: declaredPr !== null ? null : undeclaredPrOf(loop, data) };
+}
+
 // Clears a stored undeclared PR when a declared one replaces it. An absent declaration keeps it.
 const clearUndeclared = (pr) => (pr === null || pr === undefined ? {} : { prUndeclared: null });
 
@@ -173,9 +188,9 @@ function isLive(loop) {
   return loop.pid != null;
 }
 
-async function ownerStillLive(loop) {
+async function ownerStillLive(loop, cache) {
   if (!isLive(loop)) return false;
-  return ownerAlive({ pid: loop.pid, startTime: loop.startTime });
+  return ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache);
 }
 
 /**
@@ -658,6 +673,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const planTree = deps.planPrWorkTree ?? planPrWorkTree;
   const reconcile = deps.reconcileLoop ?? reconcileLoop;
   const cleanupWorkTree = deps.cleanupLoop ?? cleanupLoop;
+  const probeStartTime = deps.processStartTime ?? processStartTime;
   const verifyRecordedWorkTree = async (loop) => {
     const workTree = loop.workTree;
     if (!workTree?.path) return "the recorded work tree is missing";
@@ -1258,26 +1274,27 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     });
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
-    // One read of the declared pull request serves every exit path. An unreadable
-    // declaration keeps the needs-owner handling of the exit 4 path (#1791). The
-    // undeclared pull request of an unreadable required-check source is read beside it (#1899).
-    let declaredPr = loop.pr;
-    let prUndeclared = null;
+    let declared = { declaredPr: loop.pr, prUndeclared: null };
     try {
-      const data = transcript.ok ? transcript.data : null;
-      declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
-      prUndeclared = declaredPr !== null ? null : undeclaredPrOf(loop, data);
+      declared = pullRequestOf(loop, transcript);
     } catch (err) {
       await markNeedsOwner(
         issue,
         `the transcript declares an unreadable pull request: ${err.message}`,
         {
           evidence: err.message,
-          extra: { stepsUsed, remainingSteps, pid: null, startTime: null, prUndeclared },
+          extra: {
+            stepsUsed,
+            remainingSteps,
+            pid: null,
+            startTime: null,
+            prUndeclared: declared.prUndeclared,
+          },
         },
       );
       return;
     }
+    const { declaredPr, prUndeclared } = declared;
     const common = { stepsUsed, remainingSteps, pid: null, startTime: null, prUndeclared };
 
     if (wasInterrupted || exitCode === 130) {
@@ -1290,16 +1307,13 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       return;
     }
     if (exitCode === 0) {
-      await changeLoop(issue, { ...common, status: "succeeded", pr: declaredPr }, { transcript });
-      loop = loops.get(issue);
-      const cleanup = await cleanupWorkTree({
-        manifest,
-        loop,
-        runsRoot,
-        gh,
-      }).catch((err) => ({ removed: false, reason: err.message }));
-      await changeLoop(issue, { cleanup });
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      const cleanup = await finishSuccess(issue, loop, {
+        stepsUsed,
+        remainingSteps,
+        pr: declaredPr,
+        prUndeclared,
+        transcript,
+      });
       progress(
         `issue ${issue}: succeeded${cleanup.removed ? " (work tree removed)" : ` (work tree kept: ${cleanup.reason})`}`,
       );
@@ -1312,27 +1326,24 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
     const abort = transcriptAbortFromData(transcript.ok ? transcript.data : null, exitCode ?? null);
     if (abort) {
-      await changeLoop(
-        issue,
-        { ...common, status: "failed", reason: "aborted", pr: declaredPr },
-        { transcript },
-      );
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-      logError(`issue ${issue}: failed (${abortDetail(abort.reason)})`);
+      await finishFailure(issue, loop, "aborted", {
+        stepsUsed,
+        remainingSteps,
+        transcript,
+        detail: abortDetail(abort.reason),
+        pr: declaredPr,
+        prUndeclared,
+      });
       return;
     }
-    await changeLoop(
-      issue,
-      {
-        ...common,
-        status: "failed",
-        reason: `exit-${exitCode ?? "unknown"}`,
-        pr: declaredPr,
-      },
-      { transcript },
-    );
-    await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-    logError(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
+    await finishFailure(issue, loop, `exit-${exitCode ?? "unknown"}`, {
+      stepsUsed,
+      remainingSteps,
+      transcript,
+      detail: `exit ${exitCode ?? "unknown"}`,
+      pr: declaredPr,
+      prUndeclared,
+    });
   };
 
   // Waits for one spawned child, releases its slot, and writes its checkpoint. The interruption
@@ -1348,7 +1359,18 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
 
   const readLoopTranscript = (file) => readTranscript(file, deps.readTranscript);
 
-  const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr, transcript }) => {
+  // The undeclared pull request that a finish writes. An explicit null clears a stale record of an
+  // earlier attempt; an omitted value keeps the stored one (ADR 0131).
+  const recordedUndeclared = (prUndeclared, loop) =>
+    prUndeclared === undefined ? (loop.prUndeclared ?? null) : prUndeclared;
+
+  // Writes the success checkpoint, removes the loop's work tree, and releases its claim. Returns
+  // the cleanup result so the caller can report it.
+  const finishSuccess = async (
+    issue,
+    loop,
+    { stepsUsed, remainingSteps, pr, prUndeclared, transcript },
+  ) => {
     const recordedPr = pr ?? loop.pr;
     await changeLoop(
       issue,
@@ -1359,7 +1381,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         stepsUsed,
         remainingSteps,
         pr: recordedPr,
-        prUndeclared: recordedPr == null ? (loop.prUndeclared ?? null) : null,
+        prUndeclared: recordedPr == null ? recordedUndeclared(prUndeclared, loop) : null,
         pid: null,
         startTime: null,
       },
@@ -1374,13 +1396,15 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     );
     await changeLoop(issue, { cleanup });
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+    return cleanup;
   };
 
+  // Writes the failed checkpoint and releases the claim. `pr` is left as stored unless `pr` names it.
   const finishFailure = async (
     issue,
     loop,
     reason,
-    { stepsUsed, remainingSteps, transcript, detail = null },
+    { stepsUsed, remainingSteps, transcript, detail = null, pr, prUndeclared },
   ) => {
     logError(`issue ${issue}: failed (${detail ?? reason})`);
     await changeLoop(
@@ -1390,7 +1414,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         reason,
         stepsUsed,
         remainingSteps,
-        prUndeclared: loop.prUndeclared ?? null,
+        ...(pr === undefined ? {} : { pr }),
+        prUndeclared: recordedUndeclared(prUndeclared, loop),
         pid: null,
         startTime: null,
       },
@@ -1399,35 +1424,34 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
   };
 
-  const withLoopOwnership = async (issue, fn) => {
+  // A held resume lock means another resume owns the loop. The sentinel keeps that apart from a
+  // null result of `fn`.
+  const LOCK_SKIPPED = Symbol("resume lock skipped");
+  const withLoopLock = async (issue, fn) => {
     const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
     const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
     if (release === null) {
       lockSkipped.add(issue);
-      progress(`issue ${issue}: another resume owns the loop`);
-      return;
-    }
-    try {
-      await fn();
-    } finally {
-      await release();
-    }
-  };
-
-  // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
-  // requires. A null result means another resume owns the loop and the caller keeps it pending.
-  const withLoopResult = async (issue, fn) => {
-    const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
-    const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
-    if (release === null) {
-      lockSkipped.add(issue);
-      return null;
+      return LOCK_SKIPPED;
     }
     try {
       return await fn();
     } finally {
       await release();
     }
+  };
+
+  const withLoopOwnership = async (issue, fn) => {
+    if ((await withLoopLock(issue, fn)) === LOCK_SKIPPED) {
+      progress(`issue ${issue}: another resume owns the loop`);
+    }
+  };
+
+  // A pending-decision refresh takes the loop lock so a held lock reports paused.
+  // A null result means another resume owns the loop and the caller keeps it pending.
+  const withLoopResult = async (issue, fn) => {
+    const result = await withLoopLock(issue, fn);
+    return result === LOCK_SKIPPED ? null : result;
   };
 
   /**
@@ -1445,12 +1469,9 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       });
       return;
     }
-    let declaredPr = loop.pr;
-    let prUndeclared = null;
+    let declared;
     try {
-      const data = transcript.ok ? transcript.data : null;
-      declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
-      prUndeclared = declaredPr !== null ? null : undeclaredPrOf(loop, data);
+      declared = pullRequestOf(loop, transcript);
     } catch (err) {
       await markNeedsOwner(
         issue,
@@ -1462,7 +1483,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       );
       return;
     }
-    loop = { ...loop, pr: declaredPr, prUndeclared };
+    loop = { ...loop, pr: declared.declaredPr, prUndeclared: declared.prUndeclared };
 
     const recordedExit = transcript.ok
       ? transcriptExitFromData(transcript.data)
@@ -1571,7 +1592,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (isLive(loop)) {
       // A recorded live PID is never restarted. Without a readable identity the loop needs its
       // owner instead of waiting forever (adr/0106-foreground-batch-scheduling.md decision 10).
-      const current = await processStartTime(loop.pid);
+      const current = await probeStartTime(loop.pid);
       if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
         // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
         await markNeedsOwner(issue, "unverified-process-identity", {
@@ -1580,7 +1601,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         });
         return;
       }
-      while (await ownerStillLive(loop)) {
+      // One cache per wait, so a live owner's start time is probed once per cache age window
+      // and not on every 250 ms poll. The first check above stays fresh.
+      const cache = startTimeCache({ probe: probeStartTime });
+      while (await ownerStillLive(loop, cache)) {
         if (interrupted || hard) return;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
@@ -1622,11 +1646,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       if (err?.kind === "empty") throw new Error("exit unknown");
       throw err;
     }
-    const nodes = Array.isArray(value?.blockedBy)
-      ? value.blockedBy
-      : Array.isArray(value?.blockedBy?.nodes)
-        ? value.blockedBy.nodes
-        : null;
+    const nodes = blockedNumbers(value?.blockedBy);
     if (typeof value?.state !== "string" || nodes === null) {
       throw new Error("the wait read returned an unreadable value");
     }
@@ -1767,7 +1787,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   for (const issue of manifest.issues) {
     const loop = loops.get(issue);
     if (loop !== null && isLive(loop)) {
-      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime })) slots.add(issue);
+      // This check and the pre-wait identity check read the injectable probe. A fresh cache
+      // keeps this read fresh.
+      const cache = startTimeCache({ probe: probeStartTime });
+      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache)) slots.add(issue);
     }
   }
   await refreshPendingDecisions();

@@ -262,7 +262,8 @@ export function closingIssueNumbers(body, repository) {
   return [...new Set(closed)];
 }
 
-function blockedNumbers(value) {
+/** The blocking-issue list of a `blockedBy` reply: the array itself, or the `nodes` or `issues` list of an object. */
+export function blockedNumbers(value) {
   if (Array.isArray(value)) return value;
   if (isJsonObject(value)) {
     if (Array.isArray(value.nodes)) return value.nodes;
@@ -272,6 +273,31 @@ function blockedNumbers(value) {
 }
 
 const isOpen = (state) => String(state).toUpperCase() === "OPEN";
+
+const unverified = (detail) => ({
+  ok: false,
+  reason: "eligibility-unverified",
+  evidence: `the read failed: ${detail}`,
+});
+
+/** The refusal of a pull request-number probe, or null when the number is no pull request. */
+function probeRefusal(probe, number) {
+  if (probe.kind === "pr") {
+    return {
+      ok: false,
+      reason: "is-pull-request",
+      evidence: `number ${number} is a pull request`,
+    };
+  }
+  if (probe.kind === "failed") {
+    return {
+      ok: false,
+      reason: "eligibility-unverified",
+      evidence: `the pull request lookup failed: ${probe.detail}`,
+    };
+  }
+  return null;
+}
 
 // The text of a `gh pr view` reply that proves the number is not a pull request. Any other failed
 // reply is a failed lookup and never falls through to the issue read.
@@ -446,26 +472,9 @@ export async function checkEligibility({
   ownBranch = null,
   requireSpecification = false,
 }) {
-  const unverified = (detail) => ({
-    ok: false,
-    reason: "eligibility-unverified",
-    evidence: `the read failed: ${detail}`,
-  });
   const probe = await probePullRequest(gh, issue, repo);
-  if (probe.kind === "pr") {
-    return {
-      ok: false,
-      reason: "is-pull-request",
-      evidence: `number ${issue} is a pull request`,
-    };
-  }
-  if (probe.kind === "failed") {
-    return {
-      ok: false,
-      reason: "eligibility-unverified",
-      evidence: `the pull request lookup failed: ${probe.detail}`,
-    };
-  }
+  const refused = probeRefusal(probe, issue);
+  if (refused) return refused;
   let issueView;
   try {
     issueView = await readGhJson(
@@ -573,21 +582,7 @@ export async function preflightItemEligibility({ item, gh, repo, batchId = null 
   }
   if (item.kind !== "issue") return { ok: true };
   const probe = await probePullRequest(gh, item.number, repo);
-  if (probe.kind === "pr") {
-    return {
-      ok: false,
-      reason: "is-pull-request",
-      evidence: `number ${item.number} is a pull request`,
-    };
-  }
-  if (probe.kind === "failed") {
-    return {
-      ok: false,
-      reason: "eligibility-unverified",
-      evidence: `the pull request lookup failed: ${probe.detail}`,
-    };
-  }
-  return { ok: true };
+  return probeRefusal(probe, item.number) ?? { ok: true };
 }
 
 /**
@@ -614,11 +609,6 @@ export async function checkItemEligibility(options) {
       evidence: "the pull request head was not frozen at start",
     };
   }
-  const unverified = (detail) => ({
-    ok: false,
-    reason: "eligibility-unverified",
-    evidence: `the read failed: ${detail}`,
-  });
   let view;
   try {
     view = await readGhJson(

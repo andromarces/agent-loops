@@ -7,7 +7,7 @@ import { reviewedState, snapshot } from "./snapshot.mjs";
 
 const GATE_FLAGS = ["workerRan", "reviewerRan", "reviewerTurnDispatched", "acceptedSinceWorker"];
 
-/** The gate state of a run that starts with no earlier run (#234). */
+/** The gate state of a run that starts with no earlier run. */
 export const freshGate = () => ({
   workerRan: false,
   reviewerRan: false,
@@ -17,7 +17,7 @@ export const freshGate = () => ({
   lastReviewed: null,
 });
 
-/** The gate state of a continued run that restores nothing (#362): the tree counts as unreviewed. */
+/** The gate state of a continued run that restores nothing: the tree counts as unreviewed. */
 export const resetGate = () => ({ ...freshGate(), workerRan: true });
 
 /**
@@ -89,7 +89,7 @@ function isValidResultEvent(event) {
 
 /**
  * Rebuilds the gate state of the earlier run by replaying its transcript events in
- * file order through the transitions `runLoop` applies (#393). No stored flag is
+ * file order through the transitions `runLoop` applies. No stored flag is
  * trusted. Returns the replayed state, or null, which keeps the reset, unless all
  * of these hold:
  * - every event is an object with a string `type`, and every `invocation` and
@@ -208,7 +208,7 @@ export function undeclaredPrFromTranscript(earlier) {
  * is an init field of the continued run. A `--pr` or `--require-ci` for another PR is refused, as a
  * changed init field is. A flag for the same PR is accepted. The `review-only` mode refuses a
  * declared PR, as it refuses `--pr` at init. `--compare-head` is refused for any PR, because a
- * declared PR ends through its `--require-ci` gate (#1104).
+ * declared PR ends through its `--require-ci` gate.
  * @param {number | null} declaredPr from `declaredPrFromTranscript`
  * @param {{ pr: number | null, requireCi: number | null, mode: string | null, compareHead?: number | null }} options
  */

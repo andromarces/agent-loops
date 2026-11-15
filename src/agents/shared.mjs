@@ -193,7 +193,7 @@ export function failedForAnotherReason(err) {
 /**
  * Marks a failed turn as a provider capacity failure, so a parent can retry it without reading the
  * error text. A turn that timed out, was canceled, or ended on a signal fails for another reason,
- * so it is never marked. The caller names the terminal event that decides (issue #1017).
+ * so it is never marked. The caller names the terminal event that decides.
  * @param {unknown} err the error `exec` threw
  */
 export function markCapacityFailure(err) {
@@ -203,7 +203,6 @@ export function markCapacityFailure(err) {
   err.transient = "capacity";
 }
 
-/** Returns the byte count of `text`, or 0 for a missing value, for a size line that carries no content. */
 export function byteLength(text) {
   return Buffer.byteLength(text ?? "");
 }
@@ -272,7 +271,7 @@ export function failureMessage({ agent, err, timeout, detail, noDetail, note = "
 /**
  * Returns the message of a turn that carries the closing block the parent reads: the last
  * message that holds a closing block attempt, so a late answer to an event after the block does
- * not replace the report of the turn (issue #449). An attempt counts whether or not it parses,
+ * not replace the report of the turn. An attempt counts whether or not it parses,
  * so a later malformed block still wins and reaches the caller as `raw`, and an earlier block
  * never overrides it. When no message holds an attempt, the last message is returned.
  * @param {string[]} messages assistant messages of one turn, in order and non-empty
@@ -281,7 +280,6 @@ export function lastClosingMessage(messages) {
   return messages.findLast(hasClosingBlockAttempt) ?? messages.at(-1);
 }
 
-/** Returns the trimmed text of `lastClosingMessage(messages)`. */
 export function closingText(messages) {
   return String(lastClosingMessage(messages)).trim();
 }

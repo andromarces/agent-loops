@@ -1,5 +1,5 @@
 // The probe of the `--all` check wait that decides whether any source can report a check for a PR
-// head. It reads only, through the bounded `gh` runner of the wait (#1054).
+// head. It reads only, through the bounded `gh` runner of the wait.
 import { commitEntries } from "./commit-entries.mjs";
 import { ghApi, ghApiFailure, pagedRead, readOne } from "./gh-api.mjs";
 import { inOrder } from "./bounded-call.mjs";
@@ -142,7 +142,7 @@ async function mergedHeadsOf({ bounded, slug, cwd }, baseSha, base) {
  */
 async function readOneJson(read, endpoint, cwd) {
   const reply = await readOne(read, endpoint, cwd);
-  // A transport failure throws, so the wait retries it and reports it at the bound (#1312).
+  // A transport failure throws, so the wait retries it and reports it at the bound.
   if (reply.status !== 0 && reply.transport) {
     throw ghApiFailure(endpoint, reply);
   }
@@ -260,8 +260,8 @@ async function workflowTextsOf({ bounded, slug, cwd }, baseSha) {
  * it counts as evidence. A read that fails, cannot be parsed, is not exactly the expected shape, or
  * may be cut by an API cap returns false or throws, and the caller then keeps the normal wait. A
  * base branch or PR head that moved during the reads keeps it too. The head of the latest PR merged
- * as the base head commit is read for checks as well (#1062). Its limit: only those two commits are
- * read, so a provider that skipped both, or registers later, stays unseen (#1054).
+ * as the base head commit is read for checks as well. Its limit: only those two commits are
+ * read, so a provider that skipped both, or registers later, stays unseen.
  * @param {{ bounded: Function, slug: string, cwd: string, pr: number, headOf: () => Promise<{ head: string, base: string }> }} context
  *   `bounded` is the bounded `gh` runner of the wait, and `headOf` reads the PR head again.
  * @param {string} sha the PR head the wait reads
@@ -287,7 +287,7 @@ export async function noCheckSource(context, sha, base) {
       return false;
     }
     // A file that names a trigger keeps the wait unless every trigger is a PR event whose `paths`
-    // filter matches no PR file (#1065).
+    // filter matches no PR file.
     if (PR_TRIGGERS.test(text) && !prEventsFilteredOut(text, changedPaths)) {
       return false;
     }
@@ -296,7 +296,7 @@ export async function noCheckSource(context, sha, base) {
     return false;
   }
   // A provider that reports on PR heads only never shows on the base head, so the heads of the
-  // latest merged PRs of that commit are read the same way (#1062).
+  // latest merged PRs of that commit are read the same way.
   const mergedHeads = await mergedHeadsOf(context, baseSha, base);
   if (mergedHeads === null) {
     return false;
@@ -325,7 +325,7 @@ async function unmoved(context, sha, base, baseSha) {
 
 /**
  * Whether a workflow file of `base` may run for the PR, so the wait holds a pass for a GitHub Actions
- * check run (#1228). The base branch resolves to one SHA, the files of the PR and the workflow files
+ * check run. The base branch resolves to one SHA, the files of the PR and the workflow files
  * at that SHA are read as `noCheckSource` reads them, and `prWorkflowMayRun` judges each file. A PR
  * that changes a workflow file may run it, whatever the base files say. False means every workflow
  * text proves that no run starts for the PR. Null means a read failed or has another shape, which is

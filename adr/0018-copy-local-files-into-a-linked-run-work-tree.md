@@ -267,6 +267,7 @@ Andro Marces
 ## Links
 
 - [Issue #423](https://github.com/andromarces/agent-loops/issues/423)
+- [PR #428: Copy untracked local files into a linked run work tree](https://github.com/andromarces/agent-loops/pull/428)
 - Implementation: `copyLocalFiles` in `src/lib/local-files.mjs`, the init copy in
   `src/role/dispatch.mjs` and `runLoop` in `src/runtime.mjs`, and the flags in `src/cli.mjs`;
   documented in [Local files in a linked work tree](../docs/reference/harness-entry-points.md#local-files-in-a-linked-work-tree) and `docs/orchestrator-instructions.md`

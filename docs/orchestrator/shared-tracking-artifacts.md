@@ -1,6 +1,6 @@
 # Shared tracking artifacts
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you dispatch several runs in one repository.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you dispatch several runs in one repository, before concurrent runs can edit one issue body, and when a run can create a shared tracking issue or take a sequential identifier such as an ADR number, and put its read-write-read rule in each worker prompt.
 
 - Before dispatch, name every shared tracking artifact that a run can create, such
   as the issues that the repository rules treat as one per target.

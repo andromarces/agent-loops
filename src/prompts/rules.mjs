@@ -17,7 +17,7 @@ An indented prose line directly after an item or its sub-items folds into that i
 
 A bold heading line that groups a dash list outside the prose fold below makes the block unparseable: put each group under one label instead. A dash item or sub-item inside such a list may open with a bold report label name, for example \`- **Notes:** ran\`, and stays item text. The same bold line outside a list under a label, or any other decorated label, makes the block unparseable.
 
-A blank line, then one plain prose line, then a dash list directly under it joins the label above as the prose, a colon, and the items. The prose line must not start with whitespace, an asterisk, an underscore, a backtick, a greater-than sign, or a hash, must not be a list, and must not hold a report label name or \`Verdict\`, in any case, followed by any run of asterisks, underscores, or backticks (or none), whitespace (or none), and a colon, anywhere in the line. A whole-line bold heading is the one \`*\` exception: \`**Reviewer notes.**\` above \`- a\` reads \`**Reviewer notes.**: a\`. Any other list or nesting, an indented label, or a decorated label makes the whole block unparseable. A line that starts with \`*\` either counts as a list or is dropped from the block, so write none:
+A blank line, then one plain prose line, then a dash list directly under it joins the label above as the prose, a colon, and the items. The prose line must not start with whitespace, an asterisk, an underscore, a backtick, a greater-than sign, or a hash, must not be a list, and must not hold a report label name or \`Verdict\`, in any case, followed by any run of asterisks, underscores, or backticks (or none), whitespace (or none), and a colon, anywhere in the line. A whole-line bold heading is the one \`*\` exception: \`**Reviewer notes.**\` above \`- a\` reads \`**Reviewer notes.**: a\`. Any other list or nesting, an indented label, or a decorated label makes the whole block unparseable. A line that starts with \`*\` either counts as a list or is dropped from the block, so write none.
 
 The block holds no Markdown table: a table makes it unparseable. Put tabular data in \`- \` items, one row per item.
 
@@ -33,7 +33,7 @@ Deferred: items found but left out of scope, or "none".
 `.trim();
 
 /**
- * Prompt of the one closing-block repair turn that follows a null report (issue #1615). The turn
+ * Prompt of the one closing-block repair turn that follows a null report. The turn
  * asks for formatting only, so it repeats no work and changes no work product. The same session
  * holds the original response, so the prompt never quotes it.
  */
@@ -55,7 +55,7 @@ Do not refer to text outside the block. Reply with the block alone and nothing e
 }
 
 /**
- * Process rule for every worker and reviewer turn (issue #762). The dispatcher and the CLI of the
+ * Process rule for every worker and reviewer turn. The dispatcher and the CLI of the
  * run carry the work tree path in their command lines. A kill by name or by match can end the
  * run itself.
  */
@@ -63,15 +63,15 @@ export const processRule =
   "Never stop, kill, or signal a process that your own commands did not start, and never select processes by name or by a command-line match. End only the exact PIDs your own commands started.";
 
 /**
- * Secret file rule for every worker and reviewer turn (issue #1248). Init copies the untracked
- * `.env` of the main work tree into the run work tree. A repository-wide `grep` printed a token
- * from it into a turn. The rule is advisory, and the runtime does not detect a breach.
+ * Secret file rule for every worker and reviewer turn. Init copies the untracked
+ * `.env` of the main work tree into the run work tree, so a repository-wide search can read a
+ * token from it. The rule is advisory, and the runtime does not detect a breach.
  */
 export const secretFileRule =
   "Never read, print, or quote `.env`, `.dev.vars`, or another ignored secret file. Check a configuration value by name and presence only. Keep a content search to tracked files, for example `git grep`, or `rg` without `--no-ignore` and `-u`.";
 
 /**
- * Bars contact with a host or service that the task does not name (issue #1522). A reviewer keeps
+ * Bars contact with a host or service that the task does not name. A reviewer keeps
  * the GitHub reads of the review scope. A worker keeps the GitHub operations of its rules and a
  * host or service that the task names.
  */
@@ -83,7 +83,7 @@ export function unnamedHostRule({ namesHost = false } = {}) {
 }
 
 /**
- * What a reviewer reads when the task asks about live data (issue #1604). The rule beside it bars
+ * What a reviewer reads when the task asks about live data. The rule beside it bars
  * contact with a host or service that the task does not name.
  */
 export const liveDataRule =
@@ -162,7 +162,7 @@ export function cliCommandForms(
   const plain = `"${node}" "${cli}" ${render(...rest)}`;
   if (!windows) return [{ shell: "sh", command: plain }];
   // Probed on Windows: bash and cmd run the plain form, PowerShell 5.1 and 7 run the `&` form, and each rejects the other's form.
-  // None of these commands promise `agent-loop` on PATH (#348).
+  // None of these commands promise `agent-loop` on PATH.
   return [
     { shell: "PowerShell", command: `& ${plain}` },
     { shell: "bash or cmd", command: plain },
@@ -193,8 +193,7 @@ const TARGETED_RUN_BOUND_ITEMS = `
 const slotCommandForms = (options) =>
   cliCommandForms(() => "test-slot -- <suite command as separate arguments>", options);
 
-// Related: issue #921, ADR 0044, issue #1078, issue #1492, issue #1611, issue #1919, ADR 0138.
-// The rule also bars a load generator and a process that outlives the turn (issue #934).
+// The rule also bars a load generator and a process that outlives the turn.
 
 // A targeted run covers at most 10 files. The order is the mirror files, then the files that import
 // a changed source file directly. Then come the files of direct importers, then the files that name
@@ -202,7 +201,7 @@ const slotCommandForms = (options) =>
 // the Windows executable limit. The one-string form stays, and the rule names the platform shell
 // that runs it.
 /**
- * The test-run rule for every worker and reviewer turn (issue #848, ADR 0040, issue #872).
+ * The test-run rule for every worker and reviewer turn (ADR 0040).
  * It runs a targeted test file through the `test-slot` wrapper with `--if-held`, directly while
  * all slots are free. While any slot is held, the wrapper waits for a slot. Any broader run is a
  * full suite and runs only through the plain wrapper, or the required CI checks stand in for it.
@@ -237,12 +236,11 @@ ${TARGETED_RUN_BOUND_ITEMS}
   - ${NO_LOAD_GENERATORS}`;
 }
 
-// A held test slot made two workers skip or reorder the TDD red run, and no report recorded it
-// (issue #1612). The wait stays inside the turn, and a run that did not start reaches `Checks`
-// (ADR 0096).
+// A held test slot must not make a worker skip or reorder the red run: the wait stays inside the
+// turn, and a run that did not start reaches `Checks` (ADR 0096).
 
 /**
- * The TDD red-run rule of the worker first turn (issue #1612, ADR 0096). A red run of one or a few
+ * The TDD red-run rule of the worker first turn (ADR 0096). A red run of one or a few
  * test files is a targeted run under ADR 0044, so a held slot makes it wait. The rule bounds that
  * wait below the shell tool bound, reports a red run that did not start as not run with the reason,
  * and bars implementing the fix first with the old source restored to stand in for the red run.
@@ -263,7 +261,7 @@ export function redRunRule(options) {
 const HOOK_TEST_COMMAND = () => 'test-slot -- "<git command>"';
 
 /**
- * The push and commit rule of a worker turn (issue #1602). A `pre-push` or `pre-commit` hook under
+ * The push and commit rule of a worker turn. A `pre-push` or `pre-commit` hook under
  * `core.hooksPath` or `.git/hooks` that starts a test command runs outside the test slot. The push
  * or commit goes through the plain wrapper of this process. The wrapper names the Node binary and
  * the CLI script of this process.
@@ -281,7 +279,7 @@ export function hookTestSlotRule(options) {
 /**
  * The init task as its own block of a first-turn preamble, with the blank line that separates it
  * from the next block. A null task gives no block, so a later turn never repeats the task. The rule
- * above the block keeps the task label lines out of the child report (issue #1909).
+ * above the block keeps the task label lines out of the child report.
  */
 export function initTaskBlock(task) {
   if (task === null || task === undefined) return "";

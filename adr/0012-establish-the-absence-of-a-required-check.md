@@ -373,6 +373,7 @@ Andro Marces
 ## Links
 
 - [Issue #336: Decide how a declared PR run finishes on a base branch with no required checks](https://github.com/andromarces/agent-loops/issues/336)
+- [PR #358: Establish the absence of a required check so a declared PR run can finish](https://github.com/andromarces/agent-loops/pull/358)
 - Implementation:
   - Source: `readRequiredSource`, `classifyRulesets`, `classifyProtection`, `ghRequiredNames`, and `requiredContexts` in `src/lib/checks/ci-required-sources.mjs`
   - Source: The empty-union branch of `checkCi` in `src/lib/checks/ci-gate.mjs`

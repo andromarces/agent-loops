@@ -1,5 +1,5 @@
 // `agent-loop harness-check`: verifies that the named harness is the nearest ancestor process, so a
-// run starts only from the shell that owns it (#151). It installs nothing.
+// run starts only from the shell that owns it. It installs nothing.
 import { readableErrorText, readProp } from "./lib/error-message.mjs";
 import { logError } from "./lib/log.mjs";
 import { nearestHarness } from "./lib/process-ancestry.mjs";
@@ -10,8 +10,7 @@ import { harnessForCommand, isHarness } from "./lib/harnesses.mjs";
  * ancestor, so another harness owns the shell. Exit 0 means the names match;
  * every other non-zero code means the check could not run, found no harness
  * ancestor, or could not read the process ancestry. The distinct code lets a
- * caller separate a genuine harness refusal from a check that did not decide
- * (#151).
+ * caller separate a genuine harness refusal from a check that did not decide.
  */
 export const HARNESS_MISMATCH_EXIT = 3;
 

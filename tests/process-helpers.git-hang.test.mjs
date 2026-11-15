@@ -11,34 +11,30 @@ import {
 } from "./process-helpers.mjs";
 import { pollUntil } from "./wait-helpers.mjs";
 
-// Usefulness: verifies each shim call leaves a record with its claimed number and pid.
-// A failed run can then say how many calls never reached the shim (issue #1258).
-// No other test reads this record.
+// Usefulness: verifies each shim call leaves a record with its claimed number and pid, a start
+// marker named by the pid of the call, and the start and claim steps, so a failure can name how
+// many calls never reached the shim and the last step a call recorded (issue #1258).
+// One run of two calls checks all of it: no other test reads these records, the markers, or the steps.
 test.concurrent.skipIf(process.platform === "win32")(
-  "withGitHangingAfter records the claimed number and pid of each call",
+  "withGitHangingAfter records the number, pid, start marker, and steps of each call",
   async () => {
     await withGitHangingAfter(2, async ({ shimDir, env }) => {
-      for (let call = 0; call < 2; call += 1) {
-        await execa("git", ["--version"], { env });
-      }
+      const calls = [execa("git", ["--version"], { env }), execa("git", ["--version"], { env })];
+      const pids = calls.map((call) => call.pid);
+      await Promise.all(calls);
+
       const found = await shimCallRecords(shimDir);
       expect(found.map((record) => record.number).sort((a, b) => a - b)).toEqual([0, 1]);
       expect(found.every((record) => Number.isInteger(record.pid) && record.pid > 0)).toBe(true);
-    });
-  },
-  30_000,
-);
+      expect((await shimStartPids(shimDir)).sort()).toEqual([...pids].sort());
 
-// Usefulness: verifies the shim writes a marker named by the pid of the call. The failure message
-// of the 60-call test (issue #1258) reads the markers, and the record test does not cover them.
-test.concurrent.skipIf(process.platform === "win32")(
-  "withGitHangingAfter marks the start of each shim call with the pid of the call",
-  async () => {
-    await withGitHangingAfter(1, async ({ shimDir, env }) => {
-      const call = execa("git", ["--version"], { env });
-      const { pid } = call;
-      await call;
-      expect(await shimStartPids(shimDir)).toEqual([pid]);
+      const steps = await shimCallSteps(shimDir);
+      expect([...steps.keys()].sort((a, b) => a - b)).toEqual([...pids].sort((a, b) => a - b));
+      for (const pid of pids) {
+        expect(steps.get(pid)).toHaveLength(2);
+        expect(steps.get(pid)[0]).toMatch(/^start \d+$/);
+        expect(steps.get(pid)[1]).toMatch(/^claimed \d+$/);
+      }
     });
   },
   30_000,
@@ -55,28 +51,6 @@ test.concurrent.skipIf(process.platform === "win32")(
       const call = await execa("git", ["--version"], { reject: false, timeout: 5000, env });
       expect(call.exitCode).toBe(0);
       expect((await shimCallRecords(shimDir)).map((record) => record.number)).toEqual([0]);
-    });
-  },
-  30_000,
-);
-
-// Usefulness: verifies each call writes its start and claim steps, so a failure can name the last
-// step a call recorded (issue #1258). The record test reads the claim only, and no other test
-// reads the steps.
-test.concurrent.skipIf(process.platform === "win32")(
-  "withGitHangingAfter records the start and the claim of each call",
-  async () => {
-    await withGitHangingAfter(2, async ({ shimDir, env }) => {
-      const calls = [execa("git", ["--version"], { env }), execa("git", ["--version"], { env })];
-      const pids = calls.map((call) => call.pid);
-      await Promise.all(calls);
-      const steps = await shimCallSteps(shimDir);
-      expect([...steps.keys()].sort((a, b) => a - b)).toEqual([...pids].sort((a, b) => a - b));
-      for (const pid of pids) {
-        expect(steps.get(pid)).toHaveLength(2);
-        expect(steps.get(pid)[0]).toMatch(/^start \d+$/);
-        expect(steps.get(pid)[1]).toMatch(/^claimed \d+$/);
-      }
     });
   },
   30_000,

@@ -10,7 +10,7 @@ const consume = () => {};
 
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
 export function errorResult(err) {
-  // A cancel outside the turn `try` block, such as the process-table read of a resume or an init (#725).
+  // A cancel outside the turn `try` block, such as the process-table read of a resume or an init.
   if (readProp(err, "isCanceled")) {
     return { exitCode: 130, payload: { status: "error", error: SIGINT_MESSAGE } };
   }

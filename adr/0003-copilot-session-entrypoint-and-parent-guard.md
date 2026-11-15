@@ -41,6 +41,7 @@ Andro Marces
 ## Links
 
 - [Issue #87: Wire the parent-edit guard and a session-id entry point for GitHub Copilot CLI](https://github.com/andromarces/agent-loops/issues/87)
+- [PR #99: Wire the Copilot parent guard and session entry point](https://github.com/andromarces/agent-loops/pull/99)
 - [ADR 0002: Harness-neutral orchestrator instructions with thin entry points](0002-harness-neutral-orchestrator-instructions.md)
 - [Copilot CLI hook configuration](https://docs.github.com/en/copilot/reference/hooks-reference)
 - [Implementation: Copilot entry point](../src/entrypoints/copilot.mjs)

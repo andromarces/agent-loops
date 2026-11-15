@@ -213,7 +213,7 @@ export async function resolveWorkerPr({
       };
     }
     // `confirm` reads the matched PR before the final identity check. It returns null to accept, or
-    // the runtime-owned reason that sets `trusted` and `undeclaredPr` for ADR 0052 (#1111).
+    // the runtime-owned reason that sets `trusted` and `undeclaredPr` for ADR 0052.
     const refusal = confirm ? await confirm(entry.number) : null;
     const after = await readRunState(cwd, signal, { ssh, timeoutMs });
     if (after.branch !== branch || after.repo !== runRepo || after.head !== head) {

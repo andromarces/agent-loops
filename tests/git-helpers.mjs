@@ -1,12 +1,32 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
 import { inject, vi } from "vite-plus/test";
 import { removePath } from "./fs-helpers.mjs";
-import { TEMPLATE_KEY } from "./git-template-setup.mjs";
+import { LINKED_TEMPLATE_KEY, TEMPLATE_KEY } from "./git-template-setup.mjs";
+
+/** The seed that every caller takes when it passes none: the pair template needs no per-case seed. */
+const DEFAULT_SEED = async () => {};
+
+/** A path as Git writes it in `.git` files and worktree metadata: absolute, with `/` separators. */
+const gitPath = (path) => path.replaceAll("\\", "/");
+
+/** Points a copied linked work tree at its copied main work tree, replacing the template paths. */
+async function relocateLinkedWorkTree(main, linked) {
+  const [id] = await readdir(join(main, ".git", "worktrees"));
+  const gitdir = join(main, ".git", "worktrees", id);
+  // A Windows file named `.git` refuses a truncating open, so the new text lands by rename.
+  const put = async (path, text) => {
+    const staged = `${path}.relocate`;
+    await writeFile(staged, text);
+    await rename(staged, path);
+  };
+  await put(join(linked, ".git"), `gitdir: ${gitPath(gitdir)}\n`);
+  await put(join(gitdir, "gitdir"), `${gitPath(join(linked, ".git"))}\n`);
+}
 
 // One immutable repository per run, seeded by the global setup and provided to every test file.
 // Each case copies it, so the copy holds its own `.git`, with no alternates file and no path to
@@ -31,30 +51,35 @@ export async function createTempRepo() {
 /**
  * Creates a main work tree with one commit and a linked work tree on a new
  * branch `run`, both under one temp directory. Copies the template that the global setup
- * provides, then adds the linked work tree per case, because its `.git` file holds an
- * absolute path. `ignore` lines go to the shared `.git/info/exclude`. `seed(main)` runs
- * after the first commit and before the linked work tree exists. `mainName` and
- * `linkedName` name the two directories. Callers remove `base` with `removePath`.
+ * provides. A case with no seed copies the linked pair of the global setup and rewrites its
+ * two absolute path records, so it starts no `git worktree add`; a case that seeds commits
+ * after the work tree exists adds it per case, because its branch must hold the seed commit.
+ * `ignore` lines go to the shared `.git/info/exclude`. `seed(main)` runs after the first
+ * commit and before the linked work tree exists. `mainName` and `linkedName` name the two
+ * directories. Callers remove `base` with `removePath`.
  */
 export async function createLinkedWorkTree({
   ignore = [],
-  seed = async () => {},
+  seed = DEFAULT_SEED,
   mainName = "main",
   linkedName = "linked",
   linkedWorkTree = true,
 } = {}) {
-  const template = templatePath();
   const base = await mkdtemp(join(tmpdir(), "linked-test-"));
   const main = join(base, mainName);
   const linked = join(base, linkedName);
-  await cp(template, main, { recursive: true });
+  const pair = seed === DEFAULT_SEED ? inject(LINKED_TEMPLATE_KEY) : null;
+  await cp(pair?.main ?? templatePath(), main, { recursive: true });
   await writeFile(join(main, ".git", "info", "exclude"), `${ignore.join("\n")}\n`);
   await seed(main);
   // A case that answers every linked read from memory needs no Git work tree there.
-  if (linkedWorkTree) {
-    await execa("git", ["worktree", "add", linked, "-b", "run"], { cwd: main });
-  } else {
+  if (!linkedWorkTree) {
     await mkdir(linked);
+  } else if (pair) {
+    await cp(pair.linked, linked, { recursive: true });
+    await relocateLinkedWorkTree(main, linked);
+  } else {
+    await execa("git", ["worktree", "add", linked, "-b", "run"], { cwd: main });
   }
   return { base, main, linked };
 }
@@ -67,6 +92,11 @@ export async function createLinkedWorkTree({
 // element. Any other `git` call, including a changed flag, flag order, or two
 // arguments joined into one element, throws. A `cwd` that does not exist fails
 // as execa does with `reject: false`: no exit code, `code: "ENOENT"`, empty output.
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/evidence/shared-git.mjs`), `readMainWorkTree` (`src/lib/evidence/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/evidence/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
 export const CLEAN_REPO_BRANCH = "main";
 

@@ -7,7 +7,7 @@ import { recordRunWarning } from "./run-warnings.mjs";
 import { workTreeRoot } from "./snapshot.mjs";
 import { lstatOrNull } from "./work-tree-layout.mjs";
 
-// Short on purpose: a deep path fails some test runtimes on Windows (issue #903).
+// Short on purpose: a deep path fails some test runtimes on Windows.
 const SCRATCH_PARENT = join(".agent-loop", "rev");
 
 /**

@@ -1,18 +1,18 @@
 // The general `gh` client runs `gh` and reads `gh api` endpoints. It judges every reply the way the
-// CI gate, the check wait, and the source probe need (#1183). It holds no required-check logic.
+// CI gate, the check wait, and the source probe need. It holds no required-check logic.
 import { execBounded } from "../exec.mjs";
 import { isJsonObject, tryParseJson } from "../json.mjs";
 
 /**
  * The default bound on a status read. The read sits in front of a child turn
  * that has its own much longer `--timeout`, so it needs its own bound. A `gh`
- * that hangs must not hold the dispatch open (#320).
+ * that hangs must not hold the dispatch open.
  */
 export const DEFAULT_READ_TIMEOUT_MS = 60_000;
 
 // `gh` reads these two names and then writes a debug log to stderr, which breaks the exact stderr
-// match of the protection read (#1047). Compared in upper case, because Windows names are case-blind.
-// Every call also drops `GH_DEBUG` and `DEBUG` (#1047), and the rest of the environment stays.
+// match of the protection read. Compared in upper case, because Windows names are case-blind.
+// Every call also drops `GH_DEBUG` and `DEBUG`, and the rest of the environment stays.
 const GH_DEBUG_NAMES = new Set(["GH_DEBUG", "DEBUG"]);
 
 /**
@@ -31,7 +31,7 @@ function ghEnv(dropEnv, env = process.env) {
  * exit is data, not a throw. `timeoutMs` bounds the call and terminates the `gh` child when it
  * expires, so a hung `gh` cannot outlast a caller bound. On POSIX the kill is `SIGTERM`, then
  * `SIGKILL` after `forceKillAfterDelay`, and on Windows it is `taskkill /T /F` over the process
- * tree. No platform keeps a child the bound has given up on (#329). `dropEnv` names variables that
+ * tree. No platform keeps a child the bound has given up on. `dropEnv` names variables that
  * this one call removes from the child environment, compared in upper case because Windows names
  * are case-blind.
  */
@@ -56,7 +56,7 @@ export async function runGh(args, cwd, { timeoutMs = 0, signal = null, dropEnv =
  * The text a failed `gh` call reports: its trimmed stderr, or its exit status when stderr is empty.
  * With `stdout` of a `gh api --include` read and an empty stderr, the text is `HTTP <status>` from the
  * first line of that stdout. That form names no exit status, and a first line that is no status line
- * gives `exit <status>, no HTTP status line` (#1242). Only that number is named, never body text,
+ * gives `exit <status>, no HTTP status line`. Only that number is named, never body text,
  * which carries server-supplied text.
  */
 export function ghFailureText({ status, stderr, stdout }) {
@@ -85,10 +85,9 @@ function tagRetry(err, { transient, transport }) {
 /**
  * The error of a failed `gh api` call on `endpoint`. It carries `transient` when the reply did, or
  * when the failure is a transport failure. A `terminal` result never becomes transport. Only a
- * result marked `include`, a failed `gh api --include` read, passes its stdout on for a status line
- * (#1246). The stdout of any other read is a reply body. A failed 5xx read names only its
- * first-line status and its body class (`bodyClassOf`), never server-supplied text or a body byte
- * (#1519).
+ * result marked `include`, a failed `gh api --include` read, passes its stdout on for a status line.
+ * The stdout of any other read is a reply body. A failed 5xx read names only its
+ * first-line status and its body class (`bodyClassOf`), never server-supplied text or a body byte.
  */
 export function ghApiFailure(
   endpoint,
@@ -136,7 +135,7 @@ export async function readPrList(read, argv, isEntry) {
       })}`,
     };
   }
-  const list = JSON.parse(reply.stdout);
+  const list = parseGhJson("gh pr list", reply.stdout);
   if (!Array.isArray(list) || list.length >= PR_LIST_LIMIT || !list.every(isEntry)) {
     return { failure: "the gh pr list reply is not a list that names one PR" };
   }
@@ -171,7 +170,7 @@ export async function readOpenBranchPrs({ branch, read, repo = null, fields, isE
 }
 
 // The words that the network stack of `gh` writes for a transport failure, which carries no server
-// reply and so no HTTP status (#1312).
+// reply and so no HTTP status.
 const TRANSPORT_FAILURES = [
   /\bdial tcp\b/i,
   /\bconnection refused\b/i,
@@ -187,7 +186,7 @@ const TRANSPORT_FAILURES = [
   /\bproxyconnect tcp\b/i,
   /\bunexpected EOF\b/i,
   // A bare EOF counts only in the shape the Go HTTP client writes, a quoted URL then `: EOF` at the
-  // end. A body or message that holds EOF elsewhere never matches (#1312).
+  // end. A body or message that holds EOF elsewhere never matches.
   /"[^"]*": EOF$/,
   /\bbroken pipe\b/i,
   /\bhttp2: client connection lost\b/i,
@@ -199,7 +198,7 @@ const HTTP_STATUS_TEXT = /\bHTTP(?:\/\d(?:\.\d)?)?\s+\d{3}\b/i;
 /**
  * Whether a failed read is a transport failure. Such a read names a known transport failure, names
  * no HTTP status, and wrote no reply body. A status line decides first, so a 4xx or 5xx reply whose
- * body or error text also holds transport wording stays as it was (#1312). Text that the server
+ * body or error text also holds transport wording stays as it was. Text that the server
  * supplies arrives in the body, which is never scanned.
  */
 export function isTransportFailure({ stdout, stderr }) {
@@ -212,10 +211,22 @@ export function isTransportFailure({ stdout, stderr }) {
 }
 
 /**
+ * Parses the JSON reply of the read `label`. A parse failure keeps the `SyntaxError` class of a
+ * direct `JSON.parse` and names the read.
+ */
+export function parseGhJson(label, text) {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new SyntaxError(`${label} returned invalid JSON: ${err.message}`, { cause: err });
+  }
+}
+
+/**
  * Runs `gh api` with `args` (the `"api"` word is added here) and parses stdout as JSON.
  * @returns {Promise<unknown>} the parsed body, or null when stdout is empty
  * @throws {Error} on a non-zero exit, with `transient` set when the reply was a retryable failure
- *   stdout that is not JSON throws a raw `SyntaxError`
+ *   stdout that is not JSON names the endpoint
  */
 export async function ghApi(gh, args, cwd) {
   const result = await gh(["api", ...args], cwd);
@@ -223,24 +234,24 @@ export async function ghApi(gh, args, cwd) {
     throw ghApiFailure(args[0], result);
   }
   const text = result.stdout.trim();
-  return text === "" ? null : JSON.parse(text);
+  return text === "" ? null : parseGhJson(`gh api ${args[0]}`, text);
 }
 
-// The reply statuses of a failed paged read that the wait retries on the next poll (#1025). The
+// The reply statuses of a failed paged read that the wait retries on the next poll. The
 // status is the one on the first line of the stdout that `gh api --include` wrote for that one
 // request, never a number in the error text of `gh`, which carries server-supplied text.
 const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
 
 // The body classes of a retryable status that the wait retries. A cut-short JSON value is a
 // GitHub-shaped reply that a transient failure truncated, and the body never decides the status
-// (#1519). A complete value followed by text, and other text, stay terminal: their bytes cannot be
-// told apart from forged text (#1025).
+// A complete value followed by text, and other text, stay terminal: their bytes cannot be
+// told apart from forged text.
 const RETRYABLE_BODY_CLASSES = new Set(["empty", "JSON", "truncated JSON"]);
 
 /**
  * Whether the stderr of a failed `gh pr` read names a retryable server error.
  * `gh` words it `HTTP <status>: <message> (<url>)`, and the status opens the text, so only that
- * opening counts. A status in later text or inside a 4xx message never makes a retry (#1121).
+ * opening counts. A status in later text or inside a 4xx message never makes a retry.
  */
 function isServerErrorText(stderr) {
   const status = /^HTTP (\d{3})\b/.exec(stderr.trimStart());
@@ -249,14 +260,14 @@ function isServerErrorText(stderr) {
 
 /**
  * Whether a failed `gh pr` read is a clean server-error failure: no stdout and a retryable status
- * opening stderr. An unparseable reply is never one (#1121).
+ * opening stderr. An unparseable reply is never one.
  */
 export const isCleanServerError = ({ stdout, stderr }) =>
   stdout.trim() === "" && isServerErrorText(stderr);
 
 /**
  * The error of a failed `gh pr` read named `label`. It carries `transient` for a clean server error
- * or a transport failure, so the wait retries the read on its next poll (#1121, #1312). Every other
+ * or a transport failure, so the wait retries the read on its next poll. Every other
  * failure ends the wait.
  */
 export function ghReadError(label, result) {
@@ -401,7 +412,7 @@ function isEmptyOrJson(body) {
  * The class of a reply body: `empty`, `JSON`, `truncated JSON`, `unparseable JSON`, or `other text`.
  * A truncated body opens one JSON object or array whose closing bracket is missing.
  * A cut reply is then told from a complete value followed by text. Only the class is reported,
- * never a body byte (#1519).
+ * never a body byte.
  */
 export function bodyClassOf(body) {
   const text = body.trim();
@@ -492,11 +503,11 @@ async function readReply(read, args, cwd, state) {
   }
   if (result.status !== 0) {
     // A reply with no status block is a failure that wrote no reply, so a transport failure is its
-    // only retryable form (#1312). A reply with a status block keeps the 5xx rule.
+    // only retryable form. A reply with a status block keeps the 5xx rule.
     const transport = reply === null && isTransportFailure(result);
     const bodyClass = reply === null ? null : bodyClassOf(reply.body);
     // `transient` is set for a first-line status of 500, 502, 503, or 504 with an empty, JSON,
-    // or truncated JSON body (#1519). A transport failure with no status block is transient too.
+    // or truncated JSON body. A transport failure with no status block is transient too.
     const transient =
       reply === null
         ? transport
@@ -587,7 +598,7 @@ async function readPages(read, endpoint, cwd, field) {
 
 /**
  * A `gh` runner whose `api <endpoint>` call reads every page of `endpoint` through `readPages`.
- * A caller of `ghApi` or `readRequiredSource` then never uses `gh --paginate` (#1033).
+ * A caller of `ghApi` or `readRequiredSource` then never uses `gh --paginate`.
  * @param {Function} gh
  * @param {string | null} field see `readPages`
  */
@@ -603,7 +614,7 @@ export const pagedRead =
 
 /**
  * Reads one endpoint that is no list with `gh api --include`.
- * It applies the pager's one validation (`readReply`): the `Link` host check of every reply (#1033)
+ * It applies the pager's one validation (`readReply`): the `Link` host check of every reply
  * and a body of one JSON value. A success returns a `gh`-shaped result whose stdout is the reply
  * body. A `Link` target of the request host on a success is a refusal, because the reply is one
  * page of a longer list. `notFound` is set on a failed result only for the exact absence reply.
@@ -612,8 +623,8 @@ export const pagedRead =
  * @param {string} cwd
  */
 export async function readOne(read, endpoint, cwd) {
-  // `transient` is set as the pager sets it (#1025, #1519), and `endpoint` carries its query.
-  // That validation also checks the first-line status and the 2xx status block (#1025, #1519).
+  // `transient` is set as the pager sets it, and `endpoint` carries its query.
+  // That validation also checks the first-line status and the 2xx status block.
   // A success that names a longer list is a refusal, so this read never takes one page as complete.
   const { reply, end, targets } = await readReply(read, ["api", endpoint, "--include"], cwd, {});
   if (end) {
@@ -629,7 +640,7 @@ export async function readOne(read, endpoint, cwd) {
   }
   if (targets.length > 0) {
     // A refusal about the shape of a reply carries `unreadable`.
-    // The 5xx retry classification of a failed reply is the pager's too (#1025, #1519).
+    // The 5xx retry classification of a failed reply is the pager's too.
     return refusal("the reply carries a Link header, so it may be one page of a longer list");
   }
   return { status: 0, stdout: reply.body, stderr: "" };

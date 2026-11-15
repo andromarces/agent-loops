@@ -1,6 +1,6 @@
 # Batch runs
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when the user asks to work several items as one batch, or when a run reports an audit or a batch decision.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when the user asks for a batch of several items, or when a run reports an audit or batch decision.
 
 When the user asks to work several items as one batch, the skill resolves the request into explicit flags. It runs one `agent-loop batch start` command. It passes every setting as a flag. The settings are the repository, the selection, the agents, models, and efforts. They also include `--max-steps`, `--loops`, the base branch, the work-tree root, and the task template.
 

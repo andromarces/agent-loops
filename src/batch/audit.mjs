@@ -467,13 +467,10 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
       if (approvalMatches(state) && reviewer.status === "failed") continue;
       if (signal?.aborted) throw Object.assign(new Error("interrupted"), { isCanceled: true });
       state = {
-        ...state,
+        ...withReviewer(state, reviewer.index, { status: "running", error: null }),
         status: "running",
         pauseReason: null,
         reason: null,
-        reviewers: state.reviewers.map((entry) =>
-          entry.index === reviewer.index ? { ...entry, status: "running", error: null } : entry,
-        ),
       };
       await writeState(runsRoot, state);
       const sandboxMode = reviewerSandboxMode(reviewer.kind, state.settings.reviewerSandbox);
@@ -508,40 +505,24 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
             "the reviewer changed the audited revision or left the work tree dirty",
           );
         }
-        state = {
-          ...state,
-          reviewers: state.reviewers.map((entry) =>
-            entry.index === reviewer.index
-              ? {
-                  ...entry,
-                  status: "succeeded",
-                  error: null,
-                  findings,
-                  auditedRevision: state.revision,
-                  clean: true,
-                }
-              : entry,
-          ),
-        };
+        state = withReviewer(state, reviewer.index, {
+          status: "succeeded",
+          error: null,
+          findings,
+          auditedRevision: state.revision,
+          clean: true,
+        });
         progress(
           `audit ${state.id}: reviewer ${reviewer.kind} succeeded (${findings.length} finding(s))`,
         );
       } catch (err) {
         if (err?.isCanceled || signal?.aborted) throw err;
-        state = {
-          ...state,
-          reviewers: state.reviewers.map((entry) =>
-            entry.index === reviewer.index
-              ? {
-                  ...entry,
-                  status: "failed",
-                  error: errorText(err),
-                  auditedRevision: null,
-                  clean: null,
-                }
-              : entry,
-          ),
-        };
+        state = withReviewer(state, reviewer.index, {
+          status: "failed",
+          error: errorText(err),
+          auditedRevision: null,
+          clean: null,
+        });
         await writeState(runsRoot, state);
         if (err?.needsOwner) throw err;
         if (err?.name === "MutationError") {
@@ -689,6 +670,14 @@ export async function runAudit({ prepared, runsRoot, gh, signal = null, deps = {
     await release();
   }
 }
+
+/** The audit state with one reviewer entry patched. */
+const withReviewer = (state, index, patch) => ({
+  ...state,
+  reviewers: state.reviewers.map((entry) =>
+    entry.index === index ? { ...entry, ...patch } : entry,
+  ),
+});
 
 function errorText(err) {
   const message = typeof err?.message === "string" ? err.message : String(err);

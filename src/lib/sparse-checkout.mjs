@@ -1,5 +1,5 @@
 // Reads the sparse checkout that a linked `cwd` can inherit from the main work tree. The init
-// envelope then reports the tracked files that the run work tree lacks (issue #1538).
+// envelope then reports the tracked files that the run work tree lacks.
 import { errorLine } from "./error-message.mjs";
 import { gitRead, readTopLevel } from "./git-read.mjs";
 import { mainWorkTreePath } from "./work-tree-layout.mjs";

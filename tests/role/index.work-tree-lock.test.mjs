@@ -1,7 +1,22 @@
 import { execa } from "execa";
 import { realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers the shared Git and lockfile reads from memory (`roleReadsGit`), because no case here
+// asserts them. The `worktree list` reads stay real, because the lock field is the behavior.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? (gitDouble.answer(command, args, options) ?? real.execa(command, args, options))
+        : real.execa(command, args, options),
+  };
+});
+
 import { ExecError } from "../../src/lib/exec.mjs";
 import { cwdHash } from "../../src/lib/runstate.mjs";
 import { workTreeLockReason } from "../../src/lib/work-tree-lock.mjs";
@@ -18,9 +33,15 @@ import {
   stdinPrompt,
   withRepo,
 } from "./helpers.mjs";
-import { createLinkedWorkTree } from "../git-helpers.mjs";
+import { createLinkedWorkTree, roleReadsGit } from "../git-helpers.mjs";
 import { SUMMARY } from "../run-fixtures.mjs";
 
+beforeEach(() => {
+  gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
+});
+afterEach(() => {
+  gitDouble.answer = null;
+});
 afterEach(cleanup);
 
 // Real Git: the lock guards a linked work tree, which only a real repository provides.

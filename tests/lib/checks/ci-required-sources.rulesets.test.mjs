@@ -3,6 +3,7 @@ import {
   ABSENT,
   classifyRulesets,
   EMPTY,
+  prInfo,
   UNKNOWN,
 } from "../../../src/lib/checks/ci-required-sources.mjs";
 import { checkCi } from "../../../src/lib/checks/ci-gate.mjs";
@@ -292,4 +293,13 @@ test("refuses the empty union when a page holding rules is followed by an empty 
   expect(result.ok).toBe(false);
   expect(result.reason).toContain("repository rulesets");
   expect(result.noRequiredChecks).toBeUndefined();
+});
+
+// Usefulness: a malformed `gh pr view` reply keeps the SyntaxError class of a direct JSON.parse and
+// names the read, so a caller that classifies on the class sees the same error as before.
+test("prInfo throws a SyntaxError that names the read for a malformed reply", async () => {
+  const gh = async () => ({ status: 0, stdout: "{not json", stderr: "" });
+  const error = await prInfo(gh, 5, ".").catch((err) => err);
+  expect(error).toBeInstanceOf(SyntaxError);
+  expect(error.message).toContain("gh pr view 5 returned invalid JSON");
 });

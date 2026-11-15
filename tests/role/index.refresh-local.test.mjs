@@ -1,11 +1,26 @@
 import { mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers the shared Git and lockfile reads from memory (`roleReadsGit`), because no case here
+// asserts them. Every other command reaches the real `execa`.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? (gitDouble.answer(command, args, options) ?? real.execa(command, args, options))
+        : real.execa(command, args, options),
+  };
+});
+
 import { SPAWNED_RUN_ENV } from "../../src/lib/exec.mjs";
 import { cwdHash, statePaths } from "../../src/lib/runstate.mjs";
 import { executeRoleCommand } from "../../src/role/index.mjs";
 import { symlinkOrSkip } from "../fs-helpers.mjs";
-import { createLinkedWorkTree } from "../git-helpers.mjs";
+import { createLinkedWorkTree, roleReadsGit } from "../git-helpers.mjs";
 import {
   basicDeps,
   cleanup,
@@ -17,8 +32,12 @@ import {
   withRepo,
 } from "./helpers.mjs";
 
+beforeEach(() => {
+  gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
+});
 afterEach(cleanup);
 afterEach(() => {
+  gitDouble.answer = null;
   vi.unstubAllEnvs();
 });
 

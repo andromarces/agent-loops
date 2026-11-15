@@ -159,6 +159,7 @@ Andro Marces
 ## Links
 
 - [Issue #329: Give the interactive required-check wait a stated bound](https://github.com/andromarces/agent-loops/issues/329)
+- [PR #344: Bound the interactive required-check wait in the runtime](https://github.com/andromarces/agent-loops/pull/344)
 - Implementation: `waitChecks` in `src/lib/checks/check-wait.mjs`, the bounded runner
   in `runGh` and `src/lib/checks/ci-gate.mjs`, the `wait-checks` operation in
   `src/role/index.mjs`, the help text in `src/help.mjs`; tests in

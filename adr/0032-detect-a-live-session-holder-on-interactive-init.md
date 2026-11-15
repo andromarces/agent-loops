@@ -87,6 +87,7 @@ Andro Marces
 
 - [Issue #673](https://github.com/andromarces/agent-loops/issues/673)
 - [Issue #647](https://github.com/andromarces/agent-loops/issues/647)
+- [PR #680: Refuse role init while a live process holds an earlier Claude session](https://github.com/andromarces/agent-loops/pull/680)
 - [ADR 0031: Refuse --continue-from and --resume-interrupted while a live process holds a Claude session](0031-refuse-continue-from-and-resume-interrupted-while-a-live-process-holds-a-claude-session.md)
 - [ADR 0027: Save the session id of an in-tree transcript outside the work tree](0027-save-the-session-id-of-an-in-tree-transcript-outside-the-work-tree.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)

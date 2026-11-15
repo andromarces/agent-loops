@@ -22,15 +22,15 @@ import {
 const missingSession = (id) =>
   `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)`;
 
-// Codex reports this model capacity reply in an `error` event and a `turn.failed` event (issue #1012).
+// Codex reports this model capacity reply in an `error` event and a `turn.failed` event.
 const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
 
 // Codex reports a model it refuses in a `turn.failed` event, for example
-// `The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.` (issue #1565).
+// `The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.`
 const MODEL_REFUSAL = /\bThe '([^']+)' model is not supported\b/;
 
 // A failed Codex turn reports the exit cause and the last failure message only. It never reports
-// the stream, so command output cannot reach the envelope or the state file (issue #1353). The
+// the stream, so command output cannot reach the envelope or the state file. The
 // detail is bounded to 500 characters including the ellipsis, and the whole message stays under 700.
 const NO_DETAIL = "no Codex error event in the output";
 
@@ -108,7 +108,7 @@ export async function runCodex(state, prompt, options = {}) {
   // `exec` and `exec resume` both accept the `-c sandbox_mode` form, so one form serves every turn.
   // Network access is set off explicitly for `workspace-write`, because the user config can turn it on.
   // With no sandbox, a GitHub app connector write runs without approval, so the app connectors are
-  // turned off (issue #496). The sandboxed modes refuse that write already.
+  // turned off. The sandboxed modes refuse that write already.
   if (sandbox === "none") {
     configArgs.push("-c", 'sandbox_mode="danger-full-access"', "-c", "features.apps=false");
   } else if (sandbox === "workspace-write") {
@@ -142,7 +142,7 @@ export async function runCodex(state, prompt, options = {}) {
   let stdout;
   try {
     // The CLI creates two empty `.tmp*` directories in its temporary directory on every turn, so it
-    // gets a private one that the runtime removes (issue #955).
+    // gets a private one that the runtime removes.
     ({ stdout } = await withTurnTmpdir(
       // A command of the turn can leave the group of the child. A parent signal walks the child's
       // descendants by pid (ADR 0071).
@@ -165,7 +165,7 @@ export async function runCodex(state, prompt, options = {}) {
     flagModelRefusal(err, failedEvents);
     flagMissingSession(err, requestedSessionId, missingSession);
     // Only an `exec` failure carries the message that this adapter bounds. Any other error, such
-    // as a failed turn-directory callback, reaches the caller unchanged (issue #1353).
+    // as a failed turn-directory callback, reaches the caller unchanged.
     if (err.name === "ExecError") {
       err.message = failureMessage(err, failedEvents, options.timeout);
     }

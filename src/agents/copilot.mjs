@@ -21,12 +21,11 @@ import {
   turnExecOptions,
 } from "./shared.mjs";
 
-// Text Copilot returns for a tool call that `--no-ask-user` leaves without an approval (issue #713).
+// Text Copilot returns for a tool call that `--no-ask-user` leaves without an approval.
 const SHELL_DENIAL_TEXT = "Permission denied because no interactive user response was available";
 
 // Copilot CLI 1.0.106-2 writes the provider HTTP status on the terminal `session.error` event of
-// a failed turn. A probe against a local 529 server with a BYOK provider captured that event. A
-// provider capacity reply is status 529 (issue #1323).
+// a failed turn. A provider capacity reply is status 529.
 /**
  * Marks a failed turn whose terminal failure is a provider capacity reply. The terminal failure is
  * the last `session.error` event, so an earlier retried failure followed by another cause is never
@@ -46,8 +45,8 @@ function flagCapacityFailure(error, events) {
  * first 256 KiB holds a `user.message` event. The session directory must be a real directory, and
  * neither it nor the file is followed through a link, as the Claude ownership check does. A first turn that fails before Copilot records the
  * prompt (a bad model, an unsupported effort, a kill at startup) leaves `workspace.yaml` only, and
- * a resume of that id holds nothing (issue #642).
- * A relative `COPILOT_HOME` resolves against `cwd`, the role cwd that the CLI runs in (issue #678).
+ * a resume of that id holds nothing.
+ * A relative `COPILOT_HOME` resolves against `cwd`, the role cwd that the CLI runs in.
  * known-limit: a session store outside `COPILOT_HOME` or `~/.copilot` reads as holding no turn, and
  * the next turn then starts a fresh session.
  */
@@ -80,11 +79,11 @@ async function keepSavedPreassignedId(state, sessionId, error, cwd) {
 /**
  * Runs one Copilot turn, and a first turn pre-assigns the session id.
  * The role state keeps a reported id or one that a failed turn saved, marked
- * `state.sessionUnconfirmed` (issue #642, ADR 0030).
+ * `state.sessionUnconfirmed` (ADR 0030).
  * A resume of an unconfirmed id checks for a saved turn, and a missing one reruns the turn as a
  * first turn. A result or a reported id clears the mark.
- * A refused tool call in the assistant text sets `state.shellDenied` (issue #713, ADR 0035).
- * A turn that is not read-only passes `--allow-tool write` (issue #1916, ADR 0141).
+ * A refused tool call in the assistant text sets `state.shellDenied` (ADR 0035).
+ * A turn that is not read-only passes `--allow-tool write` (ADR 0141).
  */
 export async function runCopilot(state, prompt, options = {}) {
   const { cwd, readOnly } = options;
@@ -105,9 +104,8 @@ export async function runCopilot(state, prompt, options = {}) {
     args.push("--deny-tool", "write");
   } else {
     // A non-interactive Copilot turn denies a write request that no allow rule approves, and a
-    // worker needs file edits (issue #1916, ADR 0141).
-    // A worker created a file with this rule (issue #1916, ADR 0141). A file modification and a
-    // shell call under the rule are not verified.
+    // worker needs file edits (ADR 0141). known-limit: the rule is verified for a file creation
+    // only.
     args.push("--allow-tool", "write");
   }
 
@@ -138,7 +136,7 @@ export async function runCopilot(state, prompt, options = {}) {
     setMainLoopUsage(state, objectUsage(failedResult));
     flagCapacityFailure(error, failedEvents);
     // An id the CLI reported wins. Otherwise the pre-assigned id stays only when Copilot saved a
-    // turn under it: a failed first turn that ran a tool leaves such a session (issue #641), and
+    // turn under it: a failed first turn that ran a tool leaves such a session, and
     // one that fails before the prompt is recorded does not, so keeping its id would skip the role
     // preamble for nothing.
     const rawId = resultSessionId(failedResult);
@@ -171,7 +169,7 @@ export async function runCopilot(state, prompt, options = {}) {
   }
 
   // A first turn keeps the reported id before any later check can fail the turn, so the next
-  // turn resumes that session (issue #360). A resumed turn keeps its id, and the check below
+  // turn resumes that session. A resumed turn keeps its id, and the check below
   // refuses a changed one.
   keepFailedSessionId(state, returnedId);
   if (state.sessionId === returnedId) {

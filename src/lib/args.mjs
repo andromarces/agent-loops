@@ -94,7 +94,7 @@ function splitInlineFlag(arg) {
 
 // Both readers accept a safe integer only. Above `Number.MAX_SAFE_INTEGER`, an
 // integer double has no room for `value + 1`, so a step counter built from it
-// stops advancing and `--max-steps` stops bounding anything (#312).
+// stops advancing and `--max-steps` stops bounding anything.
 export function readPositiveInt(flag, value, error = defaultError) {
   const val = Number(value);
   if (!Number.isSafeInteger(val) || val < 1) {
@@ -195,7 +195,7 @@ export const DEFAULT_SETUP_TIMEOUT = 600;
 
 // Loop modes, shared by the headless `--mode` and the role subcommand `--mode`
 // so both paths accept the same values and refuse the same PR flags in
-// review-only (#337).
+// review-only.
 export const MODES = new Set(["work-first", "review-first", "review-only"]);
 
 function modeError(value) {
@@ -290,7 +290,7 @@ export function initRefusal(
       return sandboxRefusal;
     }
     // review-only dispatches no worker and rejects --require-ci at finish, so a
-    // declared PR there could never be gated (#302, #337).
+    // declared PR there could never be gated.
     if (args.pr !== null && (args.mode ?? "work-first") === "review-only") {
       return REVIEW_ONLY_PR_REFUSAL;
     }

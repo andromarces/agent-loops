@@ -1,7 +1,7 @@
 // Bounded wait for the required checks of one pull request. The interactive
 // parent has no harness-independent way to bound `gh pr checks --watch`: `gh`
 // takes no timeout for the watch, and a shell `timeout` exists on neither
-// Windows nor macOS by default. The runtime owns the bound instead (issue #329).
+// Windows nor macOS by default. The runtime owns the bound instead.
 import { setTimeout as delay } from "node:timers/promises";
 import { canceledError } from "../sigint.mjs";
 import {
@@ -37,7 +37,7 @@ export const DEFAULT_WAIT_SECONDS = 300;
 /**
  * Milliseconds the command keeps waiting for an abandoned `gh` read to exit after
  * the bound elapses, so the command confirms the child is gone. The total bound
- * of a wait is therefore `timeoutSeconds` plus this ceiling (#329).
+ * of a wait is therefore `timeoutSeconds` plus this ceiling.
  */
 export const CHILD_EXIT_CEILING_MS = 5000;
 
@@ -57,7 +57,7 @@ class BoundReached extends Error {
  * so the command can confirm the `gh` child is gone. Returns the read result, or
  * `{ timedOut: true, childExitUnconfirmed: true }` when that ceiling expired
  * with the read still unaccounted for, which is a claim the command does not
- * make on the parent's behalf (#329).
+ * make on the parent's behalf.
  */
 async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv, childExitCeilingMs) {
   const controller = new AbortController();
@@ -104,7 +104,7 @@ async function readWithin(gh, argv, cwd, remainingMs, signal, dropEnv, childExit
 }
 
 // Whether a names read failed with a server error or a transport failure. The refusal holds no
-// unparseable reply. The next poll retries it, and the error names the cause (#1121, #1312).
+// unparseable reply. The next poll retries it, and the error names the cause.
 const namesRetryable = (required) => required.namesTransient && required.unparsed.length === 0;
 const namesCause = (required) => (namesRetryable(required) ? `: ${required.namesFailure}` : "");
 const unresolved = (required, refusal) => {
@@ -120,7 +120,7 @@ const unresolved = (required, refusal) => {
 // `{ bounded, slug, pr, cwd, sourceCache }`: the wait's bounded runner, the repository slug, the
 // pull request, the directory, and the ruleset and protection results of the base branch that the
 // wait reads once. A rules change during the wait is not seen by this wait. The `--require-ci`
-// finish gate reads both sources again, so the finish judges the current rules (#1267).
+// finish gate reads both sources again, so the finish judges the current rules.
 async function contextsOf({ bounded, slug, pr, cwd, sourceCache }, base, listed, names) {
   const required = await requiredContexts(bounded, slug, base, pr, cwd, { names, sourceCache });
   // The gate's own refusals, and any source that settled nothing: such a source may hold a
@@ -144,17 +144,17 @@ async function contextsOf({ bounded, slug, pr, cwd, sourceCache }, base, listed,
 }
 
 // Whether the `gh` no-required-checks answer is an established absence, decided by the same
-// `requiredAbsence` the `--require-ci` gate uses (#1013). A source that settled nothing, and a
+// `requiredAbsence` the `--require-ci` gate uses. A source that settled nothing, and a
 // ruleset read that found no rule beside no named check, are errors that name the cause,
 // because the gate refuses the same states. A source that names a required
-// check is no absence, so the wait goes on to judge it. The `no checks reported` reply (#1091)
+// check is no absence, so the wait goes on to judge it. The `no checks reported` reply
 // refuses only when no source can state the required checks: both configuration sources are
 // unreadable and no check is named. A malformed reply of
 // one source says nothing about the other, so it is not judged. A source that names a check or
-// states the absence keeps the wait running whatever the other returned (#941). A server error or a
+// states the absence keeps the wait running whatever the other returned. A server error or a
 // transport failure of a source read carries `transient` and the poll retries it. The names are those of the poll's
 // own `gh pr checks --required` read, which is the reply that raised the question, so no names
-// read can fail here (#1125). `context` is the one of `contextsOf`.
+// read can fail here. `context` is the one of `contextsOf`.
 async function absenceOf(
   { bounded, slug, pr, cwd, sourceCache },
   base,
@@ -169,7 +169,7 @@ async function absenceOf(
   });
   // A no-checks-reported poll accepts its names read, which is the `no checks reported` reply
   // itself. Any other refusal stands, and only a clean server error or a transport failure is
-  // retried (#1121, #1312).
+  // retried.
   const namesRefusal = noChecksYet
     ? null
     : requiredNamesRefusal(required, pr, namesCause(required));
@@ -204,42 +204,14 @@ async function absenceOf(
  *           head?: string | null, expect?: string[], gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
  * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }>, conflicting?: true, prFailures?: Array<{ name: string, state: string|null, bucket: string|null }>, awaiting?: string[], noRequiredChecks?: true, noCheckSource?: true, childExitUnconfirmed?: true }>}
  */
-export async function waitChecks({
-  pr,
-  cwd,
-  timeoutSeconds = DEFAULT_WAIT_SECONDS,
-  deadline = null,
-  all = false,
-  head = null,
-  expect = [],
-  gh = runGh,
-  // A monotonic clock in whole milliseconds, so a wall-clock jump never ends or extends the bound.
-  // Whole milliseconds keep every child timeout an integer (issue #1536).
-  now = () => Math.floor(performance.now()),
-  sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
-  // Injectable so a test can use a short bound; production keeps the 5000 ms default (issue #1465).
-  childExitCeilingMs = CHILD_EXIT_CEILING_MS,
-  signal = null,
-}) {
-  if (head !== null && !isFullSha(head)) {
+export async function waitChecks(options) {
+  const resolved = resolveWaitOptions(options);
+  if (resolved.head !== null && !isFullSha(resolved.head)) {
     throw new Error("head must be a full lowercase commit SHA.");
   }
-  // `deadline` is an absolute time on the `now` clock (#329).
-  // A caller that passes only `timeoutSeconds` is bounded from this call (#329).
-  const context = createWaitContext({
-    pr,
-    cwd,
-    timeoutSeconds,
-    deadline,
-    all,
-    head,
-    expect,
-    gh,
-    now,
-    sleep,
-    childExitCeilingMs,
-    signal,
-  });
+  // `deadline` is an absolute time on the `now` clock.
+  // A caller that passes only `timeoutSeconds` is bounded from this call.
+  const context = createWaitContext(resolved);
   try {
     return seal(context, await poll(context));
   } catch (raw) {
@@ -260,38 +232,38 @@ export async function waitChecks({
   }
 }
 
+/** The options of one wait: the production defaults under every value that the caller gives. */
+function resolveWaitOptions(options) {
+  return {
+    timeoutSeconds: DEFAULT_WAIT_SECONDS,
+    deadline: null,
+    all: false,
+    head: null,
+    expect: [],
+    gh: runGh,
+    // A monotonic clock in whole milliseconds, so a wall-clock jump never ends or extends the bound.
+    // Whole milliseconds keep every child timeout an integer.
+    now: () => Math.floor(performance.now()),
+    sleep: (ms, signal) => delay(ms, signal ? { signal } : undefined),
+    // Injectable so a test can use a short bound; production keeps the 5000 ms default.
+    childExitCeilingMs: CHILD_EXIT_CEILING_MS,
+    signal: null,
+    ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)),
+  };
+}
+
 /**
  * Builds the inputs and mutable state of one wait.
  * The wait helpers read and write this object, so every poll shares one cache.
  * @param {object} options The resolved options of `waitChecks`.
  */
-function createWaitContext({
-  pr,
-  cwd,
-  timeoutSeconds,
-  deadline,
-  all,
-  head,
-  expect,
-  gh,
-  now,
-  sleep,
-  childExitCeilingMs,
-  signal,
-}) {
+function createWaitContext(options) {
+  const { timeoutSeconds, deadline, ...resolved } = options;
+  const { pr, all } = resolved;
   const context = {
-    pr,
-    cwd,
-    all,
-    head,
-    expect,
-    gh,
-    now,
-    sleep,
-    childExitCeilingMs,
-    signal,
-    end: deadline ?? now() + timeoutSeconds * 1000,
-    // `all` waits on every check of the PR head, not only the required ones (#896, #950).
+    ...resolved,
+    end: deadline ?? resolved.now() + timeoutSeconds * 1000,
+    // `all` waits on every check of the PR head, not only the required ones.
     checksArgv: [
       "pr",
       "checks",
@@ -300,8 +272,7 @@ function createWaitContext({
       "--json",
       "name,state,bucket",
     ],
-    // One reply carries the head and the merge state, so a conflict never pairs with another head
-    // (issue #1536).
+    // One reply carries the head and the merge state, so a conflict never pairs with another head.
     headArgv: [
       "pr",
       "view",
@@ -310,7 +281,7 @@ function createWaitContext({
       "headRefOid,baseRefName,mergeable,mergeStateStatus",
     ],
     last: [],
-    // `head` is null when no read completed (#961).
+    // `head` is null when no read completed.
     lastHead: null,
     slug: null,
     // Set by every read of the wait whose child exit was not observed. A sibling read that the
@@ -324,20 +295,20 @@ function createWaitContext({
     awaiting: [],
     // The ruleset and protection results of the base branch, read once per wait. A rules change during
     // the wait is not seen by this wait. The `--require-ci` finish gate reads both sources again, so the
-    // finish judges the current rules (#1267).
+    // finish judges the current rules.
     sourceCache: new Map(),
     // Whether the probe of `noCheckSource` settled. A retryable failure leaves it unset, so the next
     // poll probes again.
     probed: false,
     // The retryable failure of the current poll, or null. The next poll retries it, and a wait that
-    // reaches the bound with it set reports it as an error (#1025, #1312).
+    // reaches the bound with it set reports it as an error.
     failed: null,
     // Whether a workflow of the base branch can run for the PR head `sha`, read once per head. A read
-    // that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
+    // that fails or is not settled holds the pass, is not kept, and is read again on the next poll.
     workflowMayRun: { sha: null, value: true },
     // The retryable failure of the latest completed poll, or null when that poll had none. It is a
     // server error or a transport failure. A wait that ends on the bound with it set reports it as an
-    // error. Neither then reads as a timeout or a pass (#1025, #1312).
+    // error. Neither then reads as a timeout or a pass.
     transient: null,
   };
   const boundedRead = (argv, readCwd, readOptions) =>
@@ -402,7 +373,7 @@ async function ensureSlug(context) {
  * `Link` header, which they reject when it names another host (see `pagedRead`). A failed read is
  * marked `transient`, and the wait retries it on the next poll. That needs a first-line status of
  * 500, 502, 503, or 504 with a body that is empty, JSON, or truncated JSON. It also covers a
- * transport failure with no status line and no body (#1312).
+ * transport failure with no status line and no body.
  */
 async function readCommit(context, sha) {
   await ensureSlug(context);
@@ -458,7 +429,7 @@ function probeContext(context) {
 
 /**
  * Whether a workflow of the base branch can run for the PR head `sha`, read once per head.
- * A read that fails or is not settled holds the pass, is not kept, and is read again on the next poll (#1228).
+ * A read that fails or is not settled holds the pass, is not kept, and is read again on the next poll.
  */
 async function workflowMayRunFor(context, sha, base) {
   if (context.workflowMayRun.sha !== sha) {
@@ -489,7 +460,7 @@ async function workflowMayRunFor(context, sha, base) {
  * workflow can run for the PR, so a push-only workflow never holds it. Then a `github-actions` check
  * suite of the commit that is not completed holds the pass, and so does no such suite at all. A suite
  * of another app never holds it. A failed read holds the pass, and a retryable failure is kept for the
- * bound, which reports it (#1518).
+ * bound, which reports it.
  */
 async function actionsHold(context, sha, base) {
   if (!(await workflowMayRunFor(context, sha, base))) {
@@ -522,7 +493,7 @@ async function probe(context, sha, base) {
  * Then the check list, when the head is the one waited for. `listed` is null for another head.
  * A conflict settles the wait only on the head it names.
  * With `--head`, a conflict on another commit keeps the wait, as the `--head` rule keeps it for
- * checks (issue #1536).
+ * checks.
  */
 async function readPr(context) {
   const { head: sha, base, conflicting } = await readPrHead(context);
@@ -534,7 +505,7 @@ async function readPr(context) {
   }
   const read = await context.bounded(context.checksArgv);
   const listed = readOutcome(context.pr, read, context.all);
-  // The required names come from this read, so the poll makes no second `gh pr checks` call (#1125).
+  // The required names come from this read, so the poll makes no second `gh pr checks` call.
   const names = context.all ? null : requiredNamesOf(read);
   if (listed.noRequiredChecks && !(await absent(context, base, names))) {
     listed.noRequiredChecks = false;
@@ -645,7 +616,7 @@ async function commitOutcome(context, sha, base, listed, names) {
   context.awaiting = context.expect.filter((name) => !runNames.includes(name));
   const failing = context.prFailures.length > 0 || items.some(isFailing);
   const passing = read.settled && listed.settled && context.awaiting.length === 0;
-  // A pass waits for the GitHub Actions work of the base workflow on `sha` to complete (#1228, #1518).
+  // A pass waits for the GitHub Actions work of the base workflow on `sha` to complete.
   const held = !failing && passing && context.all && (await actionsHold(context, sha, base));
   return { settled: failing || (passing && !held), checks: read.checks };
 }
@@ -668,7 +639,7 @@ async function poll(context) {
     }
     // A conflict is no pass and holds no check state.
     // The wait names the head it read and ends before the bound.
-    // The parent then merges the base branch and waits on the new head (issue #1536).
+    // The parent then merges the base branch and waits on the new head.
     if (state?.conflicting) {
       return { timedOut: false, conflicting: true, head: state.sha, checks: [] };
     }

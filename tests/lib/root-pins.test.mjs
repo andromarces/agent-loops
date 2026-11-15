@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
-import { tmpRoot } from "../../src/lib/tmp-root.mjs";
+import { tmpRoot } from "../../src/lib/root-pins.mjs";
 
 const NAME = "AGENT_LOOP_TMP_ROOT_TEST";
 afterEach(() => {

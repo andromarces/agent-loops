@@ -141,8 +141,9 @@ test("an inherited AGENT_LOOP_INHERITED_TMPDIR is unset while a file runs, then 
 const NESTED_RUN_TIMEOUT_MS = 60000;
 
 // Usefulness: verifies a test run writes no agent-loops entry in the OS temp directory (#503).
-// It also runs the default-roots file, so unpinned startup stays in the per-file directory.
 // Runner caches (vite, Node compile cache) are not test output and are not asserted.
+// The default-roots file runs under default pins in the suite itself, so this nested run does not
+// repeat it; only the installer lock needs its own isolated temporary root.
 test(
   "a test run that reaches the installer lock leaves no agent-loops entry in the OS temp directory",
   async () => {
@@ -150,27 +151,16 @@ test(
     try {
       // `killTreeOnExit` ends the tree on Windows when this worker exits before the nested run (issue #612).
       await killTreeOnExit(
-        execa(
-          "pnpm",
-          [
-            "exec",
-            "vp",
-            "test",
-            "run",
-            "tests/install/installer.lock.test.mjs",
-            "tests/lib/tmp-root.default-roots.test.mjs",
-          ],
-          {
-            env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
-            extendEnv: true,
-            // Bound the nested run and end its whole process tree on expiry (as `runGh`).
-            // A forced timeout ended every descendant on Windows 11 and macOS (issue #513).
-            timeout: NESTED_RUN_TIMEOUT_MS,
-            forceKillAfterDelay: 1000,
-            cleanup: true,
-            killDescendants: true,
-          },
-        ),
+        execa("pnpm", ["exec", "vp", "test", "run", "tests/install/installer.lock.test.mjs"], {
+          env: { TMPDIR: osTmp, TEMP: osTmp, TMP: osTmp },
+          extendEnv: true,
+          // Bound the nested run and end its whole process tree on expiry (as `runGh`).
+          // A forced timeout ended every descendant on Windows 11 and macOS (issue #513).
+          timeout: NESTED_RUN_TIMEOUT_MS,
+          forceKillAfterDelay: 1000,
+          cleanup: true,
+          killDescendants: true,
+        }),
       );
       expect(await readdir(osTmp)).not.toContain("agent-loops");
     } finally {

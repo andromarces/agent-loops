@@ -6,11 +6,7 @@ import { afterEach, expect, vi } from "vite-plus/test";
 // Answers `git` from memory for the tests that switch it on (see
 // `gitWhileDotGitExists` in git-helpers.mjs); every other test reaches the real `execa`.
 //
-// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
-// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
-// (`src/lib/evidence/shared-git.mjs`), `readMainWorkTree` (`src/lib/evidence/main-work-tree-change.mjs`),
-// `readLockfiles` (`src/lib/evidence/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
-// The converted cases assert no Git result.
+// `cleanRepoGit` doubles every Git guard and read of this case; `tests/git-helpers.mjs` lists them.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 // Counts the top-level and common-directory reads of one init dispatch.
 const gitReads = vi.hoisted(() => ({ topLevel: 0, commonDir: 0 }));

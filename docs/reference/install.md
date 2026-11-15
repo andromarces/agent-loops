@@ -4,7 +4,14 @@
 
 - Node.js `^24.11.0 || >=26.0.0` (24.11.0 or later on the 24 line, or 26.0.0 or later)
 - Git (the target `--cwd` must be inside a Git work tree)
+- GitHub CLI (`gh`), installed and authenticated. The PR gate, `--require-ci`, and the
+  `batch` commands that read or write GitHub (`batch start`, `batch resume`,
+  `batch audit start`, `batch audit resume`, and `batch audit approve`) call it.
 - Installed and authenticated CLI agents (see [Harness CLI versions](#harness-cli-versions) for the version floors)
+
+The five `--harness` names are `claude`, `codex`, `opencode`, `copilot`, and `antigravity`.
+The Antigravity adapter kind is also accepted as `agy` in `--worker`, `--reviewer`, and
+`--orchestrator`, but `--harness agy` is refused.
 
 pnpm is required only for development in a clone, not for a registry install.
 

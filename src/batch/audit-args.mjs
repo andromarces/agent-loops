@@ -12,8 +12,13 @@ import {
 } from "../lib/args.mjs";
 import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import { canonicalPath } from "../lib/canonical-path.mjs";
-import { parseWorkTreeList } from "../lib/git-read.mjs";
-import { applyBatchFlag, logRoleOptionWarnings, prepareRepository, usage } from "./args.mjs";
+import {
+  applyBatchFlag,
+  logRoleOptionWarnings,
+  prepareRepository,
+  usage,
+  workTreeEntries,
+} from "./args.mjs";
 import { git } from "./git.mjs";
 
 const MAX_REVIEWERS = 16;
@@ -205,9 +210,6 @@ async function resolveFocus(options) {
 export async function prepareAudit(options, { gitRun = git } = {}) {
   const focus = await resolveFocus(options);
   const repo = await canonicalPath(options.repo);
-  const listed = await gitRun(["worktree", "list", "--porcelain", "-z"], repo);
-  if (listed.exitCode !== 0) throw usage(`--repo is not a Git work tree: ${listed.stderr}`);
-  const entries = parseWorkTreeList(listed.stdout);
   // The audit runner returns an object. The shared reader reads a string and throws on failure.
   const readText = async (args, cwd) => {
     const result = await gitRun(args, cwd);
@@ -216,6 +218,7 @@ export async function prepareAudit(options, { gitRun = git } = {}) {
     }
     return String(result.stdout).trim();
   };
+  const entries = await workTreeEntries(repo, readText);
   const rootRunner = async (args, cwd) => {
     const result = await gitRun(args, cwd);
     return result.exitCode === 0 && !result.timedOut ? result.stdout : "";

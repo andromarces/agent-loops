@@ -12,6 +12,8 @@ pnpm test:duration  # Print total time and the 20 slowest files and tests
 
 `pnpm test:duration` runs the suite and prints the elapsed time of the whole run, teardown included. It lists the 20 slowest test files and the 20 slowest tests with durations. A total time per operating system more than 10% over the base branch needs a PR justification. Compare only runs with the same runner class, test configuration, worker count, and sharding configuration.
 
+The Windows and macOS CI test jobs pass `--shard=<index>/<count>`. Vitest's default split assigns files by a hash of their path, which ignores cost. `vite.config.mjs` therefore sets `sequence.sequencer` to `tests/shard-sequencer.mjs`. That sequencer groups files by estimated duration, so shard wall times stay close. `tests/shard-weights.json` holds the per-file durations from the last measurement, and a file absent from that table is estimated from its byte size.
+
 The toolchain config lives in `vite.config.mjs`. A `vite-plus` upgrade re-pins the
 `vite` and `vitest` overrides in `pnpm-workspace.yaml` to the values that `vite-plus`
 depends on, then runs `pnpm install`. `tests/pnpm-workspace.overrides.test.mjs` fails when an override differs ([ADR 0022](https://github.com/andromarces/agent-loops/blob/main/adr/0022-vite-plus-toolchain-and-npm-distribution.md)).
@@ -60,6 +62,17 @@ Vite+ hook dispatcher (`vp config`). The hook scripts live in `.vite-hooks/`.
 `vite-plus` is absent. `prepare` writes nothing to stdout. When the dispatcher
 install fails, it writes one warning line to stderr and still exits 0. `prepare`
 changes no `core.hooksPath` value.
+
+A clone that still holds the Husky `core.hooksPath` (`<repo>/.husky/_`) runs no
+hook: `vp config` skips the install, and no warning appears. Clear the local value,
+then run `pnpm install` again:
+
+```bash
+git config --local --unset core.hooksPath
+pnpm install
+```
+
+[ADR 0133](https://github.com/andromarces/agent-loops/blob/main/adr/0133-drop-the-husky-hooks-path-migration.md) is the record of that change.
 
 ## Releasing
 

@@ -1,4 +1,4 @@
-// Filesystem helpers for the user-scope installer (#139). Every write is atomic
+// Filesystem helpers for the user-scope installer. Every write is atomic
 // (temp file plus rename).
 import { access, lstat, mkdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -45,7 +45,7 @@ export async function fileMode(path) {
 
 /**
  * Exclusive `writeFileAtomic` that preserves the destination's permission bits unless `mode` is given, so a
- * private settings file stays private after install, backup, and restore (#790).
+ * private settings file stays private after install, backup, and restore.
  */
 export async function writeTextAtomic(path, text, { mode } = {}) {
   await writeFileAtomic(path, text, {

@@ -71,7 +71,7 @@ export async function invoke({ agents, state, roleName, prompt, opts, onEvent, s
 
 /**
  * Runs one read-only probe turn in a new session and reads `state.resolvedModel` and
- * `state.initModel` from it (#394). The probe is a child turn, so it runs under the same mutation
+ * `state.initModel` from it. The probe is a child turn, so it runs under the same mutation
  * check as a reviewer turn. A probe that changes the work tree throws `MutationError`, a failed
  * snapshot throws `SnapshotError`, and `signal` cancels the CLI call. Every error is thrown, never
  * returned as a result, because the caller refuses the continuation on any failure.
@@ -108,7 +108,7 @@ export async function runProbeTurn({
       }),
     { signal },
   );
-  // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
+  // A cancel can land in the post-turn snapshot, after the adapter returned.
   throwIfCanceled(signal, roleName);
 }
 
@@ -122,31 +122,31 @@ export async function runProbeTurn({
  * errors: detected mutation, snapshot failure, or cancel.
  * A reviewer result also carries `reviewed` and `prChecks`. `reviewed` is the runtime-owned
  * identity of the work tree the reviewer saw. `prChecks` is the required-check status the
- * runtime read for a declared PR (#320).
+ * runtime read for a declared PR.
  * The evidence fields listed in `lib/evidence/turn-evidence.mjs` join a result. A fatal error carries them
  * through `carryTurnEvidence` and `failedTurnEvidence`.
  * `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) passes the reviewer-only `sandbox`
  * input to a reviewer turn and adds the matching prompt line; no other role receives it, and null
  * passes none (ADR 0019, ADR 0038).
  * `localFilesCopied` names the copied local paths whose sources the turn window hashes before and
- * after the child call. An absent or empty list reads no source (issue #1504).
+ * after the child call. An absent or empty list reads no source.
  * A reviewer turn gets one scratch folder, named in its prompt, that the runtime removes after the
- * post-turn snapshot on every outcome. A failed removal only warns (issue #920).
+ * post-turn snapshot on every outcome. A failed removal only warns.
  * `task` is the init task of the run. A first turn of the role, or a rerun as a first turn, shows it under
  * its own label, and a later turn does not repeat it. `role.taskSentTo` records the session id of the
  * conversation that a turn carrying the task ran in. A reviewer turn that a CLI runs in a replacement
- * conversation without the task is followed by a task-only reviewer turn in the same call (issue #890).
+ * conversation without the task is followed by a task-only reviewer turn in the same call.
  * `onSessionAssigned(id)` is awaited by the Claude adapter, which pre-assigns a session id, before
  * its CLI starts, and with `null` when the CLI rejected that id. Other adapters never call it. A
- * dispatcher uses it to persist the id ahead of a crash (issue #395).
+ * dispatcher uses it to persist the id ahead of a crash.
  * `onTurnTmpdir(record)` is awaited after the private temporary directory of the turn exists and
  * before its CLI starts, for an adapter of any kind (ADR 0068). A dispatcher uses
  * it to persist the record, so a later call can remove the directory of a dispatch that died
- * mid-turn (issue #1207). A failed `onTurnTmpdir` fails the turn before the CLI starts.
+ * mid-turn. A failed `onTurnTmpdir` fails the turn before the CLI starts.
  * `onTurnChild(pid)` is called once the CLI has started, so the dispatcher can
  * record which process the directory belongs to. A rejection warns and never changes the turn.
  * A successful string response whose report parses to null takes one repair turn in the same
- * session, which asks for the closing block alone and runs inside the charged step (issue #1615).
+ * session, which asks for the closing block alone and runs inside the charged step.
  * A reviewer repair takes its own mutation check. A lost or replaced session, a failed repair, and
  * a repair that still parses to null leave the original response and its evidence, with a null
  * report.
@@ -242,7 +242,7 @@ export async function runChild(options) {
   // turn, so a worker gets its preamble again and either role gets the init task again. The rerun belongs to the step already charged for
   // this turn: the failed resume ran no model turn, and the single rerun bounds the extra cost
   // (ADR 0016).
-  // A canceled turn counts as delivered, because the CLI may have received the prompt (#826). A turn
+  // A canceled turn counts as delivered, because the CLI may have received the prompt. A turn
   // that fails otherwise counts too, unless `countFailure` is false, which a caller sets when the
   // turn exists only to deliver the task.
   const invokeWithTask = async (first, buildPrompt, { countFailure = true } = {}) => {
@@ -278,7 +278,7 @@ export async function runChild(options) {
   // An adapter sets `conversationReplaced` when a resume ran the turn in a new conversation, so
   // that conversation never received the worker preamble. The turn already ran, so a rerun would
   // repeat its edits. A preamble-only turn in the new conversation gives it the preamble instead.
-  // The turn that ran stays the result, so a failed preamble turn only warns (issue #396, ADR 0016).
+  // The turn that ran stays the result, so a failed preamble turn only warns (ADR 0016).
   // The mark is cleared on every exit of `runChild` except a cancel that leaves the replaced
   // conversation without its preamble, so a step that throws after the adapter succeeded, such as
   // an event handler, leaves no stale mark for a later turn.
@@ -304,7 +304,7 @@ export async function runChild(options) {
   };
 
   // A reviewer has no preamble, so a replacement conversation would get the init task only on the
-  // next dispatch, and a run can finish first (issue #890). A task-only turn delivers it before the
+  // next dispatch, and a run can finish first. A task-only turn delivers it before the
   // verdict counts. It runs under its own mutation check, so a write in either turn is seen alone.
   // A failed turn records no delivery and throws, so the verdict of an undelivered conversation never
   // becomes an ok result. A cancel counts as delivered and keeps the replacement mark. A turn that
@@ -350,18 +350,18 @@ export async function runChild(options) {
 
   // The worker prompt needs no runtime read, so its builder is fixed here. The
   // reviewer prompt is built inside the mutation check, where the pre-turn
-  // snapshot gives the local head the status read compares against (#320).
+  // snapshot gives the local head the status read compares against.
   const buildWorkerPrompt = (first, turnTask) => workerPrompt(prompt, first, turnTask);
 
   /**
    * Reads the required-check status a PR-bearing run supplies to the reviewer,
-   * for the declared `--pr` or, when none is declared, the `--require-ci` PR
-   * (#350), using the pre-turn snapshot head as the local head, and its `clean` flag so a
+   * for the declared `--pr` or, when none is declared, the `--require-ci` PR,
+   * using the pre-turn snapshot head as the local head, and its `clean` flag so a
    * pass is withheld for a tree the finish gate refuses. A failed read, a
    * mismatched head, and a stalled read are all an unresolved status rather than
-   * a turn failure, and the reviewer keeps its own read as the fallback
-   * (issue #320). The status covers the PR head on GitHub, so it is evidence
-   * for the reviewer, not a gate.
+   * a turn failure, and the reviewer keeps its own read as the fallback. The
+   * status covers the PR head on GitHub, so it is evidence for the reviewer, not
+   * a gate.
    */
   const readStatus = async ({ head, clean }) => {
     if (!isReviewer || pr === null) {
@@ -381,11 +381,11 @@ export async function runChild(options) {
   };
 
   // Declared before the closing-block repair closure that assigns it, and outside the try so a turn
-  // that fails after the command ran still reports what the runtime saw (ADR 0017, issue #984).
+  // that fails after the command ran still reports what the runtime saw (ADR 0017).
   let keepReplacedMark = false;
 
   /**
-   * Runs the one closing-block repair turn that follows a null report (issue #1615). The turn
+   * Runs the one closing-block repair turn that follows a null report. The turn
    * stays in the same session and asks for formatting only, so it repeats no work. A reviewer
    * repair runs under its own mutation check. Returns null when the repair fails, the session is
    * lost or replaced, the repaired response still parses to null, or the repaired report does not
@@ -442,7 +442,7 @@ export async function runChild(options) {
 
   // Declared outside the try so a turn that fails after the command ran still
   // reports what the runtime read and the work tree change it saw (ADR 0017), and so a failed
-  // worker turn still compares the shared Git state it may have changed (issue #984).
+  // worker turn still compares the shared Git state it may have changed.
   let testRun = null;
   // The pre-turn baselines and post-turn evidence reads of this turn.
   const evidence = createTurnEvidence({
@@ -469,7 +469,7 @@ export async function runChild(options) {
     }
     // The scratch folder is created before the baseline snapshot and removed after the post-turn
     // snapshot, whatever the turn returned. It is ignored, so neither snapshot lists it, and the
-    // removal can neither read as a mutation nor hide one (issue #920).
+    // removal can neither read as a mutation nor hide one.
     const scratchDir = isReviewer ? await createReviewerScratch(cwd, { signal }) : null;
     let response;
     try {
@@ -505,7 +505,7 @@ export async function runChild(options) {
       if (scratchDir !== null) await removeReviewerScratch(scratchDir);
     }
     // A worker may write, so the state after its turn is what the parent needs before a reviewer
-    // runs: a PR-work tree with `clean: false` goes back to the worker (issue #910).
+    // runs: a PR-work tree with `clean: false` goes back to the worker.
     // The four reads are independent, so they run together. All settle before a failure throws, so
     // a cancel in the work tree read keeps the other values for the catch path.
     const [workTree, sharedGitChanged, lockfileChanged, mainChange] = await settleInOrder([
@@ -526,14 +526,14 @@ export async function runChild(options) {
     ]);
     const { inheritedTmpdirEntries, packageStoreEntries } = advisory;
     // A cancel can also land after the adapter returned, in the post-turn snapshot. Every result of
-    // this function passes here, so no caller records a canceled turn as ok (#587).
+    // this function passes here, so no caller records a canceled turn as ok.
     throwIfCanceled(signal, roleName);
     // An adapter sets `shellDenied` when the turn reported a refused tool call (ADR 0035).
     const shellDenied = role.shellDenied === true;
     // OpenCode sets `multiPartUnidentified` when the text arrived in several unidentified parts.
     const multiPartUnidentified = role.multiPartUnidentified === true;
     // An adapter returns the turn response as a string. A missing or non-string response breaks
-    // that contract, so the turn fails instead of ending ok with a null report (#1496).
+    // that contract, so the turn fails instead of ending ok with a null report.
     if (typeof response !== "string") {
       throw new Error(
         `the ${roleName} adapter returned no string response (got ${
@@ -543,7 +543,7 @@ export async function runChild(options) {
     }
     let report = reportForResult(response, multiPartUnidentified);
     // A null report gets one repair turn in the same session. A repair that succeeds replaces the
-    // response and the report; a failed one leaves the original response in `raw` (issue #1615).
+    // response and the report; a failed one leaves the original response in `raw`.
     if (report === null) {
       const repaired = await repairClosingBlock(response);
       if (repaired !== null) {
@@ -552,7 +552,7 @@ export async function runChild(options) {
       }
     }
     // A null report names every required label it lacks, so the parent and the log carry no response
-    // text beyond `raw` (issue #1520).
+    // text beyond `raw`.
     const reportMissingLabels = report === null ? missingRequiredReportLabels(response) : [];
     if (reportMissingLabels.length > 0) {
       logWarn(
@@ -560,8 +560,8 @@ export async function runChild(options) {
       );
     }
     // A parsed report names each label that points outside the block. The parent can then ask for
-    // that result (issues #1907 and #1910). The worker keeps its exception, and the reviewer names
-    // the pointer. A response with no text outside the block names no label (issue #1918).
+    // that result. The worker keeps its exception, and the reviewer names
+    // the pointer. A response with no text outside the block names no label.
     const outsideBlockLabels =
       report !== null ? outsideBlockReportLabels(response, report, { exception: isWorker }) : [];
     if (outsideBlockLabels.length > 0) {
@@ -571,7 +571,7 @@ export async function runChild(options) {
     }
     // A parsed report names each label whose value equals the value of the same label in the init
     // task. The task reaches every turn as its own input, so a later turn of the conversation keeps
-    // the comparison (issue #1914).
+    // the comparison.
     const copiedTaskLabels = copiedTaskReportLabels(report, task);
     if (copiedTaskLabels.length > 0) {
       logWarn(
@@ -584,9 +584,9 @@ export async function runChild(options) {
       response,
       report,
       ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
-      // The field holds label names only, never response text (issue #1907).
+      // The field holds label names only, never response text.
       ...(outsideBlockLabels.length > 0 ? { reportOutsideBlockLabels: outsideBlockLabels } : {}),
-      // The field holds label names only, never task or response text (issue #1914).
+      // The field holds label names only, never task or response text.
       ...(copiedTaskLabels.length > 0 ? { reportCopiedTaskLabels: copiedTaskLabels } : {}),
       ...(shellDenied ? { shellDenied } : {}),
       ...(multiPartUnidentified ? { multiPartUnidentified } : {}),
@@ -617,7 +617,7 @@ export async function runChild(options) {
       // A cancel of the command itself already carries its own result.
       testRun ??= failedTurnEvidence(err).testRun ?? null;
       // A fatal error carries the entries too, because the dispatcher builds its envelope, its
-      // state record, and its event from the error (issue #1024).
+      // state record, and its event from the error.
       if (err && typeof err === "object") {
         carryTurnEvidence(err, {
           testRun,
@@ -644,10 +644,10 @@ export async function runChild(options) {
       carryTurnEvidence(canceled, { testRun, ...failedEvidence });
       throw canceled;
     }
-    // An adapter marks a failure the provider is expected to clear (issue #1012).
+    // An adapter marks a failure the provider is expected to clear.
     const transient = readProp(err, "transient");
     // An adapter marks a model that the CLI refused, so a first turn can be refunded and repaired
-    // with `role set-model` (issue #1565).
+    // with `role set-model`.
     const refusedModel = readProp(err, "refusedModel");
     return {
       role: roleName,

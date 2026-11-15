@@ -31,17 +31,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      # pnpm#14407: on Windows, Defender/indexer transiently locks store paths
-      # during install; retry instead of failing the job on the first lock hit.
+      # Retries a transient store lock; see .github/actions/install-dependencies.
       - name: Install dependencies
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            pnpm install --frozen-lockfile && exit 0
-            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
-            sleep 15
-          done
-          exit 1
+        uses: ./.github/actions/install-dependencies
       # OS-independent checks: one leg is enough.
       - if: runner.os == 'Linux'
         run: pnpm fmt:check
@@ -54,23 +46,13 @@ jobs:
       # after a release. Windows installer evidence runs in windows-smoke
       # (issue #1552).
       - name: Install then uninstall harness integrations into a temp home
-        shell: bash
-        run: |
-          export AGENT_LOOP_HOME="$(mktemp -d)"
-          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
-          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
-          node ./src/cli.mjs uninstall --yes
-          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
-            echo "::error::install/uninstall left files behind"
-            ls -A "$AGENT_LOOP_HOME"
-            exit 1
-          fi
+        uses: ./.github/actions/harness-integration-smoke
 
   # Node 26 is the Active LTS line and `engines.node` accepts it. The `ci`
   # matrix runs the latest Node 24, and the `node-24` job runs the 24.11.0
-  # floor (issue #1632). Every other job runs Node 24. This job stays separate
-  # so the required ci (<os>) contexts keep their names, and it inherits the
-  # workflow-level concurrency group.
+  # floor (issue #1632). The macOS and Windows jobs run Node 26 too (issue
+  # #1946). This job stays separate so the required ci (<os>) contexts keep
+  # their names, and it inherits the workflow-level concurrency group.
   node-26:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -124,16 +106,9 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            pnpm install --frozen-lockfile && exit 0
-            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
-            sleep 15
-          done
-          exit 1
+        uses: ./.github/actions/install-dependencies
       # Call the runner directly. A `--` separator in
       # `pnpm test -- --shard=<i>/2` makes vp drop the shard argument, so
       # every shard runs the full suite.
@@ -153,28 +128,11 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            pnpm install --frozen-lockfile && exit 0
-            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
-            sleep 15
-          done
-          exit 1
+        uses: ./.github/actions/install-dependencies
       - name: Install then uninstall harness integrations into a temp home
-        shell: bash
-        run: |
-          export AGENT_LOOP_HOME="$(mktemp -d)"
-          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
-          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
-          node ./src/cli.mjs uninstall --yes
-          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
-            echo "::error::install/uninstall left files behind"
-            ls -A "$AGENT_LOOP_HOME"
-            exit 1
-          fi
+        uses: ./.github/actions/harness-integration-smoke
 
   # Required context ci (macos-latest). A skipped, cancelled, or failed shard
   # or smoke job fails this job, so the context never turns green by absence.
@@ -213,16 +171,9 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            pnpm install --frozen-lockfile && exit 0
-            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
-            sleep 15
-          done
-          exit 1
+        uses: ./.github/actions/install-dependencies
       # Call the runner directly. `pnpm test -- --shard=<i>/5` inserts a `--`
       # separator on the script command, and vp drops the arguments after it,
       # so every shard ran the full suite.
@@ -240,28 +191,11 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            pnpm install --frozen-lockfile && exit 0
-            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
-            sleep 15
-          done
-          exit 1
+        uses: ./.github/actions/install-dependencies
       - name: Install then uninstall harness integrations into a temp home
-        shell: bash
-        run: |
-          export AGENT_LOOP_HOME="$(mktemp -d)"
-          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
-          node ./src/cli.mjs install --harness claude,codex,opencode,copilot,antigravity --yes
-          node ./src/cli.mjs uninstall --yes
-          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
-            echo "::error::install/uninstall left files behind"
-            ls -A "$AGENT_LOOP_HOME"
-            exit 1
-          fi
+        uses: ./.github/actions/harness-integration-smoke
 
   # Required context ci (windows-latest). A skipped, cancelled, or failed shard
   # or smoke job fails this job, so the context never turns green by absence.

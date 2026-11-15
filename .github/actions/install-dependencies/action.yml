@@ -1,0 +1,22 @@
+name: Install dependencies
+description: Install the pnpm dependencies, retrying a transient store lock.
+
+runs:
+  using: composite
+  steps:
+    # pnpm#14407: on Windows, Defender/indexer transiently locks store paths
+    # during install; retry instead of failing the job on the first lock hit.
+    # Sleep only between attempts, so an exhausted install fails at once.
+    - name: Install dependencies
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          pnpm install --frozen-lockfile && exit 0
+          if [ "$attempt" -lt 3 ]; then
+            echo "::warning::pnpm install failed (attempt $attempt/3) - retrying in 15s"
+            sleep 15
+          else
+            echo "::warning::pnpm install failed (attempt $attempt/3)"
+          fi
+        done
+        exit 1

@@ -58,6 +58,7 @@ Andro Marces
 - [ADR 0004: Distribute the CLI as a scoped public npm package](0004-scoped-npm-distribution.md)
 - [Issue #139: Interactive install and uninstall of harness entry points and parent guards](https://github.com/andromarces/agent-loops/issues/139)
 - [Issue #88: Parent-edit guard and session-id entry point for Antigravity CLI](https://github.com/andromarces/agent-loops/issues/88)
+- [PR #140: Record user-scope-only harness integrations in ADR 0005](https://github.com/andromarces/agent-loops/pull/140)
 - [PR #147: Use `npm link --force` for a moved clone and state the PATH requirement](https://github.com/andromarces/agent-loops/pull/147)
 - [PR #164: Render the Copilot parent guard from copilot-parent-guard.mjs](https://github.com/andromarces/agent-loops/pull/164)
 - [PR #167: Reject unsupported and malformed install manifests](https://github.com/andromarces/agent-loops/pull/167)

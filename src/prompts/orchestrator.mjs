@@ -16,9 +16,10 @@ import { DEFAULT_TIMEOUT } from "../lib/args.mjs";
 import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/checks/check-wait.mjs";
 
 // Shared rule source: docs/orchestrator-instructions.md and its reference sections in
-// docs/orchestrator/ state the role rules for interactive parents (#56). This headless prompt states
-// the same rules in JSON-action form, including the completion rule. Keep the two consistent when
-// either changes.
+// docs/orchestrator/ state the role rules for interactive parents. This headless prompt states
+// the same rules in JSON-action form, including the completion rule, and leaves out the rules that
+// only an interactive parent acts on, such as a `role dispatch` envelope field or a refused `--cwd`.
+// Keep the two consistent when either changes.
 //
 // The CLI capabilities `networkedReadOnly` and `waitsForChecks` live in `src/lib/agent-kinds.mjs`.
 // A Codex reviewer with no sandbox (ADR 0038) keeps shell network. Under either sandboxed mode, or
@@ -73,7 +74,7 @@ const CEILING_WORD = SMALL_NUMBER_WORDS[CEILING_SECONDS] ?? String(CEILING_SECON
  * when unbounded) does.
  *
  * A turn under twice the ceiling plus two seconds fits no positive bound, which
- * is 12 seconds at the five-second ceiling. The prompt then names no wait (#348).
+ * is 12 seconds at the five-second ceiling. The prompt then names no wait.
  */
 export function headlessWaitSeconds(timeout) {
   if (typeof timeout !== "number" || timeout <= 0) return DEFAULT_WAIT_SECONDS;
@@ -85,7 +86,7 @@ export function headlessWaitSeconds(timeout) {
  * The commands that run `role wait-checks` in the work tree `cwd`, one per shell
  * form. They are null when a path cannot be quoted the same way in every shell
  * (`cliCommandForms`). `--cwd` carries the run's work tree, so the wait reads
- * that repository whatever directory the shell starts in (#348).
+ * that repository whatever directory the shell starts in.
  * @returns {Array<{ shell: string, command: string }> | null}
  */
 export function waitChecksCommand({
@@ -128,7 +129,7 @@ const orchestratorNetworkLead = (kind) =>
   `You orchestrate through ${kind ?? "an unnamed CLI"}, whose read-only turn cannot reach the network ${SHELL_NETWORK}`;
 
 // A `copilot` read-only turn keeps shell network, so the Codex sandbox wording above is false for
-// it. Its limit is a permission refusal of `role wait-checks` without approval (#432 probe, #495),
+// it. Its limit is a permission refusal of `role wait-checks` without approval,
 // not a network block. It gets the reviewer or gate rule and runs no check read itself. The role
 // rule excepts only the bounded `role wait-checks` command as a status read (ADR 0013).
 const COPILOT_LIMIT =
@@ -138,7 +139,7 @@ const COPILOT_LIMIT =
 const GATE_CONDITIONS =
   "the PR head is the reviewed commit, the reviewed tree is clean, the PR is not behind its base, has no merge conflicts, is not blocked, and every required check passed";
 
-// Flaky required check: the parent cannot rerun a job, so one run_worker turn does every step (#1303).
+// Flaky required check: the parent cannot rerun a job, so one run_worker turn does every step.
 const FLAKY_CHECK_RULE = [
   "- A required check can fail on a known flaky test that the diff does not reach. You write nothing to GitHub, so you cannot rerun a job, and you dispatch one run_worker turn for it.",
   "  - That turn waits, with a bound, until the run completes, then reads the failure and decides whether the diff reaches it. It records a known flaky recurrence in the flaky-test record of the target repository, for example its open issue for that test, and reruns only the failed jobs when a section of that record matches the failure.",
@@ -227,7 +228,7 @@ function prGateLines({
   }
 
   // The runtime supplies the status for the declared PR, or for the gated PR when
-  // none is declared. The reviewer's own read is only a fallback (#320, #350).
+  // none is declared. The reviewer's own read is only a fallback.
   const statusPr = pr ?? requireCi;
   const enforcesLine = `- The --require-ci finish gate is the only check read in this run that enforces anything. The runtime applies it outside every read-only turn.${ADVISORY_QUALIFIER}${PENDING_CHECK_RULE}`;
 
@@ -265,7 +266,7 @@ const ADVISORY_QUALIFIER =
  * sandboxed turn. It supplies that status to the reviewer prompt as advisory
  * evidence, in place of the reviewer reading the checks. The reviewer keeps its
  * own read as the fallback, and the `--require-ci` finish gate enforces the
- * condition (#320). The wording is the same rule `docs/orchestrator-instructions.md`
+ * condition. The wording is the same rule `docs/orchestrator-instructions.md`
  * states, so the two paths do not drift.
  * @param {number} pr the declared PR, or the gated PR when none is declared
  * @returns {string}
@@ -277,8 +278,8 @@ function suppliedRead(pr) {
 /**
  * The clause the gate line adds for a base branch that has no required check.
  * The gate verifies the PR head, the clean reviewed tree, and the merge state on
- * such a branch. It records the absence, so the finish says it verified no check
- * (#336). It states the condition the pass rests on. Only one exact reply per
+ * such a branch. It records the absence, so the finish says it verified no check.
+ * It states the condition the pass rests on. Only one exact reply per
  * source is an absence. A source this credential cannot read, or one that
  * returns a shape the gate cannot read, leaves the gate refusing.
  */
@@ -287,14 +288,14 @@ function suppliedRead(pr) {
 const NO_REQUIRED_CHECK_CLAUSE =
   " A base branch whose required-check sources each state that it holds no required check has no check to wait for, so the gate passes on the PR head, the clean reviewed tree, and the merge state, and the run records the absence. Only one exact reply per source states that outcome, so a source this credential cannot read, a reply the gate cannot read, and a merge state the gate cannot read all leave it refusing instead, with the refusal naming the source. A ruleset read of exactly one empty page is the class empty: a successful read that found no rule, which contributes no contexts, so the per-check pass runs on the other sources, and a classic-only repository still finishes, while a ruleset read of no page, several empty pages, or an empty page beside a page that holds rules is the class unknown and refuses.";
 
-// A PR that the runtime declared after a worker turn gets its read sentence from `declaredPrNote` (#1097).
+// A PR that the runtime declared after a worker turn gets its read sentence from `declaredPrNote`.
 /**
  * The `--pr` declaration rule. It is one line on purpose: the prompt must not
  * predict which reasons a refusal names, because the runtime collects every
  * applicable condition. A per-case line either claims a sole reason, which is
  * wrong whenever a second condition applies. The other form describes a gate for
- * another PR that the runtime never reads (#302). The start sentence states the unreadable-source refusal of
- * the `--pr` start, its recovery, and the warn-and-proceed case (#1092). `startRead` is whether this
+ * another PR that the runtime never reads. The start sentence states the unreadable-source refusal of
+ * the `--pr` start, its recovery, and the warn-and-proceed case. `startRead` is whether this
  * run made that read: a continuation that restored its PR made none, so it states nothing about one.
  */
 function prDeclarationBlock(pr, startRead) {
@@ -314,7 +315,7 @@ const PR_HEAD_COMPARE =
 
 /**
  * The `--compare-head` line: the runtime compares the PR head at finish and reads no required-check
- * source, for a repository whose sources are unreadable (#1104).
+ * source, for a repository whose sources are unreadable.
  */
 function compareHeadBlock(
   compareHead,
@@ -404,7 +405,7 @@ const CONTINUED_LEAD =
  * The `--continue-from` line. A continued run resumes the earlier sessions, so
  * the orchestrator holds the earlier conversation. It needs the two facts that
  * changed. The budget is new, and no reviewer accept carries over unless the
- * runtime restored the earlier gate state (#393). Empty for a fresh run, so that prompt stays byte for byte as before (#362).
+ * runtime restored the earlier gate state. Empty for a fresh run, so that prompt stays byte for byte as before.
  */
 function continuedBlock(continued, gateRestored) {
   if (!continued) return "";
@@ -420,7 +421,7 @@ function continuedBlock(continued, gateRestored) {
  * refuses a worker dispatch, so the prompt states the mode the run was started
  * with. One line per mode, naming the mode and the dispatch rule it carries.
  * Empty without `--mode`, so a run that named no mode keeps the prompt it had
- * before the flag existed, byte for byte (#337).
+ * before the flag existed, byte for byte.
  */
 function modeBlock(mode) {
   if (mode === null) return "";
@@ -440,7 +441,7 @@ function modeBlock(mode) {
 // first. A resumed session can lose its initial prompt when a CLI opens a new
 // conversation in its place. The agy known-limit names that case, so each
 // follow-up carries the rule itself. The runtime mutation check reads only the
-// local work tree, so the rule is advisory (issue #422).
+// local work tree, so the rule is advisory.
 const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
 
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
@@ -547,10 +548,6 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - For PR work that must close an issue, read \`closingIssuesReferences\` on the PR before finish. A missing issue gets a worker turn before the final reviewer turn.
   - When the PR base is not the default branch, skip that read. Record under \`open\` that the issue needs a manual close after the merge or a Development-panel link.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
-- A later dispatch envelope carries localFilesDiffer only when a copied local file changed. The field lists \`{path, changed}\` entries. \`changed\` is \`source\`, \`copy\`, \`both\`, or \`unknown\`. \`unknown\` means the runtime cannot prove a side, and it never means no change.
-  - For \`source\`, the main work tree changed after init: report the path under open and do not refresh the copy.
-  - For \`copy\`, a turn changed the copy: report a breach under open.
-  - For \`both\`, the stored hash records no refresh of the current copy: report a breach under open.
 - A worker or reviewer envelope carries localSourceChangedInTurn when a copied source changed inside that turn window. The field names the paths only, at most 20, and never content. The user or another process can cause the change too. Report it under open, and ask the user before refreshing the copy.
 - A worker that edits the body of a shared issue reads the body right before the write, writes, then reads it again. The worker restores any item that the read before the write held and the read after it lacks. Put that rule in the worker prompt, and state its limit: it narrows the race and does not remove it.
 - A worker envelope carries sharedGitChanged only when the turn changed shared Git state outside the work tree: core.hooksPath, a file in the common hooks/ directory, or a remote. The field names the items, such as core.hooksPath, hooks/pre-push, and remote.origin, and never a value or a URL. A change there affects the main work tree and every other linked work tree, and workTree does not show it. Report it in the finish summary under open. A failed or canceled worker turn carries the field too. A turn that changed none carries no field. A read of the shared Git state that fails or passes its 10 second deadline after the turn reports no field, so the absent field then does not prove that no change happened. The runtime logs a warning for such a read.
@@ -605,11 +602,6 @@ Map the report fields into the finish summary:
 - Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.
 - In review-only mode, Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode. open holds unresolved in-scope findings.
 
-- A refused \`--cwd\` is not the parent's to repair. End the run, name the path and the refusal in the reason, and leave the work tree to a maintainer. The maintainer decides whether to recreate the work tree and start a new run.
-- Abort only when a non-terminal run exists at the refused \`--cwd\`. With no run state there, from a refused init or a path that was never this run's, report the refusal and do not abort. A run that is already terminal needs no abort.
-- One rule covers every refused \`--cwd\`. A path that no longer exists reports \`--cwd must be inside a Git work tree: <path>\`. A path that is not inside a Git work tree reports the same message. So does an existing work tree path whose Git metadata is lost. The reason names that path and that message.
-- A headless run cannot act on a refused \`--cwd\`: the runtime snapshots its \`--cwd\` before and after every orchestrator turn. A work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.
-
 User Task:
 ${task}
 `.trim(),
@@ -633,8 +625,8 @@ A finish with "unresolvedCompare": true is refused. The gate resolves that compa
 /**
  * The line that follows a worker result in which the runtime refused to declare
  * the PR that the worker opened. That refusal happens because the required-check
- * sources are unreadable (#1097). The runtime compares
- * the head of that PR at finish instead (ADR 0052, #1111).
+ * sources are unreadable. The runtime compares
+ * the head of that PR at finish instead (ADR 0052).
  */
 function undeclaredPrNote(pr) {
   return `The worker turn opened PR #${pr}. The runtime did not declare it. It failed to read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish. It refuses the finish until ${PR_HEAD_COMPARE}. A closed or merged PR refuses it.
@@ -655,8 +647,8 @@ export function resultPrompt({
     status: result.status,
     ...(result.status === "ok" ? { response: result.response } : { error: result.error }),
     // The common turn-result fields follow, in prompt order. They are a transient failure the
-    // provider is expected to clear (issue #1012), the reviewer state, and the work tree state.
-    // They also carry the PR check status (#320), the evidence fields (ADR 0017), and a refused
+    // provider is expected to clear, the reviewer state, and the work tree state.
+    // They also carry the PR check status, the evidence fields (ADR 0017), and a refused
     // tool call (ADR 0035). A result with no read carries no field, so a turn that made no read
     // cannot be read as one that did. The evidence fields include the test command result the
     // runtime ran before the reviewer turn, beside the reviewer response for the same comparison.

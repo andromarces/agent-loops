@@ -3,7 +3,7 @@ import { tryParseJson } from "./json.mjs";
 
 /**
  * Environment variable that lists the temporary directories of the process tree, as a JSON array of
- * absolute paths, innermost first (issue #955). The list holds the directories inherited before an
+ * absolute paths, innermost first. The list holds the directories inherited before an
  * adapter turn replaced `TMPDIR`, `TEMP`, and `TMP` with a private one. JSON cannot split a valid
  * path, which a platform list delimiter can. A package-runner layout that an earlier process
  * created under one of them still counts as a temporary layout.

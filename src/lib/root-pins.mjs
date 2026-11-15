@@ -1,4 +1,11 @@
-import { tmpRoot } from "./tmp-root.mjs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+/** A machine-wide directory: the environment variable `envName` when non-empty, else `<os tmpdir>/agent-loops/<leaf>`. */
+export function tmpRoot(envName, leaf) {
+  const override = process.env[envName];
+  return override ? resolve(override) : join(tmpdir(), "agent-loops", leaf);
+}
 
 // Every machine-wide root, keyed by purpose. Each entry names the environment variable that
 // overrides the root and its leaf under `<os tmpdir>/agent-loops`. The table is the only place a
@@ -19,7 +26,7 @@ export function rootPath(name) {
 /**
  * The environment entries that pin the runs root, the test-slot directory, and the session-record
  * directory of a child to the paths that this process resolves, so a `TMP`, `TEMP`, or `TMPDIR`
- * override inside the child cannot move them (issues #955, #970). A root that the user set to a
+ * override inside the child cannot move them. A root that the user set to a
  * non-empty value is left out, because an empty value counts as unset and a kept empty value would
  * let the child's `TMP` move the root.
  */

@@ -1,7 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
+import { readUserDocs } from "../fs-helpers.mjs";
 import { expect, test } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { initialPrompt } from "../../src/prompts/orchestrator.mjs";
@@ -36,6 +37,8 @@ const WORK_TREE_CREATE_NO_REMOTE_COMMAND =
 const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
 
 const referenceSectionsDir = join(dirname(instructionsPath), "orchestrator");
+/** The repository root that holds the user docs. */
+const docsRoot = resolve(dirname(instructionsPath), "..");
 
 /** The reference section files of the instructions, sorted by name. */
 async function referenceSectionNames() {
@@ -52,16 +55,10 @@ async function readInstructions() {
   return (await Promise.all(parts)).join("\n\n");
 }
 
-/** The user docs as one text: the reference topic files, the reference index, then the README. */
-async function readUserDocs() {
-  const docs = join(dirname(instructionsPath), "reference");
-  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
-  const paths = [
-    ...topics.map((name) => join(docs, name)),
-    join(dirname(instructionsPath), "reference.md"),
-    join(dirname(instructionsPath), "../README.md"),
-  ];
-  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
+/** A reference section file as one whitespace-normalized line. */
+async function readSectionText(name) {
+  const text = await readFile(join(referenceSectionsDir, name), "utf8");
+  return text.replace(/\s+/g, " ");
 }
 
 // Asserts no commit or push in the text targets a branch of the rule's own, so a
@@ -825,7 +822,7 @@ test("interactive instructions and headless prompt share the status-read excepti
 test("instructions, prompt, and user docs share the status-read exception scope", async () => {
   const scope = "and agent-loop role wait-checks is the only command it covers";
   const flat = (text) => text.replace(/`/g, "").replace(/\s+/g, " ");
-  const readme = await readUserDocs();
+  const readme = await readUserDocs(docsRoot);
   expect(flat(await readInstructions())).toContain(scope);
   expect(flat(gatedPrompt("claude"))).toContain(scope);
   expect(flat(readme)).toContain(scope);
@@ -863,7 +860,7 @@ test("the interactive instructions forbid a remote write and allow a status read
 
 // Usefulness: pins the connector-write contract, the no-sandbox reviewer mode, and the issue #496 pointer.
 test("the user docs state the remote-write limit", async () => {
-  const readme = (await readUserDocs()).replace(/\s+/g, " ");
+  const readme = (await readUserDocs(docsRoot)).replace(/\s+/g, " ");
   expect(readme).toContain(
     "the runtime does not detect a remote write in a reviewer or orchestrator turn",
   );
@@ -890,10 +887,11 @@ const REFUSED_CWD_RULE = [
   "One rule covers every refused `--cwd`. A path that no longer exists reports `--cwd must be inside a Git work tree: <path>`. A path that is not inside a Git work tree reports the same message. So does an existing work tree path whose Git metadata is lost. The reason names that path and that message.",
 ];
 
-// Usefulness: verifies the interactive instructions and the headless prompt state the same
-// refused-`--cwd` rule (issue #327). Neither parent path then sends a maintainer through a work
+// Usefulness: verifies the interactive instructions keep the refused-`--cwd` rule (issue #327)
+// and the headless prompt leaves it out, because a refused `--cwd` ends a headless run before its
+// first orchestrator turn (issue #1938). Neither parent path then sends a maintainer through a work
 // tree repair that the runtime never asked for.
-test("interactive instructions and headless prompt share the refused --cwd rule", async () => {
+test("the interactive instructions keep the refused --cwd rule and the headless prompt omits it", async () => {
   const all = (await readInstructions()).replace(/\s+/g, " ");
   // The work tree setup file belongs to "Work tree ownership": its creation commands count there.
   const setup = (await readFile(join(referenceSectionsDir, "work-tree-setup.md"), "utf8"))
@@ -904,7 +902,7 @@ test("interactive instructions and headless prompt share the refused --cwd rule"
   const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
   for (const rule of REFUSED_CWD_RULE) {
     expect(instructions).toContain(rule);
-    expect(prompt).toContain(rule);
+    expect(prompt).not.toContain(rule);
   }
   // Neither text keeps the repair procedure or the unrecoverable claim. Outside "Work tree ownership"
   // the only `git worktree` command is the single removal command (#998). Inside it, the creation
@@ -956,9 +954,9 @@ const REMOVAL_WAIT_PARAGRAPH =
 // repair or recreate the work tree, fails until this test is edited on purpose.
 const MOVED_WORK_TREE_FILES = {
   "work-tree-removal.md":
-    '# Removing a work tree Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when you remove the work tree of a terminal run, after the core rule on the terminal state is met. The run holds a Git work tree lock while it is active. `role dispatch` locks a linked `--cwd` at init, with the reason `agent-loop run <id> active`. A terminal lifecycle unlocks it: `finished`, `aborted`, and `halted`. The documented removal command then succeeds. Init in the main work tree holds no lock. Do not pass `-f -f` to a locked work tree, and do not unlock it by hand. A lock can remain on a terminal run. Run `agent-loop role finish --cwd "<work tree>"` again to release it. The command also reports `Run is already finished` and exits non-zero. A later `abort` does the same. The release matches the lock reason exactly, so another run, another tool, or an empty reason stays locked. Then run the removal command. Remove the work tree with `git worktree remove --force "<work tree>"`, then check whether the folder still exists. On Windows, the remove can leave a folder of links and directories, such as `node_modules` with junctions into the shared pnpm store. When the folder remains, check that it holds only links and directories. On Windows, run `Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"` in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each command includes hidden files and never descends into a link or a junction. Any path that it prints is a file: stop and leave the folder to a maintainer. When it prints nothing, delete the folder without following links: `cmd.exe /c rmdir /s /q "$($wt.Replace(\'/\', \'\\\'))"` in PowerShell, with the work tree path in `$wt`, `cmd.exe /c rmdir /s /q "<work tree>"` in cmd.exe, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. The cmd.exe forms need a path with backslashes. A harness PowerShell tool can refuse the PowerShell form. When it refuses, run the Git Bash form instead. Run the Windows delete as `cmd.exe /c rmdir`. In Git Bash, keep `MSYS_NO_PATHCONV=1`. Never use a recursive delete that follows junctions.',
+    '# Removing a work tree Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when you remove the work tree of a terminal run, after the core rule on the terminal state is met. Read it only when the core rule does not keep the work tree. The run holds a Git work tree lock while it is active. `role dispatch` locks a linked `--cwd` at init, with the reason `agent-loop run <id> active`. A terminal lifecycle unlocks it: `finished`, `aborted`, and `halted`. The documented removal command then succeeds. Init in the main work tree holds no lock. Do not pass `-f -f` to a locked work tree, and do not unlock it by hand. A lock can remain on a terminal run. Run `agent-loop role finish --cwd "<work tree>"` again to release it. The command also reports `Run is already finished` and exits non-zero. A later `abort` does the same. The release matches the lock reason exactly, so another run, another tool, or an empty reason stays locked. Then run the removal command. Remove the work tree with `git worktree remove --force "<work tree>"`, then check whether the folder still exists. On Windows, the remove can leave a folder of links and directories, such as `node_modules` with junctions into the shared pnpm store. When the folder remains, check that it holds only links and directories. On Windows, run `Get-ChildItem -LiteralPath "<work tree>" -Recurse -Force -Attributes "!Directory+!ReparsePoint"` in PowerShell. On POSIX, run `find "<work tree>" -not -type d -not -type l`. Each command includes hidden files and never descends into a link or a junction. Any path that it prints is a file: stop and leave the folder to a maintainer. When it prints nothing, delete the folder without following links: `cmd.exe /c rmdir /s /q "$($wt.Replace(\'/\', \'\\\'))"` in PowerShell, with the work tree path in `$wt`, `cmd.exe /c rmdir /s /q "<work tree>"` in cmd.exe, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, `rm -rf "<work tree>"` on POSIX, which does not follow symbolic links. The cmd.exe forms need a path with backslashes. A harness PowerShell tool can refuse the PowerShell form. When it refuses, run the Git Bash form instead. Run the Windows delete as `cmd.exe /c rmdir`. In Git Bash, keep `MSYS_NO_PATHCONV=1`. Never use a recursive delete that follows junctions.',
   "local-files-copy.md":
-    '# Local files copied into the work tree Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work tree, and when an envelope carries `localFilesDiffer` or `localSourceChangedInTurn`. When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree into `--cwd`. It copies the files that `--cwd` ignores, before the first child turn. The copied set, the exclusion rules, and the refusal conditions are in [Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree). The init envelope reports the paths as `localFiles: {copied, skipped}`, by name only. A path in `skipped` is untracked in the main work tree but not copied: the child does not have it. Do not read, print, or quote any copied file. Remove the run work tree when the run ends. Pass `--no-copy-local-files` on the init call to turn the copy off. It is an init field, so a later call cannot change it. The task can need other ignored reference data of the main work tree. Pass `--copy-local-path <relative path>` on the init call, once for each path. A downloaded specification directory is one example. The path joins the copy and follows every rule in [Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree), and its files appear in `localFiles.copied`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and `localFilesDiffer` covers the files. The copy runs once. No dispatch replaces or refreshes a copied file; only an explicit `refresh-local` call writes a copy after init. The init stores the content hash of each copy in the run state only. Each later dispatch compares the source and the copy with that hash. The envelope reports `localFilesDiffer` as a list of `{path, changed}` entries. The key is absent when neither side changed. `changed` is `source`, `copy`, `both`, or `unknown`. A side counts as changed when it is missing, unreadable, or its hash differs from the stored hash. The stored hash is the init hash, or the hash of the last refresh. `unknown` means the runtime cannot prove a side, and it never means no change. A legacy state with no init hash reports every copied path as `unknown`. For `source`, the main work tree changed after init. Run `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored `--parent-session` id when no `localSourceChangedInTurn` entry names it. The command writes the source bytes over the copy and stores their hash. The copy keeps its prior mode, including the read-only attribute on Windows. The command refuses a path that init did not copy, a missing or unreadable side, and a link at the file or a parent component. It also refuses a copy that differs from its stored hash, a terminal run, and a child role. A refused refresh writes nothing. It reports the path only, never the content or a hash. For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`. Each worker and reviewer turn also hashes every copied source before and after its window. A source that changed inside the window is reported on that turn\'s envelope as `localSourceChangedInTurn: [path]`, by path only, at most 20 paths. The field is absent when no source changed or the read failed. The read proves no actor: the user or another process can change the source too. Report a `localSourceChangedInTurn` path under `open`, and ask the user before any refresh. Never read, print, or quote the file to decide.',
+    '# Local files copied into the work tree Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work tree, and when an envelope carries `localFilesDiffer` or `localSourceChangedInTurn`. When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree into `--cwd`. It copies the files that `--cwd` ignores, before the first child turn. The copied set, the exclusion rules, and the refusal conditions are in [Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree). The init envelope reports the paths as `localFiles: {copied, skipped}`, by name only. A path in `skipped` is untracked in the main work tree but not copied: the child does not have it. Do not read, print, or quote any copied file. Remove the run work tree when the run ends, unless the [core removal rule](../orchestrator-instructions.md#work-tree-ownership) keeps it. That rule keeps a work tree the parent did not create for this run. It also keeps one that holds uncommitted or unpushed work the run did not create. The parent keeps that work tree until the work is committed or the user decides. It reports that work tree under `open` in the finish summary. The local files copied into a kept work tree stay until the work tree is removed. Pass `--no-copy-local-files` on the init call to turn the copy off. It is an init field, so a later call cannot change it. The task can need other ignored reference data of the main work tree. Pass `--copy-local-path <relative path>` on the init call, once for each path. A downloaded specification directory is one example. The path joins the copy and follows every rule in [Local files in a linked work tree](../reference/harness-entry-points.md#local-files-in-a-linked-work-tree), and its files appear in `localFiles.copied`. A refused init writes no state and spawns no child. It is an init field too, so a later call cannot change it, and `localFilesDiffer` covers the files. The copy runs once. No dispatch replaces or refreshes a copied file; only an explicit `refresh-local` call writes a copy after init. The init stores the content hash of each copy in the run state only. Each later dispatch compares the source and the copy with that hash. The envelope reports `localFilesDiffer` as a list of `{path, changed}` entries. The key is absent when neither side changed. `changed` is `source`, `copy`, `both`, or `unknown`. A side counts as changed when it is missing, unreadable, or its hash differs from the stored hash. The stored hash is the init hash, or the hash of the last refresh. `unknown` means the runtime cannot prove a side, and it never means no change. A legacy state with no init hash reports every copied path as `unknown`. For `source`, the main work tree changed after init. Run `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored `--parent-session` id when no `localSourceChangedInTurn` entry names it. The command writes the source bytes over the copy and stores their hash. The copy keeps its prior mode, including the read-only attribute on Windows. The command refuses a path that init did not copy, a missing or unreadable side, and a link at the file or a parent component. It also refuses a copy that differs from its stored hash, a terminal run, and a child role. A refused refresh writes nothing. It reports the path only, never the content or a hash. For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`. Each worker and reviewer turn also hashes every copied source before and after its window. A source that changed inside the window is reported on that turn\'s envelope as `localSourceChangedInTurn: [path]`, by path only, at most 20 paths. The field is absent when no source changed or the read failed. The read proves no actor: the user or another process can change the source too. Report a `localSourceChangedInTurn` path under `open`, and ask the user before any refresh. Never read, print, or quote the file to decide.',
   "work-tree-setup.md":
     '# Work tree setup details Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before you create the work tree when the repository has no remote or the run is on an existing pull request, and when `extensions.worktreeConfig` is on. With `extensions.worktreeConfig` on, `git config --worktree push.default matching` sets the value for one work tree only. That value overrides the repository value. The `git config push.default` read in [Work tree ownership](../orchestrator-instructions.md#work-tree-ownership) reads the effective value of the work tree, override included. With `extensions.worktreeConfig` on, a new linked work tree inherits the sparse-checkout setting of the main work tree. Before the first dispatch, run `git sparse-checkout disable` in the run work tree, or state the exclusion in the task text. The init envelope reports the setting as `sparseCheckout: {enabled, skipWorktree}`, by path only, at most 20 paths. A Git read that fails or passes its 10 second bound adds no field, and the absent field then proves nothing. A repository with no remote has no `origin/<default>`. Use the local default branch as the base: ```bash git worktree add --no-track -b <branch> <work tree> <default> ``` In that repository, a worker commits in the work tree and never pushes. After `finish`, the parent merges the branch or hands it to the user. That run is not PR work. Finish it with a plain `role finish` and no PR gate, after a reviewer `verdict: accept` with a `Checks` line on the latest changed state. Add `--require-accept` where it applies. Compare `reviewed.head` with the `workTree.head` of the last worker envelope. Never pass `--pr`, `--require-ci`, or `--compare-head`, never run `declare-pr`, and never set `unresolvedCompare`: each one concerns a PR head, and this run has none. A run on an existing pull request, such as a review or a correction of PR #N, must run on the PR head branch. Then the worker pushes to that branch. Create the work tree on that branch from the remote branch: ```bash git fetch origin <pr branch> git worktree add --no-track -B <pr branch> <work tree> origin/<pr branch> ``` `-B` creates the branch, or moves an existing local branch of that name to `origin/<pr branch>`. If the local branch exists, run `git rev-list --left-right --count <pr branch>...origin/<pr branch>` first. A left count above 0 means the local branch is ahead of or diverged from the PR head. Do not run the command: report to the user. A left count of 0 means the local branch equals or is behind the PR head, and the command is safe. The command fails when another work tree has the branch checked out. Then report to the user, and never remove that work tree. `-B` keeps the upstream of an existing local branch. The upstream must be `origin/<pr branch>` or none, and never the default branch. Before the first dispatch, read it with `git -C "<work tree>" for-each-ref --format=\'%(upstream:short)\' "refs/heads/<pr branch>"`. If it prints another branch, such as `origin/<default>`, run `git -C "<work tree>" branch --unset-upstream`, or set the PR branch with `git -C "<work tree>" branch -u origin/<pr branch>`. The upstream `origin/<pr branch>` is acceptable. The worker pushes with `git push -u origin <pr branch>`. The work tree head must equal the PR head before the first dispatch: compare `git -C "<work tree>" rev-parse HEAD` with `gh pr view <pr> --json headRefOid --jq .headRefOid`. If they differ, run `git fetch origin <pr branch>` and `git -C "<work tree>" merge --ff-only origin/<pr branch>`, then compare again. If the heads still differ, dispatch nothing and report to the user.',
 };
@@ -968,23 +966,7 @@ const REFUSED_CWD_BLOCKS = {
     start: "## Work tree ownership",
     end: " ## Reference sections",
     text: [
-      '## Work tree ownership The parent creates the run\'s work tree and owns it. Keep that work tree in place for the whole run, and never tell a worker to remove it. When a worker report says its edit landed in another checkout, stop the run, and leave that checkout to the user. Report the paths under `open` in the finish summary. `mainWorkTreeChangedInTurn` stays report-only: the runtime cannot attribute the edit to one run. Create the work tree with no upstream: ```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ``` The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`. Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or `git push -u origin <pr branch>` for an existing PR branch. Never let the worker run a plain `git push`. Before the first dispatch, read `git -C "<work tree>" config push.default`. If it prints `matching`, state the named push in the task text. A run on an existing pull request, such as a review or a correction of PR #N, must run on the PR head branch. A repository with no remote has no `origin/<default>`. The setup for both, and the per-work-tree `push.default` override, are in [Work tree setup details](orchestrator/work-tree-setup.md). The parent installs the work tree\'s own dependencies, such as `node_modules`, for every turn, and no worker or reviewer does. After you create the work tree and before the first dispatch, run inside it the dependency setup that the repository documents for its tests. For a Node project, that is the lockfile install, for example `pnpm install --frozen-lockfile`. For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file. Never link or junction the `node_modules` of another checkout into the work tree. Never run an install in another checkout. `dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`. A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry. When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent instructions and `.env`. Do not read, print, or quote any copied file. Remove that work tree when the run ends. The copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in [Local files copied into the work tree](orchestrator/local-files-copy.md). For `source`, the main work tree changed after init. Run `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored `--parent-session` id when no `localSourceChangedInTurn` entry names it. For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`. When `localSourceChangedInTurn` names a path, report it under `open` and ask the user before a refresh. Remove the work tree only after the run is terminal. A `finish` or `abort` envelope with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused `finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run `active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)): remove the work tree after it reads `halted`. Run the removal as a separate command after you read the result. Never chain it after `finish` or `abort` in one command. Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states. Never delete it with a recursive delete that follows junctions. A refused `--cwd` is not the parent\'s to repair. End the run, name the path and the refusal in the reason, and leave the work tree to a maintainer. The maintainer decides whether to recreate the work tree and start a new run. Abort only when a non-terminal run exists at the refused `--cwd`. With no run state there, from a refused init or a path that was never this run\'s, report the refusal and do not abort. A run that is already terminal needs no abort. One rule covers every refused `--cwd`. A path that no longer exists reports `--cwd must be inside a Git work tree: <path>`. A path that is not inside a Git work tree reports the same message. So does an existing work tree path whose Git metadata is lost. The reason names that path and that message. ```bash agent-loop role abort --cwd "<work tree>" \\ --reason "<work tree>: --cwd must be inside a Git work tree" ``` `abort` reads only the state file, so it ends the run over a work tree that is gone or is not a Git work tree, and it writes nothing inside that path. It needs a non-terminal run at that path: a path with no run state is refused with `No run state for <path>`, and a terminal run is refused with `Run is already <lifecycle>.`, so neither is a command to run there. A maintainer who recreates the work tree starts a new run there: a run over an aborted work tree is not resumed, and the state file names the work tree, not the work in it.',
-    ].join(" "),
-  },
-  prompt: {
-    start: "Map the report fields into the finish summary:",
-    end: " User Task:",
-    text: [
-      "Map the report fields into the finish summary:",
-      "- Carry each Deferred item forward from every worker or reviewer turn. An item leaves the list when a later worker turn reports it done and a later reviewer accept covers that state; record it in changed. The items that remain at finish go into deferred.",
-      "- A reviewer accept can leave a criterion unverified. The reviewer turn cannot run that check. Its Checks line reports the criterion as unverified, and its Deferred line lists it. Carry it into deferred, and name the unrun check in verified as not verified. Do not dispatch another turn to run that check, unless the task states that the check must pass in this run.",
-      "- Reviewer Notes that no later turn addressed go into notes. A refused cleanup of a tool cache in its default location is not a finding. A cache entry that existed before the turn is not a finding either. Do not carry either into open. Output under a path that the reviewer chose, such as its temporary directory or the scratch folder, stays turn output. A refused cleanup of that output still goes into open.",
-      "- Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.",
-      "- In review-only mode, Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode. open holds unresolved in-scope findings.",
-      `- ${REFUSED_CWD_RULE[0]}`,
-      `- ${REFUSED_CWD_RULE[1]}`,
-      `- ${REFUSED_CWD_RULE[2]}`,
-      "- A headless run cannot act on a refused `--cwd`: the runtime snapshots its `--cwd` before and after every orchestrator turn. A work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.",
+      '## Work tree ownership The parent creates the run\'s work tree and owns it, or uses a pre-existing work tree that the user passes as `--cwd`. Keep that work tree in place for the whole run, and never tell a worker to remove it. When a worker report says its edit landed in another checkout, stop the run, and leave that checkout to the user. Report the paths under `open` in the finish summary. `mainWorkTreeChangedInTurn` stays report-only: the runtime cannot attribute the edit to one run. Create the work tree with no upstream: ```bash git worktree add --no-track -b <branch> <work tree> origin/<default> ``` The worker sets the upstream to its own remote branch on the first push, with `git push -u origin <branch>`. Tell the worker to push only with a named refspec. Use `git push -u origin <branch>`, or `git push -u origin <pr branch>` for an existing PR branch. Never let the worker run a plain `git push`. Before the first dispatch, read `git -C "<work tree>" config push.default`. If it prints `matching`, state the named push in the task text. A run on an existing pull request, such as a review or a correction of PR #N, must run on the PR head branch. A repository with no remote has no `origin/<default>`. The setup for both, and the per-work-tree `push.default` override, are in [Work tree setup details](orchestrator/work-tree-setup.md). The parent installs the work tree\'s own dependencies, such as `node_modules`, for every turn, and no worker or reviewer does. After you create the work tree and before the first dispatch, run inside it the dependency setup that the repository documents for its tests. For a Node project, that is the lockfile install, for example `pnpm install --frozen-lockfile`. For another toolchain, it is the documented setup, for example a virtual environment built from a hashed requirements file. Never link or junction the `node_modules` of another checkout into the work tree. Never run an install in another checkout. `dispatch` checks the work tree before it reads the run state, charges a step, or spawns a child, so a refused `--cwd` leaves the run as it was: the init call writes no state file, and a later dispatch charges no step, changes no lifecycle, and spawns no child. The envelope carries `status: "error"` with `--cwd must be inside a Git work tree: <path>`. A failed first turn keeps the session id its output printed, so the next dispatch resumes that session and the edits the failed turn left. When a resume fails because the CLI has no such session, the runtime clears the id and reruns the turn once as a first turn, with the worker preamble and the `Init task:` block. A reviewer rerun gets the `Init task:` block too. That rerun is part of the step the dispatch already charged: it charges no second step and adds no `turns` entry. When `--cwd` is a linked work tree, the init call copies the untracked local files of the main work tree into `--cwd`. The copied set is the files that `--cwd` ignores, such as agent instructions and `.env`. Do not read, print, or quote any copied file. Remove that work tree when the run ends, unless the removal rule below keeps it. The copy rules, `--no-copy-local-files`, `--copy-local-path`, and `localFilesDiffer` are in [Local files copied into the work tree](orchestrator/local-files-copy.md). For `source`, the main work tree changed after init. Run `agent-loop role refresh-local --cwd "<work tree>" --path <path>` with the stored `--parent-session` id when no `localSourceChangedInTurn` entry names it. For `copy`, a turn changed the copy: report a breach under `open`. For `both`, report a breach under `open`. When `localSourceChangedInTurn` names a path, report it under `open` and ask the user before a refresh. Remove the work tree only after the run is terminal. A `finish` or `abort` envelope with `status: "ok"` carries `lifecycle: "finished"` or `lifecycle: "aborted"`. A refused `finish` or `abort` prints `status: "error"` and no `lifecycle`, and the run keeps its lifecycle, `active` or `interrupted`. A dispatch that halts the run (reviewer mutation or snapshot error) also prints no `lifecycle`, as does a child error that leaves the run `active`. Read the state file ([Recovery](#recovery-after-compaction-or-restart)): remove the work tree after it reads `halted`. Run the removal as a separate command after you read the result. Never chain it after `finish` or `abort` in one command. The parent removes only the work tree that it created for this run. A work tree that it did not create for this run stays. A linked work tree that a user passes as `--cwd` is an example. So does one that holds uncommitted or unpushed work that the run did not create. Keep that work tree until the work is committed or the user decides. Report it under `open` in the finish summary. The local files that init copied into a kept work tree stay until the work tree is removed. Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states. Never delete it with a recursive delete that follows junctions. A refused `--cwd` is not the parent\'s to repair. End the run, name the path and the refusal in the reason, and leave the work tree to a maintainer. The maintainer decides whether to recreate the work tree and start a new run. Abort only when a non-terminal run exists at the refused `--cwd`. With no run state there, from a refused init or a path that was never this run\'s, report the refusal and do not abort. A run that is already terminal needs no abort. One rule covers every refused `--cwd`. A path that no longer exists reports `--cwd must be inside a Git work tree: <path>`. A path that is not inside a Git work tree reports the same message. So does an existing work tree path whose Git metadata is lost. The reason names that path and that message. ```bash agent-loop role abort --cwd "<work tree>" \\ --reason "<work tree>: --cwd must be inside a Git work tree" ``` `abort` reads only the state file, so it ends the run over a work tree that is gone or is not a Git work tree, and it writes nothing inside that path. It needs a non-terminal run at that path: a path with no run state is refused with `No run state for <path>`, and a terminal run is refused with `Run is already <lifecycle>.`, so neither is a command to run there. A maintainer who recreates the work tree starts a new run there: a run over an aborted work tree is not resumed, and the state file names the work tree, not the work in it.',
     ].join(" "),
   },
 };
@@ -1009,10 +991,11 @@ async function readParentTexts() {
   return { instructions, prompt };
 }
 
-// Usefulness: verifies both parent texts keep the refused-`--cwd` rule block as pinned, so the
-// parent is never told to repair or recreate the work tree (#991). The rule sentence pin above
-// misses an added sentence, and the `git worktree` ban misses prose.
-test("refused --cwd rule block is unchanged in the instructions and the headless prompt", async () => {
+// Usefulness: verifies the interactive instructions keep the refused-`--cwd` rule block as pinned,
+// so the parent is never told to repair or recreate the work tree (#991). The rule sentence pin
+// above misses an added sentence, and the `git worktree` ban misses prose. The headless prompt
+// omits the block, because a refused `--cwd` ends its run before the first turn (issue #1938).
+test("the refused --cwd rule block is unchanged in the interactive instructions", async () => {
   const texts = await readParentTexts();
   for (const [name, pin] of Object.entries(REFUSED_CWD_BLOCKS)) {
     expectRefusedCwdBlock(texts[name], pin);
@@ -1021,7 +1004,8 @@ test("refused --cwd rule block is unchanged in the instructions and the headless
 
 // Usefulness: verifies the pin fails on an instruction that tells the parent to recover the work
 // tree, wherever it sits in the block and whatever verb or clause shape it uses, and passes on
-// unrelated prose elsewhere in the text (#991).
+// unrelated prose elsewhere in the text (#991). It checks the interactive instructions, the one
+// text that now holds the block (issue #1938).
 test("refused --cwd pin fails on a recovery instruction and ignores unrelated prose", async () => {
   const texts = await readParentTexts();
   const [rule] = REFUSED_CWD_RULE;
@@ -1031,13 +1015,9 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
   const BEFORE_OLD_PIN = {
     instructions:
       "Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states. Never delete it with a recursive delete that follows junctions.",
-    prompt: "- In review-only mode,",
   };
-  const AFTER_RULE_BLOCK = { instructions: " ## Reference sections", prompt: " User Task:" };
-  const SECTION_START = {
-    instructions: "## Work tree ownership",
-    prompt: "Map the report fields into the finish summary:",
-  };
+  const AFTER_RULE_BLOCK = { instructions: " ## Reference sections" };
+  const SECTION_START = { instructions: "## Work tree ownership" };
   const unsafe = {
     "an earlier maintainer mention": (text) =>
       text.replace(
@@ -1053,8 +1033,8 @@ test("refused --cwd pin fails on a recovery instruction and ignores unrelated pr
       text.replace(rule, `Regenerate the checkout at the refused path. ${rule}`),
     "an instruction after the block": (text) =>
       text.replace(
-        "A maintainer decides whether to recreate the work tree and start a new run.",
-        "A maintainer decides whether to recreate the work tree and start a new run. Restore the Git metadata of the path before you abort.",
+        "The maintainer decides whether to recreate the work tree and start a new run.",
+        "The maintainer decides whether to recreate the work tree and start a new run. Restore the Git metadata of the path before you abort.",
       ),
     "a negation dropped": (text) =>
       text.replace("is not the parent's to repair", "is the parent's to repair"),
@@ -1224,6 +1204,24 @@ test("the moved work tree files are unchanged", async () => {
   }
 });
 
+// Usefulness: verifies the removal rule keeps a pre-existing work tree and its init copies and reports it under open (#1932).
+test("the removal rule keeps a pre-existing work tree that holds uncommitted work under open", async () => {
+  const instructions = (await readInstructions()).replace(/\s+/g, " ");
+  const localCopy = await readSectionText("local-files-copy.md");
+  const removal = await readSectionText("work-tree-removal.md");
+  for (const [name, text] of [
+    ["instructions", instructions],
+    ["local-files-copy.md", localCopy],
+  ]) {
+    expect(text, name).toContain("did not create for this run");
+    expect(text, name).toContain("uncommitted or unpushed work");
+    expect(text, name).toContain("under `open`");
+  }
+  expect(instructions).toContain("until the work is committed or the user decides");
+  expect(localCopy).toContain("stay until the work tree is removed");
+  expect(removal).toContain("only when the core rule does not keep the work tree");
+});
+
 // Usefulness: verifies the instructions gate the work tree removal on signals a parent can
 // observe, and bar chaining it (#1117). Without it, a refused `finish` is followed by a removal
 // that strands a non-terminal run, or the parent waits for a `halted` envelope that never prints.
@@ -1370,7 +1368,7 @@ const readHelpText = () =>
 // commands that the sandbox runs. No surface claims that it blocks model-side tools such as
 // web_search. A reader never takes the limit for a block on every channel.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
@@ -1389,7 +1387,7 @@ test.each([
 // docs, the help text, and ADR 0019 carry no unqualified denial. The prompt and the docs then state
 // one rule about what the Codex sandbox blocks.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["docs/reference/parent-guard.md", () => readRepoFile("docs/reference/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
@@ -1412,7 +1410,7 @@ test.each([
 // default" (ADR 0038). Each stale phrase named the old default or the old network rule, and was
 // removed on purpose. A restored phrase fails here. A reword that keeps the meaning passes.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
   [
@@ -1434,7 +1432,7 @@ test.each([
 // Usefulness: verifies the user docs and --help state the default and both opt-ins in one place
 // each reader looks. The new default is then not only in the ADR (ADR 0038).
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
 ])("%s states the no-sandbox default and the two opt-in modes", async (_name, load) => {
@@ -1472,7 +1470,7 @@ test("README links to the scoped reviewer file-change rule", async () => {
 // Usefulness: verifies no reviewed surface restates the reviewer rule as a blanket file ban
 // (issue #837), so a reviewer may still write ignored output.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
   [

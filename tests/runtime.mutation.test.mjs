@@ -1,6 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the test that switches it on (see `gitAbortingPostTurn` in
 // git-helpers.mjs); every other test reaches the real `execa`.
@@ -21,7 +21,17 @@ import { runProbeTurn } from "../src/child-turn.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo, gitAbortingPostTurn } from "./git-helpers.mjs";
+import {
+  createCleanRepoDir,
+  createTempRepo,
+  gitAbortingPostTurn,
+  cleanRepoGit,
+} from "./git-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {
@@ -291,7 +301,10 @@ test("a probe turn that changes the work tree is a fatal mutation", async () => 
 // Usefulness: issue #1376. A continuation probe is read-only on every adapter, so a CLI startup
 // action cannot write to the work tree.
 test("a continuation probe is read-only on every adapter", async () => {
-  const repo = await createTempRepo();
+  // The directory is not a repository: the probe's only Git reads are answered from memory, so
+  // the case checks the option it passes and starts no `git` process.
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   try {
     for (const kind of ["claude", "codex", "agy", "opencode", "copilot"]) {
       const seen = [];
@@ -310,6 +323,7 @@ test("a continuation probe is read-only on every adapter", async () => {
       expect(seen[0]).toMatchObject({ readOnly: true });
     }
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });

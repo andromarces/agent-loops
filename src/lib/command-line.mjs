@@ -1,4 +1,4 @@
-// Reads a process command line for a held Claude session (#673, ADR 0032). The process table gives
+// Reads a process command line for a held Claude session (ADR 0032). The process table gives
 // one string per process, and each platform builds it differently, so the split follows the platform.
 
 import { readProp } from "./error-message.mjs";
@@ -104,7 +104,7 @@ export function heldSessionIds(command, platform) {
 
 /**
  * Refuses a continuation when a live process passes the id of a claude role session through a
- * session flag in its command line (#647, #671, #673, ADR 0031, ADR 0032, `heldSessionIds`). A
+ * session flag in its command line (ADR 0031, ADR 0032, `heldSessionIds`). A
  * `SIGKILL` of the earlier parent leaves its `claude` child
  * running, and the CLI accepts a resume of that session, so two processes would write one session
  * file. Only a claude id in the UUID form is checked, so a short id cannot match another

@@ -33,7 +33,7 @@ vi.mock("execa", async (importOriginal) => {
 import { copyLocalFiles, MAX_WALKED_ENTRIES } from "../../src/lib/local-files.mjs";
 import { reviewedState, snapshot } from "../../src/lib/snapshot.mjs";
 import { exists, removePath } from "../fs-helpers.mjs";
-import { createLinkedWorkTree } from "../git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir, createLinkedWorkTree } from "../git-helpers.mjs";
 
 const SECRET = "TOKEN-VALUE-MUST-NOT-APPEAR";
 const created = [];
@@ -1319,11 +1319,18 @@ test.each([
   ["a git directory", ".git"],
   ["an empty path", ""],
 ])("refuses %s as an operator path", async (_name, path) => {
-  const { linked } = await createLinked({ ignore: [] });
-
-  await expect(copyLocalFiles(linked, {}, { extraPaths: [path] })).rejects.toThrow(
-    /--copy-local-path/,
-  );
+  // A path-shape refusal needs no repository or copy, so the directory holds a `.git` and the
+  // reads are answered from memory.
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  try {
+    await expect(copyLocalFiles(repo, {}, { extraPaths: [path] })).rejects.toThrow(
+      /--copy-local-path/,
+    );
+  } finally {
+    gitDouble.answer = null;
+    await removePath(repo);
+  }
 });
 
 const linkDirectory = (target, path) =>
