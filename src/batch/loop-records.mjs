@@ -1,6 +1,7 @@
 // The batch identity, the progress line, and the loop record shapes shared by the batch start,
 // the audit store, and the status read. These helpers keep no run state.
 import { randomUUID } from "node:crypto";
+import { redactEnvSecrets } from "../lib/redact.mjs";
 import { defaultMode } from "./items.mjs";
 import { missingLoopReport } from "./report.mjs";
 
@@ -11,9 +12,9 @@ export function newBatchId(now = new Date()) {
   return `${stamp}-${randomUUID().slice(0, 8)}`;
 }
 
-/** A progress line on stderr, because stdout carries one JSON summary. */
+/** A progress line on stderr, because stdout carries one JSON summary. Secret-named environment values are redacted (ADR 0017). */
 export function progress(message) {
-  process.stderr.write(`[agent-loop] batch: ${message}\n`);
+  process.stderr.write(`[agent-loop] batch: ${redactEnvSecrets(message)}\n`);
 }
 
 export function queuedLoop(paths, id, item, maxSteps) {
