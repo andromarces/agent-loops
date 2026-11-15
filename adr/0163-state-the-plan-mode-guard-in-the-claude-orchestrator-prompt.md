@@ -2,7 +2,15 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+The superseded part is decision 3, which declines the optional first-turn abort retry
+([ADR 0164](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md)). Every other decision,
+consequence, and alternative stays in force.
+
+## Superseded by
+
+[adr/0164-retry-a-first-turn-plan-mode-orchestrator-abort.md](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) partially supersedes this ADR. The replaced part is decision 3, which states that the optional first-turn abort retry is not taken. The prompt rule of decision 1 and the Claude-only scope of decision 2 stay in force, and every other decision, consequence, and alternative stays in force.
 
 ## Date
 

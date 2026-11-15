@@ -530,6 +530,134 @@ test("abort returns exit 1 and reason", async () => {
   }
 });
 
+// Usefulness: verifies acceptance "a first-turn orchestrator abort whose reason names plan mode
+// retries the orchestrator turn once, and a test covers it" (issue #1996). The plan-mode rule is
+// advisory prompt text, so the abort is a retryable runtime fault, and the retry must not charge a
+// step nor end the loop.
+test("a first-turn Claude abort whose reason names plan mode retries the orchestrator turn", async () => {
+  const repo = await cleanRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({
+        action: "abort",
+        reason: "Plan mode is on for this session, so rerun the loop without plan mode.",
+      }),
+      JSON.stringify({ action: "run_worker", prompt: "start work" }),
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+    ]);
+    const workerAdapter = scripted([CHILD_REPORT]);
+
+    const result = await runLoop({
+      task: "Task 1996",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orchAdapter, work: workerAdapter, rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(orchAdapter.recorded.length).toBe(3);
+    expect(workerAdapter.recorded.length).toBe(1);
+    expect(orchAdapter.recorded[1].prompt).toMatch(/plan mode is never a reason to abort/i);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies the retry keys on the first orchestrator turn, not charged steps (issue
+// #1996 review). A review-only finish refused before any child turn leaves stepsUsed at 0, so a
+// plan-mode abort on the second orchestrator turn must end the loop instead of retrying.
+test("a plan-mode abort after a refused review-only finish is not retried", async () => {
+  const repo = await cleanRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+      JSON.stringify({ action: "abort", reason: "Plan mode blocks this turn." }),
+    ]);
+
+    const result = await runLoop({
+      task: "Task 1996",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orchAdapter, work: scripted([]), rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toBe("Plan mode blocks this turn.");
+    expect(orchAdapter.recorded.length).toBe(2);
+  } finally {
+    await removePath(repo);
+  }
+});
+
+// Usefulness: verifies acceptance "a second such abort, and an abort with any other reason, end the
+// loop as before, and a test covers it" (issue #1996). A non-Claude kind cannot read its plan-mode
+// guard as a block, so its plan-mode abort stays terminal too.
+test.each([
+  {
+    name: "a second plan-mode abort",
+    kind: "claude",
+    replies: [
+      JSON.stringify({ action: "abort", reason: "Plan mode blocks this turn." }),
+      JSON.stringify({ action: "abort", reason: "Plan mode still blocks this turn." }),
+    ],
+    calls: 2,
+    reason: "Plan mode still blocks this turn.",
+  },
+  {
+    name: "an abort with another reason",
+    kind: "claude",
+    replies: [JSON.stringify({ action: "abort", reason: "spec contradiction" })],
+    calls: 1,
+    reason: "spec contradiction",
+  },
+  {
+    name: "a plan-mode abort on a non-Claude orchestrator",
+    kind: "codex",
+    replies: [JSON.stringify({ action: "abort", reason: "Plan mode blocks this turn." })],
+    calls: 1,
+    reason: "Plan mode blocks this turn.",
+  },
+])("$name ends the loop", async ({ kind, replies, calls, reason }) => {
+  const repo = await cleanRepo();
+  try {
+    const orchAdapter = scripted(replies);
+    const result = await runLoop({
+      task: "Task 1996",
+      cwd: repo,
+      maxSteps: 5,
+      roles: {
+        orchestrator: { kind, sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { [kind]: orchAdapter, work: scripted([]), rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toBe(reason);
+    expect(orchAdapter.recorded.length).toBe(calls);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies requirement "a headless worker turn whose adapter returns no string response
 // fails" (issue #1496). The result event carries `status: "error"`.
 // The error names the missing string response, and the run never reads the turn as `ok` with a null
