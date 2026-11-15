@@ -68,6 +68,7 @@ Andro Marces
 ## Links
 
 - [Issue #1932](https://github.com/andromarces/agent-loops/issues/1932)
+- [Pull request #1951](https://github.com/andromarces/agent-loops/pull/1951)
 - [ADR 0018: Copy untracked local files into a linked run work tree](0018-copy-local-files-into-a-linked-run-work-tree.md)
 - [ADR 0073: Lock the work tree of an active run](0073-lock-the-work-tree-of-an-active-run.md)
 - [Work tree ownership](../docs/orchestrator-instructions.md#work-tree-ownership)
