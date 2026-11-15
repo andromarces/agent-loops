@@ -795,6 +795,18 @@ test("opencode refuses a plain label that spans unidentified parts", async () =>
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
 });
 
+// Usefulness: verifies a plain heading Conclusion starts the guard block, so an accept whose
+// label lines span unidentified parts refuses (issue #1989).
+test("opencode refuses a plain heading accept that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent("Conclusion\ndone\nWhy\nok\nBlockers\nnone\nVerdict: accept\n"),
+    textEvent("Checks\ntests passed"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
 // Usefulness: verifies a required label above Conclusion counts as a block label line, so a
 // leading `Blockers:` cut across unidentified parts still refuses the accept (issue #1592 keeps the
 // #509 guard over the wider block).
