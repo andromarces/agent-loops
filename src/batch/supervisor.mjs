@@ -1776,8 +1776,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   for (const issue of manifest.issues) {
     const loop = loops.get(issue);
     if (loop !== null && isLive(loop)) {
-      // A fresh cache reads through the injectable probe once, so the check is as fresh as a
-      // plain read and the probe covers every recorded-owner read on resume.
+      // This check and the pre-wait identity check read the injectable probe. A fresh cache
+      // keeps this read fresh.
       const cache = startTimeCache({ probe: probeStartTime });
       if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache)) slots.add(issue);
     }
