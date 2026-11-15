@@ -72,6 +72,23 @@ const ROLE = fileURLToPath(new URL("../../src/role/index.mjs", import.meta.url))
 const scratches = [];
 // Every spawned dispatch, so teardown ends it on every path, a startup timeout included.
 const dispatches = [];
+// A live child that a case records as the child of a dead turn, so teardown ends it too.
+const children = [];
+
+/** Starts a live node process, to stand as the child of a dead turn. */
+function liveChild() {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  children.push(child);
+  return child;
+}
+
+/** Ends a recorded live child and waits for the process to go. */
+async function endChild(child) {
+  child.kill("SIGKILL");
+  await vi.waitFor(() => expect(processExists(child.pid)).toBe(false), { timeout: 5000 });
+}
 
 // The pid that the fake `codex` of `scratch` wrote as its first action, or null when it never ran.
 async function fakePid(scratch) {
@@ -121,6 +138,9 @@ async function endSpawned() {
   for (const dir of scratches) {
     const pid = await fakePid(dir);
     if (pid !== null && processExists(pid)) process.kill(pid, "SIGKILL");
+  }
+  for (const child of children.splice(0)) {
+    if (processExists(child.pid)) child.kill("SIGKILL");
   }
 }
 
@@ -260,35 +280,69 @@ const laterCall = (repo, tmpRoot, argv) => {
 
 // Turns the run in `repo` into an interrupted run that kept a turn directory whose recorded child
 // is dead. Returns the directory and the temporary root that holds it.
-async function interruptedWithKeptDir(repo) {
-  const tmpRoot = await mkdtemp(join(tmpdir(), "kept-turn-"));
-  scratches.push(tmpRoot);
-  const dir = await mkdtemp(join(tmpRoot, "al-"));
-  writeFileSync(join(dir, "leftover.txt"), "x\n");
-  const stat = lstatSync(dir, { bigint: true });
+async function interruptedWithKeptDir(repo, { child } = {}) {
+  const made = await keptTurnDir();
   const state = await readRepoState(repo);
   state.lifecycle = "interrupted";
+  // A dispatch that dies mid-turn records no turn of its own.
+  state.turns = [];
   state.lastDispatch = {
     role: "worker",
     at: new Date().toISOString(),
-    turnTmpdir: {
-      dir,
-      parentReal: dirname(realpathSync.native(dir)),
-      device: String(stat.dev),
-      inode: String(stat.ino),
-      child: { pid: await deadPid() },
-    },
+    turnTmpdir: { ...made.record, child: child ? { pid: child.pid } : { pid: await deadPid() } },
   };
   await writeFile(
     statePaths({ cwd: repo }).stateFile,
     `${JSON.stringify(state, null, 2)}\n`,
     "utf8",
   );
-  return { dir, tmpRoot };
+  return { dir: made.dir, tmpRoot: made.tmpRoot };
+}
+
+// Turns the run in `repo` into the state that a dispatch process leaves when it dies mid-turn: the
+// durable `dispatched` lifecycle and the record of the turn directory, with a dead child.
+async function dispatchedWithKeptDir(repo, { child } = {}) {
+  const made = await keptTurnDir();
+  const state = await readRepoState(repo);
+  state.lifecycle = "dispatched";
+  // A dispatch that dies mid-turn records no turn of its own.
+  state.turns = [];
+  state.lastDispatch = {
+    role: "worker",
+    at: new Date().toISOString(),
+    turnTmpdir: { ...made.record, child: child ? { pid: child.pid } : { pid: await deadPid() } },
+  };
+  await writeFile(
+    statePaths({ cwd: repo }).stateFile,
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf8",
+  );
+  return { dir: made.dir, tmpRoot: made.tmpRoot };
+}
+
+/** Makes a turn directory in a fresh temporary root, with the record that a killed turn leaves. */
+async function keptTurnDir() {
+  const tmpRoot = await mkdtemp(join(tmpdir(), "kept-turn-"));
+  scratches.push(tmpRoot);
+  const dir = await mkdtemp(join(tmpRoot, "al-"));
+  writeFileSync(join(dir, "leftover.txt"), "x\n");
+  const stat = lstatSync(dir, { bigint: true });
+  return {
+    dir,
+    tmpRoot,
+    record: {
+      dir,
+      parentReal: dirname(realpathSync.native(dir)),
+      device: String(stat.dev),
+      inode: String(stat.ino),
+    },
+  };
 }
 
 // Usefulness: verifies issue #1207 acceptance 1, that the call which marks a run `interrupted`
 // after its dispatch process died mid-turn removes the directory of that turn.
+// Process: this is the one real crash that proves a killed dispatch leaves its turn directory and
+// state record for the next call. Every other case writes that state in process.
 test("the call that marks a killed dispatch interrupted removes its turn directory", async () => {
   const { repo, turnDir, tmpRoot } = await killedDispatch();
   expect(existsSync(turnDir)).toBe(true);
@@ -304,9 +358,13 @@ test("the call that marks a killed dispatch interrupted removes its turn directo
 
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
 // does not fail the call and the run is still marked `interrupted`.
+// In-process: the state of a killed turn is written directly, because this case asserts the absent
+// directory, not the death of a process.
 test("a recorded turn directory that is gone does not fail the interrupted mark", async () => {
-  const { repo, turnDir, tmpRoot } = await killedDispatch();
-  await removePath(turnDir);
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+  await removePath(dir);
 
   const next = await nextCall(repo, tmpRoot);
 
@@ -316,11 +374,15 @@ test("a recorded turn directory that is gone does not fail the interrupted mark"
 
 // Usefulness: verifies issue #1207 acceptance 2, that a directory which replaced the recorded one
 // is not followed or removed, and the run is still marked `interrupted`.
+// In-process: the state of a killed turn is written directly, because this case asserts the
+// replacement guard, not the death of a process.
 test("a directory that replaced the recorded turn directory keeps its content", async () => {
-  const { repo, turnDir, tmpRoot } = await killedDispatch();
-  renameSync(turnDir, join(tmpRoot, "moved"));
-  mkdirSync(turnDir);
-  const sentinel = join(turnDir, "sentinel.txt");
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+  renameSync(dir, join(tmpRoot, "moved"));
+  mkdirSync(dir);
+  const sentinel = join(dir, "sentinel.txt");
   writeFileSync(sentinel, "keep\n");
 
   const next = await nextCall(repo, tmpRoot);
@@ -332,24 +394,32 @@ test("a directory that replaced the recorded turn directory keeps its content", 
 
 // Usefulness: verifies issue #1207 review blocker 2, that a child of the dead dispatch which still
 // runs keeps its turn directory, and the run is still marked `interrupted`.
+// Process: a live child is what the guard reads, so the case starts one and records its pid.
 test("a live child of the killed dispatch keeps the turn directory", async () => {
-  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
-  expect(processExists(childPid)).toBe(true);
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const child = liveChild();
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
+  expect(processExists(child.pid)).toBe(true);
 
   const next = await nextCall(repo, tmpRoot);
 
   expect(next.payload.error).toContain("interrupted");
   expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
-  expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+  expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
 }, 60_000);
 
 // Usefulness: verifies issue #1591 acceptance 1 and 2, that `abort` on a run whose dispatch was
 // killed removes the turn directory when no process of the dead child runs, and records the killed
 // turn as `interrupted` in `turns`. Not redundant with the interrupted-run test below, which needs
 // a dispatch call first and never exercises the direct `dispatched` abort.
+// In-process: the durable `dispatched` state that the death leaves is written directly, because no
+// case here reads the death itself.
 test("abort after a killed dispatch removes its turn directory and records the interrupted turn", async () => {
-  const { repo, turnDir, tmpRoot } = await killedDispatch();
-  expect(existsSync(turnDir)).toBe(true);
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo);
+  expect(existsSync(dir)).toBe(true);
   const before = await readRepoState(repo);
   expect(before.lifecycle).toBe("dispatched");
   expect(before.turns).toEqual([]);
@@ -358,7 +428,7 @@ test("abort after a killed dispatch removes its turn directory and records the i
 
   expect(aborted.exitCode).toBe(0);
   expect(aborted.payload).toMatchObject({ status: "ok", lifecycle: "aborted" });
-  expect(existsSync(turnDir)).toBe(false);
+  expect(existsSync(dir)).toBe(false);
   expect(readdirSync(tmpRoot)).toEqual([]);
   const state = await readRepoState(repo);
   expect(state.lifecycle).toBe("aborted");
@@ -374,9 +444,13 @@ test("abort after a killed dispatch removes its turn directory and records the i
 // Usefulness: verifies issue #1591 acceptance 1, that `abort` keeps the turn directory and warns
 // while a process of the dead child still runs, and still records the killed turn as `interrupted`.
 // Not redundant with the removal test above, which has no live child to keep the directory.
+// Process: a live child is what the guard reads, so the case starts one and records its pid.
 test("abort after a killed dispatch keeps the turn directory while the dead child runs", async () => {
-  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
-  expect(processExists(childPid)).toBe(true);
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const child = liveChild();
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo, { child });
+  expect(processExists(child.pid)).toBe(true);
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -391,13 +465,13 @@ test("abort after a killed dispatch keeps the turn directory while the dead chil
     expect(aborted.exitCode).toBe(0);
     expect(aborted.payload).toMatchObject({ status: "ok", lifecycle: "aborted" });
     const warnings = errorSpy.mock.calls.map((call) => String(call[0]));
-    expect(warnings.some((line) => line.includes("kept") && line.includes(turnDir))).toBe(true);
-    expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+    expect(warnings.some((line) => line.includes("kept") && line.includes(dir))).toBe(true);
+    expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
     const state = await readRepoState(repo);
     expect(state.lifecycle).toBe("aborted");
     expect(state.turns).toHaveLength(1);
     expect(state.turns[0]).toMatchObject({ role: "worker", status: "interrupted" });
-    expect(processExists(childPid)).toBe(true);
+    expect(processExists(child.pid)).toBe(true);
   } finally {
     errorSpy.mockRestore();
   }
@@ -405,29 +479,35 @@ test("abort after a killed dispatch keeps the turn directory while the dead chil
 
 // Usefulness: verifies issue #1329 acceptance 1, that a later call on an interrupted run
 // re-checks the kept turn directory and removes it once no process of the dead child group runs.
+// Process: a live child stands as the group at first, and its end is the condition under test.
 test("a later abort removes the turn directory kept for a dead child group", async () => {
-  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
-  const first = await nextCall(repo, tmpRoot);
-  expect(first.payload.error).toContain("interrupted");
-  expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const child = liveChild();
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
+  await nextCall(repo, tmpRoot);
+  expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
 
-  process.kill(childPid, "SIGKILL");
-  await vi.waitFor(() => expect(processExists(childPid)).toBe(false), { timeout: 5000 });
+  await endChild(child);
 
   const later = await laterCall(repo, tmpRoot, ["abort", "--cwd", "<repo>", "--reason", "stop"]);
 
   expect(later.exitCode).toBe(0);
   expect(later.payload.lifecycle).toBe("aborted");
-  expect(existsSync(turnDir)).toBe(false);
+  expect(existsSync(dir)).toBe(false);
   expect(readdirSync(tmpRoot)).toEqual([]);
 }, 60_000);
 
 // Usefulness: verifies issue #1329 hostile case, that a later call keeps the turn directory and
 // warns while a process of the dead child group still runs.
+// Process: a live child is what the guard reads, so the case starts one and records its pid.
 test("a later call keeps the turn directory and warns while the dead child group runs", async () => {
-  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const child = liveChild();
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
   await nextCall(repo, tmpRoot);
-  expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
+  expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -436,9 +516,9 @@ test("a later call keeps the turn directory and warns while the dead child group
     expect(later.exitCode).toBe(1);
     expect(later.payload.error).toContain("interrupted");
     const warnings = errorSpy.mock.calls.map((call) => String(call[0]));
-    expect(warnings.some((line) => line.includes("kept") && line.includes(turnDir))).toBe(true);
-    expect(existsSync(join(turnDir, "leftover.txt"))).toBe(true);
-    expect(processExists(childPid)).toBe(true);
+    expect(warnings.some((line) => line.includes("kept") && line.includes(dir))).toBe(true);
+    expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
+    expect(processExists(child.pid)).toBe(true);
   } finally {
     errorSpy.mockRestore();
   }
@@ -446,16 +526,19 @@ test("a later call keeps the turn directory and warns while the dead child group
 
 // Usefulness: verifies issue #1329 hostile case, that a later call does not follow a directory that
 // replaced the kept turn directory.
+// Process: a live child is what the guard reads, so the case starts one and records its pid.
 test("a later call keeps a directory that replaced the kept turn directory", async () => {
-  const { repo, turnDir, tmpRoot, childPid } = await killedDispatch({ keepChild: true });
+  const repo = await newRunRepo();
+  await initRun(repo, { agents: basicDeps().agents });
+  const child = liveChild();
+  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
   await nextCall(repo, tmpRoot);
-  renameSync(turnDir, join(tmpRoot, "moved"));
-  mkdirSync(turnDir);
-  const sentinel = join(turnDir, "sentinel.txt");
+  renameSync(dir, join(tmpRoot, "moved"));
+  mkdirSync(dir);
+  const sentinel = join(dir, "sentinel.txt");
   writeFileSync(sentinel, "keep\n");
 
-  process.kill(childPid, "SIGKILL");
-  await vi.waitFor(() => expect(processExists(childPid)).toBe(false), { timeout: 5000 });
+  await endChild(child);
 
   const later = await laterCall(repo, tmpRoot, ["abort", "--cwd", "<repo>", "--reason", "stop"]);
 
@@ -599,6 +682,7 @@ async function fakeProcesses(scratch) {
 // Usefulness: verifies issue #1207 review items 1 and 2, that teardown ends the fake `codex` when
 // startup times out after the spawn and before the child writes its pid or its report, the window
 // that no pid file or process group can cover.
+// Process: the case proves teardown of a real child that never reports, which no double can show.
 test("teardown ends a fake codex that is delayed before its first statement", async () => {
   await expect(
     killedDispatch({ startupMs: 3000, reportDelayMs: 20_000, startDelayMs: 20_000 }),
