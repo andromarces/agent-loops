@@ -12,12 +12,16 @@ orchestrator ──> runtime ──> worker   (edits, tests)
                         └──> reviewer (no tracked change)
 ```
 
-Supported agent CLIs: `claude`, `codex`, `agy`, `opencode`, `copilot`.
+Supported agent CLIs: `claude`, `codex`, `agy` (alias: `antigravity`), `opencode`,
+`copilot`. The five `--harness` names that `install` and `uninstall` accept are in
+[Requirements](docs/reference/install.md#requirements).
 
 ## Requirements
 
 - Node.js `^24.11.0 || >=26.0.0`
 - Git
+- GitHub CLI (`gh`), installed and authenticated. The PR gate, `--require-ci`, and every
+  `batch` command call it.
 - At least one agent CLI from the list above, installed and signed in
 
 ## Install

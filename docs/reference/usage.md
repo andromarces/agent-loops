@@ -18,7 +18,7 @@ agent-loop --orchestrator codex --worker claude --reviewer agy --task "Implement
 
 ### Options
 
-`agent-loop --help` lists every option, with its default and its refusals. This file holds no copy of that list. `agent-loop role --help` lists the `role` subcommand options.
+`agent-loop --help` lists every option, with its default and its refusals. This file holds no copy of that list. `agent-loop role --help` prints the role usage lines, the dispatch and init task forms, and a pointer to `agent-loop --help` for every role flag; it does not list the role options.
 
 A value flag also accepts the inline form `--flag=value`, for example
 `--task=-x`, which allows a value that starts with `-`. A boolean flag rejects

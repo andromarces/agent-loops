@@ -91,6 +91,7 @@ test("batch help prints the commands and exit codes", async () => {
   expect(code).toBe(0);
   expect(out).toContain("agent-loop batch start");
   expect(out).toContain("--from-audit");
+  expect(out).toContain("--reviewer-workspace-write");
   expect(out).toContain("agent-loop batch answer");
   expect(out).toContain("130");
 });
@@ -172,6 +173,7 @@ test("audit help prints the commands and exit codes", async () => {
   expect(out).toContain("agent-loop batch audit remove");
   expect(out).toContain("--focus");
   expect(out).toContain("--focus-file");
+  expect(out).toContain("--reviewer-workspace-write");
   expect(out).toContain("130");
 });
 // Usefulness: decision 8 keeps checkpoints outside any repository, so a runs root inside the

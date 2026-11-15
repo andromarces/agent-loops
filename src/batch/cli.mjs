@@ -59,8 +59,8 @@ every mode and is skipped before launch when that head moved or it is closed. A 
 on branch batch/<batch id>/task-<id> in work tree task-<id>, and in work-first or
 review-first it delivers through a pull request with no closing keyword.
 Settings: --base, --work-tree-root, --task-template, --require-specification, --setup-cmd,
---setup-timeout, --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox, and the
---<role>-model and --<role>-effort flags.
+--setup-timeout, --test-cmd, --test-cmd-timeout, --timeout, --reviewer-sandbox,
+--reviewer-workspace-write, and the --<role>-model and --<role>-effort flags.
 
 A needs-owner loop becomes a pending decision and releases its slot. \`batch status\` shows
 the options and the recommendation. \`batch answer\` binds one listed option to one decision.
@@ -70,9 +70,10 @@ Its status names the pull request and the next action.
 The audit runs two or more read-only reviewers on one revision, then one consolidation
 worker. It then creates one issue per finding that no open or closed issue covers.
 Audit settings: --base, --work-tree-root, --setup-cmd, --setup-timeout, --timeout,
---reviewer-sandbox, --reviewer-model and --reviewer-effort after each --reviewer,
---worker-model and --worker-effort, and --focus <text> or --focus-file <path>. The two
-focus flags are mutually exclusive, and an empty focus is refused.
+--reviewer-sandbox, --reviewer-workspace-write, --reviewer-model and --reviewer-effort
+after each --reviewer, --worker-model and --worker-effort, and --focus <text> or
+--focus-file <path>. The two focus flags are mutually exclusive, and an empty focus is
+refused.
 
 Exit codes: 0 every item succeeded or was skipped, or the audit created its issue set. 1 a
 loop failed, the batch waits on an owner decision or merge, the queue paused, or an audit
@@ -87,7 +88,8 @@ Usage:
     [--worker-model <model>] [--worker-effort <effort>] \\
     [--focus <text> | --focus-file <path>] \\
     [--base <branch>] [--work-tree-root <dir>] [--setup-cmd <command>] \\
-    [--setup-timeout <seconds>] [--timeout <seconds>] [--reviewer-sandbox <mode>]
+    [--setup-timeout <seconds>] [--timeout <seconds>] [--reviewer-sandbox <mode>] \\
+    [--reviewer-workspace-write]
 
   agent-loop batch audit status [--audit <id>]
   agent-loop batch audit resume --audit <id>
