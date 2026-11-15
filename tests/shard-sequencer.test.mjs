@@ -40,8 +40,7 @@ test("each of five shards holds close to a fifth of the measured duration", asyn
 
 // Usefulness: a file added after the last measurement has no entry, and must still reach exactly one shard.
 test("an unmeasured test file still runs in exactly one shard", async () => {
-  const unmeasured = resolve(root, "tests/shard-sequencer.test.mjs");
-  expect(Object.keys(testFileDurations)).not.toContain("tests/shard-sequencer.test.mjs");
+  const unmeasured = resolve(root, "tests/unmeasured-synthetic.test.mjs");
   const found = [];
   for (let index = 1; index <= 5; index++) {
     const files = await shard(index, 5, [...specs, { moduleId: unmeasured }]);
