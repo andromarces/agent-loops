@@ -83,8 +83,8 @@ export async function runAgy(state, prompt, options = {}) {
     throw new Error("Antigravity did not return a conversation_id.");
   }
 
-  // In the probe (agy 1.2.13), a resumed id that agy does not have printed a not-found warning on
-  // stderr, exited 0, and ran the turn in a new conversation. The turn already ran, so a rerun would
+  // agy 1.2.13 prints a not-found warning on stderr for a resumed id it does not have, exits 0, and
+  // runs the turn in a new conversation. The turn already ran, so a rerun would
   // repeat its edits. The new id is adopted, and `conversationReplaced` tells the runtime that the
   // conversation never received the role preamble. The stderr text is not matched: any different id
   // means a new conversation.

@@ -19,9 +19,8 @@ import { redactAndClean } from "./redact.mjs";
  * pre-spawn session record. The `data` object is mutated by the caller to record the outcome.
  */
 export function createTranscriptWriter({ options, roles, events, reviewerSandbox, signal }) {
-  // The mode is recorded only when the run named one, so a mode-free run writes
-  // the transcript shape it wrote before the flag existed, and a consumer of that file sees no
-  // field this flag introduced.
+  // The mode is recorded only when the run named one, so a mode-free transcript holds no mode
+  // field, and a consumer of that file sees no field the flag introduced.
   const transcriptData = {
     task: options.task,
     cwd: options.cwd,

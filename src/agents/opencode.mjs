@@ -31,12 +31,11 @@ const UNKNOWN_ERROR = "unknown error";
 
 // opencode marks a provider capacity reply on two sourced signals.
 // v0.0.0-dev-466 streams a provider overload as a `provider.internal` error whose structured
-// `status` is the provider's HTTP status. A probe against a local 529 server streamed that event,
-// and a 503 carries a generic service-unavailable message, so only 529 is marked.
+// `status` is the provider's HTTP status, and a 503 carries a generic service-unavailable message,
+// so only 529 is marked.
 // v0.0.0-dev-973 streams a provider overload as a `provider.rate-limit` error with `status` 429
-// and the provider error code `overloaded` in the structured response body. A probe against a
-// local 429 server streamed that event; a plain rate limit carries another code, and a quota is a
-// `provider.quota` event, so neither is marked.
+// and the provider error code `overloaded` in the structured response body. A plain rate limit
+// carries another code, and a quota is a `provider.quota` event, so neither is marked.
 const OVERLOAD_STATUS = 429;
 const OVERLOAD_CODE = "overloaded";
 

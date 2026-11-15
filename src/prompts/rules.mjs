@@ -64,8 +64,8 @@ export const processRule =
 
 /**
  * Secret file rule for every worker and reviewer turn. Init copies the untracked
- * `.env` of the main work tree into the run work tree. A repository-wide `grep` printed a token
- * from it into a turn. The rule is advisory, and the runtime does not detect a breach.
+ * `.env` of the main work tree into the run work tree, so a repository-wide search can read a
+ * token from it. The rule is advisory, and the runtime does not detect a breach.
  */
 export const secretFileRule =
   "Never read, print, or quote `.env`, `.dev.vars`, or another ignored secret file. Check a configuration value by name and presence only. Keep a content search to tracked files, for example `git grep`, or `rg` without `--no-ignore` and `-u`.";
@@ -236,9 +236,8 @@ ${TARGETED_RUN_BOUND_ITEMS}
   - ${NO_LOAD_GENERATORS}`;
 }
 
-// A held test slot made two workers skip or reorder the TDD red run, and no report recorded it
-// The wait stays inside the turn, and a run that did not start reaches `Checks`
-// (ADR 0096).
+// A held test slot must not make a worker skip or reorder the red run: the wait stays inside the
+// turn, and a run that did not start reaches `Checks` (ADR 0096).
 
 /**
  * The TDD red-run rule of the worker first turn (ADR 0096). A red run of one or a few

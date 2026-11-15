@@ -21,12 +21,11 @@ const commitLinkRule =
 
 const prBodyRule = `After each push, if the branch has an open pull request, update the pull request body in place so that it describes the pushed head. Add no revision log to the body or to a comment. ${PR_BODY_SCOPE}`;
 
-// A worker wrote a PR body whose closing keyword sat inside a code span, so GitHub recorded no link.
-// The issue stayed unlinked.
+// A closing keyword inside a code span records no link, so the body must be read back.
 const closingIssuesRule =
   "After you set or edit a pull request body that links an issue with a closing keyword, read `gh pr view <pr> --json closingIssuesReferences`. Fix the body until the issue is listed. When the PR base is not the default branch, GitHub lists no issue. Skip that read, and never report the empty list as a blocker. Name the manual close in `Notes`.";
 
-// A worker ran the test suite and committed an unignored Vitest report with `git add -A`.
+// `git add -A` stages an unignored generated report, and the commit then carries it.
 const stageOnlyNeededPathsRule =
   "Stage only the paths that the change needs, by name. Never stage with `git add -A`, `git add .`, or `git commit -a`. Before each commit, read `git diff --cached --stat`, and unstage any generated, cache, or test output file. When a run leaves untracked generated output that the repository does not ignore, report it in `Notes`, and do not commit it.";
 
@@ -38,8 +37,8 @@ const namedPushRule =
 const matchingPushNote =
   "Under `push.default=matching`, a plain `git push` also pushes each local branch with a same-name remote branch, such as the default branch.";
 
-// A worker piped `git push` through `tail`, so the pre-push hook output was cut and its result never
-// reached Checks. A hook can print a warning or a phase result that the turn needs.
+// A filter that cuts the hook output hides its warning or phase result, so the result never reaches
+// Checks.
 const hookOutputRule =
   "Never pipe `git commit` or `git push` through a filter that cuts the hook output, such as `tail` or `head`. Keep the full output of a commit or push hook, or at least its failing and summary lines. Report the hook result in Checks.";
 
@@ -63,13 +62,12 @@ const pnpmRunRule =
 const ownNodeModulesRule =
   "Use the own `node_modules` of this work tree, which the parent installed before the first dispatch. Never link or junction the `node_modules` of another checkout into this work tree, and never run an install in another checkout.";
 
-// A worker turn in a linked work tree edited the main checkout instead, and a code index can
-// return absolute paths of another checkout.
+// A code index can return an absolute path of another checkout, so an edit there lands outside the
+// run work tree.
 const workTreeEditRule =
   "Edit, create, and delete files only under the run work tree. Before an edit with an absolute path, check that the path starts with the work tree root. A path that a tool returns for another checkout maps to the same relative path in the run work tree.";
 
-// A worker whose edit landed in another checkout restored the files there, which can discard an
-// uncommitted change of the user, and its own envelope then named no path.
+// A restore in another checkout can discard an uncommitted change of the user.
 const foreignCheckoutEditRule =
   "If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there. A restore can discard an uncommitted change of the user.";
 
@@ -85,8 +83,8 @@ const tmpdirRule = tempPathRule(
   ", such as `/tmp`. Never write a literal `/tmp` path, even when TMPDIR names another directory. Another run can hold the same name",
 );
 
-// A Claude worker moved its suite to a background shell task when it could outlive the foreground
-// bound, then ended the turn with no closing block.
+// A background shell task can outlive the foreground bound, and the turn then ends with no closing
+// block.
 const longSuiteRule =
   "Never end the turn while a command that you started is still running. When a test command can outlive the shell tool bound of the harness, such as the 10-minute Claude Code bound, rely on the required CI checks and report the local suite as not run in `Checks`; never move it to the background.";
 
@@ -94,20 +92,18 @@ const longSuiteRule =
 const ciWaitRule =
   "Never wait for CI with an unbounded command, such as `gh pr checks --watch`. The run waits for the required checks outside the worker turn with `role wait-checks`, where the run permits it. A worker that must read CI, for example for a flaky check, uses a bounded read.";
 
-// A Claude worker put the reasons under an unlabeled `Verification:` heading on a first turn.
-// The block parsed to null for the missing `Why:` label. Later turns repeated the
-// omission in prose and bold-lead lists, so every turn carries the rule.
+// An unlabeled `Verification:` heading leaves the block with no `Why:` label, so the report parses
+// to null. A prose or bold-lead list repeats the omission, so every turn carries the rule.
 const reasonsUnderWhyRule =
   "Put the reasons under `Why:`, never under another heading such as `Verification:`.";
 
-// A Claude worker opened later turns with a prose sentence and put requested values on lines of
-// their own, so the response had no `Conclusion:` line and the report parsed to null.
+// A prose sentence before the labels, or a requested value on its own line, leaves the response
+// with no `Conclusion:` line, so the report parses to null.
 const conclusionFirstRule =
   "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 
-// A later turn resumes the same session and gets no preamble, so it never learns that TMPDIR
-// changed. A worker that reused a temporary path from an earlier turn wrote to a
-// directory that the runtime had already removed.
+// A later turn resumes the same session and gets no preamble, so it never learns that `TMPDIR`
+// changed. A reused temporary path can name a directory that the runtime already removed.
 const laterTurnTmpdirRule =
   "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
 
@@ -121,8 +117,8 @@ export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions
   if (!firstTurn) {
     // A later turn can commit and push a fix with no preamble yet. So it repeats the push,
     // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path, and closing-block
-    // rules. It repeats the closing block because a worker drifts from it as the conversation grows
-    // The rules also name the `Conclusion:` line as its first line.
+    // rules. It repeats the closing block because a worker drifts from it as the conversation
+    // grows. The rules also name the `Conclusion:` line as its first line.
     return escapeLineSeparators(`${prompt}
 
 ${prTurnRules.join("\n\n")}

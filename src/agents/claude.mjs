@@ -34,9 +34,8 @@ import {
 // Claude Code prints exactly this on stderr, exit 1, when `--resume` names a session it does not have.
 const missingSession = (id) => `No conversation found with session ID: ${id}`;
 
-// Claude Code 2.1.316 writes `api_error_status: 529` on the result event of a provider overload
-// (probe against a local 529 server). The `result` text carries an environment suffix, so only the
-// structured status is matched.
+// Claude Code 2.1.316 writes `api_error_status: 529` on the result event of a provider overload.
+// The `result` text carries an environment suffix, so only the structured status is matched.
 /**
  * Marks a failed turn whose terminal failure is a provider overload. The terminal failure is the
  * last `result` event of the output, so an earlier overload followed by another cause is never

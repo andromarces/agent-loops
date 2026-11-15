@@ -25,9 +25,9 @@
 import { parentInstructionParts } from "../lib/parent-instructions.mjs";
 
 // The permission actions that carry a file edit. A set, not a single constant,
-// so a further edit tool is one entry. A live probe against OpenCode
-// v0.0.0-dev-19933 showed the built-in `edit`, `write`, and `apply_patch` tools
-// all raise the `edit` action, so the set covers every built-in file-edit tool.
+// so a further edit tool is one entry. In OpenCode v0.0.0-dev-19933 the built-in
+// `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the set
+// covers every built-in file-edit tool.
 // `shell` is a different action and stays allowed. A tool served by an MCP
 // server raises its own action name and passes the guard.
 export const EDIT_ACTIONS = new Set(["edit"]);

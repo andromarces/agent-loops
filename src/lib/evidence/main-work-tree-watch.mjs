@@ -24,10 +24,9 @@ const IGNORE_BATCH_SIZE = 200;
 // it cannot separate from the window.
 const MTIME_MARGIN_MS = 2_000;
 // Milliseconds after the window start within which a change time still counts as a read. A change
-// time is a write only when it is strictly later than the start plus this guard. The saved Windows
-// probe put a pre-window change time at most 1.786 ms after the measured-fraction start. It put a
-// timestamp-preserving restore at least 2.732 ms after a four-millisecond wait. The guard sits
-// between them, and an in-window restore inside the guard is not reported.
+// time is a write only when it is strictly later than the start plus this guard. The guard sits
+// between a pre-window change time and a timestamp-preserving restore, so an in-window restore
+// inside the guard is not reported.
 const CHANGE_TIME_GUARD_MS = 2.25;
 // Milliseconds after the fallback start within which a change time still counts as a read. The
 // fallback start is `base + 1`. The cutoff is `base + 2.7`, so a restore 2.732 ms or more after any
@@ -73,10 +72,9 @@ function readWindowStart() {
 }
 
 /**
- * Starts a recursive watch and returns it with a `ready` promise for the watch factory. In the
- * saved probe, a write right after `watch` missed 1 in 10,000. One event-loop turn missed 0 in
- * 5,000, so the macOS `ready` resolves after one turn. The other platforms return no `ready`, so
- * their event handling does not change.
+ * Starts a recursive watch and returns it with a `ready` promise for the watch factory. A write right
+ * after `watch` can miss before the next event-loop turn, so the macOS `ready` resolves after one
+ * turn. The other platforms return no `ready`, so their event handling does not change.
  * @param {string} root
  * @param {(type: string, filename: string | Buffer) => void} onEvent
  * @returns {{ watcher: import("node:fs").FSWatcher, ready: Promise<void> | null }}
@@ -478,7 +476,7 @@ export async function startMainWorkTreeWatch(
     closeWatcher();
     return null;
   }
-  // In the saved probe a write right after `watch` missed, so the child call waits for `ready`.
+  // A write right after `watch` can miss before `ready`, so the child call waits for `ready`.
   await arm(ready, { armDeadlineMs, signal, armWait, fail });
   if (signal?.aborted) {
     closeWatcher();

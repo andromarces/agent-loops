@@ -25,8 +25,7 @@ import {
 const SHELL_DENIAL_TEXT = "Permission denied because no interactive user response was available";
 
 // Copilot CLI 1.0.106-2 writes the provider HTTP status on the terminal `session.error` event of
-// a failed turn. A probe against a local 529 server with a BYOK provider captured that event. A
-// provider capacity reply is status 529.
+// a failed turn. A provider capacity reply is status 529.
 /**
  * Marks a failed turn whose terminal failure is a provider capacity reply. The terminal failure is
  * the last `session.error` event, so an earlier retried failure followed by another cause is never
@@ -105,9 +104,8 @@ export async function runCopilot(state, prompt, options = {}) {
     args.push("--deny-tool", "write");
   } else {
     // A non-interactive Copilot turn denies a write request that no allow rule approves, and a
-    // worker needs file edits (ADR 0141).
-    // A worker created a file with this rule (ADR 0141). A file modification and a
-    // shell call under the rule are not verified.
+    // worker needs file edits (ADR 0141). The rule allows a file creation; a file modification and
+    // a shell call under it are not verified.
     args.push("--allow-tool", "write");
   }
 
