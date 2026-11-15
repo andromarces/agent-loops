@@ -107,14 +107,14 @@ export function parseArgs(argv) {
   // A review-only run dispatches no worker, so it gates no PR: neither
   // declaration nor gate nor the accept rule has a finish to apply to. All three
   // arrive on this one command line, so the interactive path's refusals move
-  // here and keep their wording, shared from one constant each (#337). The PR
+  // here and keep their wording, shared from one constant each. The PR
   // declaration is refused in `initRefusal`.
   if (options.mode === "review-only" && (options.requireAccept || options.requireCi !== null)) {
     throw new Error(REVIEW_ONLY_GATE_REFUSAL);
   }
 
   // The compare is the operator's choice for a repository whose required-check sources are
-  // unreadable, so a run that declares or gates a PR, or has no PR work, never takes it (#1104).
+  // unreadable, so a run that declares or gates a PR, or has no PR work, never takes it.
   if (options.compareHead !== null) {
     if (options.pr !== null || options.requireCi !== null) {
       throw new Error(COMPARE_HEAD_INPUT_REFUSAL);
@@ -127,7 +127,7 @@ export function parseArgs(argv) {
   // The headless path takes both flags on one command line, so a gate for another
   // pull request is knowable before the run starts. The runtime refuses a finish
   // for that mismatch as a defensive check, and the interactive `role` path keeps
-  // the refusal because its `--require-ci` arrives only at `finish` (#302).
+  // the refusal because its `--require-ci` arrives only at `finish`.
   if (options.pr !== null && options.requireCi !== null && options.pr !== options.requireCi) {
     throw new Error(
       `--pr ${options.pr} and --require-ci ${options.requireCi} must name the same pull request.`,
@@ -146,7 +146,7 @@ function assertTask(task) {
   }
 }
 
-// Compares the write targets, so a file symlink and its target count as one file (#658).
+// Compares the write targets, so a file symlink and its target count as one file.
 async function sameFile(a, b) {
   const [{ resolveWriteTarget }, { samePath }] = await Promise.all([
     import("./lib/atomic-write.mjs"),
@@ -236,7 +236,6 @@ ${redactedErrorMessage(err)}`);
   }
 }
 
-/** The redacted message of a thrown value, or the value itself when it has no message. */
 function redactedErrorMessage(err) {
   return redactedText(readProp(err, "message") ?? err);
 }
@@ -481,7 +480,7 @@ export async function main(
           copyLocalFiles: options.copyLocalFiles,
           // A rewrite of the transcript before the CLI starts keeps the pre-assigned id across a
           // parent crash. known-limit: a failed write only warns, as at exit, and runs that share
-          // one transcript path have no write coordination (issue #564).
+          // one transcript path have no write coordination.
           ...(options.transcript ? { onSessionAssigned } : {}),
           signal: controller.signal,
           roles: transcriptData.roles,
@@ -490,7 +489,7 @@ export async function main(
         }),
       );
       // The last event of a run that returned an exit code: its gate state, which a
-      // later --continue-from checks against a replay of the events (#393). A
+      // later --continue-from checks against a replay of the events. A
       // thrown error leaves none.
       if (options.transcript) {
         events.push({ type: "gate", ...result.gate, at: new Date().toISOString() });
@@ -499,7 +498,7 @@ export async function main(
       if (result.exitCode === 0) {
         // A recorded unresolved PR-head compare keeps the summary and gains its
         // own exit code, so a consumer that reads only the exit code can tell it
-        // from a verified finish (#279).
+        // from a verified finish.
         const exitCode = result.unresolvedCompare ? UNRESOLVED_COMPARE_EXIT : 0;
         console.log("\n===== SUMMARY =====\n");
         console.log(formatSummary(result.summary));
