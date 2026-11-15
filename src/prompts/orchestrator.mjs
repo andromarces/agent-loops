@@ -17,8 +17,9 @@ import { CHILD_EXIT_CEILING_MS, DEFAULT_WAIT_SECONDS } from "../lib/checks/check
 
 // Shared rule source: docs/orchestrator-instructions.md and its reference sections in
 // docs/orchestrator/ state the role rules for interactive parents (#56). This headless prompt states
-// the same rules in JSON-action form, including the completion rule. Keep the two consistent when
-// either changes.
+// the same rules in JSON-action form, including the completion rule, and leaves out the rules that
+// only an interactive parent acts on, such as a `role dispatch` envelope field or a refused `--cwd`.
+// Keep the two consistent when either changes.
 //
 // The CLI capabilities `networkedReadOnly` and `waitsForChecks` live in `src/lib/agent-kinds.mjs`.
 // A Codex reviewer with no sandbox (ADR 0038) keeps shell network. Under either sandboxed mode, or
@@ -547,10 +548,6 @@ A reviewer result carries the runtime-owned reviewed state: head, clean, exact, 
 - For PR work that must close an issue, read \`closingIssuesReferences\` on the PR before finish. A missing issue gets a worker turn before the final reviewer turn.
   - When the PR base is not the default branch, skip that read. Record under \`open\` that the issue needs a manual close after the merge or a Development-panel link.
 - A worker result carries workTree, the runtime-owned head and clean state read after the turn. For PR work, when workTree shows clean: false, dispatch a worker to commit or discard the leftover change, not a reviewer.
-- A later dispatch envelope carries localFilesDiffer only when a copied local file changed. The field lists \`{path, changed}\` entries. \`changed\` is \`source\`, \`copy\`, \`both\`, or \`unknown\`. \`unknown\` means the runtime cannot prove a side, and it never means no change.
-  - For \`source\`, the main work tree changed after init: report the path under open and do not refresh the copy.
-  - For \`copy\`, a turn changed the copy: report a breach under open.
-  - For \`both\`, the stored hash records no refresh of the current copy: report a breach under open.
 - A worker or reviewer envelope carries localSourceChangedInTurn when a copied source changed inside that turn window. The field names the paths only, at most 20, and never content. The user or another process can cause the change too. Report it under open, and ask the user before refreshing the copy.
 - A worker that edits the body of a shared issue reads the body right before the write, writes, then reads it again. The worker restores any item that the read before the write held and the read after it lacks. Put that rule in the worker prompt, and state its limit: it narrows the race and does not remove it.
 - A worker envelope carries sharedGitChanged only when the turn changed shared Git state outside the work tree: core.hooksPath, a file in the common hooks/ directory, or a remote. The field names the items, such as core.hooksPath, hooks/pre-push, and remote.origin, and never a value or a URL. A change there affects the main work tree and every other linked work tree, and workTree does not show it. Report it in the finish summary under open. A failed or canceled worker turn carries the field too. A turn that changed none carries no field. A read of the shared Git state that fails or passes its 10 second deadline after the turn reports no field, so the absent field then does not prove that no change happened. The runtime logs a warning for such a read.
@@ -604,11 +601,6 @@ Map the report fields into the finish summary:
 - Reviewer Notes that no later turn addressed go into notes. A refused cleanup of a tool cache in its default location is not a finding. A cache entry that existed before the turn is not a finding either. Do not carry either into open. Output under a path that the reviewer chose, such as its temporary directory or the scratch folder, stays turn output. A refused cleanup of that output still goes into open.
 - Do not send an accepted note to the worker automatically. To act on a note, dispatch the worker for that change, then obtain another reviewer accept on the new state before finish.
 - In review-only mode, Blockers go into open, Notes go into notes, and reviewer Deferred items go into deferred. deferred holds out-of-scope items in every mode. open holds unresolved in-scope findings.
-
-- A refused \`--cwd\` is not the parent's to repair. End the run, name the path and the refusal in the reason, and leave the work tree to a maintainer. The maintainer decides whether to recreate the work tree and start a new run.
-- Abort only when a non-terminal run exists at the refused \`--cwd\`. With no run state there, from a refused init or a path that was never this run's, report the refusal and do not abort. A run that is already terminal needs no abort.
-- One rule covers every refused \`--cwd\`. A path that no longer exists reports \`--cwd must be inside a Git work tree: <path>\`. A path that is not inside a Git work tree reports the same message. So does an existing work tree path whose Git metadata is lost. The reason names that path and that message.
-- A headless run cannot act on a refused \`--cwd\`: the runtime snapshots its \`--cwd\` before and after every orchestrator turn. A work tree in any of those three states ends the run on that snapshot failure, and no turn of yours runs after it. A maintainer decides whether to recreate the work tree and start a new run.
 
 User Task:
 ${task}

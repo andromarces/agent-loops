@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on, so no test here
@@ -1564,5 +1566,31 @@ test("the orchestrator prompt names no wait when the turn timeout is too short",
   } finally {
     gitDouble.answer = null;
     await removePath(repo);
+  }
+});
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
+
+// Usefulness: verifies the headless prompt omits the rules for a dispatch envelope
+// field and for a refused `--cwd`, which a headless run never receives, while the
+// interactive instructions keep both for the parent that does (issue #1938). A
+// prompt that states a rule the run cannot act on spends its budget on dead text.
+test("the headless prompt omits rules for fields a headless run never receives", async () => {
+  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 });
+  const instructions = await readFile(join(repoRoot, "docs/orchestrator-instructions.md"), "utf8");
+
+  // The `localFilesDiffer` field is added only to a `role dispatch` envelope.
+  expect(prompt).not.toContain("localFilesDiffer");
+  expect(prompt).not.toContain("A later dispatch envelope");
+  expect(instructions).toContain("localFilesDiffer");
+
+  // A refused `--cwd` ends a headless run before its first orchestrator turn.
+  for (const rule of [
+    "A refused `--cwd` is not the parent's to repair",
+    "Abort only when a non-terminal run exists at the refused `--cwd`",
+    "One rule covers every refused `--cwd`",
+  ]) {
+    expect(prompt, rule).not.toContain(rule);
+    expect(instructions, rule).toContain(rule);
   }
 });

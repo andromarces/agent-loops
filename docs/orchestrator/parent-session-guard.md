@@ -1,6 +1,8 @@
 # Parent session id after init
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a new session resumes a run, and before a call that passes `--parent-session` after init, such as `extend`, `declare-pr`, `refresh-local`, or `set-model`.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this when a new session resumes a run, and before a call that passes `--parent-session` after init.
+
+The calls include `extend`, `declare-pr`, `refresh-local`, and `set-model`.
 
 A run stores the `--parent-session` of the session that started it. The
 parent-edit guard and `extend` match that id, and no later call changes it. After init,
