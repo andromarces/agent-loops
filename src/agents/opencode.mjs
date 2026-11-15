@@ -302,7 +302,9 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
   if (bounded && remaining <= 0) return [];
   let messages;
   try {
-    const { stdout } = await exec("opencode", ["session", "export", sessionId], {
+    // `--standalone` keeps the export on a private server. Without it the export starts the shared
+    // background service, and that `opencode serve --service` process outlives the turn (issue #1992).
+    const { stdout } = await exec("opencode", ["session", "export", "--standalone", sessionId], {
       cwd,
       timeout: remaining,
       signal,

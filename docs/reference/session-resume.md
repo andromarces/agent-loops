@@ -118,7 +118,7 @@ Issue #675 killed the native process instead, on macOS 27.2 with Copilot CLI 1.0
 
 #### Current contract
 
-The OpenCode adapter passes `--standalone` on every turn. The turn runs against a private server instead of the shared background service, so the run does not depend on a background `opencode` service. Provider variables set on the shared service with `opencode service set env` do not apply to a standalone turn; provide them in the process environment. See [Background service](https://opencode.ai/v2/docs/cli#background-service) in the OpenCode CLI docs.
+The OpenCode adapter passes `--standalone` on every OpenCode call of a turn: the run, and the `session export` that reads the resolved model. Each call runs against a private server instead of the shared background service, so neither depends on a background `opencode` service, and no `opencode serve --service` process that the turn started outlives it (issue #1992). Provider variables set on the shared service with `opencode service set env` do not apply to a standalone call; provide them in the process environment. See [Background service](https://opencode.ai/v2/docs/cli#background-service) in the OpenCode CLI docs.
 
 The stream splits one response across several `text` parts, and each part carries the `messageID` of its message. `joinTextParts` (`src/agents/opencode-text.mjs`) joins them into one response:
 
