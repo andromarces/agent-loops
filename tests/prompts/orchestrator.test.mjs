@@ -192,6 +192,37 @@ test("every orchestrator kind states the reviewer label order", () => {
   }
 });
 
+// Usefulness: verifies requirement "The Claude orchestrator prompt states the plan-mode guard
+// rule" (issue #1990). The read-only Claude turn runs in plan mode as a write guard, and the rule
+// keeps "never a reason to abort" with the returned JSON action that the runtime carries out.
+// A prompt that states the rule for every kind fails the second loop, because no other adapter
+// runs a read-only turn in plan mode.
+test("a Claude orchestrator prompt states the plan-mode guard", () => {
+  const prompt = initialPrompt({
+    task: "Implement feature X",
+    maxSteps: 10,
+    orchestratorKind: "claude",
+  });
+  expectRule(
+    prompt,
+    /runs in plan mode/i,
+    /write guard/i,
+    /never a reason to abort/i,
+    /return[^.!?]{0,40}JSON decision/i,
+    /runtime carries out/i,
+  );
+  expectRule(prompt, /do not write a plan file/i);
+
+  for (const orchestratorKind of ["codex", "agy", "opencode", "copilot", null]) {
+    const other = initialPrompt({
+      task: "Implement feature X",
+      maxSteps: 10,
+      orchestratorKind,
+    });
+    expect(other, String(orchestratorKind)).not.toMatch(/plan mode/i);
+  }
+});
+
 // The headless prompt also states that every child turn reports the line. The
 // interactive instructions state that rule on `report.checks` instead, so this
 // pattern guards the headless prompt only. The subject stays open (`every`,
