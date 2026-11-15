@@ -2,6 +2,8 @@ import { expect, test } from "vite-plus/test";
 import { NOTIFY_MAX_CHARS, notify, notificationInvocation } from "../../src/batch/notifier.mjs";
 
 const HOSTILE = `He said "hi" and \`quoted\` $(rm -rf /) 50%\nsecond line ünïcode ✓`;
+const HOSTILE_TITLE = `A "title" <b>& $(rm -rf /) \`quoted\` ]]>`;
+const HOSTILE_TEXT = `He said "hi" <b>& ]]> $(rm -rf /) \`quoted\` 50%\nsecond line ünïcode ✓`;
 
 // Usefulness: macOS carries the text as one argv entry, never inside the AppleScript source.
 test("the macOS invocation passes the text as one argument", () => {
@@ -13,15 +15,21 @@ test("the macOS invocation passes the text as one argument", () => {
   expect(script).not.toContain(HOSTILE);
 });
 
-// Usefulness: Windows carries the text in environment values, never inside the script string.
+// Usefulness: Windows carries a hostile title and text only in environment values, so a quote,
+// `$(...)`, `<`, `&`, and `]]>` never become script or XML source.
 test("the Windows invocation passes the text in the environment", () => {
-  const invocation = notificationInvocation({ title: "A title", text: HOSTILE }, "win32");
+  const invocation = notificationInvocation({ title: HOSTILE_TITLE, text: HOSTILE_TEXT }, "win32");
   expect(invocation.command).toBe("powershell.exe");
   expect(invocation.args).toContain("-NoProfile");
   expect(invocation.args).toContain("-NonInteractive");
-  expect(invocation.env.AL_BATCH_NOTIFY_TEXT).toBe(HOSTILE);
-  expect(invocation.env.AL_BATCH_NOTIFY_TITLE).toBe("A title");
-  expect(invocation.args.join(" ")).not.toContain(HOSTILE);
+  expect(invocation.env).toEqual({
+    AL_BATCH_NOTIFY_TITLE: HOSTILE_TITLE,
+    AL_BATCH_NOTIFY_TEXT: HOSTILE_TEXT,
+  });
+  const commandLine = invocation.args.join("\n");
+  for (const value of [HOSTILE_TITLE, HOSTILE_TEXT, "$(rm -rf /)", "]]>", "<b>&"]) {
+    expect(commandLine).not.toContain(value);
+  }
 });
 
 // Usefulness: Linux and other platforms build no command and spawn nothing.
