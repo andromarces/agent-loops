@@ -576,8 +576,7 @@ test("a live recorded process with no start stamp is not restarted", async () =>
 // per cache age window, and an owner that reports dead ends the wait and lets recovery resume.
 // Not redundant: no other test observes the probe count of the recovery wait.
 test("a recovery wait probes a live owner once per cache age window and resumes after it dies", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const stamp = "darwin-lstart:1000";
   const holder = { pid: 2_147_400_000, alive: true };
@@ -641,7 +640,7 @@ test("a recovery wait probes a live owner once per cache age window and resumes 
     expect(result.summary.loops[0].status).toBe("succeeded");
   } finally {
     kill.mockRestore();
-    await cleanupRepo(repo);
+    await cleanupRepo();
   }
 });
 
