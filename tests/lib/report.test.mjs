@@ -1286,6 +1286,26 @@ test("hasClosingBlockAttempt holds for a plain heading report", () => {
   }
 });
 
+// Usefulness: verifies a final plain heading block wins over an earlier colon block in one
+// response, so the last closing block governs whatever its label form (issue #1989).
+test("parseReportBlock reads a final plain heading block after a colon block", () => {
+  const response = [
+    "Conclusion: stale",
+    "Why: stale",
+    "Blockers: none",
+    "",
+    "Conclusion",
+    "fresh",
+    "",
+    "Why",
+    "fresh",
+    "",
+    "Blockers",
+    "none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ conclusion: "fresh", why: "fresh" });
+});
+
 // Usefulness: verifies a table directly under a plain heading label keeps the block unparseable,
 // as origin/main rejects a table anywhere in the block (issue #1989).
 test("parseReportBlock keeps a table under a plain heading label unparseable", () => {
