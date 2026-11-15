@@ -47,6 +47,7 @@ Andro Marces
 ## Links
 
 - [Issue #1946](https://github.com/andromarces/agent-loops/issues/1946)
+- [PR #1959](https://github.com/andromarces/agent-loops/pull/1959)
 - [CI workflow](../.github/workflows/ci.yml)
 - [Release workflow](../.github/workflows/release.yml)
 - [ADR 0124: Drop Node 22 support before its end of life](0124-drop-node-22-support.md)
