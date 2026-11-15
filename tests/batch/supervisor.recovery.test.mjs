@@ -1221,29 +1221,49 @@ test("a failure after the child declares a pull request clears the stale undecla
   }
 });
 
-// Usefulness: a success after the child declares a pull request keeps the undeclared field clear,
-// so a stale record of an earlier attempt never names the same pull request in both fields (ADR 0131).
-test("a success after the child declares a pull request keeps the undeclared field clear", async () => {
+// Usefulness: a success of a resumed child clears the undeclared pull request that an earlier
+// attempt left and the resumed attempt did not repeat, so the checkpoint names only the last
+// attempt's pull request (ADR 0131). Not redundant: no other test succeeds a resumed child over a
+// stored `prUndeclared`.
+test("a success of a resumed child keeps the undeclared field clear", async () => {
   const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
-  const child = childDouble({
-    pr: 41,
-    beforeWrite: () =>
-      updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: 7 })),
-  });
+  const first = childDouble({ steps: 1, hold: true });
+  const controller = new AbortController();
   try {
-    const { summary } = await runBatch({
+    const run = runBatch({
       prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: first.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(first);
+    controller.abort();
+    await run;
+    // A record left by an earlier attempt holds an undeclared pull request when the child resumes.
+    const child = childDouble({
+      beforeWrite: () =>
+        updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: 7 })),
+    });
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
       deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
-    expect(summary.loops[0]).toMatchObject({
+    expect(child.calls).toHaveLength(1);
+    expect(resumed.summary.loops[0]).toMatchObject({
       status: "succeeded",
-      pr: 41,
+      pr: null,
       prUndeclared: null,
     });
-    expect(await readLoop(runsRoot, prepared.id, 1)).toMatchObject({ pr: 41, prUndeclared: null });
+    expect(await readLoop(runsRoot, prepared.id, 1)).toMatchObject({ prUndeclared: null });
   } finally {
     await cleanupRepo();
   }
