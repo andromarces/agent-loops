@@ -2,7 +2,13 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0155: Run the macOS and Windows CI jobs on Node 26](0155-run-macos-and-windows-ci-on-node-26.md). The superseded part is:
+
+- Decision 2's Node 24 line for `macos-tests`, `macos-smoke`, `windows-tests`, and `windows-smoke`. Superseded by [ADR 0155](0155-run-macos-and-windows-ci-on-node-26.md): those four jobs run Node 26.
+
+Decision 2's `ci` matrix line, decision 3's floor job, decision 4's install probe, decision 5's contexts, and every other consequence stay in force.
 
 ## Supersedes
 
@@ -16,7 +22,7 @@ This ADR partially supersedes [ADR 0022: Run the dev toolchain and Git hooks thr
 
 Node 22 reaches end of life on 2027-04-30 (issue #1812). ADR 0022 set `engines.node` to `^22.18.0 || ^24.11.0 || >=26.0.0` and kept the Node 22 line in CI. The main `ci` matrix, the macOS and Windows shards, the smoke jobs, and the `node-22-floor` job ran Node 22. That job tested the `22.18.0` floor.
 
-Node 24 is the lowest supported line after this change, and `release.yml` publishes on Node 24. The `node-24` job ran the latest Node 24, and it duplicates the Ubuntu `ci` leg once that leg moves to Node 24.
+Node 24 is the lowest supported line after this change, and `release.yml` published on Node 24. [ADR 0128: Publish on Node 26 with a pnpm trust policy](0128-publish-on-node-26-with-a-pnpm-trust-policy.md) later moved the publish job to Node 26, so the publish statement here no longer holds. The `node-24` job ran the latest Node 24, and it duplicates the Ubuntu `ci` leg once that leg moves to Node 24.
 
 ## Decision
 
