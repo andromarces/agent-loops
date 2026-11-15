@@ -136,7 +136,7 @@ export async function readPrList(read, argv, isEntry) {
       })}`,
     };
   }
-  const list = JSON.parse(reply.stdout);
+  const list = parseGhJson("gh pr list", reply.stdout);
   if (!Array.isArray(list) || list.length >= PR_LIST_LIMIT || !list.every(isEntry)) {
     return { failure: "the gh pr list reply is not a list that names one PR" };
   }
@@ -212,10 +212,22 @@ export function isTransportFailure({ stdout, stderr }) {
 }
 
 /**
+ * Parses the JSON reply of the read `label`. A parse failure keeps the `SyntaxError` class of a
+ * direct `JSON.parse` and names the read.
+ */
+export function parseGhJson(label, text) {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new SyntaxError(`${label} returned invalid JSON: ${err.message}`, { cause: err });
+  }
+}
+
+/**
  * Runs `gh api` with `args` (the `"api"` word is added here) and parses stdout as JSON.
  * @returns {Promise<unknown>} the parsed body, or null when stdout is empty
  * @throws {Error} on a non-zero exit, with `transient` set when the reply was a retryable failure
- *   stdout that is not JSON throws a raw `SyntaxError`
+ *   stdout that is not JSON names the endpoint
  */
 export async function ghApi(gh, args, cwd) {
   const result = await gh(["api", ...args], cwd);
@@ -223,7 +235,7 @@ export async function ghApi(gh, args, cwd) {
     throw ghApiFailure(args[0], result);
   }
   const text = result.stdout.trim();
-  return text === "" ? null : JSON.parse(text);
+  return text === "" ? null : parseGhJson(`gh api ${args[0]}`, text);
 }
 
 // The reply statuses of a failed paged read that the wait retries on the next poll (#1025). The

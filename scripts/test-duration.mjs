@@ -80,14 +80,16 @@ export function formatSummary(summary, totalMs) {
   ].join("\n\n");
 }
 
+function vitePlusRoot() {
+  return dirname(createRequire(import.meta.url).resolve("vite-plus/package.json"));
+}
+
 function vpBinPath() {
-  const require = createRequire(import.meta.url);
-  return join(dirname(require.resolve("vite-plus/package.json")), "bin", "vp");
+  return join(vitePlusRoot(), "bin", "vp");
 }
 
 function vitePlusRequire() {
-  const require = createRequire(import.meta.url);
-  return createRequire(join(dirname(require.resolve("vite-plus/package.json")), "package.json"));
+  return createRequire(join(vitePlusRoot(), "package.json"));
 }
 
 /** Reads the reporter names that the installed Vitest uses when none are given. */

@@ -1,7 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
+import { readUserDocs } from "../fs-helpers.mjs";
 import { expect, test } from "vite-plus/test";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { initialPrompt } from "../../src/prompts/orchestrator.mjs";
@@ -36,6 +37,8 @@ const WORK_TREE_CREATE_NO_REMOTE_COMMAND =
 const WORK_TREE_REMOVE_COMMAND = 'git worktree remove --force "<work tree>"';
 
 const referenceSectionsDir = join(dirname(instructionsPath), "orchestrator");
+/** The repository root that holds the user docs. */
+const docsRoot = resolve(dirname(instructionsPath), "..");
 
 /** The reference section files of the instructions, sorted by name. */
 async function referenceSectionNames() {
@@ -56,18 +59,6 @@ async function readInstructions() {
 async function readSectionText(name) {
   const text = await readFile(join(referenceSectionsDir, name), "utf8");
   return text.replace(/\s+/g, " ");
-}
-
-/** The user docs as one text: the reference topic files, the reference index, then the README. */
-async function readUserDocs() {
-  const docs = join(dirname(instructionsPath), "reference");
-  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
-  const paths = [
-    ...topics.map((name) => join(docs, name)),
-    join(dirname(instructionsPath), "reference.md"),
-    join(dirname(instructionsPath), "../README.md"),
-  ];
-  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
 }
 
 // Asserts no commit or push in the text targets a branch of the rule's own, so a
@@ -831,7 +822,7 @@ test("interactive instructions and headless prompt share the status-read excepti
 test("instructions, prompt, and user docs share the status-read exception scope", async () => {
   const scope = "and agent-loop role wait-checks is the only command it covers";
   const flat = (text) => text.replace(/`/g, "").replace(/\s+/g, " ");
-  const readme = await readUserDocs();
+  const readme = await readUserDocs(docsRoot);
   expect(flat(await readInstructions())).toContain(scope);
   expect(flat(gatedPrompt("claude"))).toContain(scope);
   expect(flat(readme)).toContain(scope);
@@ -869,7 +860,7 @@ test("the interactive instructions forbid a remote write and allow a status read
 
 // Usefulness: pins the connector-write contract, the no-sandbox reviewer mode, and the issue #496 pointer.
 test("the user docs state the remote-write limit", async () => {
-  const readme = (await readUserDocs()).replace(/\s+/g, " ");
+  const readme = (await readUserDocs(docsRoot)).replace(/\s+/g, " ");
   expect(readme).toContain(
     "the runtime does not detect a remote write in a reviewer or orchestrator turn",
   );
@@ -1377,7 +1368,7 @@ const readHelpText = () =>
 // commands that the sandbox runs. No surface claims that it blocks model-side tools such as
 // web_search. A reader never takes the limit for a block on every channel.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["ADR 0019", () => readRepoFile(adr19)],
   ["--help", readHelpText],
@@ -1396,7 +1387,7 @@ test.each([
 // docs, the help text, and ADR 0019 carry no unqualified denial. The prompt and the docs then state
 // one rule about what the Codex sandbox blocks.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["docs/reference/parent-guard.md", () => readRepoFile("docs/reference/parent-guard.md")],
   ["ADR 0019", () => readRepoFile(adr19)],
@@ -1419,7 +1410,7 @@ test.each([
 // default" (ADR 0038). Each stale phrase named the old default or the old network rule, and was
 // removed on purpose. A restored phrase fails here. A reword that keeps the meaning passes.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
   [
@@ -1441,7 +1432,7 @@ test.each([
 // Usefulness: verifies the user docs and --help state the default and both opt-ins in one place
 // each reader looks. The new default is then not only in the ADR (ADR 0038).
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
 ])("%s states the no-sandbox default and the two opt-in modes", async (_name, load) => {
@@ -1479,7 +1470,7 @@ test("README links to the scoped reviewer file-change rule", async () => {
 // Usefulness: verifies no reviewed surface restates the reviewer rule as a blanket file ban
 // (issue #837), so a reviewer may still write ignored output.
 test.each([
-  ["the user docs", readUserDocs],
+  ["the user docs", () => readUserDocs(docsRoot)],
   ["docs/orchestrator-instructions.md", () => readInstructions()],
   ["--help", readHelpText],
   [

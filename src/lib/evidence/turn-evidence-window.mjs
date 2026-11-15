@@ -1,7 +1,7 @@
 import { settleInOrder } from "../map-in-batches.mjs";
 import { reportedEntryNames } from "./entry-report.mjs";
 import { errorLine, readProp } from "../error-message.mjs";
-import { logInfo, logWarn } from "../log.mjs";
+import { logDebug, logInfo, logWarn } from "../log.mjs";
 import {
   appearedInInheritedTmpdir,
   literalTmpdirRoots,
@@ -258,7 +258,7 @@ async function readInheritedTmpdirEntries(state) {
     includeInherited: !state.isWorker,
   });
   if (entries.length > 0) {
-    logWarn(
+    logDebug(
       state.isWorker
         ? `worker: entries appeared in a literal system temporary directory: ${entries.length}`
         : `reviewer: entries appeared in the inherited temporary directory or a literal one: ${entries.length}`,
@@ -274,7 +274,7 @@ async function readInheritedTmpdirEntries(state) {
 async function readPackageStoreEntries(state) {
   const entries = await changedInPackageStore(state.storeBefore, { cwd: state.cwd });
   if (entries.length > 0) {
-    logWarn(`reviewer: package store entries changed: ${entries.length}`);
+    logDebug(`reviewer: package store entries changed: ${entries.length}`);
   }
   return entries;
 }

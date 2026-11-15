@@ -204,42 +204,14 @@ async function absenceOf(
  *           head?: string | null, expect?: string[], gh?: Function, now?: Function, sleep?: Function, signal?: AbortSignal | null }} options
  * @returns {Promise<{ timedOut: boolean, head: string | null, checks: Array<{ name: string, state: string|null, bucket: string|null }>, conflicting?: true, prFailures?: Array<{ name: string, state: string|null, bucket: string|null }>, awaiting?: string[], noRequiredChecks?: true, noCheckSource?: true, childExitUnconfirmed?: true }>}
  */
-export async function waitChecks({
-  pr,
-  cwd,
-  timeoutSeconds = DEFAULT_WAIT_SECONDS,
-  deadline = null,
-  all = false,
-  head = null,
-  expect = [],
-  gh = runGh,
-  // A monotonic clock in whole milliseconds, so a wall-clock jump never ends or extends the bound.
-  // Whole milliseconds keep every child timeout an integer (issue #1536).
-  now = () => Math.floor(performance.now()),
-  sleep = (ms, signal) => delay(ms, signal ? { signal } : undefined),
-  // Injectable so a test can use a short bound; production keeps the 5000 ms default (issue #1465).
-  childExitCeilingMs = CHILD_EXIT_CEILING_MS,
-  signal = null,
-}) {
-  if (head !== null && !isFullSha(head)) {
+export async function waitChecks(options) {
+  const resolved = resolveWaitOptions(options);
+  if (resolved.head !== null && !isFullSha(resolved.head)) {
     throw new Error("head must be a full lowercase commit SHA.");
   }
   // `deadline` is an absolute time on the `now` clock (#329).
   // A caller that passes only `timeoutSeconds` is bounded from this call (#329).
-  const context = createWaitContext({
-    pr,
-    cwd,
-    timeoutSeconds,
-    deadline,
-    all,
-    head,
-    expect,
-    gh,
-    now,
-    sleep,
-    childExitCeilingMs,
-    signal,
-  });
+  const context = createWaitContext(resolved);
   try {
     return seal(context, await poll(context));
   } catch (raw) {
@@ -260,37 +232,37 @@ export async function waitChecks({
   }
 }
 
+/** The options of one wait: the production defaults under every value that the caller gives. */
+function resolveWaitOptions(options) {
+  return {
+    timeoutSeconds: DEFAULT_WAIT_SECONDS,
+    deadline: null,
+    all: false,
+    head: null,
+    expect: [],
+    gh: runGh,
+    // A monotonic clock in whole milliseconds, so a wall-clock jump never ends or extends the bound.
+    // Whole milliseconds keep every child timeout an integer (issue #1536).
+    now: () => Math.floor(performance.now()),
+    sleep: (ms, signal) => delay(ms, signal ? { signal } : undefined),
+    // Injectable so a test can use a short bound; production keeps the 5000 ms default (issue #1465).
+    childExitCeilingMs: CHILD_EXIT_CEILING_MS,
+    signal: null,
+    ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)),
+  };
+}
+
 /**
  * Builds the inputs and mutable state of one wait.
  * The wait helpers read and write this object, so every poll shares one cache.
  * @param {object} options The resolved options of `waitChecks`.
  */
-function createWaitContext({
-  pr,
-  cwd,
-  timeoutSeconds,
-  deadline,
-  all,
-  head,
-  expect,
-  gh,
-  now,
-  sleep,
-  childExitCeilingMs,
-  signal,
-}) {
+function createWaitContext(options) {
+  const { timeoutSeconds, deadline, ...resolved } = options;
+  const { pr, all } = resolved;
   const context = {
-    pr,
-    cwd,
-    all,
-    head,
-    expect,
-    gh,
-    now,
-    sleep,
-    childExitCeilingMs,
-    signal,
-    end: deadline ?? now() + timeoutSeconds * 1000,
+    ...resolved,
+    end: deadline ?? resolved.now() + timeoutSeconds * 1000,
     // `all` waits on every check of the PR head, not only the required ones (#896, #950).
     checksArgv: [
       "pr",

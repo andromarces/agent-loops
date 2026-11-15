@@ -1,3 +1,5 @@
+import { parseGhJson } from "../lib/checks/gh-api.mjs";
+
 // The one `gh` JSON read for batch callers. Each caller maps the `kind` of a failed read to its
 // own message, so a shared reader never changes an outcome.
 /**
@@ -19,7 +21,7 @@ export async function readGhJson(gh, args, cwd, options) {
     });
   }
   try {
-    return JSON.parse(reply.stdout);
+    return parseGhJson(`gh ${args.join(" ")}`, reply.stdout);
   } catch (err) {
     throw Object.assign(new Error(err.message), { kind: "json", reply });
   }

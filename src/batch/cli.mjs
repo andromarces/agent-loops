@@ -114,6 +114,9 @@ Exit codes: 0 the issue set is created or the audit is removed, 1 the audit paus
 remove kept it, 2 a refused setting or a refusal before any state write, 130 SIGINT.
 `.trim();
 
+// The readers scan by hand rather than through `walkFlags`: `--help` wins over every later flag, and
+// a value flag accepts a dash argument, which are the orders that `batch status` and `batch answer`
+// document.
 function readIdFlag(argv, name) {
   let id = null;
   for (let i = 0; i < argv.length; i += 1) {
@@ -222,6 +225,28 @@ async function runAuditCommand({ prepared, runsRoot }) {
   }
 }
 
+/** The `--audit` value of one subcommand, with the usage text printed when help was asked. */
+function readAuditFlag(argv) {
+  const values = readIdFlag(argv.slice(1), "--audit");
+  if (values.help) console.log(AUDIT_USAGE);
+  return values;
+}
+
+/** The stored audit that a resume, approve, or remove names, after the runs-root refusal. */
+async function storedAudit(argv, runsRoot) {
+  const { help, id } = readAuditFlag(argv);
+  if (help) return { help: true };
+  if (id === null) {
+    throw usage("Missing required --audit.");
+  }
+  const state = await readAudit(runsRoot, id);
+  if (state === null) {
+    throw usage(`No audit ${id}.`);
+  }
+  await refuseRootInGitWorkTree(runsRoot, "runs root");
+  return { help: false, id, state };
+}
+
 async function runAuditMain(argv, runsRoot) {
   const command = argv[0];
   if (command === undefined || command === "--help" || command === "-h") {
@@ -229,9 +254,8 @@ async function runAuditMain(argv, runsRoot) {
     return 0;
   }
   if (command === "status") {
-    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    const { help, id } = readAuditFlag(argv);
     if (help) {
-      console.log(AUDIT_USAGE);
       return 0;
     }
     if (id === null) {
@@ -254,35 +278,17 @@ async function runAuditMain(argv, runsRoot) {
     return runAuditCommand({ prepared, runsRoot });
   }
   if (command === "resume" || command === "approve") {
-    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    const { help, state } = await storedAudit(argv, runsRoot);
     if (help) {
-      console.log(AUDIT_USAGE);
       return 0;
     }
-    if (id === null) {
-      throw usage("Missing required --audit.");
-    }
-    const state = await readAudit(runsRoot, id);
-    if (state === null) {
-      throw usage(`No audit ${id}.`);
-    }
-    await refuseRootInGitWorkTree(runsRoot, "runs root");
     return runAuditCommand({ prepared: preparedFromAudit(state, command), runsRoot });
   }
   if (command === "remove") {
-    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    const { help, id } = await storedAudit(argv, runsRoot);
     if (help) {
-      console.log(AUDIT_USAGE);
       return 0;
     }
-    if (id === null) {
-      throw usage("Missing required --audit.");
-    }
-    const state = await readAudit(runsRoot, id);
-    if (state === null) {
-      throw usage(`No audit ${id}.`);
-    }
-    await refuseRootInGitWorkTree(runsRoot, "runs root");
     const { exitCode, summary } = await removeAudit({ runsRoot, id });
     console.log(JSON.stringify(summary, null, 2));
     return exitCode;

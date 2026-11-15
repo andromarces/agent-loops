@@ -30,6 +30,7 @@ import {
   recommendedOf,
 } from "./decisions.mjs";
 import {
+  blockedNumbers,
   checkItemEligibility,
   preflightItemEligibility,
   readOpenPrClosures,
@@ -148,6 +149,15 @@ const abortDetail = (line) => (line ? `aborted: ${line}` : "aborted");
 function undeclaredPrOf(loop, data) {
   if (loop.kind === "pr" || loop.mode === "review-only") return null;
   return undeclaredPrFromTranscript(data);
+}
+
+// The declared pull request of one transcript and the undeclared pull request that no declaration
+// leaves. An unreadable declaration throws (#1791), and the undeclared pull request of an
+// unreadable required-check source is read beside it (#1899).
+function pullRequestOf(loop, transcript) {
+  const data = transcript.ok ? transcript.data : null;
+  const declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
+  return { declaredPr, prUndeclared: declaredPr !== null ? null : undeclaredPrOf(loop, data) };
 }
 
 // Clears a stored undeclared PR when a declared one replaces it. An absent declaration keeps it.
@@ -1264,26 +1274,27 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     });
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
-    // One read of the declared pull request serves every exit path. An unreadable
-    // declaration keeps the needs-owner handling of the exit 4 path (#1791). The
-    // undeclared pull request of an unreadable required-check source is read beside it (#1899).
-    let declaredPr = loop.pr;
-    let prUndeclared = null;
+    let declared = { declaredPr: loop.pr, prUndeclared: null };
     try {
-      const data = transcript.ok ? transcript.data : null;
-      declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
-      prUndeclared = declaredPr !== null ? null : undeclaredPrOf(loop, data);
+      declared = pullRequestOf(loop, transcript);
     } catch (err) {
       await markNeedsOwner(
         issue,
         `the transcript declares an unreadable pull request: ${err.message}`,
         {
           evidence: err.message,
-          extra: { stepsUsed, remainingSteps, pid: null, startTime: null, prUndeclared },
+          extra: {
+            stepsUsed,
+            remainingSteps,
+            pid: null,
+            startTime: null,
+            prUndeclared: declared.prUndeclared,
+          },
         },
       );
       return;
     }
+    const { declaredPr, prUndeclared } = declared;
     const common = { stepsUsed, remainingSteps, pid: null, startTime: null, prUndeclared };
 
     if (wasInterrupted || exitCode === 130) {
@@ -1296,16 +1307,13 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       return;
     }
     if (exitCode === 0) {
-      await changeLoop(issue, { ...common, status: "succeeded", pr: declaredPr }, { transcript });
-      loop = loops.get(issue);
-      const cleanup = await cleanupWorkTree({
-        manifest,
-        loop,
-        runsRoot,
-        gh,
-      }).catch((err) => ({ removed: false, reason: err.message }));
-      await changeLoop(issue, { cleanup });
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+      const cleanup = await finishSuccess(issue, loop, {
+        stepsUsed,
+        remainingSteps,
+        pr: declaredPr,
+        prUndeclared,
+        transcript,
+      });
       progress(
         `issue ${issue}: succeeded${cleanup.removed ? " (work tree removed)" : ` (work tree kept: ${cleanup.reason})`}`,
       );
@@ -1318,27 +1326,24 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
     const abort = transcriptAbortFromData(transcript.ok ? transcript.data : null, exitCode ?? null);
     if (abort) {
-      await changeLoop(
-        issue,
-        { ...common, status: "failed", reason: "aborted", pr: declaredPr },
-        { transcript },
-      );
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-      logError(`issue ${issue}: failed (${abortDetail(abort.reason)})`);
+      await finishFailure(issue, loop, "aborted", {
+        stepsUsed,
+        remainingSteps,
+        transcript,
+        detail: abortDetail(abort.reason),
+        pr: declaredPr,
+        prUndeclared,
+      });
       return;
     }
-    await changeLoop(
-      issue,
-      {
-        ...common,
-        status: "failed",
-        reason: `exit-${exitCode ?? "unknown"}`,
-        pr: declaredPr,
-      },
-      { transcript },
-    );
-    await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-    logError(`issue ${issue}: failed (exit ${exitCode ?? "unknown"})`);
+    await finishFailure(issue, loop, `exit-${exitCode ?? "unknown"}`, {
+      stepsUsed,
+      remainingSteps,
+      transcript,
+      detail: `exit ${exitCode ?? "unknown"}`,
+      pr: declaredPr,
+      prUndeclared,
+    });
   };
 
   // Waits for one spawned child, releases its slot, and writes its checkpoint. The interruption
@@ -1354,7 +1359,18 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
 
   const readLoopTranscript = (file) => readTranscript(file, deps.readTranscript);
 
-  const finishSuccess = async (issue, loop, { stepsUsed, remainingSteps, pr, transcript }) => {
+  // The undeclared pull request that a finish writes. An explicit null clears a stale record of an
+  // earlier attempt; an omitted value keeps the stored one (ADR 0131).
+  const recordedUndeclared = (prUndeclared, loop) =>
+    prUndeclared === undefined ? (loop.prUndeclared ?? null) : prUndeclared;
+
+  // Writes the success checkpoint, removes the loop's work tree, and releases its claim. Returns
+  // the cleanup result so the caller can report it.
+  const finishSuccess = async (
+    issue,
+    loop,
+    { stepsUsed, remainingSteps, pr, prUndeclared, transcript },
+  ) => {
     const recordedPr = pr ?? loop.pr;
     await changeLoop(
       issue,
@@ -1365,7 +1381,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         stepsUsed,
         remainingSteps,
         pr: recordedPr,
-        prUndeclared: recordedPr == null ? (loop.prUndeclared ?? null) : null,
+        prUndeclared: recordedPr == null ? recordedUndeclared(prUndeclared, loop) : null,
         pid: null,
         startTime: null,
       },
@@ -1380,13 +1396,15 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     );
     await changeLoop(issue, { cleanup });
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
+    return cleanup;
   };
 
+  // Writes the failed checkpoint and releases the claim. `pr` is left as stored unless `pr` names it.
   const finishFailure = async (
     issue,
     loop,
     reason,
-    { stepsUsed, remainingSteps, transcript, detail = null },
+    { stepsUsed, remainingSteps, transcript, detail = null, pr, prUndeclared },
   ) => {
     logError(`issue ${issue}: failed (${detail ?? reason})`);
     await changeLoop(
@@ -1396,7 +1414,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         reason,
         stepsUsed,
         remainingSteps,
-        prUndeclared: loop.prUndeclared ?? null,
+        ...(pr === undefined ? {} : { pr }),
+        prUndeclared: recordedUndeclared(prUndeclared, loop),
         pid: null,
         startTime: null,
       },
@@ -1405,35 +1424,34 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
   };
 
-  const withLoopOwnership = async (issue, fn) => {
+  // A held resume lock means another resume owns the loop. The sentinel keeps that apart from a
+  // null result of `fn`.
+  const LOCK_SKIPPED = Symbol("resume lock skipped");
+  const withLoopLock = async (issue, fn) => {
     const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
     const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
     if (release === null) {
       lockSkipped.add(issue);
-      progress(`issue ${issue}: another resume owns the loop`);
-      return;
-    }
-    try {
-      await fn();
-    } finally {
-      await release();
-    }
-  };
-
-  // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
-  // requires. A null result means another resume owns the loop and the caller keeps it pending.
-  const withLoopResult = async (issue, fn) => {
-    const lockFile = join(paths.batchDir(id), "loops", `${loopSegment(issue)}.resume.lock`);
-    const release = await tryStateLock(lockFile, { label: "Batch loop", noun: "batch loop" });
-    if (release === null) {
-      lockSkipped.add(issue);
-      return null;
+      return LOCK_SKIPPED;
     }
     try {
       return await fn();
     } finally {
       await release();
     }
+  };
+
+  const withLoopOwnership = async (issue, fn) => {
+    if ((await withLoopLock(issue, fn)) === LOCK_SKIPPED) {
+      progress(`issue ${issue}: another resume owns the loop`);
+    }
+  };
+
+  // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
+  // requires. A null result means another resume owns the loop and the caller keeps it pending.
+  const withLoopResult = async (issue, fn) => {
+    const result = await withLoopLock(issue, fn);
+    return result === LOCK_SKIPPED ? null : result;
   };
 
   /**
@@ -1451,12 +1469,9 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       });
       return;
     }
-    let declaredPr = loop.pr;
-    let prUndeclared = null;
+    let declared;
     try {
-      const data = transcript.ok ? transcript.data : null;
-      declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
-      prUndeclared = declaredPr !== null ? null : undeclaredPrOf(loop, data);
+      declared = pullRequestOf(loop, transcript);
     } catch (err) {
       await markNeedsOwner(
         issue,
@@ -1468,7 +1483,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       );
       return;
     }
-    loop = { ...loop, pr: declaredPr, prUndeclared };
+    loop = { ...loop, pr: declared.declaredPr, prUndeclared: declared.prUndeclared };
 
     const recordedExit = transcript.ok
       ? transcriptExitFromData(transcript.data)
@@ -1631,11 +1646,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       if (err?.kind === "empty") throw new Error("exit unknown");
       throw err;
     }
-    const nodes = Array.isArray(value?.blockedBy)
-      ? value.blockedBy
-      : Array.isArray(value?.blockedBy?.nodes)
-        ? value.blockedBy.nodes
-        : null;
+    const nodes = blockedNumbers(value?.blockedBy);
     if (typeof value?.state !== "string" || nodes === null) {
       throw new Error("the wait read returned an unreadable value");
     }

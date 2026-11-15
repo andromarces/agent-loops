@@ -381,9 +381,10 @@ async function gitWorkTreeTop(candidate, gitRun) {
   return top ?? null;
 }
 
-async function workTreeEntries(repo) {
+/** The work-tree list of `repo`, read through `readText`, or a usage refusal when the read fails. */
+export async function workTreeEntries(repo, readText = gitOrThrow) {
   try {
-    const stdout = await gitOrThrow(["worktree", "list", "--porcelain", "-z"], repo);
+    const stdout = await readText(["worktree", "list", "--porcelain", "-z"], repo);
     return parseWorkTreeList(stdout);
   } catch (err) {
     throw usage(`--repo is not a Git work tree: ${err.message}`);

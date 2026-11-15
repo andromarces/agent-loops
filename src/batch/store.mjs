@@ -133,49 +133,43 @@ export async function createBatchStore(runsRoot, manifest, loops) {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
+ * Reads one record, hands it to `updater`, and writes the result only when it differs. Returns true
+ * when a write happened. The read-modify-write runs chained and under `lockFile`.
+ */
+async function updateRecord(file, lockFile, { initial = null, missing }, updater) {
+  return withLock(lockFile, "Batch", "batch", async () => {
+    const current = parseObject(await readStoreText(file), file) ?? initial;
+    if (current === null) throw new Error(missing);
+    const next = await updater(current);
+    if (next === undefined || next === null || same(next, current)) return false;
+    await writeFileAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
+    return true;
+  });
+}
+
+/**
  * Reads one loop checkpoint, hands it to `updater`, and writes the result only when it differs.
  * Returns true when a write happened. The read-modify-write runs under the one batch lock, so two
  * batch commands cannot interleave a checkpoint change.
  */
 export async function updateLoop(runsRoot, id, issue, updater, { initial = null } = {}) {
   const paths = batchPaths(runsRoot);
-  return serialized(paths.lock(id), () =>
-    withStateLock(
-      paths.lock(id),
-      async () => {
-        const file = paths.loop(id, issue);
-        const stored = parseObject(await readStoreText(file), file);
-        if (stored === null && initial === null) {
-          throw new Error(`No loop checkpoint for issue ${issue}.`);
-        }
-        const current = stored ?? initial;
-        const next = await updater(current);
-        if (next === undefined || next === null || same(next, current)) return false;
-        await writeFileAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
-        return true;
-      },
-      { label: "Batch", noun: "batch" },
-    ),
+  return updateRecord(
+    paths.loop(id, issue),
+    paths.lock(id),
+    { initial, missing: `No loop checkpoint for issue ${issue}.` },
+    updater,
   );
 }
 
 /** As `updateLoop`, for the batch manifest. Returns true when a write happened. */
 export async function updateManifest(runsRoot, id, updater) {
   const paths = batchPaths(runsRoot);
-  return serialized(paths.lock(id), () =>
-    withStateLock(
-      paths.lock(id),
-      async () => {
-        const file = paths.manifest(id);
-        const current = parseObject(await readStoreText(file), file);
-        if (current === null) throw new Error(`No batch manifest for ${id}.`);
-        const next = await updater(current);
-        if (next === undefined || next === null || same(next, current)) return false;
-        await writeFileAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
-        return true;
-      },
-      { label: "Batch", noun: "batch" },
-    ),
+  return updateRecord(
+    paths.manifest(id),
+    paths.lock(id),
+    { missing: `No batch manifest for ${id}.` },
+    updater,
   );
 }
 
@@ -224,17 +218,16 @@ export async function createExclusive(file, text) {
 }
 
 async function removeClaimText(file, text) {
-  return serialized(`${file}.lock`, () =>
-    withStateLock(
-      `${file}.lock`,
-      async () => {
-        if ((await readStoreText(file)) !== text) return false;
-        await rm(file, { force: true });
-        return true;
-      },
-      { label: "Issue claim", noun: "issue claim" },
-    ),
-  );
+  return withLock(`${file}.lock`, "Issue claim", "issue claim", async () => {
+    if ((await readStoreText(file)) !== text) return false;
+    await rm(file, { force: true });
+    return true;
+  });
+}
+
+/** Runs `fn` chained and under the cross-process lock at `lockFile`. */
+function withLock(lockFile, label, noun, fn) {
+  return serialized(lockFile, () => withStateLock(lockFile, fn, { label, noun }));
 }
 
 /**

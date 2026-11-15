@@ -67,6 +67,11 @@ export async function createLinkedWorkTree({
 // element. Any other `git` call, including a changed flag, flag order, or two
 // arguments joined into one element, throws. A `cwd` that does not exist fails
 // as execa does with `reject: false`: no exit code, `code: "ENOENT"`, empty output.
+// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
+// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
+// (`src/lib/evidence/shared-git.mjs`), `readMainWorkTree` (`src/lib/evidence/main-work-tree-change.mjs`),
+// `readLockfiles` (`src/lib/evidence/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
+// These cases assert no Git result.
 export const CLEAN_REPO_HEAD = "1111111111111111111111111111111111111111";
 export const CLEAN_REPO_BRANCH = "main";
 

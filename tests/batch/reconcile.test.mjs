@@ -94,7 +94,7 @@ test("a matching open pull request resumes with --pr and --require-ci", async ()
     gh: ghReplies({ pulls: [openPull] }),
     deps: deps(baseGit()),
   });
-  expect(result).toEqual({ status: "resume", reason: null, pr: 5, requireCi: 5 });
+  expect(result).toEqual({ status: "resume", reason: null, pr: 5 });
 });
 
 // Usefulness: another head never resumes as an uncertain write.
@@ -172,7 +172,7 @@ test("an equal remote head with no pull request resumes", async () => {
     gh: ghReplies(),
     deps: deps(baseGit()),
   });
-  expect(result).toEqual({ status: "resume", reason: null, pr: null, requireCi: null });
+  expect(result).toEqual({ status: "resume", reason: null, pr: null });
 });
 
 // Usefulness: a local branch ahead of its remote with no pull request is not an uncertain write.
@@ -268,7 +268,7 @@ test("a merged pull request with no local work beyond its head succeeds", async 
       }),
     ),
   });
-  expect(result).toEqual({ status: "succeeded", reason: null, pr: 5, requireCi: null });
+  expect(result).toEqual({ status: "succeeded", reason: null, pr: 5 });
 });
 
 // Usefulness: a merged pull request with extra local work is not a success.
@@ -339,7 +339,7 @@ test("a loop's own undeclared pull request does not trip the another-branch chec
     gh: ghReplies({ pulls: [openPull], references: [{ number: 5 }] }),
     deps: deps(baseGit()),
   });
-  expect(result).toEqual({ status: "resume", reason: null, pr: null, requireCi: null });
+  expect(result).toEqual({ status: "resume", reason: null, pr: null });
 });
 
 // Usefulness: a pull request from another repository never fills the undeclared number.
@@ -476,7 +476,7 @@ test("a pull request head moved by the loop's own push resumes", async () => {
         [`["merge-base","--is-ancestor","${HEAD}","${NEW}"]`]: [0, ""],
       }),
     });
-    expect(result).toMatchObject({ status: "resume", pr: 5, requireCi: 5 });
+    expect(result).toMatchObject({ status: "resume", pr: 5 });
   } finally {
     await removePath(dir);
   }

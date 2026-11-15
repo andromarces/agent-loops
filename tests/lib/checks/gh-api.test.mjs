@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   bodyClassOf,
+  ghApi,
   ghApiFailure,
   ghReadError,
   isCleanServerError,
   isTransportFailure,
+  readPrList,
 } from "../../../src/lib/checks/gh-api.mjs";
 import { boundedRunner } from "../../../src/lib/checks/bounded-call.mjs";
 
@@ -160,5 +162,23 @@ describe("boundedRunner", () => {
       );
     const call = boundedRunner(gh, 20);
     await expect(call(["pr", "view", "1"], ".")).rejects.toMatchObject({ timedOut: true });
+  });
+});
+
+describe("a successful reply that is not JSON", () => {
+  const malformed = { status: 0, stdout: "{not json", stderr: "" };
+
+  // Usefulness: a malformed reply keeps the SyntaxError class of a direct JSON.parse and names the
+  // read, so a caller that classifies on the class sees the same error as before.
+  it("throws a SyntaxError that names the read through ghApi and readPrList", async () => {
+    const gh = async () => malformed;
+    const api = ghApi(gh, ["repos/o/r/commits"], ".");
+    await expect(api).rejects.toBeInstanceOf(SyntaxError);
+    await expect(api).rejects.toThrow(/gh api repos\/o\/r\/commits returned invalid JSON/);
+
+    const read = async () => malformed;
+    const list = readPrList(read, ["pr", "list"], () => true);
+    await expect(list).rejects.toBeInstanceOf(SyntaxError);
+    await expect(list).rejects.toThrow(/gh pr list returned invalid JSON/);
   });
 });
