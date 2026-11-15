@@ -1,5 +1,5 @@
-// Interactive checkbox prompt for the install and uninstall harness selection
-// (#1319). It drives `node:readline` keypress events in raw mode.
+// Interactive checkbox prompt for the install and uninstall harness selection.
+// It drives `node:readline` keypress events in raw mode.
 // It adds no dependency because Node supplies the keypress events.
 // The caller runs the numbered prompt when the terminal cannot host the list.
 import { emitKeypressEvents } from "node:readline";

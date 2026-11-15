@@ -1,4 +1,4 @@
-// `agent-loop install` / `agent-loop uninstall` (#139). User-scope only: each
+// `agent-loop install` / `agent-loop uninstall`. User-scope only: each
 // harness gets its entry point and its guard, rendered from the shipped
 // templates against the installed package. The manifest records one baseline
 // per target; a second install is a no-op, an upgrade replaces only the
@@ -6,10 +6,10 @@
 // unchanged since install. Guards are applied before entry points, and a failed
 // write persists the manifest for the writes that completed and keeps the
 // previous record for every target it did not complete, so uninstall can recover
-// a partial install or an interrupted upgrade (#156). An exclusive lock
+// a partial install or an interrupted upgrade. An exclusive lock
 // beside `<home>/.agent-loops` serializes install and uninstall, so concurrent
 // read-modify-write of the manifest cannot drop a record, whatever the temp
-// root of each process (#193, #198).
+// root of each process.
 import { lstatSync } from "node:fs";
 import { dirname } from "node:path";
 import { readableErrorText } from "../lib/error-message.mjs";
@@ -264,7 +264,7 @@ function report(harness, plan) {
 /**
  * Adds the previous record for every target without a record yet. A failed
  * install leaves the bytes those targets held before, so uninstall must keep
- * owning them (#156).
+ * owning them.
  */
 function keepPriorRecords(records, targets, priorRecords) {
   for (const target of targets) {

@@ -1,4 +1,4 @@
-// Finds the harnesses whose CLI is on PATH (#365, #376).
+// Finds the harnesses whose CLI is on PATH.
 import { readdir } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { HARNESS_META, HARNESS_ORDER } from "../lib/harnesses.mjs";
@@ -34,7 +34,7 @@ function directoryLister() {
 // Walks PATH in order and stops at the first match. The listing only skips names that cannot exist: it
 // folds case, so a case-insensitive file system loses no match, and each listed name is still confirmed
 // with a lookup, so a dangling link does not count. One listing per PATH entry replaces one probe per
-// PATH entry x PATHEXT x command, which took seconds on a loaded Windows host (#376).
+// PATH entry x PATHEXT x command, which took seconds on a loaded Windows host.
 async function onPath(command, path, list) {
   for (const dir of path.split(delimiter).filter(Boolean)) {
     const names = await list(dir);
@@ -53,7 +53,7 @@ async function onPath(command, path, list) {
 /**
  * Harnesses whose CLI is found on PATH, in registry order. Harnesses are
  * scanned concurrently over one shared directory listing per PATH entry, so
- * the scan stays short on a long PATH or a loaded machine (#365, #376). `path`
+ * the scan stays short on a long PATH or a loaded machine. `path`
  * overrides `process.env.PATH`.
  */
 export async function detectHarnesses({ path = process.env.PATH ?? "" } = {}) {
