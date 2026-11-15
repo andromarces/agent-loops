@@ -46,6 +46,8 @@ afterEach(async () => {
   }
 });
 
+// Process: the tracked-file and ignore state is real Git state, so each case builds it with real
+// `git`.
 async function git(cwd, ...args) {
   return execa("git", args, { cwd });
 }

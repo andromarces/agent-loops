@@ -71,6 +71,8 @@ const turn = (act, cwd = tree.linked, onMainWatch = null, mainWatchDeadlineMs = 
     mainWatchDeadlineMs,
   });
 
+// Process: the branch, commit, reset, and remote refs are real Git state, because the case reads
+// them back as the main work tree change.
 /** Adds the branch `other` at the template commit and a second commit on the checked-out branch. */
 async function seedOtherBranch() {
   await execa("git", ["branch", "other"], { cwd: tree.main });
