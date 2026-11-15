@@ -19,6 +19,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      # A local action is read from the checkout, so the probe checks out the
+      # repository. It never installs the repository dependencies.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Verify the published package on the minimum supported Node version.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -52,17 +57,9 @@ jobs:
       # Exercise install and uninstall against a temp home, so the render path
       # and the manifest round trip are covered on macOS, Ubuntu, and Windows.
       - name: Install then uninstall harness integrations into a temp home
-        shell: bash
-        run: |
-          export AGENT_LOOP_HOME="$(mktemp -d)"
-          agent-loop install --harness claude,codex,opencode,copilot,antigravity --yes
-          agent-loop install --harness claude,codex,opencode,copilot,antigravity --yes
-          agent-loop uninstall --yes
-          if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
-            echo "::error::install/uninstall left files behind"
-            ls -A "$AGENT_LOOP_HOME"
-            exit 1
-          fi
+        uses: ./.github/actions/harness-integration-smoke
+        with:
+          cli: agent-loop
       # bash resolves the extensionless sh shim on Windows, so check the
       # PowerShell and cmd shims explicitly. Each command carries its own exit
       # check, because pwsh does not fail a step on a middle command.

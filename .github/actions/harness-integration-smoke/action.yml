@@ -1,0 +1,24 @@
+name: Install then uninstall harness integrations into a temp home
+description: Install the harness integrations twice, uninstall, and require an empty home.
+
+inputs:
+  cli:
+    description: Command that runs the agent-loop CLI.
+    required: false
+    default: node ./src/cli.mjs
+
+runs:
+  using: composite
+  steps:
+    - name: Install then uninstall harness integrations into a temp home
+      shell: bash
+      run: |
+        export AGENT_LOOP_HOME="$(mktemp -d)"
+        ${{ inputs.cli }} install --harness claude,codex,opencode,copilot,antigravity --yes
+        ${{ inputs.cli }} install --harness claude,codex,opencode,copilot,antigravity --yes
+        ${{ inputs.cli }} uninstall --yes
+        if [ -n "$(ls -A "$AGENT_LOOP_HOME")" ]; then
+          echo "::error::install/uninstall left files behind"
+          ls -A "$AGENT_LOOP_HOME"
+          exit 1
+        fi
