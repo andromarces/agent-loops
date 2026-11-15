@@ -138,9 +138,10 @@ function conclusionStart(lines, fenced) {
 /**
  * Returns the lines from `start` with each column-0 line that holds only a report label name read
  * as that label, with the non-blank lines under it as its value, joined with a space (issue #1989).
- * A line inside a fenced code block stays text. The value stops at a blank line, a list, a table
- * row, or a label line in any form, so a lone label name with no line under it supplies no value.
- * The line count is kept, so a caller that slices a prefix of the response still measures it.
+ * A line inside a fenced code block stays text. The value stops at a blank line, a list, a Markdown
+ * table row, or a label line in any form, so a lone label name with no line under it supplies no
+ * value. A line that merely contains a pipe stays part of the value. The line count is kept, so a
+ * caller that slices a prefix of the response still measures it.
  * @param {string[]} lines
  * @param {boolean[]} fenced
  * @param {number} start
@@ -154,7 +155,7 @@ function plainHeadingLines(lines, fenced, start) {
     }
     let end = i + 1;
     const value = [];
-    while (end < out.length && !fenced[end] && isHeadingValueLine(out[end])) {
+    while (end < out.length && !fenced[end] && isHeadingValueLine(out[end], out[end + 1])) {
       value.push(out[end].trim());
       out[end++] = "";
     }
@@ -167,18 +168,33 @@ function plainHeadingLines(lines, fenced, start) {
 
 /**
  * True when the line under a plain heading label is part of its value: a non-blank line that is
- * neither a list, nor a table row (`|`), nor a label line in any form. A table row stays in the
- * block, so a table under the heading keeps the block unparseable.
+ * neither a list, nor a Markdown table row, nor a label line in any form. A table row stays in the
+ * block, so a table under the heading keeps the block unparseable. A line that merely contains a
+ * pipe, such as a shell pipeline, is no table row and stays part of the value.
  * @param {string} line
+ * @param {string} [next] the line directly below `line`
  * @returns {boolean}
  */
-function isHeadingValueLine(line) {
+function isHeadingValueLine(line, next) {
   return (
     line.trim() !== "" &&
-    !line.includes("|") &&
+    !isTableRow(line, next) &&
     !isListLine(line) &&
     !PLAIN_HEADING_LABEL_LINE.test(line) &&
     !readsAsLabelLine(line)
+  );
+}
+
+/**
+ * True when the line belongs to a Markdown table: a delimiter row, or a row directly above one. A
+ * line with no pipe is no table row.
+ * @param {string} line
+ * @param {string} [next] the line directly below `line`
+ * @returns {boolean}
+ */
+function isTableRow(line, next) {
+  return (
+    isTableDelimiter(line) || (line.includes("|") && next !== undefined && isTableDelimiter(next))
   );
 }
 
@@ -259,17 +275,20 @@ const HEADING_LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]*\\s*:`, 
 
 /**
  * True when the response holds a closing block attempt: any report label name or `Verdict`
- * followed by a colon, anywhere in the text, or a column-0 line that holds only a report label
- * name. The block need not parse. A response without one is plain prose, such as a late answer to
- * an event after the closing block.
+ * followed by a colon, anywhere in the text, or a `Conclusion:` line or line that holds only
+ * `Conclusion` outside a fence, which starts a plain heading block. The block need not parse. A
+ * response without one is plain prose, such as a late answer to an event after the closing block,
+ * or fenced output that quotes a label line on its own.
  * @param {string} response
  * @returns {boolean}
  */
 export function hasClosingBlockAttempt(response) {
-  return (
-    LABEL_MENTION.test(response) ||
-    response.split(/\r?\n/).some((line) => PLAIN_HEADING_LABEL_LINE.test(line))
-  );
+  if (LABEL_MENTION.test(response)) {
+    return true;
+  }
+  const lines = response.split(/\r?\n/);
+  const fenced = fencedLines(lines);
+  return lines.some((line, index) => !fenced[index] && CONCLUSION_START_LINE.test(line));
 }
 
 /**

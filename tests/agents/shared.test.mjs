@@ -86,6 +86,17 @@ test("lastClosingMessage picks a final plain heading report", () => {
   expect(lastClosingMessage([stale, fresh])).toBe(fresh);
 });
 
+// Usefulness: verifies a later message with only fenced or prose lone label lines is no attempt, so
+// the completed report still governs (issue #1989).
+test("lastClosingMessage keeps the report before a later non-closing lone label line", () => {
+  const report = "Conclusion: done\nWhy: ok\nBlockers: none";
+  const fenced = "The run printed:\n```\nChecks\n- a\n```";
+  const prose = "I read the labels:\n\nChecks\n\nThe gate is green.";
+
+  expect(lastClosingMessage([report, fenced])).toBe(report);
+  expect(lastClosingMessage([report, prose])).toBe(report);
+});
+
 // Usefulness: pins the exec options every adapter passes for a turn, so an absent env or spawn hook never reaches `exec` as an explicit undefined that changes its behavior.
 test("turnExecOptions maps turn options to exec options and omits an absent env and spawn hook", () => {
   const onTurnChild = () => {};

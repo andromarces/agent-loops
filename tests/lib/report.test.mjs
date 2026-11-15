@@ -1306,6 +1306,42 @@ test("parseReportBlock reads a final plain heading block after a colon block", (
   expect(parseReportBlock(response)).toMatchObject({ conclusion: "fresh", why: "fresh" });
 });
 
+// Usefulness: verifies a lone label line inside a fence or in prose is no closing block attempt, so
+// a later non-closing message never replaces the completed report (issue #1989).
+test("hasClosingBlockAttempt is false for a lone label line outside a closing block", () => {
+  for (const prose of [
+    "The run printed:\n```\nChecks\n- a\n```",
+    "I read the labels:\n\nChecks\n\nThe gate is green.",
+    "The format lists:\n\nNotes\nDeferred\n\nThat is all.",
+  ]) {
+    expect(hasClosingBlockAttempt(prose), prose).toBe(false);
+  }
+});
+
+// Usefulness: verifies a shell pipeline stays part of a plain heading value, so an accept keeps its
+// Checks line (issue #1989).
+test("acceptanceFailure accepts a plain heading report with a pipeline Checks line", () => {
+  const response = [
+    "Conclusion",
+    "done",
+    "",
+    "Why",
+    "ok",
+    "",
+    "Blockers",
+    "none",
+    "",
+    "Checks",
+    "node scripts/check.mjs | Select-Object -First 5",
+    "",
+    "Verdict: accept",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    checks: "node scripts/check.mjs | Select-Object -First 5",
+  });
+  expect(acceptanceFailure(response)).toBeNull();
+});
+
 // Usefulness: verifies a table directly under a plain heading label keeps the block unparseable,
 // as origin/main rejects a table anywhere in the block (issue #1989).
 test("parseReportBlock keeps a table under a plain heading label unparseable", () => {
