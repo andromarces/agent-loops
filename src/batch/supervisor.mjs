@@ -14,12 +14,11 @@ import {
   ownerAlive,
   startTimeCache,
 } from "../lib/process-identity.mjs";
-import { logError, logInfo, logWarn } from "../lib/log.mjs";
+import { logError, logWarn } from "../lib/log.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
 import { createOwnerDecisions, readAnswer, readDecision } from "./decisions.mjs";
 import {
-  blockedNumbers,
   checkItemEligibility,
   preflightItemEligibility,
   readOpenPrClosures,
@@ -57,9 +56,11 @@ import {
   updateManifest,
 } from "./store.mjs";
 import { childArguments, runSetup, spawnHeadless, taskTextFor } from "./worker.mjs";
+import { createWaitPolling, POLL_INTERVAL_MS } from "./wait-polling.mjs";
 
 // The batch id stays available here for the tests and the command line.
 export { newBatchId } from "./loop-records.mjs";
+export { POLL_INTERVAL_MS };
 
 // A needs-owner loop becomes a pending decision and releases its slot
 // (adr/0110-release-batch-slots-on-owner-decisions.md decision 1). A waiting loop keeps its
@@ -72,10 +73,6 @@ const PR_BRANCH_REFUSALS = new Set([
   "pr-branch-checked-out",
 ]);
 const INTERRUPT_WAIT_MS = 30_000;
-/** The wait between two re-checks of a blocked issue (adr/0110-release-batch-slots-on-owner-decisions.md decision 5). */
-export const POLL_INTERVAL_MS = 15_000;
-/** The bound on one poll read of the wait state. */
-const POLL_READ_TIMEOUT_MS = 60_000;
 /** The most independent reads in flight at once. */
 const READ_BATCH_SIZE = 4;
 
@@ -90,19 +87,6 @@ function defaultSleep(ms, signal) {
   return delay(ms, undefined, { signal }).catch((error) => {
     if (error?.name !== "AbortError") throw error;
   });
-}
-
-/**
- * Waits one poll interval on the monotonic clock. An abort ends the wait at once without an error,
- * so the caller keeps its own cancel identity. Tests inject `now` and `sleep`.
- */
-async function pollWait(ms, signal, { now = () => performance.now(), sleep = defaultSleep } = {}) {
-  const deadline = now() + ms;
-  while (!signal?.aborted) {
-    const remaining = deadline - now();
-    if (remaining <= 0) return;
-    await sleep(Math.min(remaining, 1000), signal);
-  }
 }
 
 let ownStamp;
@@ -1465,157 +1449,30 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     for (const issue of manifest.issues) if (remaining.has(issue)) return issue;
     return null;
   };
-  const readWaitState = async (issue) => {
-    let value;
-    try {
-      value = await readGhJson(
-        gh,
-        ["issue", "view", String(issue), "--json", "state,blockedBy"],
-        prepared.repo,
-        { signal: controller.signal, timeoutMs: POLL_READ_TIMEOUT_MS },
-      );
-    } catch (err) {
-      if (err?.kind === "empty") throw new Error("exit unknown");
-      throw err;
-    }
-    const nodes = blockedNumbers(value?.blockedBy);
-    if (typeof value?.state !== "string" || nodes === null) {
-      throw new Error("the wait read returned an unreadable value");
-    }
-    const open = nodes
-      .filter((node) => String(node?.state ?? "").toUpperCase() === "OPEN")
-      .map((node) => node?.number)
-      .filter(Number.isInteger);
-    return { state: value.state, open };
-  };
-  // Applies one wait read in checkpoint order. A read that failed keeps the issue waiting.
-  const applyWaitRead = async (issue, read) => {
-    if (String(read.state).toUpperCase() !== "OPEN") {
-      await changeLoop(issue, {
-        status: "skipped",
-        skipReason: "closed",
-        reason: `the issue state is ${read.state}`,
-        blockingIssues: [],
-        pid: null,
-        startTime: null,
-      });
-      progress(`issue ${issue}: skipped (closed: the issue state is ${read.state})`);
-      return "done";
-    }
-    if (read.open.length > 0) {
-      const changed = await changeLoop(issue, {
-        blockingIssues: read.open,
-        reason: `open blocking issues: ${read.open.join(", ")}`,
-      });
-      if (changed) {
-        await sendNotification({
-          kind: "merge-required",
-          title: "Batch merge required",
-          text: `Batch ${id} issue ${issue} waits for the merge of blocking issue(s) ${read.open.join(", ")}.`,
-        });
-      }
-      return "wait";
-    }
-    await changeLoop(issue, {
-      status: "queued",
-      skipReason: null,
-      reason: null,
-      blockingIssues: [],
-      pid: null,
-      startTime: null,
-    });
-    logInfo(`issue ${issue}: blockers closed. Queued for launch`);
-    return "ready";
-  };
-  const refreshWaiting = async () => {
-    const issues = [...waiting];
-    const outcomes = await mapInBatches(issues, READ_BATCH_SIZE, (issue) =>
-      readWaitState(issue).then(
-        (read) => ({ read }),
-        (error) => ({ error }),
-      ),
-    );
-    for (let index = 0; index < issues.length; index += 1) {
-      const issue = issues[index];
-      const outcome = outcomes[index];
-      let result;
-      if (outcome.error === undefined) {
-        result = await applyWaitRead(issue, outcome.read);
-      } else if (interrupted || hard) {
-        result = "wait";
-      } else {
-        logWarn(
-          `issue ${issue}: the wait read failed: ${outcome.error.message}. Retrying on the next poll`,
-        );
-        result = "wait";
-      }
-      if (result === "done") waiting.delete(issue);
-      else if (result === "ready") {
-        waiting.delete(issue);
-        remaining.add(issue);
-      }
-    }
-  };
-  // A cached snapshot is stale once another write replaced the in-memory loop.
-  const newestRead = async (issue, reads) => {
-    const cached = reads?.get(issue);
-    if (cached !== undefined && cached === loops.get(issue)) return cached;
-    return await readLoop(runsRoot, id, issue);
-  };
-  const refreshPendingDecisions = async (reads = null) => {
-    for (const issue of pendingDecisions) {
-      const current = await newestRead(issue, reads);
-      if (current === null) continue;
-      loops.set(issue, current);
-      if (current.status !== "needs-owner") {
-        pendingDecisions.delete(issue);
-        if (current.status === "queued") remaining.add(issue);
-        continue;
-      }
-      if (isLive(current)) {
-        if (await ownerAlive({ pid: current.pid, startTime: current.startTime })) {
-          slots.add(issue);
-          continue;
-        }
-        slots.delete(issue);
-      }
-      const applied = await withLoopResult(issue, () => applyDecisionAnswer(issue, current));
-      if (applied === null) continue;
-      if (applied.kind === "resume") {
-        pendingDecisions.delete(issue);
-        remaining.add(issue);
-      } else if (applied.kind === "terminal") {
-        pendingDecisions.delete(issue);
-      }
-    }
-  };
-  const syncFromDisk = async () => {
-    const results = await mapInBatches(manifest.issues, READ_BATCH_SIZE, (issue) =>
-      readLoop(runsRoot, id, issue),
-    );
-    const reads = new Map();
-    for (let index = 0; index < manifest.issues.length; index++) {
-      const issue = manifest.issues[index];
-      const current = results[index];
-      reads.set(issue, current);
-      if (current !== null) loops.set(issue, current);
-    }
-    return reads;
-  };
-  // A recorded child that this process did not spawn holds its slot until its process ends.
-  const refreshHeld = async (reads = null) => {
-    for (const issue of slots) {
-      if (active.has(issue)) continue;
-      const current = await newestRead(issue, reads);
-      if (current === null || !isLive(current)) {
-        slots.delete(issue);
-        continue;
-      }
-      if (!(await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
-        slots.delete(issue);
-      }
-    }
-  };
+  const waits = createWaitPolling({
+    runsRoot,
+    batchId: id,
+    repo: prepared.repo,
+    gh,
+    signal: controller.signal,
+    issues: () => manifest.issues,
+    waiting,
+    pendingDecisions,
+    slots,
+    remaining,
+    loops,
+    active,
+    clock,
+    pollIntervalMs,
+    changeLoop,
+    notify: sendNotification,
+    progress,
+    applyDecisionAnswer,
+    withLoopResult,
+    isLive,
+    isStopped: () => interrupted || hard,
+  });
+
   for (const issue of manifest.issues) {
     const loop = loops.get(issue);
     if (loop !== null && isLive(loop)) {
@@ -1625,7 +1482,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache)) slots.add(issue);
     }
   }
-  await refreshPendingDecisions();
+  await waits.refreshPendingDecisions();
   await notifyOwnerMergeOnly();
   // An issue that already holds a slot is taken for its own recovery or launch. A new issue
   // enters only while a slot is free.
@@ -1634,8 +1491,6 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (issue === null) return false;
     return slots.has(issue) || slots.size < prepared.loops;
   };
-  let pollLogged = false;
-  let nextPoll = clock.now() + pollIntervalMs;
   for (;;) {
     while (!interrupted && !hard && pausedReason === null && canTake() && remaining.size > 0) {
       const issue = nextIssue();
@@ -1696,23 +1551,16 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     await notifyOwnerMergeOnly();
     if (hard || interrupted) break;
     if (pausedReason !== null && active.size === 0) break;
-    const hasRecordedHeld = () => slots.size > active.size;
-    const pollingNeeded =
-      waiting.size > 0 || pendingDecisions.size > 0 || (hasRecordedHeld() && remaining.size > 0);
-    if (pollingNeeded && !pollLogged) {
-      pollLogged = true;
-      logInfo(`waiting poll started for issue(s) ${[...waiting, ...pendingDecisions].join(", ")}`);
-    }
+    if (waits.pollingNeeded()) waits.beginPollLog();
     if (active.size > 0) {
       const racers = [...active.values()];
       let pollElapsed = false;
       let pollController = null;
-      if (pollingNeeded) {
+      if (waits.pollingNeeded()) {
         pollController = new AbortController();
-        const wait = Math.max(0, nextPoll - clock.now());
         const pollSignal = AbortSignal.any([controller.signal, pollController.signal]);
         racers.push(
-          pollWait(wait, pollSignal, clock).then(() => {
+          waits.waitForNext(pollSignal).then(() => {
             pollElapsed = true;
           }),
         );
@@ -1721,37 +1569,28 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       pollController?.abort();
       if (interrupted || hard) break;
       if (pollElapsed) {
-        nextPoll = clock.now() + pollIntervalMs;
-        const reads = await syncFromDisk();
-        await refreshHeld(reads);
-        await refreshWaiting();
-        await refreshPendingDecisions(reads);
+        waits.advance();
+        await waits.poll();
         await notifyOwnerMergeOnly();
       }
       continue;
     }
     if (pausedReason !== null) break;
-    if (waiting.size === 0 && pendingDecisions.size === 0 && !hasRecordedHeld()) break;
-    if (waiting.size > 0 || (hasRecordedHeld() && remaining.size > 0)) {
-      const wait = Math.max(0, nextPoll - clock.now());
-      await pollWait(wait, controller.signal, clock);
+    if (!waits.anyWait()) break;
+    if (waits.waitingPollNeeded()) {
+      await waits.waitForNext(controller.signal);
       if (interrupted || hard) break;
-      nextPoll = clock.now() + pollIntervalMs;
-      const reads = await syncFromDisk();
-      await refreshHeld(reads);
-      await refreshWaiting();
-      await refreshPendingDecisions(reads);
+      waits.advance();
+      await waits.poll();
       await notifyOwnerMergeOnly();
       continue;
     }
     // Only pending decisions remain. Apply a live answer that already arrived, then stop.
-    const reads = await syncFromDisk();
-    await refreshHeld(reads);
-    await refreshPendingDecisions(reads);
+    await waits.poll({ waiting: false });
     if (remaining.size > 0) continue;
     break;
   }
-  if (pollLogged) logInfo("waiting poll stopped");
+  waits.endPollLog();
   // A resume runs its recovered loops one at a time; this drains any that the pass left live.
   while (active.size > 0 && !hard) await Promise.race(active.values());
 
