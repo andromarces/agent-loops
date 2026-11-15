@@ -728,6 +728,23 @@ test("reviewer prompt tells the reviewer to leave the runtime scratch folder to 
   );
 });
 
+// Usefulness: verifies acceptance #1966 — a turn with a scratch folder tells the reviewer not to name
+// that folder in Notes or as an open or leftover item, because the runtime removes it and a reported
+// leftover that never exists reaches the user through `open`. The rule that names output outside the
+// folder stays.
+test("reviewer prompt tells the reviewer not to report the runtime scratch folder", () => {
+  const prompt = reviewerPrompt({
+    prompt: "check the fix",
+    scratchDir: "/work/.agent-loop/rev/ab12cd34",
+  });
+  expect(prompt).toContain(
+    "Do not name the scratch folder in Notes or as an open or leftover item, because the runtime removes it.",
+  );
+  expect(prompt).toContain(
+    "Before the closing block, remove every temporary file or directory that this turn created outside the repository. Name in Notes any entry that you cannot remove.",
+  );
+});
+
 // Usefulness: verifies a turn with no scratch folder keeps the earlier wording and names no folder,
 // because a failed creation must not send the reviewer to a path that does not exist.
 test("reviewer prompt without a scratch folder names none", () => {

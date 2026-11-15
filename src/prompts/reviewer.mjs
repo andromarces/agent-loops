@@ -132,7 +132,7 @@ const remoteWriteRule = `Do not write to GitHub or any remote. ${REMOTE_WRITE_AC
 const scratchPlacement = (scratchDir) =>
   scratchDir === null
     ? "Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits."
-    : `The runtime created the scratch folder ${JSON.stringify(scratchDir)} for this turn. Put the output of a test, build, or probe in that folder first. The runtime removes that folder after this turn. Use another ignored path inside the repository, or a temporary path outside it, only when that folder does not fit.`;
+    : `The runtime created the scratch folder ${JSON.stringify(scratchDir)} for this turn. Put the output of a test, build, or probe in that folder first. The runtime removes that folder after this turn. Do not name the scratch folder in Notes or as an open or leftover item, because the runtime removes it. Use another ignored path inside the repository, or a temporary path outside it, only when that folder does not fit.`;
 
 // The scratch folder is an ignored path inside the repository, so the removal rule names it as an
 // exception. A Codex reviewer that deletes it runs a command that automatic approval review can
