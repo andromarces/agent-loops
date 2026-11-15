@@ -35,7 +35,7 @@ const PASSING_STATES = new Set(["SUCCESS", "SKIPPED", "NEUTRAL"]);
  * One check item, or null when the item is not well formed. A well-formed item
  * carries a non-empty `name` and at least one of `state` or `bucket`, and every
  * value it carries is one the runtime knows. An item that fails any of those
- * checks has no state to read, so it is unresolved, never a pass (#329).
+ * checks has no state to read, so it is unresolved, never a pass.
  */
 function readItem(item) {
   if (!isJsonObject(item)) {
@@ -85,7 +85,7 @@ export function readOutcome(pr, { status, stdout, stderr }, all, source = null) 
   if (text !== "") {
     const parsed = tryParseJson(text);
     if (!Array.isArray(parsed)) {
-      // An unparseable output is a read error (#329).
+      // An unparseable output is a read error.
       throw ghReadError(label, { status, stdout, stderr });
     }
     const items = parsed.map(readItem);
@@ -106,32 +106,32 @@ export function readOutcome(pr, { status, stdout, stderr }, all, source = null) 
   }
   // Only the pending exit code, or exit 0 with a pending item, keeps the wait running. Exit 1
   // with a pending list and no failing check is a read error, so it is not waited
-  // out as pending (#894).
+  // out as pending.
   if (status === EXIT_PENDING || (status === 0 && checks.some(isPending))) {
     return { settled: false, checks };
   }
   // An empty list on exit 0 keeps waiting, because `gh pr checks --required` omits a check that
   // has not started. An exit 0 with no settled check keeps it running too. The same empty list on
   // exit 1 is not that. Exit 1 with no failing check listed is a read error unless `gh` names no
-  // required check or no check has reported yet (#941, #950). Any other exit 1 falls through to the
+  // required check or no check has reported yet. Any other exit 1 falls through to the
   // refusal below.
   if (status === 0 && checks.length > 0) {
     return { settled: true, checks };
   }
   // Exit 1 with no output and the exact `no required checks reported` reply is settled as
   // `noRequiredChecks`. The branch has no required check to wait for, which is no pass either
-  // (#894). The all-checks read has no such answer, so its stderr is unresolved, like every other
-  // exit 1 with no failing check listed (#896).
+  // The all-checks read has no such answer, so its stderr is unresolved, like every other
+  // exit 1 with no failing check listed.
   if (!all && status === 1 && text === "" && NO_REQUIRED_CHECKS.test(stderr.trim())) {
     return { settled: true, checks, noRequiredChecks: true };
   }
   // Exit 1 with no output and the exact `no checks reported` reply is an empty list that is not
-  // settled. The wait continues, because no check has reported on the PR head yet (#941). The
-  // all-checks read applies the same rule (#950).
+  // settled. The wait continues, because no check has reported on the PR head yet. The
+  // all-checks read applies the same rule.
   if (status === 1 && text === "" && NO_CHECKS_YET.test(stderr.trim())) {
     return { settled: false, checks, noChecksYet: true };
   }
-  // Exit 1 with no failing check listed covers a read error, and any other code is unresolved (#329).
+  // Exit 1 with no failing check listed covers a read error, and any other code is unresolved.
   if (status !== 0) {
     throw ghReadError(label, { status, stdout, stderr });
   }
@@ -165,7 +165,7 @@ export function readHead(pr, { status, stdout, stderr }) {
 }
 
 // The check items of one commit, read by SHA. `gh pr checks` queries by PR identity and names no
-// commit, so it cannot say which head its states describe (#961). The check runs and commit
+// commit, so it cannot say which head its states describe. The check runs and commit
 // statuses of the commit come from `commits/{sha}`. A required context is judged by the gate's
 // own matching and verdict (`matchingEntries`, `evaluateContext`). An app-qualified context needs
 // a run of that app, and the latest matching entry decides.

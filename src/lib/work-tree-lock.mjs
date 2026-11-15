@@ -1,4 +1,4 @@
-// Git work tree lock for an active run (issue #1347, ADR 0073). Init locks a linked `--cwd`, and a
+// Git work tree lock for an active run (ADR 0073). Init locks a linked `--cwd`, and a
 // terminal lifecycle unlocks it. Every failure is a warning: the lock is a protection, not a
 // precondition of the command that takes or drops it.
 import { gitRead, WORK_TREE_READ_TIMEOUT_MS } from "./git-read.mjs";

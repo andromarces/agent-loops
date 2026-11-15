@@ -161,7 +161,7 @@ export async function runTestCmd({
   cwd,
   signal,
   forceSignal = forceCancelSignal(signal),
-  // Injectable so a test can shorten the settle bound; production keeps 10 s (issue #1465).
+  // Injectable so a test can shorten the settle bound; production keeps 10 s.
   killGraceMs = KILL_GRACE_MS,
   // Overrides the child environment of the command and of its snapshots.
   env,
@@ -213,7 +213,7 @@ async function runInSlot({
     buffer: false,
     // The runtime sends the immediate SIGKILL to the group at the bound or on the cancel.
     // `killBound` arms the settle bound of `execBounded` from the same timeout and cancel,
-    // so a command that no kill ends settles 10 s later (issue #1307).
+    // so a command that no kill ends settles 10 s later.
     killBound: { timeoutMs: timeoutSeconds * 1000, signal },
     killGraceMs,
   });

@@ -24,7 +24,7 @@ export async function withTimeBound(boundMs, message, run, { start = null } = {}
     );
     timer.unref();
   };
-  // The caller can gate the timer start; production starts it at once (issue #1465).
+  // The caller can gate the timer start; production starts it at once.
   if (start === null) arm();
   else
     Promise.resolve(start)

@@ -1,7 +1,7 @@
 // Evaluates the `--require-ci` finish gate: every required status check passed
 // on the commit GitHub evaluates for the pull request. Check runs and commit
 // statuses are both considered, because a required name can appear as either
-// type (issue #218).
+// type.
 //
 // The `gh` runner is injected so a caller can run the gate against captured
 // responses. The default runner shells out to the `gh` CLI.
@@ -48,7 +48,7 @@ const MERGE_BLOCKED_REFUSAL =
 // Every merge state GitHub's GraphQL `mergeStateStatus` reports that the gate can
 // act on. A value outside this set, and a missing or null one, is a state the
 // gate cannot read, so it refuses on both the per-check path and the absence path
-// (issue #336 review). `UNSTABLE` means a check is failing, which the per-check
+// `UNSTABLE` means a check is failing, which the per-check
 // path judges by name, and `HAS_HOOKS` and `DRAFT` report no unmet rule the gate
 // enforces; `BLOCKED` refuses at the end of both paths. `UNKNOWN` is deliberately
 // absent: GitHub computes it lazily, so it states no outcome either.
@@ -66,7 +66,7 @@ const MERGE_STATES = new Set([
 // base, merge conflicts, and a state the gate cannot read. `UNKNOWN`, which GitHub
 // computes lazily, a missing state, and a value outside `MERGE_STATES` are all the
 // last kind. Shared with the status read so it cannot report a pass for a state the
-// gate refuses (issue #349).
+// gate refuses.
 function earlyMergeRefusal(mergeState) {
   if (mergeState === "BEHIND") {
     return "the PR is behind its base branch";
@@ -78,8 +78,7 @@ function earlyMergeRefusal(mergeState) {
   // applies exactly the same merge-state condition as the per-check path. A state
   // that is missing, null, empty, or not one GitHub documents settles nothing, and
   // a state the gate cannot read is not a clean one, so it refuses on both paths
-  // rather than passing the absence path on a reply it never understood
-  // (issue #336 review).
+  // rather than passing the absence path on a reply it never understood.
   if (!MERGE_STATES.has(mergeState)) {
     return "GitHub reports the PR merge state as unknown (computed lazily; retry shortly)";
   }
@@ -115,11 +114,11 @@ export async function checkCi({
 
 /**
  * Refuses unless the PR is open, its head equals the reviewed commit, and the reviewed tree is
- * clean. A closed or merged PR refuses even when its head is unchanged (#1111). This is the head
+ * clean. A closed or merged PR refuses even when its head is unchanged. This is the head
  * part of `checkCi` alone, so it reads no required-check source. It evaluates no merge state and
  * claims no check result. It serves a repository whose required-check sources settle nothing, where
- * `checkCi` refuses every finish (#1098). The call rejects with `isCanceled` on a cancel and
- * `timedOut` after `timeoutMs` (#1200).
+ * `checkCi` refuses every finish. The call rejects with `isCanceled` on a cancel and
+ * `timedOut` after `timeoutMs`.
  * @param {{ pr: number, reviewed: object | null, workerAfterReview?: boolean, cwd: string, gh?: Function, timeoutMs?: number, signal?: AbortSignal | null }} options
  * @returns {Promise<{ ok: true, commit: string } | { ok: false, reason: string }>}
  */
@@ -172,7 +171,7 @@ function readExpired(call, err) {
 // before the read, when the reviewed state refuses, and after the read. `read(call)` runs on the
 // bounded runner, and `judge(value)` runs on its value once the cancel check has passed.
 // The read ends after timeoutMs and when signal aborts; a cancel starts no read and rejects with isCanceled.
-// A deadline rejects with timedOut set and a timeout message (#1181), never a verified compare (#1200).
+// A deadline rejects with timedOut set and a timeout message, never a verified compare.
 async function boundedGateRead(
   { reviewed, workerAfterReview, gh, timeoutMs, signal },
   read,
@@ -272,8 +271,7 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
     // An unknown ruleset read refuses the finish whatever the rest of the union
     // holds. Its own reply may carry a required-status rule this caller never saw,
     // and a non-empty union from another source would otherwise let the per-check
-    // pass judge only the names it saw, so a ruleset-required check could be skipped
-    // (issue #336 review).
+    // pass judge only the names it saw, so a ruleset-required check could be skipped.
     //
     // A successful read that found no rule is not in this branch. It contributes no
     // contexts, and the per-check pass runs on the other sources. A classic-only
@@ -311,7 +309,7 @@ async function judgeCi({ pr, reviewed, cwd, gh }) {
     return fail(first.failure.reason);
   }
   // Run this after the per-check pass so a named check refusal keeps its name. A blocked merge
-  // state fails closed, because another unmet rule reports it too (ADR 0012, issues #280 and #336).
+  // state fails closed, because another unmet rule reports it too (ADR 0012).
   if (info.mergeStateStatus === "BLOCKED") {
     return fail(MERGE_BLOCKED_REFUSAL);
   }
@@ -365,13 +363,13 @@ export async function unreadableGateReason({
 
 /**
  * Reads the required-check status for the reviewed commit, which a declared-PR
- * run supplies to each reviewer prompt (issue #320). The read is evidence for the
+ * run supplies to each reviewer prompt. The read is evidence for the
  * reviewer, not a gate.
  *
  * The status is bound to `head`, the local reviewed commit. The PR is read once,
  * and the check runs and commit statuses come from `commits/{sha}` by SHA, so a PR
  * head that moves away and back cannot put another commit's checks in the status
- * (issue #349). A PR head that differs from `head`, or a read with no local
+ * A PR head that differs from `head`, or a read with no local
  * `head`, is unresolved, because the gate would judge the other commit.
  *
  * The read judges what the gate judges: the required contexts come from
@@ -385,7 +383,7 @@ export async function unreadableGateReason({
  * as pending.
  *
  * It never throws, except for a caller cancel: an aborted `signal` starts no read
- * and rejects with `isCanceled` set (#1181). A failed read is `unresolved`, because
+ * and rejects with `isCanceled` set. A failed read is `unresolved`, because
  * the reviewer keeps its own read as the fallback and a turn must not fail over
  * supplied evidence.
  *

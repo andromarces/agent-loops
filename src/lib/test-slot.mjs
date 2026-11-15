@@ -1,4 +1,4 @@
-// Machine-wide test slot (#847, ADR 0039). Claims one of the slot lock files that every work
+// Machine-wide test slot (ADR 0039). Claims one of the slot lock files that every work
 // tree and project of the OS user on the host shares. Parallel full-suite runs then do not
 // oversubscribe the host. The `test-slot` command lives in `test-slot-cli.mjs`.
 import { readdir } from "node:fs/promises";

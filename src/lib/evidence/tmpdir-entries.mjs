@@ -9,7 +9,7 @@ import { isRegisteredTurnTmpdir } from "../turn-tmpdir-registry.mjs";
 
 const REGISTERED_PREFIX = "registered/";
 // A name of a literal system temporary directory that differs from the inherited one. No entry name
-// can hold the slash, so the parent can tell the two reads apart (issue #1713).
+// can hold the slash, so the parent can tell the two reads apart.
 const LITERAL_PREFIX = "literal-tmp/";
 
 /**
@@ -78,8 +78,8 @@ export async function snapshotInheritedTmpdir({
   // `inherited-tmpdir.mjs` reads the `AGENT_LOOP_INHERITED_TMPDIR` list.
   const inheritedDir = (await resolvedPath(tmpdir())) ?? tmpdir();
   const literal = new Map();
-  // A root that holds the inherited directory is read, so a write directly in it is still seen
-  // (issue #1713). When `includeInherited` is false, a root equal to the inherited directory is read
+  // A root that holds the inherited directory is read, so a write directly in it is still seen.
+  // When `includeInherited` is false, a root equal to the inherited directory is read
   // as a literal root because the two writes cannot be told apart.
   for (const root of literalRoots) {
     const resolved = await resolvedPath(root);
@@ -96,15 +96,15 @@ export async function snapshotInheritedTmpdir({
  * when it lists literal roots, in each of them, sorted, at most 20, each redacted like the test
  * command output (ADR 0017), because a name is chosen by the turn. A literal entry carries the
  * prefix `literal-tmp/`, because a literal `/tmp` path on macOS is not the inherited directory and
- * no field named it (issue #1713). The directories that this process created for a turn are left
+ * no field named it. The directories that this process created for a turn are left
  * out by their exact name, because the runtime removes them. Every other entry is listed, an `al-`
  * name too. An entry that is the turn directory that another agent-loop process registered carries
- * the prefix `registered/`, which no entry name can hold, so the parent can tell it apart (issue
- * #1240). The mark is a hint and never a reason to leave an entry out: a turn can write a
+ * the prefix `registered/`, which no entry name can hold, so the parent can tell it apart.
+ * The mark is a hint and never a reason to leave an entry out: a turn can write a
  * registration too (ADR 0069). The read happens once, after the turn's last child call, with no
- * confirming read and no wait (issue #1616, ADR 0095). The names are diagnostics only: the
+ * confirming read and no wait (ADR 0095). The names are diagnostics only: the
  * directories are shared with every other process on the host, so the runtime cannot attribute an
- * entry to the turn and never deletes one (issue #1024). An unattributed difference creates no
+ * entry to the turn and never deletes one. An unattributed difference creates no
  * automatic `open` item. `includeInherited` is false for a worker turn, which may legitimately
  * write directly in the inherited directory; a literal root that is that directory is still read,
  * because the two writes cannot be told apart. Returns [] when either read failed.

@@ -1,4 +1,4 @@
-// The `agent-loop test-slot` command (#847, ADR 0039). It parses its arguments, then runs one
+// The `agent-loop test-slot` command (ADR 0039). It parses its arguments, then runs one
 // command only while it holds a machine-wide slot through `test-slot.mjs`.
 import { constants } from "node:os";
 import { killLiveTrees } from "./exec-tree.mjs";

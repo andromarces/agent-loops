@@ -21,7 +21,7 @@ import { redactAndClean } from "./redact.mjs";
 export function createTranscriptWriter({ options, roles, events, reviewerSandbox, signal }) {
   // The mode is recorded only when the run named one, so a mode-free run writes
   // the transcript shape it wrote before the flag existed, and a consumer of that file sees no
-  // field this flag introduced (#337).
+  // field this flag introduced.
   const transcriptData = {
     task: options.task,
     cwd: options.cwd,
@@ -52,7 +52,7 @@ export function createTranscriptWriter({ options, roles, events, reviewerSandbox
 
   // The pre-assigned session id of the turn that is running, with the mark that no CLI output
   // confirmed it. It exists only in the written record, never on the role state, so the adapter
-  // alone decides what a failed turn keeps (issue #564). Cleared when the CLI call ends.
+  // alone decides what a failed turn keeps. Cleared when the CLI call ends.
   let pendingSession = null;
 
   // The digest of the transcript file that this run wrote last. A session record binds to it.

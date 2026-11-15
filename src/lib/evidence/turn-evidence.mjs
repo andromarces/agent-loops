@@ -4,27 +4,25 @@ import { readProp } from "../error-message.mjs";
 // The evidence fields of a turn result, in both the ok and the error envelope, the result prompt,
 // and the fatal-path events. A consumer of `TURN_EVIDENCE_FIELDS` picks up a new field with no change.
 // A new field needs one entry here, and its producer in `runChild`.
-// - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree
-//   (issue #984).
-// - mainWorkTreeChanged: paths of the main work tree that a worker turn in a linked work tree changed
-//   (issue #1448).
+// - sharedGitChanged: names of the shared Git items the worker turn changed outside the work tree.
+// - mainWorkTreeChanged: paths of the main work tree that a worker turn in a linked work tree changed.
 // - mainWorkTreeChangedInTurn: paths of the main work tree that changed and were restored inside a
-//   worker turn window (issue #1556).
+//   worker turn window.
 // - mainWorkTreeFastForward: the old and new head of a clean fast-forward to the remote default
-//   branch (issue #1485).
+//   branch.
 // - localSourceChangedInTurn: paths of the copied local sources that changed inside a worker or
-//   reviewer turn window (issue #1504).
+//   reviewer turn window.
 // - lockfileChanged: paths of the dependency files the worker turn changed. Before the next
 //   reviewer turn, the parent runs only the dependency setup that the repository documents for
 //   its tests in the work tree, and a changed dependency file that no test setup reads needs no
-//   action (issues #1180 and #1537).
+//   action.
 // - inheritedTmpdirEntries: names that appeared in the inherited temporary directory during a
 //   reviewer turn, or in a literal system temporary directory that differs from it during any
 //   child turn. One post-turn read lists them, with no settle re-read, and a failed read gives
 //   none. Diagnostic: the runtime cannot attribute them to the turn, and they create no automatic
-//   open item (issue #1024, issue #1616, issue #1713, ADR 0095, ADR 0108).
+//   open item (ADR 0095, ADR 0108).
 // - packageStoreEntries: names that changed in the pnpm package store during a reviewer turn.
-//   Advisory, like the temporary directory entries (issue #1045).
+//   Advisory, like the temporary directory entries.
 // - testRun: the test command result the runtime ran before a reviewer turn (ADR 0017), for the
 //   comparison with the Checks line. The state file keeps it beside the response in `lastResult`,
 //   and the turn history keeps its fixed shape.

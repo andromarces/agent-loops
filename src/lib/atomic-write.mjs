@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 // Monotonic suffix for state temp files, for the same reason as the lock temp
 // counter: one pid writes several temps concurrently, and a cleanup must remove
-// only the file its own call created (#353).
+// only the file its own call created.
 let stateTempCounter = 0;
 
 // On Windows, rename fails while another process holds the destination open.
@@ -20,7 +20,7 @@ const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
  * A transient unlink failure clears once the holder lets go, so a failed removal
  * is retried once. A persistent failure is swallowed, because this runs on the way out
  * of an already-failed operation. The leftover temp is a lesser problem than
- * replacing the error the caller must act on (#353).
+ * replacing the error the caller must act on.
  */
 export async function removeTemp(path) {
   for (let attempt = 0; ; attempt += 1) {
@@ -37,7 +37,7 @@ export async function removeTemp(path) {
 
 // `link` is the atomic create primitive, but FAT/exFAT and some network mounts
 // have no hard links and report one of these codes. They fall back to an
-// exclusive create, where the pre-#176 create/write window returns.
+// exclusive create, where the create/write window returns.
 // EISDIR is the Windows mapping: libuv translates the ERROR_INVALID_FUNCTION
 // from CreateHardLinkW on FAT/exFAT to EISDIR (nodejs/node#65817).
 const LINK_UNSUPPORTED = new Set([
@@ -86,7 +86,7 @@ const SYNC_FS = { realpath: realpathSync.native, readlink: readlinkSync };
 // step as `{ op, path }`. The driver runs the step and sends back the result, or throws the error
 // into the generator, so only the fs calls differ between the async and the sync resolver.
 function* traverseWriteTarget(file) {
-  // A rename over a link replaces the link instead of the file it names (#658).
+  // A rename over a link replaces the link instead of the file it names.
   let current = resolve(file);
   for (let hops = 0; hops <= MAX_LINK_HOPS; hops += 1) {
     let dir;
@@ -138,9 +138,9 @@ export async function resolveWriteTarget(file) {
  * is renamed over the destination. A concurrent reader then sees the old content
  * or the new content, never a partial write. Node rename replaces an existing
  * destination on Windows and POSIX, and a file symlink keeps its link. The write
- * then goes to the final target, with the temp beside it (#658). A failed write or
- * rename removes the temp on a best-effort basis and rethrows the original error
- * (#353). With `mode`, the temp is created with those permission bits and chmod-ed
+ * then goes to the final target, with the temp beside it. A failed write or
+ * rename removes the temp on a best-effort basis and rethrows the original error.
+ * With `mode`, the temp is created with those permission bits and chmod-ed
  * to them before the rename, so the destination is never briefly more open.
  */
 export async function writeFileAtomic(file, text, { mode, exclusive = false } = {}) {
@@ -190,7 +190,7 @@ function resolveWriteTargetSync(file) {
 }
 
 /**
- * Synchronous `writeFileAtomic` for a forced exit, where no event loop turn is left (#669). It
+ * Synchronous `writeFileAtomic` for a forced exit, where no event loop turn is left. It
  * resolves the target as the async write does, so a file symlink, dangling or not, keeps its link.
  * A rename that Windows refuses because a reader holds the destination fails: there is no retry
  * and no async wait. A write that stalls in the OS blocks the caller, because a sync call cannot
@@ -216,7 +216,7 @@ export function writeFileAtomicSync(file, text) {
 // destination past a fixed short delay, so the wait grows across attempts. The
 // budget is about 400 ms, enough to outlast the observed hold while a real
 // failure still surfaces quickly: the original error is rethrown once the
-// schedule is spent (#233, #242).
+// schedule is spent.
 // Wait before each retry, in order. Six attempts total wait 385 ms.
 const RENAME_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 

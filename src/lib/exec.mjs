@@ -12,8 +12,8 @@ import { cwdHash } from "./runstate.mjs";
  * run, outermost first, then the key of the run that dispatched the turn. `role extend`, `set-model`, `finish`,
  * and `abort` refuse a caller whose list holds the key they use to find the run state, so a
  * descendant of a run never ends or extends it, while a parent that inherited the marker of
- * another run is not refused. Every descendant of the spawned process inherits it (issues #392,
- * #548). An empty value counts as unset.
+ * another run is not refused. Every descendant of the spawned process inherits it. An empty value
+ * counts as unset.
  */
 export const SPAWNED_RUN_ENV = "AGENT_LOOP_SPAWNED_RUN";
 
@@ -43,7 +43,7 @@ const settingOf = (name) => NPM_LOG_NAME.exec(name)?.[1].toLowerCase();
 
 /**
  * Returns `env`, the complete child environment, with the npm log settings resolved to one spelling
- * each, so npm writes no debug log in a child turn that the cleanup rule cannot clear (issue #995).
+ * each, so npm writes no debug log in a child turn that the cleanup rule cannot clear.
  * npm writes them to its cache, outside the work tree and the turn temporary directory.
  * `callerEnv` is the `env` option of the spawn. For each of `logs_dir` and `logs_max`, the value
  * is the last non-empty one in the process environment and then in `callerEnv`, in any spelling,
@@ -74,7 +74,7 @@ const PNPM_DEPS_CHECK_NAME = /^pnpm_config_verify_deps_before_run$/i;
 /**
  * Returns `env`, the complete child environment, with `pnpm_config_verify_deps_before_run` set to
  * `warn` in one spelling. That stops pnpm from installing from its dependency check before
- * `pnpm run` or `pnpm exec` (issues #1145, #1385). The default `install` can write to the
+ * `pnpm run` or `pnpm exec`. The default `install` can write to the
  * `node_modules` of the work tree and to the shared pnpm store, outside the reach of the mutation
  * check. The environment overrides a `verifyDepsBeforeRun` workspace setting. An inherited value
  * of any case is dropped, and `warn` wins over a user value.
@@ -89,11 +89,11 @@ function withPnpmDepsCheckWarn(env) {
 
 // Idle bound on the pipes of an exited child: no byte read for this long, and no read held back by
 // a slow consumer. A descendant that inherited a pipe and outlived the child keeps the pipe open.
-// The exit event of the child is then the last event that execa sees (issue #1302).
+// The exit event of the child is then the last event that execa sees.
 const STDIO_DRAIN_GRACE_MS = 3000;
 // Bound on the wait for a child to exit after the timeout or the cancel killed it. It exceeds the
 // force-kill delays of `exec` (5 s) and `execBounded` (1 s). A child that no kill ends, for example
-// one stuck in a kernel I/O request, never emits `exit` (issue #1302).
+// one stuck in a kernel I/O request, never emits `exit`.
 export const KILL_GRACE_MS = 10_000;
 
 // The idle pipe bound. Absent keeps the default. Any other value must be a finite number of 0 or more.
@@ -332,7 +332,7 @@ export async function exec(command, args = [], options = {}) {
     execaOptions.timeout = timeout * 1000;
   }
 
-  // Injectable so a test can shorten the delay; production keeps execa's 5000 ms default (issue #1465).
+  // Injectable so a test can shorten the delay; production keeps execa's 5000 ms default.
   if (forceKillAfterDelay !== undefined) {
     execaOptions.forceKillAfterDelay = forceKillAfterDelay;
   }
@@ -413,10 +413,10 @@ export async function exec(command, args = [], options = {}) {
  * a cancel: the caller reads `exitCode`, `timedOut`, `isCanceled`, and the output. `timeoutMs`
  * bounds the call and `signal` cancels it. Either one kills the child, with SIGTERM then SIGKILL
  * after 1 s on POSIX and `taskkill /T /F` over the process tree on Windows, so no platform keeps a
- * child the bound gave up on (#329). `execaOptions` pass through, for example `stripFinalNewline`.
+ * child the bound gave up on. `execaOptions` pass through, for example `stripFinalNewline`.
  * `killBound` arms the same give-up bound for a caller that sends its own kill. Its `{ timeoutMs,
  * signal }` reaches `settleWithin` and never reaches execa. The caller's immediate SIGKILL is then
- * the only kill (#1307). The run logs nothing, so a caller that reads sensitive output controls
+ * the only kill. The run logs nothing, so a caller that reads sensitive output controls
  * what is logged.
  * @param {string} command
  * @param {string[]} args

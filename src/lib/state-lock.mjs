@@ -1,4 +1,4 @@
-// Exclusive state lock and the owner liveness checks behind it (#173, ADR 0020). One lock file
+// Exclusive state lock and the owner liveness checks behind it (ADR 0020). One lock file
 // guards one read-modify-write of a state file or a manifest.
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -174,11 +174,11 @@ function claimFileFor(rootLockFile, file, staleText) {
 // owner is dead, nobody else removes it, and nobody creates a file at a path
 // that exists. Every acquisition writes unique content (a nonce). A file that
 // reads as the stale content under the claim is the file that was read as stale.
-// Removing it cannot delete a new owner's file (#363). Nothing is renamed, and no
+// Removing it cannot delete a new owner's file. Nothing is renamed, and no
 // path is bare-removed unclaimed. A loser finds a live claim and exits as busy.
 // A file that reads differently or cannot be read is kept, and the caller's retry
 // reports it as busy. A dead claim is removed through this same claimed removal,
-// by a contender that meets its stale file or by `pruneOrphanClaims` (#452).
+// by a contender that meets its stale file or by `pruneOrphanClaims`.
 // Owner liveness: `ownerAlive`. Older-version contenders: `withStateLock`.
 // known-limit: a writer of an older version that runs the exclusive-create
 // fallback leaves no marker, so its unwritten file is kept only while it is
@@ -265,7 +265,7 @@ async function hasLiveWriter(file) {
 
 // Cleans up beside a lock that was just taken, from one listing of its directory. A failed
 // listing skips both scans: the lock is held, and only stale files stay for the next acquisition.
-// Removes temp files left by a crash between the temp write and the link (#178), and at depth 0
+// Removes temp files left by a crash between the temp write and the link, and at depth 0
 // the orphaned claims. Runs while the lock is held and never touches a live contender's temp, so
 // it cannot break a racing acquisition.
 async function pruneLockDirectory(lockFile, label, depth) {
@@ -319,13 +319,12 @@ async function pruneOrphanClaims(lockFile, label, entries) {
 
 // Create the lock and its owner content. The owner JSON goes to a private temp
 // file that is hard linked to the lock path; the link is atomic, so EEXIST
-// means a contender won and the owner is readable the instant the lock exists
-// (fixes #176 path 1). On a filesystem with no hard links, an exclusive create
+// means a contender won and the owner is readable the instant the lock exists. On a filesystem with no hard links, an exclusive create
 // and write keeps the lock usable at the cost of that window. Returns the nonce of
 // the content written, or null only when another owner already holds the lock.
 async function createLock(lockFile) {
   // The nonce makes every acquisition's content unique, so a re-read that matches
-  // the stale content can only be the same file, never a later owner (#363). A
+  // the stale content can only be the same file, never a later owner. A
   // lock written without one by an older version parses the same way.
   const nonce = randomUUID();
   const owner = JSON.stringify({
@@ -337,7 +336,7 @@ async function createLock(lockFile) {
   const tempFile = `${lockFile}.${process.pid}.${LOCK_TEMP_TOKEN}.${lockTempCounter++}.tmp`;
   // The write is inside the guard because it creates the temp file: a write cut
   // short leaves a partial temp behind, and the prune never removes a temp owned
-  // by the running process, so nothing else would clean it (#353).
+  // by the running process, so nothing else would clean it.
   try {
     await writeFile(tempFile, owner, "utf8");
     const created = await linkExclusive(tempFile, lockFile, owner);
@@ -346,7 +345,7 @@ async function createLock(lockFile) {
   } catch (err) {
     // The body already failed, so a temp that will not delete is the lesser
     // problem: swallow the cleanup error and surface the one the caller must
-    // act on (#353).
+    // act on.
     await removeTemp(tempFile);
     throw err;
   }

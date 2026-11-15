@@ -9,7 +9,7 @@ import { readSessionRecord } from "./session-record.mjs";
 
 /**
  * Reads the earlier headless run from its `--transcript` file, the only record
- * that holds the final role session ids (#362). A session record that a crashed run left outside the
+ * that holds the final role session ids. A session record that a crashed run left outside the
  * work tree can add the id of one claude first turn (ADR 0027). Rejects a file that is
  * unreadable, not JSON, has `events` that are not a list, or is missing a role
  * with a string `kind`, a string or null `sessionId`, and no `sessionUnconfirmed` or `conversationReplaced`, or a boolean one.
@@ -130,7 +130,7 @@ export function restoreSessions(roles, earlier, cwd) {
   }
   for (const role of ROLE_KINDS) {
     roles[role].sessionId = earlier.roles[role].sessionId;
-    // An id that no CLI output confirmed keeps its mark, so the adapter verifies its owner (#395).
+    // An id that no CLI output confirmed keeps its mark, so the adapter verifies its owner.
     if (earlier.roles[role].sessionUnconfirmed === true && roles[role].sessionId !== null) {
       roles[role].sessionUnconfirmed = true;
     }
@@ -161,7 +161,7 @@ export function restoreSessions(roles, earlier, cwd) {
 
 /**
  * Refuses a continuation when the model a CLI resolves now differs from the one the earlier run
- * recorded in `resolvedModel` (#394, ADR 0026). A recorded model id gets one probe turn in a new
+ * recorded in `resolvedModel` (ADR 0026). A recorded model id gets one probe turn in a new
  * session, and the probe sets `resolvedModel` and `initModel` on the state it receives. A Claude
  * worker record compares with the probe's `init` model when it exists, and with `resolvedModel`
  * otherwise. A Claude reviewer or orchestrator record compares with the probe's `resolvedModel`,

@@ -1,5 +1,5 @@
-// Lifecycle state file shared by the role subcommand (#55) and the parent
-// guard hook (#57). The state file lives at a fixed path derived from the
+// Lifecycle state file shared by the role subcommand and the parent
+// guard hook. The state file lives at a fixed path derived from the
 // resolved work tree cwd, never passed as a flag; tests override the runs
 // root with AGENT_LOOP_RUNS_ROOT.
 //
@@ -24,7 +24,7 @@ export const TERMINAL_LIFECYCLES = new Set(["halted", "finished", "aborted"]);
 /**
  * Resolve the state paths for one run. `cwd` derives the per-work-tree state
  * directory; `parentSession` derives the session-run entry directory and the
- * legacy index file that the #57 hook reads back. Both are optional so a caller
+ * legacy index file that the hook reads back. Both are optional so a caller
  * with only one of them still resolves the half it needs. `sessionEntryFile` is
  * present only when both are given.
  * @param {{ cwd?: string, parentSession?: string }} args
@@ -62,7 +62,7 @@ export const stateRoot = () => rootPath("runs");
 
 /**
  * The name of the state directory of the run in one work tree, which is also the key that binds
- * a spawned child to its run (issue #392). It hashes the lexical path, so a path spelling that
+ * a spawned child to its run. It hashes the lexical path, so a path spelling that
  * the state lookup treats as another run is another key and finds no state.
  */
 export function cwdHash(cwd) {
@@ -79,7 +79,7 @@ function canonicalCwd(cwd) {
 
 // A parent session id is one path segment under <root>/session-runs and under
 // the legacy <root>/sessions, and is matched verbatim against the harness
-// session id by the #57 guard. Real harness ids
+// session id by the guard. Real harness ids
 // are opaque tokens, but an unexpanded template (`${CLAUDE_SESSION_ID}`,
 // `%CODEX_THREAD_ID%`, `<parent-session-id>`), a path separator, or whitespace
 // can only come from a caller that failed to expand its placeholder. Any of
@@ -104,7 +104,7 @@ function assertSessionId(sessionId) {
  * Reads every state file registered by a parent session id and returns the
  * parsed states that are readable. Unions the per-run entry directory with the
  * legacy single-path index. A missing, unreadable, or corrupt entry or state
- * file is skipped, never thrown: the #57 hook treats an empty list as
+ * file is skipped, never thrown: the hook treats an empty list as
  * unguarded, and one corrupt run never hides another active run.
  * @returns {Promise<object[]>}
  */
@@ -169,7 +169,7 @@ export async function readState(stateFile) {
 
 /**
  * The claude role sessions that the current and the archived state files of one work tree record,
- * as `{ role, sessionId }` entries (#673). The pre-spawn write of a turn puts the id there before
+ * as `{ role, sessionId }` entries. The pre-spawn write of a turn puts the id there before
  * the CLI starts, so a hard kill still leaves it. An unreadable or malformed file is skipped.
  * known-limit: every archived file is read, so a work tree with many earlier runs reads them all.
  */

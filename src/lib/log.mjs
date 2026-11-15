@@ -4,7 +4,7 @@
 // the --verbose gate is on. Info, warn, and debug lines are length-bounded so untrusted content
 // (for example a model echo in a validation error) cannot flood a line. logInfoFull and logWarnFull print a
 // trusted, user-facing note in full, and logError prints an error in full, so a long path
-// never hides the action the message asks for (#515). Every line has secret-named environment
+// never hides the action the message asks for. Every line has secret-named environment
 // values redacted first (ADR 0017), so a log line never echoes a secret that an error text held.
 import { redactEnvSecrets } from "./redact.mjs";
 
