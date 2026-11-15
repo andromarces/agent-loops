@@ -4,11 +4,15 @@
 
 partially-superseded
 
+The superseded parts are the held-lock sentence of decision 9 ([ADR 0117](0117-state-the-held-lock-paused-rule-and-its-precedence.md)), the event list of decision 6 ([ADR 0127](0127-notify-when-only-owner-merges-remain.md)), and the Windows notifier mechanics of decision 6 ([ADR 0161](0161-keep-windows-notifications-in-notification-center.md)). Every other part of every decision, consequence, and acceptance check stays in force.
+
 ## Superseded by
 
 [adr/0117-state-the-held-lock-paused-rule-and-its-precedence.md](0117-state-the-held-lock-paused-rule-and-its-precedence.md) partially supersedes this ADR. The replaced part is the held-lock sentence of decision 9, which states the `paused` report but states no precedence. The rest of decision 9 and every other decision, consequence, and acceptance check stays in force.
 
 [adr/0127-notify-when-only-owner-merges-remain.md](0127-notify-when-only-owner-merges-remain.md) partially supersedes this ADR. The replaced part is the event list of decision 6, which names three events. Every other part of decision 6, including the notifier mechanics, and every other decision, consequence, and acceptance check stays in force.
+
+[adr/0161-keep-windows-notifications-in-notification-center.md](0161-keep-windows-notifications-in-notification-center.md) partially supersedes this ADR. The replaced part is the Windows notifier mechanics of decision 6: the tray balloon, its icon, and the wait that precedes the disposal. The rest of decision 6, including the macOS command, the environment-value rule, the text bound, the process bound, and the warning-only failure, and every other decision, consequence, and acceptance check stays in force.
 
 ## Supersedes
 
@@ -298,6 +302,7 @@ Andro Marces
 - [Issue #1735: State the held-lock paused rule of batch resume in the ADR and link PR #1730](https://github.com/andromarces/agent-loops/issues/1735)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0117: State the held-lock paused rule and its precedence in batch resume](0117-state-the-held-lock-paused-rule-and-its-precedence.md)
+- [ADR 0161: Keep Windows batch notifications in Notification Center](0161-keep-windows-notifications-in-notification-center.md)
 - [ADR 0014: Extend the step budget of a live interactive run](0014-extend-the-step-budget-of-a-live-run.md)
 - [ADR 0020: Remove orphan claim files with a writer liveness check](0020-remove-orphan-claim-files-with-a-writer-liveness-check.md)
 - [ADR 0026: Detect a changed resolved model on --continue-from](0026-detect-a-changed-resolved-model-on-continue-from.md)

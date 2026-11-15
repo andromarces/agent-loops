@@ -1,7 +1,8 @@
-// Desktop notifications of a batch (adr/0110-release-batch-slots-on-owner-decisions.md decision
-// 6). The text reaches the command as an argument or an environment value, never inside the
-// script. A missing binary, a failure, and a timeout only warn, so a notification never fails or
-// stalls the batch.
+// Desktop notifications of a batch
+// (adr/0110-release-batch-slots-on-owner-decisions.md decision 6,
+// adr/0161-keep-windows-notifications-in-notification-center.md). The text reaches the command as
+// an argument or an environment value, never inside the script. A missing binary, a failure, and
+// a timeout only warn, so a notification never fails or stalls the batch.
 import { execBounded } from "../lib/exec.mjs";
 import { logWarn } from "../lib/log.mjs";
 
@@ -26,15 +27,20 @@ const MAC_SCRIPT = [
   "end run",
 ].join("\n");
 
+// A WinRT toast belongs to the shell, so it stays in Notification Center after this process ends.
+// An unregistered AppUserModelID shows nothing, so the script uses the Windows PowerShell Start
+// menu id, which Windows registers by default.
 const WINDOWS_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
-  "Add-Type -AssemblyName System.Windows.Forms",
-  "$icon = New-Object System.Windows.Forms.NotifyIcon",
-  "$icon.Icon = [System.Drawing.SystemIcons]::Information",
-  "$icon.Visible = $true",
-  "$icon.ShowBalloonTip(5000, $env:AL_BATCH_NOTIFY_TITLE, $env:AL_BATCH_NOTIFY_TEXT, [System.Windows.Forms.ToolTipIcon]::Info)",
-  "Start-Sleep -Milliseconds 300",
-  "$icon.Dispose()",
+  "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+  "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
+  "$toastXml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
+  "$texts = $toastXml.GetElementsByTagName('text')",
+  "$texts.Item(0).AppendChild($toastXml.CreateTextNode($env:AL_BATCH_NOTIFY_TITLE)) > $null",
+  "$texts.Item(1).AppendChild($toastXml.CreateTextNode($env:AL_BATCH_NOTIFY_TEXT)) > $null",
+  "$toast = [Windows.UI.Notifications.ToastNotification]::new($toastXml)",
+  "$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
+  "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)",
 ].join("\n");
 
 /**

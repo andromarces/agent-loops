@@ -12,6 +12,7 @@ import {
   fakeGh,
   fakeGitDeps,
   noNotify,
+  waitForStatus,
   waitPrepared,
 } from "./supervisor-helpers.mjs";
 
@@ -915,4 +916,80 @@ test("a child result during a wait read keeps needs-owner", async () => {
     for (const pending of first.pending) pending.resolve({ exitCode: 130 });
     await run;
   }
+});
+
+// Usefulness: the first wait deadline is measured after the startup notification, so a slow
+// startup cannot shorten the first poll; no existing case measures the deadline against startup.
+test("the first wait deadline starts after a slow startup notification", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const blocked = [{ number: 9, state: "OPEN" }];
+  const firstController = new AbortController();
+  try {
+    const first = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ blocked }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+        signal: firstController.signal,
+        pollIntervalMs: 60_000,
+        sleep: (ms, signal) =>
+          new Promise((resolve) => {
+            signal?.addEventListener("abort", resolve, { once: true });
+          }),
+      },
+    });
+    await waitForStatus(runsRoot, prepared.id, 1, "waiting");
+    firstController.abort();
+    await first;
+  } finally {
+    firstController.abort();
+  }
+
+  let now = 0;
+  let firstPollAt = null;
+  const gh = (args, ...rest) => {
+    if (args[0] === "issue" && args[1] === "view" && args.includes("state,blockedBy")) {
+      firstPollAt ??= now;
+      return Promise.resolve({
+        status: 0,
+        stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: blocked } }),
+        stderr: "",
+      });
+    }
+    return fakeGh({ blocked })(args, ...rest);
+  };
+  const notifier = async (event) => {
+    if (event.kind === "owner-merge") now += 5000;
+    return { spawned: false, ok: true };
+  };
+  const controller = new AbortController();
+  const run = runBatch({
+    prepared: { ...prepared, resume: true },
+    runsRoot,
+    gh,
+    deps: {
+      ...fakeGitDeps,
+      notifier,
+      spawn: childDouble().spawn,
+      installSignal: false,
+      signal: controller.signal,
+      pollIntervalMs: 15_000,
+      now: () => now,
+      sleep: async (ms, signal) => {
+        now += ms;
+        if (signal?.aborted) return;
+        await Promise.resolve();
+      },
+    },
+  });
+  await pollUntil(() => (firstPollAt !== null ? true : undefined), 10_000);
+  controller.abort();
+  await run;
+  // Five seconds of startup notification plus one fifteen-second poll interval.
+  expect(firstPollAt).toBe(20_000);
 });
