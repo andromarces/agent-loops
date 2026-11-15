@@ -242,6 +242,14 @@ const SHARED_PARENT_RULES = [
   (text) => expectRule(text, /worker envelope/i, /literal system temporary directory/i),
   // Issue #1616: the field is a diagnostic, so an unattributed difference creates no open item.
   (text) => expectRule(text, /creates no/i, /item by itself/i),
+  // Issue #1978: an unattributed entry goes nowhere in the finish summary, so `open` stays `none`.
+  (text) =>
+    expectRule(
+      text,
+      /no turn reports as its own leftover/i,
+      /goes nowhere in the finish summary/i,
+      /`open` stays `none`/,
+    ),
   // Issue #1616: a runtime cleanup warning reaches the operator, not the parent.
   (text) => expectRule(text, /cleanup failure/i, /runtime warning/i, /adds no/i, /item for it/i),
   // Issue #1529: the parent never deletes an entry that `inheritedTmpdirEntries` names.
