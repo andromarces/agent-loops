@@ -115,9 +115,9 @@ test("opencode records provider/model of the streamed assistant messages as reso
 
 // Usefulness: verifies every OpenCode process of a turn runs without the background service, so the
 // turn starts no detached `opencode serve --service` process that outlives the turn on Windows
-// (issue #1992). Not redundant: the run-args tests name the run flags, and the export assertion
-// above names the export payload, so none covers the server mode of the export, which is the other
-// process that a turn starts.
+// (issue #1992). Not redundant: the run-args and export assertions each name the arguments of one
+// call, and only this test requires the flag on every OpenCode call of a turn, so a new call without
+// it fails.
 test("opencode starts no background service on any call of a turn", async () => {
   const state = { kind: "opencode", sessionId: null, model: null };
   await runResolvedTurn(state, ["msg-1"], exportJson(assistantMessage("msg-1", MODEL_A)));
