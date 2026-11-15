@@ -1,6 +1,8 @@
 # A change outside the work tree
 
-Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when the task changes state outside the work tree, and before you write a reviewer prompt for such a task. An example is a service configuration that a worker applies on a remote host over SSH, with no repository diff.
+Part of the [orchestrator instructions](../orchestrator-instructions.md). Read this before init when the task changes state outside the work tree, and before you write a reviewer prompt for such a task.
+
+An example is a service configuration that a worker applies on a remote host over SSH, with no repository diff.
 
 The runtime identity fields cover the work tree only. For such a task, `reviewed.head` is the unchanged base commit, `reviewed.clean` is true, and no field identifies the out-of-tree state. The `--require-accept` gate compares work tree snapshots, so it passes after any later change to the out-of-tree state.
 

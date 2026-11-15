@@ -475,13 +475,14 @@ of this file.
 - [Closing block list rules](orchestrator/closing-block.md): read it when a child report holds a
   list, or when `report` is null and `raw` carries the response.
 - [Runtime advisory fields](orchestrator/runtime-advisory-fields.md): read it when a reviewer
-  envelope carries `inheritedTmpdirEntries` or `packageStoreEntries`.
+  or worker envelope carries `inheritedTmpdirEntries`, or a reviewer envelope carries
+  `packageStoreEntries`.
 - [Reviewer prompts and runtime evidence](orchestrator/reviewer-evidence.md): read it before you
   write a reviewer prompt, when a reviewer envelope carries `prChecks` or `testRun`, when the
   run sets `--test-cmd`, and when the reviewer could not run tests. Read it after any worker or
   reviewer envelope that carries `shellDenied`, before the next dispatch.
 - [A change outside the work tree](orchestrator/out-of-tree-change.md): read it before init when the
-  task changes state outside the work tree, and before the reviewer prompt of such a task.
+  task changes state outside the work tree, and before you write a reviewer prompt for such a task.
 - [Codex reviewer sandbox mode](orchestrator/reviewer-sandbox.md): read it when the run uses a
   Codex reviewer, sets `--reviewer-sandbox`, or halts on a reviewer mutation.
 - [Waiting for required checks](orchestrator/waiting-for-checks.md): read it before a run that ends
@@ -499,11 +500,11 @@ of this file.
 - [Local files copied into the work tree](orchestrator/local-files-copy.md): read it before init
   when `--cwd` is a linked work tree, when the task needs ignored reference data of the main work
   tree, and when an envelope carries `localFilesDiffer` or `localSourceChangedInTurn`.
-- [A target outside any Git repository](orchestrator/target-outside-git.md): read it when the task
-  target is outside a Git work tree and must never become one. Read it again before the copy-back
-  after `finish`.
+- [A target outside any Git repository](orchestrator/target-outside-git.md): read it before init when
+  the task names a file in a directory that is not a Git work tree and must never become one. Read
+  it again before the copy-back after `finish`.
 - [Removing a work tree](orchestrator/work-tree-removal.md): read it when you remove the work tree
-  of a terminal run, before the removal command.
+  of a terminal run, after the core rule on the terminal state is met.
 - [Shared tracking artifacts](orchestrator/shared-tracking-artifacts.md): read it before you
   dispatch several runs in one repository, before concurrent runs can edit one issue body, and
   when a run can create a shared tracking issue or take a sequential identifier such as an ADR
@@ -511,12 +512,13 @@ of this file.
 - [Batch runs](orchestrator/batch-runs.md): read it when the user asks for a batch of several
   items, or when a run reports an audit or batch decision.
 - [Work tree setup details](orchestrator/work-tree-setup.md): read it before you create the work
-  tree for a repository with no remote or for a run on an existing PR, and when
+  tree when the repository has no remote or the run is on an existing pull request, and when
   `extensions.worktreeConfig` is on.
 - [Finish with --compare-head](orchestrator/finish-compare-head.md): read it before you finish with
-  `--compare-head <pr>`, and when that finish is refused.
-- [Init with a task file](orchestrator/task-file-init.md): read it before you stage a task file, before
-  any init with `--task-file`, and before a later init in a session with an active run.
+  `--compare-head <pr>`, and when a finish with it is refused.
+- [Init with a task file](orchestrator/task-file-init.md): read it before you stage a task file, which
+  happens before init, before any init with `--task-file`, and before a later init in a session that
+  already has an active run.
 - [Parent session id after init](orchestrator/parent-session-guard.md): read it when a new session
   resumes a run, and before a call that passes `--parent-session` after init.
 - [Child run guard](orchestrator/child-run-guard.md): read it when a child role ran `extend`,
@@ -599,8 +601,6 @@ when the condition is about the change. An interactive
 file instead of a transcript event.
 
 ## Completion
-
-The rule is in [Child dispatch](reference/role.md#interactive-child-dispatch-agent-loop-role).
 
 - `work-first` and `review-first`: call `finish` after the reviewer returns
   `verdict: accept` on the latest changed state and the report names the
