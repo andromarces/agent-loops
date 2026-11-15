@@ -138,9 +138,9 @@ function conclusionStart(lines, fenced) {
 /**
  * Returns the lines from `start` with each column-0 line that holds only a report label name read
  * as that label, with the non-blank lines under it as its value, joined with a space (issue #1989).
- * A line inside a fenced code block stays text. The value stops at a blank line, a list, or a label
- * line in any form, so a lone label name with no line under it supplies no value. The line count is
- * kept, so a caller that slices a prefix of the response still measures it.
+ * A line inside a fenced code block stays text. The value stops at a blank line, a list, a table
+ * row, or a label line in any form, so a lone label name with no line under it supplies no value.
+ * The line count is kept, so a caller that slices a prefix of the response still measures it.
  * @param {string[]} lines
  * @param {boolean[]} fenced
  * @param {number} start
@@ -167,13 +167,15 @@ function plainHeadingLines(lines, fenced, start) {
 
 /**
  * True when the line under a plain heading label is part of its value: a non-blank line that is
- * neither a list nor a label line in any form.
+ * neither a list, nor a table row (`|`), nor a label line in any form. A table row stays in the
+ * block, so a table under the heading keeps the block unparseable.
  * @param {string} line
  * @returns {boolean}
  */
 function isHeadingValueLine(line) {
   return (
     line.trim() !== "" &&
+    !line.includes("|") &&
     !isListLine(line) &&
     !PLAIN_HEADING_LABEL_LINE.test(line) &&
     !readsAsLabelLine(line)
@@ -257,13 +259,17 @@ const HEADING_LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]*\\s*:`, 
 
 /**
  * True when the response holds a closing block attempt: any report label name or `Verdict`
- * followed by a colon, anywhere in the text, whether or not the block parses. A response
- * without one is plain prose, such as a late answer to an event after the closing block.
+ * followed by a colon, anywhere in the text, or a column-0 line that holds only a report label
+ * name. The block need not parse. A response without one is plain prose, such as a late answer to
+ * an event after the closing block.
  * @param {string} response
  * @returns {boolean}
  */
 export function hasClosingBlockAttempt(response) {
-  return LABEL_MENTION.test(response);
+  return (
+    LABEL_MENTION.test(response) ||
+    response.split(/\r?\n/).some((line) => PLAIN_HEADING_LABEL_LINE.test(line))
+  );
 }
 
 /**

@@ -1274,6 +1274,43 @@ test("hasClosingBlockAttempt is false for prose and lists with no label", () => 
   }
 });
 
+// Usefulness: verifies a plain heading report counts as an attempt, so a final plain heading block
+// is never replaced by an earlier colon block (issue #1989).
+test("hasClosingBlockAttempt holds for a plain heading report", () => {
+  for (const shape of [
+    "Conclusion\ndone\n\nWhy\nok\n\nBlockers\nnone",
+    "Conclusion\ndone\nWhy\nok\nBlockers\nnone",
+    "Conclusion: done\nWhy: ok\nBlockers: none\nNotes\nsample",
+  ]) {
+    expect(hasClosingBlockAttempt(shape), shape).toBe(true);
+  }
+});
+
+// Usefulness: verifies a table directly under a plain heading label keeps the block unparseable,
+// as origin/main rejects a table anywhere in the block (issue #1989).
+test("parseReportBlock keeps a table under a plain heading label unparseable", () => {
+  const underOptional = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Notes",
+    "| Check | Result |",
+    "| --- | --- |",
+    "| tests | pass |",
+  ].join("\n");
+  const underRequired = [
+    "Conclusion",
+    "done",
+    "| Check | Result |",
+    "| --- | --- |",
+    "",
+    "Why: ok",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(underOptional)).toBeNull();
+  expect(parseReportBlock(underRequired)).toBeNull();
+});
+
 // Usefulness: verifies every malformed parser fixture keeps its origin/main report, verdict, and
 // acceptance result, so bold handling changes no fail-closed shape (issue #1483).
 test("parseReportBlock keeps the origin/main result for every malformed fixture", () => {

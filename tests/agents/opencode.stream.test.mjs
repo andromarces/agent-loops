@@ -562,6 +562,20 @@ test("opencode refuses two blocks whose messages interleave across an invalid-id
   ).rejects.toThrow(INTERLEAVED);
 });
 
+// Usefulness: verifies a plain heading block counts as an attempt, so two interleaved plain
+// heading messages refuse instead of letting either govern (issue #1989).
+test("opencode refuses plain heading blocks whose messages interleave", async () => {
+  const block = "Conclusion\ndone\nWhy\nok\nBlockers\nnone";
+
+  await expect(
+    runWithEvents(
+      textEvent(block.slice(0, 15), "msg-a"),
+      textEvent(block),
+      textEvent(`\n${block.slice(15)}`, "msg-a"),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
 // Usefulness: verifies the error of an interleaved stream carries the assistant text of every
 // message, joined as an uninterleaved stream would be, so the orchestrator and the user can read
 // what the model wrote while no accept can come from the turn (issue #493).
