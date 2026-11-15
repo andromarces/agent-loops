@@ -1,16 +1,12 @@
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 import { main, parseArgs } from "../src/cli.mjs";
-import { createBodyBarrier } from "./body-barrier-helpers.mjs";
+import { createBodyBarrier } from "./barrier-helpers.mjs";
 import { removePath } from "./fs-helpers.mjs";
 import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
 
-// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
-// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
-// (`src/lib/evidence/shared-git.mjs`), `readMainWorkTree` (`src/lib/evidence/main-work-tree-change.mjs`),
-// `readLockfiles` (`src/lib/evidence/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
-// The converted cases assert no Git result.
+// `cleanRepoGit` doubles every Git guard and read of this case; `tests/git-helpers.mjs` lists them.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();

@@ -3,6 +3,7 @@
 // adr/0110-release-batch-slots-on-owner-decisions.md). stdout carries one JSON
 // object; progress and logs go to stderr.
 import { setLogsToStderr, logError } from "../lib/log.mjs";
+import { walkFlags } from "../lib/args.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { parseBatchArgs, prepareBatch, refuseRootInGitWorkTree, usage } from "./args.mjs";
@@ -113,41 +114,42 @@ remove kept it, 2 a refused setting or a refusal before any state write, 130 SIG
 `.trim();
 
 function readIdFlag(argv, name) {
-  let id = null;
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i];
-    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
-    const flag = eq === -1 ? raw : raw.slice(0, eq);
-    if (flag === name) {
-      const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
-      if (!value) throw usage(`Missing value for ${name}.`);
-      id = value;
-      continue;
-    }
-    if (flag === "--help" || flag === "-h") return { help: true, id };
-    throw usage(`Unknown argument: ${raw}`);
-  }
-  return { help: false, id };
+  const values = { help: false, id: null };
+  walkFlags(
+    argv,
+    0,
+    (flag, readInline) => {
+      if (flag === "--help" || flag === "-h") {
+        values.help = true;
+        return true;
+      }
+      if (flag !== name) return false;
+      values.id = readInline(flag);
+      return true;
+    },
+    { error: usage },
+  );
+  return values;
 }
 
 function readAnswerArgs(argv) {
   const values = { batch: null, decision: null, option: null, help: false };
-  for (let i = 0; i < argv.length; i += 1) {
-    const raw = argv[i];
-    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
-    const flag = eq === -1 ? raw : raw.slice(0, eq);
-    if (flag === "--help" || flag === "-h") {
-      values.help = true;
-      continue;
-    }
-    const key = { "--batch": "batch", "--decision": "decision", "--option": "option" }[flag];
-    if (key === undefined) {
-      throw usage(`Unknown argument: ${raw}`);
-    }
-    const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
-    if (!value) throw usage(`Missing value for ${flag}.`);
-    values[key] = value;
-  }
+  const keys = { "--batch": "batch", "--decision": "decision", "--option": "option" };
+  walkFlags(
+    argv,
+    0,
+    (flag, readInline) => {
+      if (flag === "--help" || flag === "-h") {
+        values.help = true;
+        return true;
+      }
+      const key = keys[flag];
+      if (key === undefined) return false;
+      values[key] = readInline(flag);
+      return true;
+    },
+    { error: usage },
+  );
   return values;
 }
 
@@ -220,6 +222,28 @@ async function runAuditCommand({ prepared, runsRoot }) {
   }
 }
 
+/** The `--audit` value of one subcommand, with the usage text printed when help was asked. */
+function readAuditFlag(argv) {
+  const values = readIdFlag(argv.slice(1), "--audit");
+  if (values.help) console.log(AUDIT_USAGE);
+  return values;
+}
+
+/** The stored audit that a resume, approve, or remove names, after the runs-root refusal. */
+async function storedAudit(argv, runsRoot) {
+  const { help, id } = readAuditFlag(argv);
+  if (help) return { help: true };
+  if (id === null) {
+    throw usage("Missing required --audit.");
+  }
+  const state = await readAudit(runsRoot, id);
+  if (state === null) {
+    throw usage(`No audit ${id}.`);
+  }
+  await refuseRootInGitWorkTree(runsRoot, "runs root");
+  return { help: false, id, state };
+}
+
 async function runAuditMain(argv, runsRoot) {
   const command = argv[0];
   if (command === undefined || command === "--help" || command === "-h") {
@@ -227,9 +251,8 @@ async function runAuditMain(argv, runsRoot) {
     return 0;
   }
   if (command === "status") {
-    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    const { help, id } = readAuditFlag(argv);
     if (help) {
-      console.log(AUDIT_USAGE);
       return 0;
     }
     if (id === null) {
@@ -252,35 +275,17 @@ async function runAuditMain(argv, runsRoot) {
     return runAuditCommand({ prepared, runsRoot });
   }
   if (command === "resume" || command === "approve") {
-    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    const { help, state } = await storedAudit(argv, runsRoot);
     if (help) {
-      console.log(AUDIT_USAGE);
       return 0;
     }
-    if (id === null) {
-      throw usage("Missing required --audit.");
-    }
-    const state = await readAudit(runsRoot, id);
-    if (state === null) {
-      throw usage(`No audit ${id}.`);
-    }
-    await refuseRootInGitWorkTree(runsRoot, "runs root");
     return runAuditCommand({ prepared: preparedFromAudit(state, command), runsRoot });
   }
   if (command === "remove") {
-    const { help, id } = readIdFlag(argv.slice(1), "--audit");
+    const { help, id } = await storedAudit(argv, runsRoot);
     if (help) {
-      console.log(AUDIT_USAGE);
       return 0;
     }
-    if (id === null) {
-      throw usage("Missing required --audit.");
-    }
-    const state = await readAudit(runsRoot, id);
-    if (state === null) {
-      throw usage(`No audit ${id}.`);
-    }
-    await refuseRootInGitWorkTree(runsRoot, "runs root");
     const { exitCode, summary } = await removeAudit({ runsRoot, id });
     console.log(JSON.stringify(summary, null, 2));
     return exitCode;

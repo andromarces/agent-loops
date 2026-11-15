@@ -119,33 +119,26 @@ export async function hashCopiedLocalFiles(cwd, names, { signal, located, ...hoo
 /**
  * Hashes each named source file in the main work tree of a linked `cwd`. The result shape and the
  * failure rules match `hashCopiedLocalFiles`. A turn window compares two results to name the
- * sources that a turn changed. `main` is a main-work-tree path that the caller already read.
+ * sources that a turn changed.
  * @param {string} cwd
  * @param {string[]} names
- * @param {{ signal?: AbortSignal, main?: string | null, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
+ * @param {{ signal?: AbortSignal, afterAncestorCheck?: (path: string) => Promise<void>, beforeRead?: (path: string) => Promise<void> }} [options]
  * @returns {Promise<Record<string, string>>}
  */
-export async function hashCopiedLocalSources(cwd, names, { signal, main, ...hooks } = {}) {
-  return hashCopiedNames(cwd, names, { signal, ...hooks }, (found) => found.mainReal, { main });
+export async function hashCopiedLocalSources(cwd, names, { signal, ...hooks } = {}) {
+  return hashCopiedNames(cwd, names, { signal, ...hooks }, (found) => found.mainReal);
 }
 
-async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf, { located, main } = {}) {
-  if (main === null || located === null) {
+async function hashCopiedNames(cwd, names, { signal, ...hooks }, baseOf, { located } = {}) {
+  if (located === null) {
     return {};
   }
-  let base;
-  if (main !== undefined) {
-    base = main;
-  } else {
-    let found = located;
-    if (found === undefined) {
-      found = await locateWorkTrees(cwd, signalBoundReadWorkTree(signal));
-    }
-    if (found === null) {
-      return {};
-    }
-    base = baseOf(found);
+  const found =
+    located === undefined ? await locateWorkTrees(cwd, signalBoundReadWorkTree(signal)) : located;
+  if (found === null) {
+    return {};
   }
+  const base = baseOf(found);
   const pairs = await mapInBatches(names, DEFAULT_BATCH_SIZE, async (rel) => {
     if (!isPlainRelativeName(rel)) {
       return null;

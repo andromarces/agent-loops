@@ -1,7 +1,7 @@
 // One loop report in a batch summary (adr/0115-batch-loop-final-report.md). It is built from the
 // loop transcript once at the loop end, then stored in the loop checkpoint. `batch status` reads it
 // from the checkpoint and never reads the transcript again.
-import { readFile } from "node:fs/promises";
+import { readTranscript } from "./steps.mjs";
 import { boundedWarnings } from "../lib/run-warnings.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { redactAndClean } from "../lib/redact.mjs";
@@ -308,28 +308,5 @@ export function loopReportFromRead(read, { attempts = 0, reviewOnly = false } = 
  * @param {{ attempts?: number }} [options]
  */
 export async function readLoopReport(file, { attempts = 0, reviewOnly = false } = {}) {
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (err) {
-    return loopReportFromRead(
-      {
-        ok: false,
-        missing: err?.code === "ENOENT",
-        reason:
-          err?.code === "ENOENT" ? "the transcript is missing" : "the transcript is unreadable",
-      },
-      { attempts, reviewOnly },
-    );
-  }
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return loopReportFromRead(
-      { ok: false, reason: "the transcript is not valid JSON" },
-      { attempts, reviewOnly },
-    );
-  }
-  return loopReportFromRead({ ok: true, data }, { attempts, reviewOnly });
+  return loopReportFromRead(await readTranscript(file), { attempts, reviewOnly });
 }

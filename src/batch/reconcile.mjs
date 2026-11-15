@@ -29,7 +29,7 @@ async function ghJson(gh, args, cwd, label) {
   }
 }
 
-const owner = (reason) => ({ status: "needs-owner", reason, pr: null, requireCi: null });
+const owner = (reason) => ({ status: "needs-owner", reason, pr: null });
 
 // The success of a merged pull request, or null when no merged head matches the local branch.
 async function mergedOutcome(merged, workTree, git) {
@@ -39,7 +39,7 @@ async function mergedOutcome(merged, workTree, git) {
     });
     if (ahead === null) return owner("the local commit count could not be read");
     if (ahead === 0) {
-      return { status: "succeeded", reason: null, pr: pull.number, requireCi: null };
+      return { status: "succeeded", reason: null, pr: pull.number };
     }
   }
   return null;
@@ -90,7 +90,7 @@ async function reconcilePullRequest({ loop, repo, gh, git, state, headsOf }) {
   }
   if (view.state === "MERGED") {
     if (state.head === view.headRefOid) {
-      return { status: "succeeded", reason: null, pr: loop.pr, requireCi: null };
+      return { status: "succeeded", reason: null, pr: loop.pr };
     }
     return owner(`pull request ${loop.pr} is merged with another head`);
   }
@@ -117,7 +117,7 @@ async function reconcilePullRequest({ loop, repo, gh, git, state, headsOf }) {
     if (state.head !== view.headRefOid) {
       return owner(`the local head differs from the head of pull request ${loop.pr}`);
     }
-    return { status: "resume", reason: null, pr: null, requireCi: null };
+    return { status: "resume", reason: null, pr: null };
   }
   const fetched = await git(["fetch", "origin", view.headRefName ?? loop.branch], repo);
   if (fetched.exitCode !== 0) return owner("the remote branch could not be read");
@@ -132,14 +132,14 @@ async function reconcilePullRequest({ loop, repo, gh, git, state, headsOf }) {
     const ancestor = await git(["merge-base", "--is-ancestor", remote.stdout, state.head], repo);
     if (ancestor.exitCode !== 0) return owner("the remote branch head differs from the local head");
   }
-  return { status: "resume", reason: null, pr: loop.pr, requireCi: loop.pr };
+  return { status: "resume", reason: null, pr: loop.pr };
 }
 
 /**
  * Reads the loop's local and remote state and applies the reconciliation rules.
  * `loop` holds `workTree` (`path`, `canonicalPath`, `dev`, `ino`, `branch`) and `pr` (declared).
  * `transcript` is the already-parsed transcript, or undefined to read the recorded file.
- * @returns {Promise<{ status: "resume" | "succeeded" | "needs-owner", reason: string | null, pr: number | null, requireCi: number | null }>}
+ * @returns {Promise<{ status: "resume" | "succeeded" | "needs-owner", reason: string | null, pr: number | null }>}
  */
 export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcript }) {
   const git = asGit(deps);
@@ -302,9 +302,9 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
     // A loop whose only recorded pull request is undeclared keeps the head compare. A
     // required-check gate for that pull request refuses every finish on an unreadable source.
     if (loop.pr == null && loop.prUndeclared != null) {
-      return { status: "resume", reason: null, pr: null, requireCi: null };
+      return { status: "resume", reason: null, pr: null };
     }
-    return { status: "resume", reason: null, pr: pull.number, requireCi: pull.number };
+    return { status: "resume", reason: null, pr: pull.number };
   }
 
   if (remoteHead !== null && remoteHead !== state.head) {
@@ -314,9 +314,9 @@ export async function reconcileLoop({ loop, repo, base, gh, deps = {}, transcrip
     });
     if (ahead === null) return owner("the local commit count could not be read");
     if (ahead > 0 && remoteIsAncestor) {
-      return { status: "resume", reason: null, pr: null, requireCi: null };
+      return { status: "resume", reason: null, pr: null };
     }
     return owner("the remote branch head differs from the local head");
   }
-  return { status: "resume", reason: null, pr: null, requireCi: null };
+  return { status: "resume", reason: null, pr: null };
 }

@@ -7,6 +7,7 @@ import {
   isCleanServerError,
   isTransportFailure,
   pagedRead,
+  parseGhJson,
   readOne,
 } from "./gh-api.mjs";
 import { inOrder } from "./bounded-call.mjs";
@@ -356,7 +357,7 @@ function isProtectionMalformed(data) {
  * Reads the PR fields the gate judges: `headRefOid`, `baseRefName`, `mergeStateStatus`,
  * `potentialMergeCommit`, and `state`.
  * @returns {Promise<object>} the parsed `gh pr view` stdout, with no shape check
- * @throws {Error} on a non-zero exit, and stdout that is not JSON throws a raw `SyntaxError`
+ * @throws {Error} on a non-zero exit, and stdout that is not JSON names the read
  */
 export async function prInfo(gh, pr, cwd) {
   const { status, stdout, stderr } = await gh(
@@ -372,7 +373,7 @@ export async function prInfo(gh, pr, cwd) {
   if (status !== 0) {
     throw new Error(`gh pr view ${pr} failed: ${ghFailureText({ status, stderr })}`);
   }
-  return JSON.parse(stdout);
+  return parseGhJson(`gh pr view ${pr}`, stdout);
 }
 
 /** The repository slug. `failure` is the verb phrase of the error text that follows `gh repo view`. */

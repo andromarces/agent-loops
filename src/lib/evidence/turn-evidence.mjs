@@ -41,71 +41,28 @@ const testRunCarrier = entryCarrier("testRun");
 // A canceled test command sets the result directly, which `carry` never recorded.
 const failedTestRun = (err) => testRunCarrier.failed(err) ?? readProp(err, "testRun");
 const TURN_EVIDENCE = [
-  {
-    field: "sharedGitChanged",
-    type: "shared-git",
-    key: "items",
-    carry: sharedGitCarrier.carry,
-    failed: sharedGitCarrier.failed,
-  },
-  {
-    field: "mainWorkTreeChanged",
-    type: "main-work-tree",
-    key: "paths",
-    carry: mainWorkTreeCarrier.carry,
-    failed: mainWorkTreeCarrier.failed,
-  },
-  {
-    field: "mainWorkTreeChangedInTurn",
-    type: "main-work-tree-in-turn",
-    key: "paths",
-    carry: mainWorkTreeInTurnCarrier.carry,
-    failed: mainWorkTreeInTurnCarrier.failed,
-  },
-  {
-    field: "mainWorkTreeFastForward",
-    type: "main-work-tree-fast-forward",
-    key: "heads",
-    carry: mainWorkTreeFastForwardCarrier.carry,
-    failed: mainWorkTreeFastForwardCarrier.failed,
-  },
-  {
-    field: "localSourceChangedInTurn",
-    type: "local-source-change",
-    key: "paths",
-    carry: localSourceCarrier.carry,
-    failed: localSourceCarrier.failed,
-  },
-  {
-    field: "lockfileChanged",
-    type: "lockfile",
-    key: "paths",
-    carry: lockfileCarrier.carry,
-    failed: lockfileCarrier.failed,
-  },
-  {
-    field: "inheritedTmpdirEntries",
-    type: "inherited-tmpdir",
-    key: "entries",
-    carry: inheritedTmpdirCarrier.carry,
-    failed: inheritedTmpdirCarrier.failed,
-  },
-  {
-    field: "packageStoreEntries",
-    type: "package-store",
-    key: "entries",
-    carry: packageStoreCarrier.carry,
-    failed: packageStoreCarrier.failed,
-  },
-  {
-    field: "testRun",
-    type: "test-run",
-    key: "testRun",
-    emitFirst: true,
-    carry: testRunCarrier.carry,
-    failed: failedTestRun,
-  },
-];
+  ["sharedGitChanged", "shared-git", "items", sharedGitCarrier],
+  ["mainWorkTreeChanged", "main-work-tree", "paths", mainWorkTreeCarrier],
+  ["mainWorkTreeChangedInTurn", "main-work-tree-in-turn", "paths", mainWorkTreeInTurnCarrier],
+  [
+    "mainWorkTreeFastForward",
+    "main-work-tree-fast-forward",
+    "heads",
+    mainWorkTreeFastForwardCarrier,
+  ],
+  ["localSourceChangedInTurn", "local-source-change", "paths", localSourceCarrier],
+  ["lockfileChanged", "lockfile", "paths", lockfileCarrier],
+  ["inheritedTmpdirEntries", "inherited-tmpdir", "entries", inheritedTmpdirCarrier],
+  ["packageStoreEntries", "package-store", "entries", packageStoreCarrier],
+  ["testRun", "test-run", "testRun", testRunCarrier, { emitFirst: true, failed: failedTestRun }],
+].map(([field, type, key, carrier, extra = {}]) => ({
+  field,
+  type,
+  key,
+  ...extra,
+  carry: carrier.carry,
+  failed: extra.failed ?? carrier.failed,
+}));
 
 export const TURN_EVIDENCE_FIELDS = TURN_EVIDENCE.map(({ field }) => field);
 

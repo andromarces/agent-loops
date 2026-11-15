@@ -15,11 +15,7 @@ import {
   withRepo,
 } from "./helpers.mjs";
 
-// `cleanRepoGit` answers the Git guards and reads from memory: `assertGitWorkTree` and `snapshot`
-// (`src/lib/snapshot.mjs`), `locateLocalFiles` (`src/lib/local-files.mjs`), `readSharedGit`
-// (`src/lib/evidence/shared-git.mjs`), `readMainWorkTree` (`src/lib/evidence/main-work-tree-change.mjs`),
-// `readLockfiles` (`src/lib/evidence/lockfile-change.mjs`), and `resolveWorkerPr` (`src/lib/worker-pr.mjs`).
-// These cases assert no Git result.
+// `cleanRepoGit` doubles every Git guard and read of this case; `tests/git-helpers.mjs` lists them.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();

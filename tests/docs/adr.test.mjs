@@ -2,23 +2,12 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vite-plus/test";
+import { readUserDocs } from "../fs-helpers.mjs";
 
 const adrDir = fileURLToPath(new URL("../../adr", import.meta.url));
 const repoRoot = resolve(adrDir, "..");
 const adr19 = "adr/0019-opt-in-workspace-write-sandbox-for-the-codex-reviewer.md";
 const readRepoFile = (path) => readFile(join(repoRoot, path), "utf8");
-
-/** The user docs as one text: the reference topic files, the reference index, then the README. */
-async function readUserDocs() {
-  const docs = join(repoRoot, "docs/reference");
-  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
-  const paths = [
-    ...topics.map((name) => join(docs, name)),
-    join(repoRoot, "docs/reference.md"),
-    join(repoRoot, "README.md"),
-  ];
-  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
-}
 
 // The five accepted gaps of issue #421, each as the phrases that identify it.
 const SANDBOX_GAPS = [
@@ -398,7 +387,7 @@ test("ADR 0019 names the five accepted gaps", async () => {
 // Usefulness: verifies the user docs and the orchestrator instructions describe the opt-in as ADR
 // 0019 does. The text names the flag, the sandbox mode, the network option, the ADR, and each gap.
 test("the user docs describe the reviewer sandbox opt-in consistently with ADR 0019", async () => {
-  const text = await readUserDocs();
+  const text = await readUserDocs(repoRoot);
   expect(text).toContain("--reviewer-workspace-write");
   expect(text).toContain("workspace-write");
   expect(text).toContain("network_access=false");

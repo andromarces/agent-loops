@@ -553,15 +553,13 @@ export function missingRequiredReportLabels(response) {
 
 /**
  * True when `response` parses only because bold report labels were normalized. A response that
- * also parses without bold labels is not bold-dependent.
+ * also parses without bold labels is not bold-dependent. `parsed` is the already-read bold form.
  * @param {string} response
+ * @param {ReturnType<typeof parseReportBlock>} [parsed]
  * @returns {boolean}
  */
-export function parsesOnlyWithBoldLabels(response) {
-  return (
-    parseReportBlock(response) !== null &&
-    parseReportBlock(response, { boldLabels: false }) === null
-  );
+export function parsesOnlyWithBoldLabels(response, parsed = parseReportBlock(response)) {
+  return parsed !== null && parseReportBlock(response, { boldLabels: false }) === null;
 }
 
 /**
@@ -577,7 +575,7 @@ export function reportForResult(response, multiPartUnidentified = false) {
   if (!multiPartUnidentified || report === null) {
     return report;
   }
-  return parseReportBlock(response, { boldLabels: false }) === null ? null : report;
+  return parsesOnlyWithBoldLabels(response, report) ? null : report;
 }
 
 // A repaired value that carries no finding, for a label that the original response left out.
@@ -973,8 +971,7 @@ function verdictFrom(block) {
 
 /** Last line in `lines` that opens `label`, with its value and index. */
 function lastLabeled(lines, label) {
-  const pattern =
-    LABEL_PATTERN_BY_KEY.get(label.toLowerCase()) ?? new RegExp(`^${label}:\\s*(.*)$`, "i");
+  const pattern = LABEL_PATTERN_BY_KEY.get(label.toLowerCase());
   let found = null;
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(pattern);

@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, rm, symlink } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -64,4 +64,16 @@ export async function trackedTempDir(prefix, dirs) {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   dirs.push(dir);
   return dir;
+}
+
+/** The user docs of the repository at `root` as one text: the reference topic files, the reference index, then the README. */
+export async function readUserDocs(root) {
+  const docs = join(root, "docs/reference");
+  const topics = (await readdir(docs)).filter((name) => name.endsWith(".md")).sort();
+  const paths = [
+    ...topics.map((name) => join(docs, name)),
+    join(root, "docs/reference.md"),
+    join(root, "README.md"),
+  ];
+  return (await Promise.all(paths.map((path) => readFile(path, "utf8")))).join("\n\n");
 }
