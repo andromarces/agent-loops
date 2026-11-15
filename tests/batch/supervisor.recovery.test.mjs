@@ -1226,8 +1226,7 @@ test("a failure after the child declares a pull request clears the stale undecla
 // attempt's pull request (ADR 0131). Not redundant: no other test succeeds a resumed child over a
 // stored `prUndeclared`.
 test("a success of a resumed child keeps the undeclared field clear", async () => {
-  const repo = await batchRepo();
-  const prepared = await preparedFor(repo, [1]);
+  const prepared = await waitPrepared([1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const first = childDouble({ steps: 1, hold: true });
   const controller = new AbortController();
@@ -1237,6 +1236,7 @@ test("a success of a resumed child keeps the undeclared field clear", async () =
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: first.spawn,
         installSignal: false,
@@ -1246,7 +1246,6 @@ test("a success of a resumed child keeps the undeclared field clear", async () =
     await waitForLaunch(first);
     controller.abort();
     await run;
-    await pushLoop(prepared);
     // A record left by an earlier attempt holds an undeclared pull request when the child resumes.
     const child = childDouble({
       beforeWrite: () =>
@@ -1256,7 +1255,7 @@ test("a success of a resumed child keeps the undeclared field clear", async () =
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
-      deps: { notifier: noNotify, spawn: child.spawn, installSignal: false },
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
     });
     expect(child.calls).toHaveLength(1);
     expect(resumed.summary.loops[0]).toMatchObject({
