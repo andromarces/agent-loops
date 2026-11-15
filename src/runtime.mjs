@@ -44,15 +44,15 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
 const PLAN_MODE_ABORT_REASON = /\bplan[- ]?mode\b/i;
 
 /**
- * True for the one retryable orchestrator fault: a first-turn Claude abort whose reason names plan
- * mode (ADR 0164). Any other kind, turn, or reason ends the loop, and so does a retry already taken.
+ * True for the one retryable orchestrator fault: a Claude abort that names plan mode on the loop's
+ * first orchestrator turn (ADR 0164). Any other kind, turn, or reason ends the loop. A repair turn
+ * inside one decision keeps the turn count, and a refused finish starts a new turn.
  * @param {{ action: string, reason?: string }} action
- * @param {{ stepsUsed: number, orchestratorKind: string | null, retried: boolean }} state
+ * @param {{ orchestratorTurns: number, orchestratorKind: string | null }} state
  */
-function isRetryablePlanModeAbort(action, { stepsUsed, orchestratorKind, retried }) {
+function isRetryablePlanModeAbort(action, { orchestratorTurns, orchestratorKind }) {
   return (
-    retried !== true &&
-    stepsUsed === 0 &&
+    orchestratorTurns === 1 &&
     orchestratorKind === "claude" &&
     action?.action === "abort" &&
     typeof action.reason === "string" &&
@@ -226,8 +226,9 @@ export async function runLoop(options) {
   // against the older head.
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
-  // The plan-mode retry of a first-turn Claude abort is taken once (ADR 0164).
-  let planModeAbortRetried = false;
+  // The number of orchestrator turns the loop has run. The plan-mode retry applies only to the
+  // first one, because a refused finish starts a new turn without charging a step (ADR 0164).
+  let orchestratorTurns = 0;
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
   // from null to a number, and only the runtime sets it. A continued run with neither flag takes
@@ -303,6 +304,7 @@ export async function runLoop(options) {
       throw err;
     }
 
+    orchestratorTurns += 1;
     onEvent({ type: "action", action, stepsUsed });
 
     if (action.action === "finish") {
@@ -333,12 +335,10 @@ export async function runLoop(options) {
     if (action.action === "abort") {
       if (
         isRetryablePlanModeAbort(action, {
-          stepsUsed,
+          orchestratorTurns,
           orchestratorKind: orchestrator?.kind ?? null,
-          retried: planModeAbortRetried,
         })
       ) {
-        planModeAbortRetried = true;
         logWarn(
           `retrying the first orchestrator turn after a plan-mode abort: ${errorLine(action.reason)}`,
         );

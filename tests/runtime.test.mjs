@@ -571,6 +571,41 @@ test("a first-turn Claude abort whose reason names plan mode retries the orchest
   }
 });
 
+// Usefulness: verifies the retry keys on the first orchestrator turn, not charged steps (issue
+// #1996 review). A review-only finish refused before any child turn leaves stepsUsed at 0, so a
+// plan-mode abort on the second orchestrator turn must end the loop instead of retrying.
+test("a plan-mode abort after a refused review-only finish is not retried", async () => {
+  const repo = await cleanRepo();
+  try {
+    const orchAdapter = scripted([
+      JSON.stringify({
+        action: "finish",
+        summary: { changed: "a", verified: "b", deferred: "c", notDone: "d", open: "e" },
+      }),
+      JSON.stringify({ action: "abort", reason: "Plan mode blocks this turn." }),
+    ]);
+
+    const result = await runLoop({
+      task: "Task 1996",
+      cwd: repo,
+      maxSteps: 5,
+      mode: "review-only",
+      roles: {
+        orchestrator: { kind: "claude", sessionId: null },
+        worker: { kind: "work", sessionId: null },
+        reviewer: { kind: "rev", sessionId: null },
+      },
+      agents: { claude: orchAdapter, work: scripted([]), rev: scripted([]) },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.reason).toBe("Plan mode blocks this turn.");
+    expect(orchAdapter.recorded.length).toBe(2);
+  } finally {
+    await removePath(repo);
+  }
+});
+
 // Usefulness: verifies acceptance "a second such abort, and an abort with any other reason, end the
 // loop as before, and a test covers it" (issue #1996). A non-Claude kind cannot read its plan-mode
 // guard as a block, so its plan-mode abort stays terminal too.

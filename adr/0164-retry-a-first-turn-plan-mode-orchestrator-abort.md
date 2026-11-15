@@ -28,11 +28,13 @@ runs a read-only turn in plan mode, so no other orchestrator kind can meet the c
 ## Decision
 
 1. **A first-turn Claude abort that names plan mode is retryable.** `runLoop` takes one retry of
-   the orchestrator turn when `stepsUsed` is 0, the orchestrator kind is `claude`, the action is
-   `abort`, and the reason matches `plan mode` or `plan-mode` in any case. The retry charges no
-   step and does not end the loop.
+   the orchestrator turn when the loop is on its first orchestrator turn, the orchestrator kind is
+   `claude`, the action is `abort`, and the reason matches `plan mode` or `plan-mode` in any case.
+   The retry charges no step and does not end the loop. The guard counts orchestrator turns, not
+   charged steps, because a refused finish starts a new turn without charging one.
 2. **The fault is classified once.** A second plan-mode abort, an abort with any other reason, a
-   non-Claude orchestrator, and an abort after any charged step end the loop at exit 1 as before.
+   non-Claude orchestrator, and a plan-mode abort on any orchestrator turn after the first end the
+   loop at exit 1 as before.
 3. **The retry restates the guard.** The retry prompt carries the previous reason as JSON text and
    repeats the plan-mode rule of ADR 0163 decision 1, so the turn learns that the guard is not a
    block and that the runtime carries out its returned action.
@@ -45,6 +47,8 @@ runs a read-only turn in plan mode, so no other orchestrator kind can meet the c
   exit 1, and the reason stays in the transcript.
 - An orchestrator kind other than Claude keeps every abort terminal, because no such adapter runs
   a read-only turn in plan mode.
+- A plan-mode abort after a refused finish stays terminal, because that finish starts a new
+  orchestrator turn, even though no step was charged.
 - The retry adds no step, so the step budget and every finish gate read the same count as before.
 
 ## Alternatives
@@ -63,6 +67,7 @@ Andro Marces
 ## Links
 
 - [Issue #1996: Retry a first-turn Claude orchestrator abort whose reason names plan mode](https://github.com/andromarces/agent-loops/issues/1996)
+- [Pull request #1997](https://github.com/andromarces/agent-loops/pull/1997)
 - [ADR 0163: State the plan-mode guard in the Claude orchestrator prompt](0163-state-the-plan-mode-guard-in-the-claude-orchestrator-prompt.md)
 - Implementation: the orchestrator loop in [src/runtime.mjs](../src/runtime.mjs) and the retry prompt in [src/prompts/orchestrator.mjs](../src/prompts/orchestrator.mjs)
 - Tests: [tests/runtime.test.mjs](../tests/runtime.test.mjs)
