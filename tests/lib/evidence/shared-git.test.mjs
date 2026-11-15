@@ -167,7 +167,7 @@ vi.mock("execa", async (importOriginal) => {
 import { firstErrorLine, readableErrorText } from "../../../src/lib/error-message.mjs";
 import { diffSharedGit, readSharedGit } from "../../../src/lib/evidence/shared-git.mjs";
 import { removePath, trackedTempDir } from "../../fs-helpers.mjs";
-import { createTempRepo } from "../../git-helpers.mjs";
+import { createLinkedWorkTree, createTempRepo } from "../../git-helpers.mjs";
 import { pollUntil } from "../../wait-helpers.mjs";
 import {
   endOwnedProcess,
@@ -203,17 +203,16 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
-// Real Git: the shared state read must match what Git reports for a linked work tree.
-// A repository and a linked work tree of it, so the shared state sits in the common directory.
+// Process: the shared state read must match what Git reports for a linked work tree, so each case
+// reads and writes a real repository. The config, remote, and hook writes in a case stay real
+// because the reported change is the assertion.
+// A copy of the seeded main and linked work tree pair, so the shared state sits in the common
+// directory and the case starts no `git worktree add`. The copy rewrites the two absolute path
+// records of the pair, so each case still holds its own linked work tree.
 async function createRepoWithLinkedWorkTree(store = dirs) {
-  const repo = await createTempRepo();
-  store.push(repo);
-  const parent = await trackedTempDir("agent-loops-shared-git-", store);
-  const linked = join(parent, "linked");
-  // A real `git worktree add`: the linked work tree's `.git` file holds an absolute path, so each
-  // case needs its own.
-  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
-  return { repo, linked };
+  const tree = await createLinkedWorkTree();
+  store.push(tree.base);
+  return { repo: tree.main, linked: tree.linked };
 }
 
 const localConfig = (repo) => join(repo, ".git", "config");
@@ -798,6 +797,7 @@ test("the deadline aborts the git calls with the default abort reason", async ()
 // Usefulness: verifies requirement "every git process of the read has ended when it rejects at its
 // deadline" (issue #1315). A deadline that stops waiting without ending the git processes leaves
 // them running past the end of a canceled turn.
+// Process: the case runs fake git shims as children, so it reads their pids and their end.
 test("every git process of the read has ended when the read rejects at its deadline", async () => {
   const { linked } = await createRepoWithLinkedWorkTree();
   await withGitHangingAfter(0, async ({ shimDir, env }) => {

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
 // Answers the shared Git and lockfile reads from memory (`roleReadsGit`), because no case here
 // asserts them. Every other command reaches the real `execa`.
+// Process: the copy's own Git reads are the refresh behavior under assertion, so each case reads a
+// real repository.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();
@@ -45,18 +47,18 @@ const SECRET = "REFRESH-CONTENT-MUST-NOT-APPEAR";
 const CONTENT = `KEY=${SECRET}\n`;
 
 // Real Git: the linked work tree and its ignored files exist only in a real repository.
-/** A linked work tree whose main checkout holds ignored files, then an initialized run. */
+/**
+ * A linked work tree whose main checkout holds ignored files, then an initialized run. The ignored
+ * files land after the copy, so the case uses the shared seeded pair and starts no `git worktree
+ * add`.
+ */
 async function linkedRun(files = { ".env": CONTENT }, ignore = [".env"]) {
   await setup();
-  const tree = await createLinkedWorkTree({
-    ignore,
-    seed: async (main) => {
-      for (const [rel, content] of Object.entries(files)) {
-        await mkdir(dirname(join(main, rel)), { recursive: true });
-        await writeFile(join(main, rel), content);
-      }
-    },
-  });
+  const tree = await createLinkedWorkTree({ ignore });
+  for (const [rel, content] of Object.entries(files)) {
+    await mkdir(dirname(join(tree.main, rel)), { recursive: true });
+    await writeFile(join(tree.main, rel), content);
+  }
   repos.push(tree.base);
   const init = await executeRoleCommand(
     withRepo(dispatchArgv(INIT_OVERRIDES), tree.linked),

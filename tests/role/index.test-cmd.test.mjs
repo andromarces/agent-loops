@@ -48,6 +48,8 @@ afterEach(async () => {
 });
 
 // Interactive behavior of `--test-cmd` (issue #420, ADR 0017).
+// Process: each case that reaches the command reads its exit code or its recorded result, so the
+// command runs as a real child. The refusal cases stop before any command starts.
 const node = (body) => `node -e "${body}"`;
 // Synthetic value for the secret-named environment variable of the redaction test.
 const SYNTHETIC_SECRET = "synthetic-probe-value-8f3a1c";

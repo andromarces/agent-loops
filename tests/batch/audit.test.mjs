@@ -91,6 +91,8 @@ function fakeTurns({ reviewers = {}, consolidations = [] } = {}) {
   return { runTurn, calls };
 }
 
+// Process: the audit checkout and its identity are real Git state, so the one shared repository and
+// checkout are built once and a case that writes into the checkout gets its own copy.
 // One clean repository and checkout serve the cases that never change them. A case that writes
 // into the checkout asks for its own, so the shared state stays immutable across cases.
 async function preparedAudit({ ownWorkTree = false, ...overrides } = {}) {

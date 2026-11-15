@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { execa } from "execa";
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
@@ -32,6 +32,8 @@ import { SUMMARY } from "./run-fixtures.mjs";
 // Headless behavior of `--test-cmd` (issue #420, ADR 0017). Most cases run a real
 // command through the platform shell inside a real Git work tree. A case that reads no Git
 // state uses a repository answered from memory.
+// Process: each case reads the exit code, output, or timeout of the command it starts, so the
+// command runs as a real child.
 
 const REVIEW = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: none\nVerdict: accept";
 const node = (body) => `node -e "${body}"`;
@@ -511,6 +513,23 @@ test.each([
   }
 });
 
+// A per-file test root that `tests/setup-tmpdir.mjs` created, read through a literal system
+// temporary directory that another test file's root landed in (ADR 0108). The match reads the
+// redacted entry name and never a path, so a temporary root whose path form differs cannot slip
+// through.
+const FOREIGN_TEST_ROOT = /^literal-tmp\/test-tmp-/;
+
+// Drops the other test files' per-file roots from the inherited-tmpdir evidence of `events`, and an
+// event that held only such entries. A case keeps its own expected entries, so it cannot fail when
+// another test file starts inside its turn window (issue #1962).
+function withoutForeignTestRoots(events) {
+  return events.flatMap((event) => {
+    if (event.type !== "inherited-tmpdir") return [event];
+    const entries = event.entries.filter((name) => !FOREIGN_TEST_ROOT.test(name));
+    return entries.length === 0 && event.entries.length > 0 ? [] : [{ ...event, entries }];
+  });
+}
+
 // Usefulness: verifies requirement "a fatal reviewer error emits the entries that appeared in the
 // inherited temporary directory" (issue #1024): a fatal error ends the run with no result event, so
 // the transcript would otherwise lose them.
@@ -539,7 +558,9 @@ test("a fatal reviewer error emits the inherited temporary directory entries", a
       onEvent: (event) => events.push(event),
     }).catch((err) => err);
     expect(error).toBe(fatal);
-    expect(events.find((e) => e.type === "inherited-tmpdir")).toMatchObject({
+    expect(
+      withoutForeignTestRoots(events).find((e) => e.type === "inherited-tmpdir"),
+    ).toMatchObject({
       role: "reviewer",
       entries: ["m54-3db54ca8"],
       fatal: true,
@@ -551,6 +572,62 @@ test("a fatal reviewer error emits the inherited temporary directory entries", a
     await removePath(repo);
   }
 });
+
+// Usefulness: verifies a `test-tmp-*` root that another test file creates in the literal system
+// temporary directory during the turn window does not fail the case (issue #1962); the runtime
+// reports that root as a `literal-tmp/` entry (ADR 0108). Literal temporary directories exist only
+// on POSIX, so the case skips on Windows.
+test.skipIf(process.platform === "win32")(
+  "a foreign test-tmp root in the literal temporary directory does not fail the case",
+  async () => {
+    const repo = await cleanRepo();
+    const temp = await mkdtemp(join(tmpdir(), "runtime-foreign-"));
+    let foreign = null;
+    try {
+      for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
+      const events = [];
+      const fatal = Object.assign(new Error("fatal"), { name: "MutationError" });
+      const error = await runLoop({
+        task: "Review the change.",
+        cwd: repo,
+        maxSteps: 5,
+        roles: roles(),
+        agents: {
+          orch: scripted([JSON.stringify({ action: "run_reviewer", prompt: "review" })]),
+          work: scripted([]),
+          rev: scripted([
+            async () => {
+              await mkdir(join(temp, "m54-foreign"));
+              foreign = await mkdtemp(join("/tmp", "test-tmp-"));
+              throw fatal;
+            },
+          ]),
+        },
+        onEvent: (event) => events.push(event),
+      }).catch((err) => err);
+      expect(error).toBe(fatal);
+      // The window held the foreign root, so the case below is the filter's work and not a missed
+      // read.
+      const foreignName = `literal-tmp/${basename(foreign)}`;
+      expect(
+        events.some((e) => e.type === "inherited-tmpdir" && e.entries.includes(foreignName)),
+      ).toBe(true);
+      expect(
+        withoutForeignTestRoots(events).find((e) => e.type === "inherited-tmpdir"),
+      ).toMatchObject({
+        role: "reviewer",
+        entries: ["m54-foreign"],
+        fatal: true,
+        stepsUsed: 1,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      if (foreign !== null) await removePath(foreign);
+      await removePath(temp);
+      await removePath(repo);
+    }
+  },
+);
 
 // Usefulness: verifies the order and the exact fields of the fatal-path evidence events (#1269):
 // the per-event tests above match a subset, so a reordered or renamed field would pass them.
@@ -635,7 +712,7 @@ test("a fatal worker error emits the shared Git event before the lockfile event"
       onEvent: (event) => events.push(event),
     }).catch((err) => err);
     expect(error).toBe(fatal);
-    expect(events.filter((e) => e.fatal === true)).toEqual([
+    expect(withoutForeignTestRoots(events).filter((e) => e.fatal === true)).toEqual([
       { type: "shared-git", role: "worker", items: ["remote.origin"], fatal: true, stepsUsed: 1 },
       { type: "lockfile", role: "worker", paths: ["pnpm-lock.yaml"], fatal: true, stepsUsed: 1 },
     ]);

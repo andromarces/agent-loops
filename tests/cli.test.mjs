@@ -188,7 +188,10 @@ test.each([
   { where: "inside the work tree", inTree: true, added: ["runNonce"] },
 ])("a mode-free run writes the pre-flag transcript shape $where", async ({ inTree, added }) => {
   const runOnce = async (extra) => {
-    const repo = await createTempRepo();
+    // The case reads the transcript shape, not a Git result, so `cleanRepoGit` answers the
+    // snapshot reads and no `git` process runs.
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     const transcriptPath = inTree ? join(repo, "transcript.json") : `${repo}-transcript.json`;
     const origExitCode = process.exitCode;
     const agents = {
@@ -688,6 +691,7 @@ test.each(["--version", "-V"])("%s prints the package version", async (flag) => 
 
 // Usefulness: verifies the CLI entry point prints --help to the real stdout and exits 0, so a
 // spawn of the installed binary shows its flags. The help text itself is checked in process below.
+// Process: one real entry-point run reads the stdout and the exit code of a separate CLI.
 test("--help lists --version and role --help", async () => {
   const result = await execa(process.execPath, [CLI, "--help"]);
   expect(result.exitCode).toBe(0);

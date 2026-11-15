@@ -93,6 +93,91 @@ test("a blocked issue waits on the poll and launches after its blockers close", 
   }
 });
 
+// Usefulness: the wait poll reads the `issues` list of a `blockedBy` object, the reply shape the
+// eligibility read also accepts, so both callers agree on one reply and an open entry in that list
+// still holds the loop. Not redundant: no other wait case replies with an `issues` list.
+test("a wait poll holds the loop on an issues list in the blockedBy reply", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  let blockedReads = 0;
+  let polls = 0;
+  let launchesAtFirstPoll = null;
+  const child = childDouble();
+  const gh = (args) => {
+    if (args[0] === "issue" && args[1] === "view") {
+      if (args.some((arg) => arg.includes("blockedBy"))) {
+        blockedReads += 1;
+        const open = blockedReads <= 2 ? [{ number: 9, state: "OPEN" }] : [];
+        if (args.includes("state,blockedBy,body,title")) {
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { nodes: open }, body: BODY }),
+            stderr: "",
+          };
+        }
+        if (args.includes("state,blockedBy")) {
+          polls += 1;
+          if (polls === 1) launchesAtFirstPoll = child.calls.length;
+          return {
+            status: 0,
+            stdout: JSON.stringify({ state: "OPEN", blockedBy: { issues: open } }),
+            stderr: "",
+          };
+        }
+        return { status: 0, stdout: JSON.stringify({ blockedBy: { nodes: open } }), stderr: "" };
+      }
+      if (args.includes("body"))
+        return { status: 0, stdout: JSON.stringify({ body: BODY }), stderr: "" };
+      if (args.includes("title")) {
+        return { status: 0, stdout: JSON.stringify({ title: "A title" }), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ state: "OPEN" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "list") {
+      return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 0, stdout: JSON.stringify({ nameWithOwner: "o/r" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
+      return {
+        status: 1,
+        stdout: "",
+        stderr: "Could not resolve to a PullRequest with the number.",
+      };
+    }
+    return { status: 1, stdout: "", stderr: `unexpected gh ${args.join(" ")}` };
+  };
+  let now = 0;
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: child.spawn,
+        installSignal: false,
+        pollIntervalMs: 1000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+      },
+    });
+    // The open entry of the `issues` list holds the loop over one poll, and the empty list
+    // releases it to a launch.
+    expect(launchesAtFirstPoll).toBe(0);
+    expect(polls).toBeGreaterThanOrEqual(2);
+    expect(child.calls).toHaveLength(1);
+    expect(exitCode).toBe(0);
+    expect(summary.loops[0].status).toBe("succeeded");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: a failed poll read warns, launches nothing, and retries on the next poll.
 test("a failed poll read retries on the next poll", async () => {
   const prepared = await waitPrepared([1]);

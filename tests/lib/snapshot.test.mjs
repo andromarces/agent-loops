@@ -84,7 +84,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-// Real Git: the snapshot and work tree checks read a repository that only Git creates.
+// Process: the snapshot and work tree checks read a repository that only Git creates.
 // Usefulness: verifies assertGitWorkTree passes inside a git repository and rejects a non-git directory.
 test("assertGitWorkTree validates git directory", async () => {
   const repo = await createTempRepo();
@@ -121,6 +121,7 @@ test.skipIf(process.platform === "win32")(
 // when the bound expires, on Windows and on macOS. A real process is the only way
 // to check that a slow `git` cannot add its own time to a caller's total limit,
 // because every other test uses a real fast `git` (issue #329).
+// Process: the probe must run as a real child so its bound can end it.
 test.concurrent(
   "assertGitWorkTree refuses a probe that outlasts its bound",
   async () => {
@@ -137,6 +138,7 @@ test.concurrent(
 
 // Usefulness: verifies a cancel ends a hung work-tree probe and marks the refusal as a cancel, so
 // `role dispatch` and the headless run keep exit 130 instead of exit 1 (#729).
+// Process: only a real child can be canceled after it hangs.
 test.concurrent(
   "assertGitWorkTree ends a hung probe on cancel and reports a cancel",
   async () => {
@@ -153,6 +155,7 @@ test.concurrent(
 
 // Usefulness: verifies a hung `git` read in the snapshot ends at its bound with a SnapshotError, so
 // a stuck child cannot hang the turn (#729).
+// Process: the git read must be a real child so its bound can end it.
 test.concurrent(
   "snapshot refuses a git read that outlasts its bound",
   async () => {
@@ -167,6 +170,7 @@ test.concurrent(
 
 // Usefulness: verifies a cancel ends a hung `git` read in the snapshot and marks the error as a
 // cancel, which the caller maps to exit 130 (#729).
+// Process: only a real child can be canceled after its git read hangs.
 test.concurrent(
   "snapshot ends a hung git read on cancel and reports a cancel",
   async () => {
@@ -205,6 +209,7 @@ test("withMutationCheck keeps the changed-path evidence after a cancel", async (
 
 // Usefulness: verifies a second cancel ends a hung evidence snapshot at once and reports the
 // evidence as not captured, never as unchanged, while the first cancel alone leaves it running (#729).
+// Process: the hung evidence snapshot is a real child, so only a real second cancel can end it.
 test.skipIf(process.platform === "win32")(
   "a second cancel ends a hung evidence snapshot and reports it as not captured",
   async () => {

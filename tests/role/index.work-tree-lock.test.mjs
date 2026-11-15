@@ -44,7 +44,8 @@ afterEach(() => {
 });
 afterEach(cleanup);
 
-// Real Git: the lock guards a linked work tree, which only a real repository provides.
+// Process: the lock guards a linked work tree, and the `locked` field of `git worktree list` is
+// the assertion, so each case reads and writes a real repository.
 const git = (cwd, args) => execa("git", args, { cwd, reject: false });
 
 async function linked() {
