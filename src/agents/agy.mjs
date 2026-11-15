@@ -11,8 +11,7 @@ import {
 
 // agy 1.4.12 writes one machine line to stderr for a failed turn: `AGY_ERROR: {...}`. Its
 // `short_error` field opens with the provider status and code, for example
-// `UNAVAILABLE (code 529): ...`, which a probe against a local 529 server captured. A provider
-// capacity reply carries code 529 (issue #1323).
+// `UNAVAILABLE (code 529): ...`. A provider capacity reply carries code 529.
 const AGY_ERROR_PREFIX = "AGY_ERROR: ";
 const CAPACITY_SHORT_ERROR = /^(?:[A-Z_]+ )?\(code 529\): /;
 

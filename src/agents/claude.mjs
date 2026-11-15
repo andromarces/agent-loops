@@ -36,7 +36,7 @@ const missingSession = (id) => `No conversation found with session ID: ${id}`;
 
 // Claude Code 2.1.316 writes `api_error_status: 529` on the result event of a provider overload
 // (probe against a local 529 server). The `result` text carries an environment suffix, so only the
-// structured status is matched (issue #1017).
+// structured status is matched.
 /**
  * Marks a failed turn whose terminal failure is a provider overload. The terminal failure is the
  * last `result` event of the output, so an earlier overload followed by another cause is never
@@ -126,7 +126,7 @@ export async function runClaude(state, prompt, options = {}) {
     `Claude Code session ${requestedSessionId} is not verified as owned by this work tree.`,
   );
   // A first turn pre-assigns its id, so a kill that leaves stdout empty still names the session
-  // the CLI saved (issue #395). A resumed turn passes no `--session-id`.
+  // the CLI saved. A resumed turn passes no `--session-id`.
   const preassignedId = requestedSessionId ? null : randomUUID();
 
   args.push(
@@ -150,7 +150,7 @@ export async function runClaude(state, prompt, options = {}) {
   }
 
   // `--verbose` makes the `json` output an array of events, so it carries the `init` event that
-  // names the main-loop model (issue #566).
+  // names the main-loop model.
   args.push("--output-format", "json", "--verbose");
 
   if (preassignedId) {
@@ -305,7 +305,7 @@ function turnModels(inits, results) {
 /**
  * Records the resolved model of a turn that ran, from one consistent source. The model is the one
  * `init` event names, or the one key of `modelUsage` when no `init` event exists. A single `init`
- * model that differs from the one `modelUsage` model records the `modelUsage` model (issue #1376).
+ * model that differs from the one `modelUsage` model records the `modelUsage` model.
  * The record also names the source of a resolved model. The output must name exactly one valid
  * session, and every result and `init` event must name it. Otherwise the turn records unresolved.
  * @param {object} state role state; mutated
