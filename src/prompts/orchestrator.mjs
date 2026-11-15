@@ -466,6 +466,26 @@ function planModeBlock(orchestratorKind) {
   return `\nThis turn runs in plan mode as a write guard only, and plan mode is never a reason to abort: you act by returning your JSON decision, and the runtime carries out that action. Do not write a plan file.`;
 }
 
+/**
+ * The prompt of the one retried first orchestrator turn after a Claude abort whose reason names
+ * plan mode (ADR 0164). The retry repeats the guard, because the abort shows the first prompt did
+ * not settle it, and carries the previous reason as JSON text so it cannot change the prompt shape.
+ * @param {string} reason the abort reason of the first turn
+ * @returns {string}
+ */
+export function planModeRetryPrompt(reason) {
+  return escapeLineSeparators(
+    `
+The previous orchestrator turn ended with an abort:
+${JSON.stringify(reason)}
+
+The loop retried that first turn once, and this is the retry.${planModeBlock("claude")}
+
+${NEXT_ACTION_TAIL}
+`.trim(),
+  );
+}
+
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
 const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}
 

@@ -122,4 +122,5 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0155 — [Run the macOS and Windows CI jobs on Node 26](0155-run-macos-and-windows-ci-on-node-26.md) — accepted
 - 0161 — [Keep Windows batch notifications in Notification Center](0161-keep-windows-notifications-in-notification-center.md) — accepted
 - 0162 — [Run every OpenCode call of a turn on a private server](0162-run-every-opencode-call-of-a-turn-on-a-private-server.md) — accepted
-- 0163 — [State the plan-mode guard in the Claude orchestrator prompt](0163-state-the-plan-mode-guard-in-the-claude-orchestrator-prompt.md) — accepted
+- 0163 — [State the plan-mode guard in the Claude orchestrator prompt](0163-state-the-plan-mode-guard-in-the-claude-orchestrator-prompt.md) — partially-superseded — Partially superseded by [ADR 0164](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md).
+- 0164 — [Retry a first-turn Claude orchestrator abort that names plan mode](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) — accepted

@@ -29,7 +29,7 @@ import {
 } from "./lib/evidence/turn-evidence.mjs";
 import { decide } from "./orchestrator.mjs";
 import { testCmdInput } from "./lib/test-cmd.mjs";
-import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
+import { initialPrompt, planModeRetryPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 
 /**
  * Process exit code for a recorded finish that carries `unresolvedCompare`. The
@@ -39,13 +39,35 @@ import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
  */
 export const UNRESOLVED_COMPARE_EXIT = 4;
 
+// The plan-mode rule is advisory prompt text, so a first Claude turn can still abort for it
+// (ADR 0163, ADR 0164). The runtime reads the reason only to classify that one retryable fault.
+const PLAN_MODE_ABORT_REASON = /\bplan[- ]?mode\b/i;
+
+/**
+ * True for the one retryable orchestrator fault: a first-turn Claude abort whose reason names plan
+ * mode (ADR 0164). Any other kind, turn, or reason ends the loop, and so does a retry already taken.
+ * @param {{ action: string, reason?: string }} action
+ * @param {{ stepsUsed: number, orchestratorKind: string | null, retried: boolean }} state
+ */
+function isRetryablePlanModeAbort(action, { stepsUsed, orchestratorKind, retried }) {
+  return (
+    retried !== true &&
+    stepsUsed === 0 &&
+    orchestratorKind === "claude" &&
+    action?.action === "abort" &&
+    typeof action.reason === "string" &&
+    PLAN_MODE_ABORT_REASON.test(action.reason)
+  );
+}
+
 /**
  * Runs the orchestrator loop. Returns `{ exitCode: 0, summary, unresolvedCompare, gate }`, plus
  * `headCompare: "verified"` for a passing `compareHead` finish, when the orchestrator returns
  * `finish`. It returns `{ exitCode: 1 | 2, reason, gate }` on `abort`, a refused finish, a
- * refused `run_worker` in review-only mode, or a step limit reached with work remaining. `gate`
- * is the completion gate state, which the headless CLI records in the transcript for a later
- * `--continue-from`. Throws on fatal controller errors: orchestrator failure, detected mutation,
+ * refused `run_worker` in review-only mode, or a step limit reached with work remaining. A
+ * first-turn Claude `abort` whose reason names plan mode is retried once instead (ADR 0164).
+ * `gate` is the completion gate state, which the headless CLI records in the transcript for a
+ * later `--continue-from`. Throws on fatal controller errors: orchestrator failure, detected mutation,
  * or cancel. A finish that records `unresolvedCompare` emits an `unresolved-compare` event and
  * reports `unresolvedCompare: true`, which the headless CLI maps to `UNRESOLVED_COMPARE_EXIT`.
  *
@@ -204,6 +226,8 @@ export async function runLoop(options) {
   // against the older head.
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
+  // The plan-mode retry of a first-turn Claude abort is taken once (ADR 0164).
+  let planModeAbortRetried = false;
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
   // a worker turn when the run has neither `--pr` nor `--require-ci` (ADR 0043). It changes once,
   // from null to a number, and only the runtime sets it. A continued run with neither flag takes
@@ -307,6 +331,20 @@ export async function runLoop(options) {
     }
 
     if (action.action === "abort") {
+      if (
+        isRetryablePlanModeAbort(action, {
+          stepsUsed,
+          orchestratorKind: orchestrator?.kind ?? null,
+          retried: planModeAbortRetried,
+        })
+      ) {
+        planModeAbortRetried = true;
+        logWarn(
+          `retrying the first orchestrator turn after a plan-mode abort: ${errorLine(action.reason)}`,
+        );
+        prompt = planModeRetryPrompt(action.reason);
+        continue;
+      }
       return stopLoop(1, { reason: action.reason });
     }
 
