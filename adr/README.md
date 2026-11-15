@@ -99,7 +99,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0121 — [Run issue, pull request, and free-text task items in one batch](0121-mix-issue-pull-request-and-task-items-in-one-batch.md) — accepted
 - 0122 — [Report the open PR of the work tree branch in the worker envelope](0122-report-the-open-pr-of-the-work-tree-branch-in-the-worker-envelope.md) — accepted
 - 0123 — [Shard the macOS CI test job behind a fan-in required context](0123-shard-the-macos-ci-test-job.md) — accepted
-- 0124 — [Drop Node 22 support before its end of life](0124-drop-node-22-support.md) — accepted
+- 0124 — [Drop Node 22 support before its end of life](0124-drop-node-22-support.md) — partially-superseded — Partially superseded by [ADR 0155](0155-run-macos-and-windows-ci-on-node-26.md).
 - 0125 — [Keep the last child turn items in a batch loop report](0125-keep-the-last-child-turn-items-in-a-batch-loop-report.md) — accepted
 - 0126 — [Keep review-only reviewer items in separate report fields](0126-keep-review-only-reviewer-items-in-separate-report-fields.md) — accepted
 - 0127 — [Notify when only owner merges remain in a batch](0127-notify-when-only-owner-merges-remain.md) — accepted
@@ -119,3 +119,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0141 — [Allow the Copilot write tool on a worker turn](0141-allow-the-copilot-write-tool-on-a-worker-turn.md) — accepted
 - 0145 — [Keep a pre-existing work tree that holds uncommitted work](0145-keep-a-pre-existing-work-tree-with-uncommitted-work.md) — accepted
 - 0148 — [Omit dead rules from the headless orchestrator prompt](0148-omit-dead-rules-from-the-headless-orchestrator-prompt.md) — accepted
+- 0155 — [Run the macOS and Windows CI jobs on Node 26](0155-run-macos-and-windows-ci-on-node-26.md) — accepted

@@ -50,9 +50,9 @@ jobs:
 
   # Node 26 is the Active LTS line and `engines.node` accepts it. The `ci`
   # matrix runs the latest Node 24, and the `node-24` job runs the 24.11.0
-  # floor (issue #1632). Every other job runs Node 24. This job stays separate
-  # so the required ci (<os>) contexts keep their names, and it inherits the
-  # workflow-level concurrency group.
+  # floor (issue #1632). The macOS and Windows jobs run Node 26 too (issue
+  # #1946). This job stays separate so the required ci (<os>) contexts keep
+  # their names, and it inherits the workflow-level concurrency group.
   node-26:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -106,7 +106,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
       # Call the runner directly. A `--` separator in
@@ -128,7 +128,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
       - name: Install then uninstall harness integrations into a temp home
@@ -171,7 +171,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
       # Call the runner directly. `pnpm test -- --shard=<i>/5` inserts a `--`
@@ -191,7 +191,7 @@ jobs:
       # No setup-node cache: pnpm. See the note in the ci job (#38).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
       - name: Install then uninstall harness integrations into a temp home
