@@ -562,6 +562,20 @@ test("opencode refuses two blocks whose messages interleave across an invalid-id
   ).rejects.toThrow(INTERLEAVED);
 });
 
+// Usefulness: verifies a plain heading block counts as an attempt, so two interleaved plain
+// heading messages refuse instead of letting either govern (issue #1989).
+test("opencode refuses plain heading blocks whose messages interleave", async () => {
+  const block = "Conclusion\ndone\nWhy\nok\nBlockers\nnone";
+
+  await expect(
+    runWithEvents(
+      textEvent(block.slice(0, 15), "msg-a"),
+      textEvent(block),
+      textEvent(`\n${block.slice(15)}`, "msg-a"),
+    ),
+  ).rejects.toThrow(INTERLEAVED);
+});
+
 // Usefulness: verifies the error of an interleaved stream carries the assistant text of every
 // message, joined as an uninterleaved stream would be, so the orchestrator and the user can read
 // what the model wrote while no accept can come from the turn (issue #493).
@@ -789,6 +803,18 @@ test("opencode refuses a plain label that spans unidentified parts", async () =>
   const error = await runWithEvents(
     textEvent("Conclusion: done\nWhy: ok\nBlockers: none\nVerdict: accept\n"),
     textEvent("Checks: tests passed"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a plain heading Conclusion starts the guard block, so an accept whose
+// label lines span unidentified parts refuses (issue #1989).
+test("opencode refuses a plain heading accept that spans unidentified parts", async () => {
+  const error = await runWithEvents(
+    textEvent("Conclusion\ndone\nWhy\nok\nBlockers\nnone\nVerdict: accept\n"),
+    textEvent("Checks\ntests passed"),
   ).catch((err) => err);
 
   expect(error).toBeInstanceOf(Error);

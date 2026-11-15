@@ -7,15 +7,16 @@ import {
 } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
 
-/** Returns a matcher for a line that opens one of the labels `names`, plain at column 0. */
-const labelLine = (names) => new RegExp(`^(?:${names.join("|")}):`, "i");
-
 // A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
-// than becoming a verdict the model never wrote on its own line.
-const LABEL_LINE = labelLine(REPORT_LABEL_NAMES);
-const BLOCK_LABEL_LINE = labelLine([...REPORT_LABEL_NAMES, "Verdict"]);
-const BLOCK_START = /^Conclusion:\s*/i;
+// than becoming a verdict the model never wrote on its own line. The heading form names the label
+// alone on its line, so it opens a label line too.
+const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")})(?::|\\s*$)`, "i");
+const BLOCK_LABEL_LINE = new RegExp(
+  `^(?:(?:${REPORT_LABEL_NAMES.join("|")})(?::|\\s*$)|Verdict:)`,
+  "i",
+);
+const BLOCK_START = /^Conclusion(?::|\s*$)/i;
 
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
 const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";

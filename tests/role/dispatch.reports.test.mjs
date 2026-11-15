@@ -1021,6 +1021,45 @@ test("worker dispatch reads the issue #1585 bold heading labels", async () => {
   expect(result.payload).not.toHaveProperty("reportMissingLabels");
 });
 
+// Usefulness: verifies the issue #1989 envelope yields a report and no reportMissingLabels, a boundary no other test checks.
+test("worker dispatch reads the issue #1989 plain heading labels", async () => {
+  const repo = await newCleanRepo();
+  const reply = [
+    "Conclusion",
+    "The worker pushed the fix and opened PR #56.",
+    "",
+    "Why",
+    "The new test failed before the parser change.",
+    "",
+    "Blockers",
+    "none",
+    "",
+    "Checks",
+    "- pnpm exec vp test run tests/lib/report.test.mjs",
+    "- pnpm lint",
+    "",
+    "Notes",
+    "No non-blocking finding.",
+    "",
+    "Deferred",
+    "none",
+  ].join("\n");
+  const worker = recordingAdapter([async () => reply]);
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(result.payload.report).toEqual({
+    conclusion: "The worker pushed the fix and opened PR #56.",
+    why: "The new test failed before the parser change.",
+    blockers: "none",
+    checks: "pnpm exec vp test run tests/lib/report.test.mjs; pnpm lint",
+    notes: "No non-blocking finding.",
+    deferred: "none",
+  });
+  expect(result.payload).not.toHaveProperty("reportMissingLabels");
+});
+
 // Usefulness: verifies a plain report from a multi-part unidentified turn keeps its fields, so
 // the fail-closed rule needs a bold-only parse (issue #1483).
 test("worker dispatch keeps a plain report across unidentified parts", async () => {

@@ -1274,6 +1274,99 @@ test("hasClosingBlockAttempt is false for prose and lists with no label", () => 
   }
 });
 
+// Usefulness: verifies a plain heading report counts as an attempt, so a final plain heading block
+// is never replaced by an earlier colon block (issue #1989).
+test("hasClosingBlockAttempt holds for a plain heading report", () => {
+  for (const shape of [
+    "Conclusion\ndone\n\nWhy\nok\n\nBlockers\nnone",
+    "Conclusion\ndone\nWhy\nok\nBlockers\nnone",
+    "Conclusion: done\nWhy: ok\nBlockers: none\nNotes\nsample",
+  ]) {
+    expect(hasClosingBlockAttempt(shape), shape).toBe(true);
+  }
+});
+
+// Usefulness: verifies a final plain heading block wins over an earlier colon block in one
+// response, so the last closing block governs whatever its label form (issue #1989).
+test("parseReportBlock reads a final plain heading block after a colon block", () => {
+  const response = [
+    "Conclusion: stale",
+    "Why: stale",
+    "Blockers: none",
+    "",
+    "Conclusion",
+    "fresh",
+    "",
+    "Why",
+    "fresh",
+    "",
+    "Blockers",
+    "none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ conclusion: "fresh", why: "fresh" });
+});
+
+// Usefulness: verifies a lone label line inside a fence or in prose is no closing block attempt, so
+// a later non-closing message never replaces the completed report (issue #1989).
+test("hasClosingBlockAttempt is false for a lone label line outside a closing block", () => {
+  for (const prose of [
+    "The run printed:\n```\nChecks\n- a\n```",
+    "I read the labels:\n\nChecks\n\nThe gate is green.",
+    "The format lists:\n\nNotes\nDeferred\n\nThat is all.",
+  ]) {
+    expect(hasClosingBlockAttempt(prose), prose).toBe(false);
+  }
+});
+
+// Usefulness: verifies a shell pipeline stays part of a plain heading value, so an accept keeps its
+// Checks line (issue #1989).
+test("acceptanceFailure accepts a plain heading report with a pipeline Checks line", () => {
+  const response = [
+    "Conclusion",
+    "done",
+    "",
+    "Why",
+    "ok",
+    "",
+    "Blockers",
+    "none",
+    "",
+    "Checks",
+    "node scripts/check.mjs | Select-Object -First 5",
+    "",
+    "Verdict: accept",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    checks: "node scripts/check.mjs | Select-Object -First 5",
+  });
+  expect(acceptanceFailure(response)).toBeNull();
+});
+
+// Usefulness: verifies a table directly under a plain heading label keeps the block unparseable,
+// as origin/main rejects a table anywhere in the block (issue #1989).
+test("parseReportBlock keeps a table under a plain heading label unparseable", () => {
+  const underOptional = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Notes",
+    "| Check | Result |",
+    "| --- | --- |",
+    "| tests | pass |",
+  ].join("\n");
+  const underRequired = [
+    "Conclusion",
+    "done",
+    "| Check | Result |",
+    "| --- | --- |",
+    "",
+    "Why: ok",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(underOptional)).toBeNull();
+  expect(parseReportBlock(underRequired)).toBeNull();
+});
+
 // Usefulness: verifies every malformed parser fixture keeps its origin/main report, verdict, and
 // acceptance result, so bold handling changes no fail-closed shape (issue #1483).
 test("parseReportBlock keeps the origin/main result for every malformed fixture", () => {
@@ -2120,6 +2213,123 @@ test("parseReportBlock keeps a bold heading label inside a fenced code block as 
     notes: null,
     deferred: null,
   });
+});
+
+// Usefulness: verifies the exact issue #1989 shape parses, so no other test needs the full block.
+test("parseReportBlock reads the issue #1989 plain heading labels", () => {
+  const response = [
+    "Conclusion",
+    "The parser reads a lone label name as its report label.",
+    "The lines under it supply its value.",
+    "",
+    "Why",
+    "An OpenCode worker wrote each label as a plain word alone on its line.",
+    "",
+    "Blockers",
+    "none",
+    "",
+    "Checks",
+    "- pnpm exec vp test run tests/lib/report.test.mjs",
+    "- pnpm lint",
+    "",
+    "Notes",
+    "No non-blocking finding.",
+    "",
+    "Deferred",
+    "none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion:
+      "The parser reads a lone label name as its report label. The lines under it supply its value.",
+    why: "An OpenCode worker wrote each label as a plain word alone on its line.",
+    blockers: "none",
+    checks: "pnpm exec vp test run tests/lib/report.test.mjs; pnpm lint",
+    notes: "No non-blocking finding.",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #1989 shape parses with CRLF, a Windows case no other test covers.
+test("parseReportBlock reads the issue #1989 shape with CRLF line endings", () => {
+  const response = [
+    "Conclusion",
+    "The plain label form parses.",
+    "",
+    "Why",
+    "A Windows worker wrote CRLF lines.",
+    "",
+    "Blockers",
+    "none",
+  ].join("\r\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The plain label form parses.",
+    why: "A Windows worker wrote CRLF lines.",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a lone label name in prose outside the block supplies no value (issue #1989).
+test("parseReportBlock keeps a plain heading label name in prose outside the block as prose", () => {
+  const response = [
+    "The report format is:",
+    "",
+    "Notes",
+    "This paragraph is prose, not a label value.",
+    "",
+    "Conclusion",
+    "done",
+    "",
+    "Why",
+    "ok",
+    "",
+    "Blockers",
+    "none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    notes: null,
+  });
+});
+
+// Usefulness: verifies a lone label name with no Conclusion line supplies no block (issue #1989).
+test("parseReportBlock keeps a plain heading label name with no Conclusion line as prose", () => {
+  const response = "The format is:\n\nNotes\nNothing changed.";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
+// Usefulness: verifies a plain label name with trailing text stays prose (issue #1989).
+test("parseReportBlock keeps a plain heading label name with trailing text as prose", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\nNotes is a section."),
+  ).toMatchObject({ notes: null });
+  expect(parseReportBlock("Conclusion\ndone\nWhy: ok\nBlockers: none")).toMatchObject({
+    conclusion: "done",
+  });
+});
+
+// Usefulness: verifies a fenced lone label name stays text, a fence guard no other test covers.
+test("parseReportBlock keeps a plain heading label inside a fenced code block as text", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "```",
+    "Conclusion",
+    "Why",
+    "```",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ conclusion: "done", why: "ok" });
+});
+
+// Usefulness: verifies the plain heading form is no bold form, so a multi-part turn keeps it.
+test("parsesOnlyWithBoldLabels is false for a plain heading report", () => {
+  expect(parsesOnlyWithBoldLabels("Conclusion\ndone\nWhy\nok\nBlockers\nnone")).toBe(false);
 });
 
 // Usefulness: verifies the fail-closed helper is true only when the report needs bold labels. A
