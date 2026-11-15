@@ -233,7 +233,7 @@ export function createWaitPolling({
     await refreshPendingDecisions(reads);
   };
 
-  let nextPoll = clock.now() + pollIntervalMs;
+  let nextPoll = 0;
   let pollLogged = false;
 
   return {
@@ -244,6 +244,10 @@ export function createWaitPolling({
     refreshHeld,
     syncFromDisk,
     poll,
+    /** Starts the first poll interval at the current clock, after startup work. */
+    start: () => {
+      nextPoll = clock.now() + pollIntervalMs;
+    },
     /** Whether the batch has a wait to poll. */
     pollingNeeded: () =>
       waiting.size > 0 || pendingDecisions.size > 0 || (hasRecordedHeld() && remaining.size > 0),

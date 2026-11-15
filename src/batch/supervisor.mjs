@@ -1491,6 +1491,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (issue === null) return false;
     return slots.has(issue) || slots.size < prepared.loops;
   };
+  waits.start();
   for (;;) {
     while (!interrupted && !hard && pausedReason === null && canTake() && remaining.size > 0) {
       const issue = nextIssue();
