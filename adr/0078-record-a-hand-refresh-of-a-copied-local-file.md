@@ -2,9 +2,11 @@
 
 ## Status
 
-accepted
+partially-superseded
 
 Partially supersedes [ADR 0074: Report the side that changed in localFilesDiffer](0074-report-the-side-that-changed-in-local-files-differ.md). This ADR replaces decision 2's init-hash compare and decision 3's init-hash comparison with a stored hash that a recorded refresh updates. It also names `refresh-local` for decision 5's source action. Decisions 1 and 4, the rest of decision 3, and decision 5's action for `copy`, still hold.
+
+Partially superseded by [ADR 0148: Omit dead rules from the headless orchestrator prompt](0148-omit-dead-rules-from-the-headless-orchestrator-prompt.md). The replaced part is decision 5's headless-prompt statement: the headless prompt omits the `localFilesDiffer` rules, because a headless result cannot carry the field. Decision 5's interactive documentation statement and decisions 1 to 4 stay in force.
 
 ## Date
 
