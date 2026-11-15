@@ -2122,6 +2122,123 @@ test("parseReportBlock keeps a bold heading label inside a fenced code block as 
   });
 });
 
+// Usefulness: verifies the exact issue #1989 shape parses, so no other test needs the full block.
+test("parseReportBlock reads the issue #1989 plain heading labels", () => {
+  const response = [
+    "Conclusion",
+    "The parser reads a lone label name as its report label.",
+    "The lines under it supply its value.",
+    "",
+    "Why",
+    "An OpenCode worker wrote each label as a plain word alone on its line.",
+    "",
+    "Blockers",
+    "none",
+    "",
+    "Checks",
+    "- pnpm exec vp test run tests/lib/report.test.mjs",
+    "- pnpm lint",
+    "",
+    "Notes",
+    "No non-blocking finding.",
+    "",
+    "Deferred",
+    "none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion:
+      "The parser reads a lone label name as its report label. The lines under it supply its value.",
+    why: "An OpenCode worker wrote each label as a plain word alone on its line.",
+    blockers: "none",
+    checks: "pnpm exec vp test run tests/lib/report.test.mjs; pnpm lint",
+    notes: "No non-blocking finding.",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #1989 shape parses with CRLF, a Windows case no other test covers.
+test("parseReportBlock reads the issue #1989 shape with CRLF line endings", () => {
+  const response = [
+    "Conclusion",
+    "The plain label form parses.",
+    "",
+    "Why",
+    "A Windows worker wrote CRLF lines.",
+    "",
+    "Blockers",
+    "none",
+  ].join("\r\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "The plain label form parses.",
+    why: "A Windows worker wrote CRLF lines.",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a lone label name in prose outside the block supplies no value (issue #1989).
+test("parseReportBlock keeps a plain heading label name in prose outside the block as prose", () => {
+  const response = [
+    "The report format is:",
+    "",
+    "Notes",
+    "This paragraph is prose, not a label value.",
+    "",
+    "Conclusion",
+    "done",
+    "",
+    "Why",
+    "ok",
+    "",
+    "Blockers",
+    "none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    notes: null,
+  });
+});
+
+// Usefulness: verifies a lone label name with no Conclusion line supplies no block (issue #1989).
+test("parseReportBlock keeps a plain heading label name with no Conclusion line as prose", () => {
+  const response = "The format is:\n\nNotes\nNothing changed.";
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
+// Usefulness: verifies a plain label name with trailing text stays prose (issue #1989).
+test("parseReportBlock keeps a plain heading label name with trailing text as prose", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\nNotes is a section."),
+  ).toMatchObject({ notes: null });
+  expect(parseReportBlock("Conclusion\ndone\nWhy: ok\nBlockers: none")).toMatchObject({
+    conclusion: "done",
+  });
+});
+
+// Usefulness: verifies a fenced lone label name stays text, a fence guard no other test covers.
+test("parseReportBlock keeps a plain heading label inside a fenced code block as text", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "```",
+    "Conclusion",
+    "Why",
+    "```",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ conclusion: "done", why: "ok" });
+});
+
+// Usefulness: verifies the plain heading form is no bold form, so a multi-part turn keeps it.
+test("parsesOnlyWithBoldLabels is false for a plain heading report", () => {
+  expect(parsesOnlyWithBoldLabels("Conclusion\ndone\nWhy\nok\nBlockers\nnone")).toBe(false);
+});
+
 // Usefulness: verifies the fail-closed helper is true only when the report needs bold labels. A
 // plain report never fails closed for a multi-part turn (issue #1483).
 test("parsesOnlyWithBoldLabels is true only for a bold-only report", () => {

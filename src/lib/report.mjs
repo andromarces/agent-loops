@@ -2,6 +2,7 @@
 // from every child turn, plus the reviewer Verdict line. Both parse only the
 // final block. It starts at the last `Conclusion:` line, or at a lone required
 // label or `Verdict:` line directly above that line.
+// A column-0 line that holds only a report label name, or only `**Label**`, reads as that label.
 // Labels or verdicts in earlier prose therefore never produce a verdict.
 
 const REPORT_LABELS = [
@@ -35,6 +36,14 @@ const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 // whitespace. Only the six report labels gain this form.
 const BOLD_HEADING_LABEL = `\\*\\*(?:${LABEL_NAMES})\\*\\*\\s*$`;
 const BOLD_HEADING_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES})\\*\\*\\s*$`, "i");
+
+// A column-0 line that holds only a label name, for example `Conclusion`, with optional trailing
+// whitespace. Only the six report labels gain this form.
+const PLAIN_HEADING_LABEL_LINE = new RegExp(`^(${LABEL_NAMES})\\s*$`, "i");
+
+// The line that starts a plain heading block: a `Conclusion:` line, or a line that holds only
+// `Conclusion`.
+const CONCLUSION_START_LINE = /^Conclusion(?::|\s*$)/i;
 
 // A line that opens a known report label or a plain `Verdict` line at column 0, plain or bold.
 const KNOWN_LABEL_LINE = new RegExp(
@@ -78,9 +87,11 @@ function fencedLines(lines) {
 
 /**
  * Returns the lines of `text` with each column-0 bold report label normalized to its plain form.
- * The forms are `**Label:**` and a line that holds only `**Label**`.
- * A bold label inside a fenced code block stays text. With `boldLabels` false, the lines are
- * unchanged. The fenced flags come with the lines, so a caller never scans the fences twice.
+ * The forms are `**Label:**` and a line that holds only `**Label**`. A bold label inside a fenced
+ * code block stays text. With `boldLabels` false, the bold lines are unchanged. A column-0 line
+ * that holds only a report label name reads as that label from the last `Conclusion:` line or lone
+ * `Conclusion` line to the end, so an earlier lone label name stays prose. The fenced flags come
+ * with the lines, so a caller never scans the fences twice.
  * @param {string} text
  * @param {boolean} [boldLabels]
  * @returns {{ lines: string[], fenced: boolean[] }}
@@ -88,24 +99,85 @@ function fencedLines(lines) {
 function normalizedReportLines(text, boldLabels = true) {
   const lines = boldLabels ? text.split(/\r?\n/) : text.split("\n");
   const fenced = fencedLines(lines);
-  if (!boldLabels) {
-    return { lines, fenced };
+  const normalized = !boldLabels
+    ? lines
+    : lines.map((line, index) => {
+        const boldHeading = BOLD_HEADING_LABEL_LINE.test(line);
+        if (!BOLD_LABEL_LINE.test(line) && !boldHeading) {
+          return line;
+        }
+        if (!isKnownLabelLine(line, fenced[index])) {
+          return `x${line}`;
+        }
+        return boldHeading
+          ? line.replace(BOLD_HEADING_LABEL_LINE, "$1:")
+          : line.replace(BOLD_LABEL_LINE, "$1:$2");
+      });
+  const start = conclusionStart(normalized, fenced);
+  return { lines: plainHeadingLines(normalized, fenced, start), fenced };
+}
+
+/**
+ * The index of the last `Conclusion:` line or line that holds only `Conclusion`, outside a fence,
+ * or the line count when the response holds neither. The plain heading form reads from there, so a
+ * lone label name in earlier prose stays prose.
+ * @param {string[]} lines
+ * @param {boolean[]} fenced
+ * @returns {number}
+ */
+function conclusionStart(lines, fenced) {
+  let start = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    if (!fenced[i] && CONCLUSION_START_LINE.test(lines[i])) {
+      start = i;
+    }
   }
-  return {
-    lines: lines.map((line, index) => {
-      const boldHeading = BOLD_HEADING_LABEL_LINE.test(line);
-      if (!BOLD_LABEL_LINE.test(line) && !boldHeading) {
-        return line;
-      }
-      if (!isKnownLabelLine(line, fenced[index])) {
-        return `x${line}`;
-      }
-      return boldHeading
-        ? line.replace(BOLD_HEADING_LABEL_LINE, "$1:")
-        : line.replace(BOLD_LABEL_LINE, "$1:$2");
-    }),
-    fenced,
-  };
+  return start;
+}
+
+/**
+ * Returns the lines from `start` with each column-0 line that holds only a report label name read
+ * as that label, with the non-blank lines under it as its value, joined with a space (issue #1989).
+ * A line inside a fenced code block stays text. The value stops at a blank line, a list, or a label
+ * line in any form, so a lone label name with no line under it supplies no value. The line count is
+ * kept, so a caller that slices a prefix of the response still measures it.
+ * @param {string[]} lines
+ * @param {boolean[]} fenced
+ * @param {number} start
+ * @returns {string[]}
+ */
+function plainHeadingLines(lines, fenced, start) {
+  const out = lines.slice();
+  for (let i = start; i < out.length; i++) {
+    if (fenced[i] || !PLAIN_HEADING_LABEL_LINE.test(out[i])) {
+      continue;
+    }
+    let end = i + 1;
+    const value = [];
+    while (end < out.length && !fenced[end] && isHeadingValueLine(out[end])) {
+      value.push(out[end].trim());
+      out[end++] = "";
+    }
+    const label = out[i].replace(PLAIN_HEADING_LABEL_LINE, "$1:");
+    out[i] = value.length > 0 ? `${label} ${value.join(" ")}` : label;
+    i = end - 1;
+  }
+  return out;
+}
+
+/**
+ * True when the line under a plain heading label is part of its value: a non-blank line that is
+ * neither a list nor a label line in any form.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isHeadingValueLine(line) {
+  return (
+    line.trim() !== "" &&
+    !isListLine(line) &&
+    !PLAIN_HEADING_LABEL_LINE.test(line) &&
+    !readsAsLabelLine(line)
+  );
 }
 
 // A report label that indentation or markdown decoration hides from the strict
