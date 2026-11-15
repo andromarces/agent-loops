@@ -168,6 +168,7 @@ Andro Marces
 - [Issue #497: Probe secret-name casing of the redaction on Windows](https://github.com/andromarces/agent-loops/issues/497)
 - [Issue #601: Clarify the ADR 0017 child-env casing rule and probe the casing on POSIX](https://github.com/andromarces/agent-loops/issues/601)
 - [Issue #342: Document that a Codex reviewer on Windows cannot spawn the test runner](https://github.com/andromarces/agent-loops/issues/342)
+- [PR #429: Run an operator --test-cmd before each reviewer turn](https://github.com/andromarces/agent-loops/pull/429)
 - Implementation:
   - Source: `runTestCmd` and `redactAndClean` in `src/lib/test-cmd.mjs`
   - Source: `redactEnvSecrets` in `src/lib/redact.mjs`

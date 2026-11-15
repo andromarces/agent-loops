@@ -464,3 +464,71 @@ test("the ADR index holds no summary text", async () => {
   expect(rows.length).toBeGreaterThan(0);
   expect(rows.filter((line) => !INDEX_ROW.test(line))).toEqual([]);
 });
+
+/** Groups a Markdown file into its heading sections. */
+function sectionsOf(text) {
+  const sections = [];
+  let current = { heading: "", lines: [] };
+  for (const line of text.split("\n")) {
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      sections.push(current);
+      current = { heading: heading[1], lines: [] };
+    } else current.lines.push(line);
+  }
+  sections.push(current);
+  return sections;
+}
+
+/** Returns the ADR numbers that the supersede statements of `text` name as superseding this ADR. */
+function supersededByNumbers(text) {
+  const found = new Set();
+  for (const section of sectionsOf(text)) {
+    const isStatus = /^Status\b/i.test(section.heading);
+    const isSupersededBy = /^Superseded by\b/i.test(section.heading);
+    if (!isStatus && !isSupersededBy) continue;
+    if (isSupersededBy) {
+      for (const match of section.heading.matchAll(/(\d{4})-[^)]*\.md/g)) found.add(match[1]);
+    }
+    for (const block of section.lines.join("\n").split(/\n\s*\n/)) {
+      const flat = block.replace(/\s+/g, " ").trim();
+      for (const sentence of flat.split(/(?<=[.!?])\s+/)) {
+        for (const match of sentence.matchAll(
+          /\[[^\]]*\]\((\d{4})-[^)]*\.md\)[^.]{0,160}?supersedes this ADR/gi,
+        )) {
+          found.add(match[1]);
+        }
+        const phrase = sentence.match(/(?:partially )?superseded by|is replaced by/i);
+        if (!phrase) continue;
+        const after = sentence.slice(phrase.index + phrase[0].length);
+        for (const match of after.matchAll(/(\d{4})-[^)]*\.md/g)) found.add(match[1]);
+      }
+    }
+  }
+  return [...found].sort();
+}
+
+// Usefulness: requires each index row to list exactly the Superseded by links of its ADR file, so
+// the index cannot drift from the record it points at (issue #1939). No other test compares them.
+test("each ADR index row lists the Superseded by links of its ADR file", async () => {
+  const adrs = await readAdrs();
+  const readme = await readFile(join(adrDir, "README.md"), "utf8");
+  const rows = new Map();
+  for (const line of readme.split("\n")) {
+    const number = line.match(/^- (\d{4}) — /)?.[1];
+    if (!number) continue;
+    rows.set(
+      number,
+      [...line.matchAll(/\[ADR (\d{4})\]\(/g)].map((link) => link[1]),
+    );
+  }
+  const problems = [];
+  for (const adr of adrs) {
+    const expected = supersededByNumbers(adr.text);
+    const actual = [...(rows.get(adr.number) ?? [])].sort();
+    if (expected.join() !== actual.join()) {
+      problems.push(`ADR ${adr.number} row lists [${actual}] but its file lists [${expected}]`);
+    }
+  }
+  expect(problems).toEqual([]);
+});
