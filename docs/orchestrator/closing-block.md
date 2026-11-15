@@ -65,7 +65,7 @@ A report label of any shape inside a fenced code block stays text and supplies n
 
 A column-0 line that holds only `**Label**`, with no colon and no other text, is that label too. The lines under it supply its value as they do for the plain form.
 
-A column-0 line that holds only `Label`, with no colon and no other text, is that label too (issue #1989). The non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable and a list under the heading folds as it does under the plain form. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
+A column-0 line that holds only `Label`, with no colon and no other text, is that label too. The non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable and a list under the heading folds as it does under the plain form. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
 
 When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
 report label outside a fence becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
@@ -88,7 +88,7 @@ line sits in a fence has none.
 
 A report that parses only because bold labels were normalized fails closed into `raw` when its
 OpenCode response has more than one unidentified part. The report is null in that case. A
-single-part response, and every response with only plain labels, keeps its result.
+single-part response, and every response whose labels use only the `Label:` form or the lone `Label` form, keeps its result.
 
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
