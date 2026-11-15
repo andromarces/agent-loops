@@ -1,10 +1,12 @@
 import { defineConfig } from "vite-plus";
+import { ShardSequencer } from "./tests/shard-sequencer.mjs";
 
 export default defineConfig({
   test: {
     testTimeout: 15000,
     globalSetup: ["./tests/git-template-setup.mjs"],
     setupFiles: ["./tests/setup-tmpdir.mjs"],
+    sequence: { sequencer: ShardSequencer },
   },
   // Oxfmt and Oxlint defaults. The empty blocks keep both tools on this file.
   fmt: {},
