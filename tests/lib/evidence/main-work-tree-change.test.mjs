@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vite-plus/test";
 import { execa } from "execa";
 import { readMainWorkTree } from "../../../src/lib/evidence/main-work-tree-change.mjs";
 import { removePath } from "../../fs-helpers.mjs";
-import { createLinkedWorkTree } from "../../git-helpers.mjs";
+import { copyLinkedWorkTree, createLinkedWorkTree } from "../../git-helpers.mjs";
 
 // Arms one remote default ref move or one classification fault.
 const race = vi.hoisted(() => ({
@@ -65,8 +65,12 @@ vi.mock("../../../src/lib/git-read.mjs", async (importOriginal) => {
 });
 
 let tree;
-beforeEach(async () => {
-  tree = await createLinkedWorkTree({
+let template;
+
+// Process: the shared pair is seeded once, with real commits, and each case copies it. Only the
+// reads that follow a case's own change start `git`, because the change report must match Git.
+beforeAll(async () => {
+  template = await createLinkedWorkTree({
     seed: async (main) => {
       await writeFile(join(main, "init.txt"), "second\n");
       await execa("git", ["commit", "-am", "second"], { cwd: main });
@@ -86,6 +90,12 @@ beforeEach(async () => {
       );
     },
   });
+});
+afterAll(async () => {
+  if (template) await removePath(template.base);
+});
+beforeEach(async () => {
+  tree = await copyLinkedWorkTree(template);
 });
 afterEach(async () => {
   race.arm = false;

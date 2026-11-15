@@ -32,6 +32,8 @@ import { SUMMARY } from "./run-fixtures.mjs";
 // Headless behavior of `--test-cmd` (issue #420, ADR 0017). Most cases run a real
 // command through the platform shell inside a real Git work tree. A case that reads no Git
 // state uses a repository answered from memory.
+// Process: each case reads the exit code, output, or timeout of the command it starts, so the
+// command runs as a real child.
 
 const REVIEW = "Conclusion: ok.\nWhy: ok.\nBlockers: none.\nChecks: none\nVerdict: accept";
 const node = (body) => `node -e "${body}"`;

@@ -84,6 +84,22 @@ export async function createLinkedWorkTree({
   return { base, main, linked };
 }
 
+/**
+ * Copies the main and linked work tree pair that an earlier `createLinkedWorkTree` call built, and
+ * rewrites its two absolute path records, so the copy starts no `git` process. The copy holds the
+ * commits of the source at copy time; a change in the copy reaches neither the source nor another
+ * copy. A case that needs the same seeded repository as every other case copies one shared pair.
+ * Callers remove `base` with `removePath`.
+ */
+export async function copyLinkedWorkTree(source) {
+  const base = await mkdtemp(join(tmpdir(), "linked-test-"));
+  await cp(source.base, base, { recursive: true });
+  const main = join(base, "main");
+  const linked = join(base, "linked");
+  await relocateLinkedWorkTree(main, linked);
+  return { base, main, linked };
+}
+
 // A clean repo at `CLEAN_REPO_HEAD`, answered from memory for a test that routes
 // `execa` through a double. The real snapshot code still runs over these answers,
 // and only the `git` processes are gone. Each reply holds the bytes `git` prints,

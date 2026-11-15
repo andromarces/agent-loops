@@ -45,18 +45,18 @@ const SECRET = "REFRESH-CONTENT-MUST-NOT-APPEAR";
 const CONTENT = `KEY=${SECRET}\n`;
 
 // Real Git: the linked work tree and its ignored files exist only in a real repository.
-/** A linked work tree whose main checkout holds ignored files, then an initialized run. */
+/**
+ * A linked work tree whose main checkout holds ignored files, then an initialized run. The ignored
+ * files land after the copy, so the case uses the shared seeded pair and starts no `git worktree
+ * add`.
+ */
 async function linkedRun(files = { ".env": CONTENT }, ignore = [".env"]) {
   await setup();
-  const tree = await createLinkedWorkTree({
-    ignore,
-    seed: async (main) => {
-      for (const [rel, content] of Object.entries(files)) {
-        await mkdir(dirname(join(main, rel)), { recursive: true });
-        await writeFile(join(main, rel), content);
-      }
-    },
-  });
+  const tree = await createLinkedWorkTree({ ignore });
+  for (const [rel, content] of Object.entries(files)) {
+    await mkdir(dirname(join(tree.main, rel)), { recursive: true });
+    await writeFile(join(tree.main, rel), content);
+  }
   repos.push(tree.base);
   const init = await executeRoleCommand(
     withRepo(dispatchArgv(INIT_OVERRIDES), tree.linked),

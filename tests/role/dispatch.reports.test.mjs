@@ -15,12 +15,14 @@ import {
   readRepoState,
   recordingAdapter,
   REPORT,
+  repos,
+  setup,
   stdinPrompt,
   withRepo,
   WORKER_REPLY,
 } from "./helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
-import { roleReadsGit } from "../git-helpers.mjs";
+import { createLinkedWorkTree, roleReadsGit } from "../git-helpers.mjs";
 import { createBarrierTest } from "../barrier-helpers.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
@@ -166,83 +168,73 @@ test.each([
 // names beside workTree, and a turn that changes none carries no field" (issue #984). The
 // work tree snapshot alone shows clean: true for a hook or remote change made from a linked work tree.
 test("worker dispatch reports shared Git state changed outside the work tree", async () => {
-  const repo = await newRunRepo();
+  await setup();
+  const { base, linked } = await createLinkedWorkTree();
+  repos.push(base);
   gitDouble.answer = roleReadsGit({ lockfile: true, mainWorkTree: true });
-  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
-  const linked = join(parent, "linked");
-  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
-  try {
-    const sharedChangingWorker = recordingAdapter([
-      async (_state, _prompt, options) => {
-        await execa("git", ["remote", "add", "origin", "https://user:token-9@example.test/a.git"], {
-          cwd: options.cwd,
-        });
-        await execa("git", ["config", "core.hooksPath", "private-hooks"], { cwd: options.cwd });
-        return WORKER_REPLY;
-      },
-    ]);
-    const agents = { fake1: sharedChangingWorker, fake2: recordingAdapter([]) };
+  const sharedChangingWorker = recordingAdapter([
+    async (_state, _prompt, options) => {
+      await execa("git", ["remote", "add", "origin", "https://user:token-9@example.test/a.git"], {
+        cwd: options.cwd,
+      });
+      await execa("git", ["config", "core.hooksPath", "private-hooks"], { cwd: options.cwd });
+      return WORKER_REPLY;
+    },
+  ]);
+  const agents = { fake1: sharedChangingWorker, fake2: recordingAdapter([]) };
 
-    const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
-      agents,
-      stdin: stdinPrompt,
-    });
-    expect(changed.payload.workTree.clean).toBe(true);
-    expect(changed.payload.sharedGitChanged).toEqual(["core.hooksPath", "remote.origin"]);
-    expect(JSON.stringify(changed.payload)).not.toMatch(/token-9|private-hooks/);
-    expect((await readRepoState(linked)).lastResult.sharedGitChanged).toEqual([
-      "core.hooksPath",
-      "remote.origin",
-    ]);
+  const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(changed.payload.workTree.clean).toBe(true);
+  expect(changed.payload.sharedGitChanged).toEqual(["core.hooksPath", "remote.origin"]);
+  expect(JSON.stringify(changed.payload)).not.toMatch(/token-9|private-hooks/);
+  expect((await readRepoState(linked)).lastResult.sharedGitChanged).toEqual([
+    "core.hooksPath",
+    "remote.origin",
+  ]);
 
-    const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
-      agents,
-      stdin: stdinPrompt,
-    });
-    expect(unchanged.payload.workTree).toBeDefined();
-    expect(unchanged.payload).not.toHaveProperty("sharedGitChanged");
-  } finally {
-    await removePath(parent);
-  }
+  const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(unchanged.payload.workTree).toBeDefined();
+  expect(unchanged.payload).not.toHaveProperty("sharedGitChanged");
 });
 
 // Usefulness: verifies requirement "a worker turn that writes a tracked main work tree file reports
 // that path in the envelope" (issue #1448). A turn that leaves the main work tree unchanged carries
 // no field. The linked work tree stays clean, so no other envelope field shows the change.
 test("worker dispatch reports a main work tree change by path and omits the field otherwise", async () => {
-  const repo = await newRunRepo();
+  await setup();
+  const { base, main: repo, linked } = await createLinkedWorkTree();
+  repos.push(base);
   gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
-  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-main-"));
-  const linked = join(parent, "linked");
-  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
-  try {
-    const mainChangingWorker = recordingAdapter([
-      async () => {
-        await writeFile(join(repo, "init.txt"), "changed in the main work tree\n");
-        return WORKER_REPLY;
-      },
-      async () => WORKER_REPLY,
-    ]);
-    const agents = { fake1: mainChangingWorker, fake2: recordingAdapter([]) };
+  const mainChangingWorker = recordingAdapter([
+    async () => {
+      await writeFile(join(repo, "init.txt"), "changed in the main work tree\n");
+      return WORKER_REPLY;
+    },
+    async () => WORKER_REPLY,
+  ]);
+  const agents = { fake1: mainChangingWorker, fake2: recordingAdapter([]) };
 
-    const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
-      agents,
-      stdin: stdinPrompt,
-    });
-    expect(changed.payload.workTree.clean).toBe(true);
-    expect(changed.payload.mainWorkTreeChanged).toEqual(["init.txt"]);
-    expect(JSON.stringify(changed.payload)).not.toMatch(/changed in the main work tree/);
-    expect((await readRepoState(linked)).lastResult.mainWorkTreeChanged).toEqual(["init.txt"]);
+  const changed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(changed.payload.workTree.clean).toBe(true);
+  expect(changed.payload.mainWorkTreeChanged).toEqual(["init.txt"]);
+  expect(JSON.stringify(changed.payload)).not.toMatch(/changed in the main work tree/);
+  expect((await readRepoState(linked)).lastResult.mainWorkTreeChanged).toEqual(["init.txt"]);
 
-    const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
-      agents,
-      stdin: stdinPrompt,
-    });
-    expect(unchanged.payload.workTree).toBeDefined();
-    expect(unchanged.payload).not.toHaveProperty("mainWorkTreeChanged");
-  } finally {
-    await removePath(parent);
-  }
+  const unchanged = await executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(unchanged.payload.workTree).toBeDefined();
+  expect(unchanged.payload).not.toHaveProperty("mainWorkTreeChanged");
 });
 
 /**
@@ -263,60 +255,53 @@ async function writeUntilSeen(handle, path, content) {
 // envelope and its state record (issue #1556). The end-of-turn read cannot see the restored file,
 // so a lost watch leaves the edit with no trace.
 test("worker dispatch reports a main work tree change restored inside the turn", async () => {
-  const repo = await newRunRepo();
+  await setup();
+  const { base, main: repo, linked } = await createLinkedWorkTree();
+  repos.push(base);
   gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
-  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-in-turn-"));
-  const linked = join(parent, "linked");
-  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
-  try {
-    const original = await readFile(join(repo, "init.txt"));
-    let release;
-    const held = new Promise((resolve) => {
-      release = resolve;
-    });
-    let written = false;
-    let watchHandle;
-    const onMainWatch = (handle) => {
-      watchHandle = handle;
-    };
-    const worker = recordingAdapter([
-      async () => WORKER_REPLY,
-      async () => {
-        await writeUntilSeen(watchHandle, join(repo, "init.txt"), "changed inside the turn\n");
-        written = true;
-        await held;
-        await writeFile(join(repo, "init.txt"), original);
-        return WORKER_REPLY;
-      },
-    ]);
-    const agents = { fake1: worker, fake2: recordingAdapter([]) };
+  const original = await readFile(join(repo, "init.txt"));
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let written = false;
+  let watchHandle;
+  const onMainWatch = (handle) => {
+    watchHandle = handle;
+  };
+  const worker = recordingAdapter([
+    async () => WORKER_REPLY,
+    async () => {
+      await writeUntilSeen(watchHandle, join(repo, "init.txt"), "changed inside the turn\n");
+      written = true;
+      await held;
+      await writeFile(join(repo, "init.txt"), original);
+      return WORKER_REPLY;
+    },
+  ]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
 
-    await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
-      agents,
-      stdin: stdinPrompt,
-      onMainWatch,
-      mainWatchDeadlineMs: 60_000,
-    });
-    const run = executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
-      agents,
-      stdin: stdinPrompt,
-      onMainWatch,
-      mainWatchDeadlineMs: 60_000,
-    }).catch((error) => ({ error }));
-    await vi.waitFor(() => expect(written).toBe(true), { timeout: 5_000 });
-    await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
-    release();
-    const changed = await run;
-    expect(changed.error).toBeUndefined();
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), linked), {
+    agents,
+    stdin: stdinPrompt,
+    onMainWatch,
+    mainWatchDeadlineMs: 60_000,
+  });
+  const run = executeRoleCommand(withRepo(dispatchArgv([], "worker"), linked), {
+    agents,
+    stdin: stdinPrompt,
+    onMainWatch,
+    mainWatchDeadlineMs: 60_000,
+  }).catch((error) => ({ error }));
+  await vi.waitFor(() => expect(written).toBe(true), { timeout: 5_000 });
+  await vi.waitFor(() => expect(watchHandle.seenFileCount()).toBeGreaterThan(0));
+  release();
+  const changed = await run;
+  expect(changed.error).toBeUndefined();
 
-    expect(changed.payload.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
-    expect(changed.payload).not.toHaveProperty("mainWorkTreeChanged");
-    expect((await readRepoState(linked)).lastResult.mainWorkTreeChangedInTurn).toEqual([
-      "init.txt",
-    ]);
-  } finally {
-    await removePath(parent);
-  }
+  expect(changed.payload.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
+  expect(changed.payload).not.toHaveProperty("mainWorkTreeChanged");
+  expect((await readRepoState(linked)).lastResult.mainWorkTreeChangedInTurn).toEqual(["init.txt"]);
 });
 
 // Usefulness: verifies requirement "a changed key with userinfo reports no userinfo in the
@@ -479,18 +464,14 @@ test("a canceled worker dispatch still reports the lockfile it changed", async (
 });
 
 // Runs `body(linked, repo)` with a linked work tree of a fresh repository. The worker adapters of
-// the shared Git tests act on the linked work tree.
+// the shared Git tests act on the linked work tree. The pair is a copy of the seeded template, so
+// the case starts no `git worktree add`.
 async function withLinkedWorkTree(body) {
-  const repo = await newRunRepo();
+  await setup();
+  const { base, main: repo, linked } = await createLinkedWorkTree();
+  repos.push(base);
   gitDouble.answer = roleReadsGit({ lockfile: true, mainWorkTree: true });
-  const parent = await mkdtemp(join(tmpdir(), "role-dispatch-linked-"));
-  const linked = join(parent, "linked");
-  await execa("git", ["worktree", "add", "-b", "linked-branch", linked], { cwd: repo });
-  try {
-    await body(linked, repo);
-  } finally {
-    await removePath(parent);
-  }
+  await body(linked, repo);
 }
 
 // Usefulness: verifies requirement "a worker turn that fails after it changed shared Git state
