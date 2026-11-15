@@ -20,8 +20,9 @@ Supported agent CLIs: `claude`, `codex`, `agy` (alias: `antigravity`), `opencode
 
 - Node.js `^24.11.0 || >=26.0.0`
 - Git
-- GitHub CLI (`gh`), installed and authenticated. The PR gate, `--require-ci`, and every
-  `batch` command call it.
+- GitHub CLI (`gh`), installed and authenticated. The PR gate, `--require-ci`, and the
+  `batch` commands that read or write GitHub (`batch start`, `batch resume`,
+  `batch audit start`, `batch audit resume`, and `batch audit approve`) call it.
 - At least one agent CLI from the list above, installed and signed in
 
 ## Install
