@@ -27,7 +27,12 @@ import { gateFromTranscript } from "../src/lib/gate.mjs";
 import { runLoop } from "../src/runtime.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { cleanRepoGit, createCleanRepoDir, createTempRepo } from "./git-helpers.mjs";
+import {
+  cleanRepoGit,
+  createCleanRepoDir,
+  createTempRepo,
+  untrackedFilesGit,
+} from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
 import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./run-fixtures.mjs";
 
@@ -248,7 +253,7 @@ test.each([
 ])(
   "a %s turn that fails after the adapter succeeded clears the replacement mark",
   async (name, action) => {
-    const repo = await createTempRepo();
+    const repo = await createCleanRepoDir();
     // The turn reads `git` from memory (`cleanRepoGit`), so no snapshot process runs.
     gitDouble.answer = cleanRepoGit;
     try {
@@ -467,8 +472,10 @@ test("a continued --require-accept run needs a reviewer accept before finish", a
 // whose tree is unchanged (#393): the earlier reviewer accept still satisfies --require-accept,
 // so the finish needs no new reviewer turn. Distinct from the reset test above, which has no
 // earlier gate to restore.
+// The tree is unchanged, so `cleanRepoGit` answers every read and no `git` process runs.
 test("a continued --require-accept run restores the earlier accept on an unchanged tree", async () => {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   try {
     const events = [];
     const first = await runLoop({
@@ -508,12 +515,14 @@ test("a continued --require-accept run restores the earlier accept on an unchang
     expect(second.exitCode).toBe(0);
     expect(reviewer.recorded.length).toBe(0);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
 
 // Usefulness: verifies a changed tree keeps the reset (#393): the earlier accept describes a
 // state that no longer exists, so the finish is refused until a reviewer turn runs.
+// Real Git: only a real changed work tree can show that the earlier accept no longer applies.
 test("a continued --require-accept run resets the gate when the tree changed", async () => {
   const repo = await createTempRepo();
   try {
@@ -568,7 +577,8 @@ test("a continued --require-accept run resets the gate when the tree changed", a
 // the --require-ci gate reads `clean` for truthiness, so a string would pass a gate that needs a
 // clean reviewed tree. The reset makes the finish need a reviewer turn from this run.
 test("a continued run resets when the earlier gate record holds an invalid clean value", async () => {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
   try {
     const state = reviewedState(await snapshot(repo));
     const reviewer = scripted([REVIEW_ACCEPT]);
@@ -600,6 +610,7 @@ test("a continued run resets when the earlier gate record holds an invalid clean
     expect(result.exitCode).toBe(0);
     expect(reviewer.recorded.length).toBe(1);
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });
@@ -607,8 +618,10 @@ test("a continued run resets when the earlier gate record holds an invalid clean
 // Usefulness: verifies a restored gate takes `clean` from the current work tree, not from the
 // record (#393 review): a record that claims a clean review of a dirty tree must still fail the
 // --require-ci clean-tree check.
+// `untrackedFilesGit` reports the written file, so the dirty tree is real and no `git` process runs.
 test("a restored gate reads cleanliness from the current tree, not the record", async () => {
-  const repo = await createTempRepo();
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = untrackedFilesGit;
   try {
     await writeFile(join(repo, "dirty.txt"), "dirty\n");
     const state = reviewedState(await snapshot(repo));
@@ -640,6 +653,7 @@ test("a restored gate reads cleanliness from the current tree, not the record", 
     expect(result.exitCode).toBe(1);
     expect(result.reason).toContain("the reviewed work tree is not clean");
   } finally {
+    gitDouble.answer = null;
     await removePath(repo);
   }
 });

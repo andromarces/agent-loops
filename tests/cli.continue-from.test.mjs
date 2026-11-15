@@ -264,7 +264,9 @@ test(
 test(
   "--continue-from restores the recorded reviewer accept on an unchanged tree",
   async () => {
-    const repo = await createTempRepo();
+    // The tree is unchanged, so `cleanRepoGit` answers every read and no `git` process runs.
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     // Outside the work tree: a transcript inside it is an untracked file that changes the tree.
     const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
     const transcriptPath = join(transcriptDir, "run.json");
@@ -314,6 +316,7 @@ test(
     } finally {
       process.exitCode = origExitCode;
       logSpy.mockRestore();
+      gitDouble.answer = null;
       await removePath(repo);
       await removePath(transcriptDir);
     }

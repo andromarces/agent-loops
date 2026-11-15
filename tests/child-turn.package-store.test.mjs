@@ -2,6 +2,21 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`untrackedFilesGit`): the turn snapshots a directory that holds the
+// files the case writes, and no `git` process runs.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { runChild } from "../src/child-turn.mjs";
 import {
   changedInPackageStore,
@@ -12,7 +27,7 @@ import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { createCleanRepoDir, untrackedFilesGit } from "./git-helpers.mjs";
 
 // A turn reads the host's literal `/tmp` roots, whose churn these assertions do not cover (issue
 // #1713).
@@ -29,9 +44,11 @@ const record = async (text) => {
   await writeFile(modulesFile(), text);
 };
 const recordStore = (dir) => record(JSON.stringify({ storeDir: dir }, null, 2));
-// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
+// The directory holds the files the case writes, and `untrackedFilesGit` reports each top-level
+// file, so a mutation check still sees a leak and no `git` process runs.
 beforeEach(async () => {
-  repo = await createTempRepo();
+  repo = await createCleanRepoDir();
+  gitDouble.answer = untrackedFilesGit;
   store = await mkdtemp(join(tmpdir(), "package-store-"));
   for (const dir of ["links", "projects", "files"]) {
     await mkdir(join(store, "v11", dir), { recursive: true });
@@ -41,6 +58,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  gitDouble.answer = null;
   await removePath(repo);
   await removePath(store);
 });

@@ -1,19 +1,37 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory: the lockfile read hashes the root lockfile on disk and needs no
+// work tree snapshot, so no `git` process runs.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { runChild } from "../src/child-turn.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { cleanRepoGit, createCleanRepoDir } from "./git-helpers.mjs";
 
-// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
+// The directory is not a repository: `cleanRepoGit` answers the reads from memory, and the
+// lockfile compare hashes the file on disk, so no `git` process runs.
 let repo;
 beforeEach(async () => {
-  repo = await createTempRepo();
+  repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
 });
 afterEach(async () => {
+  gitDouble.answer = null;
   await removePath(repo);
 });
 
