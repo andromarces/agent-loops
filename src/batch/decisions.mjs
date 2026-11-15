@@ -2,6 +2,7 @@
 // to 4). A decision records the reason, the evidence, the options, and the recommendation. An
 // answer is an exclusive file bound to one decision, so two answers cannot both win. Every
 // malformed record fails closed.
+import { randomUUID } from "node:crypto";
 import { isJsonObject } from "../lib/json.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { logInfo, logWarn } from "../lib/log.mjs";
@@ -269,4 +270,205 @@ export async function answerDecision({ runsRoot, batchId, decisionId, option }) 
   }
   logInfo(`decision ${decisionId}: answered with ${option}`);
   return { ok: true, answer };
+}
+
+/** The comma-joined option keys of a decision, or of the default options when it is unreadable. */
+function optionKeysOf(decision) {
+  return (decision?.options ?? DECISION_OPTIONS).map((option) => option.key).join(", ");
+}
+
+const decisionOptions = (decision) => decision.options.map((option) => option.key);
+
+/**
+ * The owner-decision lifecycle of one batch: a stop creates or reuses the pending decision, and an
+ * answer applies to its loop. Every dependency is explicit, so the lifecycle holds no supervisor
+ * closure. `changeLoop` writes one loop checkpoint, `notify` sends one event, and `loopOf` reads the
+ * in-memory loop that `changeLoop` stored.
+ */
+export function createOwnerDecisions({
+  runsRoot,
+  batchId,
+  repoKey,
+  pending,
+  changeLoop,
+  notify,
+  loopOf,
+}) {
+  /**
+   * Moves one loop to `needs-owner` with its pending decision and releases its slot. A later stop
+   * with the same reason and attempt reuses an unanswered decision; an applied answer creates a new
+   * id. A malformed decision file keeps the loop pending with the refusal as its reason. Returns
+   * whether this call created the decision.
+   */
+  const markNeedsOwner = async (issue, reason, { evidence = null, extra = {} } = {}) => {
+    const current = await readLoop(runsRoot, batchId, issue);
+    const attempt = Number.isInteger(current?.attempts) ? current.attempts : 0;
+    let decisionId = null;
+    let created = false;
+    const options = optionsForReason(reason);
+    const recommended = recommendedOf(options);
+
+    if (typeof current?.decision === "string") {
+      const existing = await readDecision(runsRoot, batchId, current.decision);
+      if (
+        existing !== null &&
+        existing.ok &&
+        existing.decision.reason === reason &&
+        existing.decision.attempt === attempt
+      ) {
+        const answer = await readAnswer(
+          runsRoot,
+          batchId,
+          current.decision,
+          decisionOptions(existing.decision),
+          issue,
+        );
+        const applied = current.decisionAnswer != null;
+        if (answer === null || !applied) decisionId = current.decision;
+      }
+    }
+    if (decisionId === null) {
+      let idForState = newDecisionId(batchId, issue, attempt, reason);
+      const existingAtId = await readDecision(runsRoot, batchId, idForState);
+      if (existingAtId !== null && !existingAtId.ok) {
+        const refusal = `the decision file is unreadable: ${existingAtId.reason}`;
+        logWarn(`issue ${issue}: ${refusal}`);
+        await changeLoop(issue, {
+          status: "needs-owner",
+          reason: refusal,
+          skipReason: null,
+          decision: idForState,
+          ...extra,
+        });
+        pending.add(issue);
+        return false;
+      }
+      if (existingAtId !== null && existingAtId.ok) {
+        const sameState =
+          existingAtId.decision.reason === reason && existingAtId.decision.attempt === attempt;
+        const answer = await readAnswer(
+          runsRoot,
+          batchId,
+          idForState,
+          decisionOptions(existingAtId.decision),
+          issue,
+        );
+        if (sameState && answer === null) {
+          decisionId = idForState;
+        } else {
+          idForState = `${idForState}-${randomUUID().slice(0, 8)}`;
+        }
+      }
+      if (decisionId === null) {
+        const result = await createDecision({
+          runsRoot,
+          batchId,
+          id: idForState,
+          issue,
+          attempt,
+          reason,
+          evidence,
+          options,
+          recommended,
+        });
+        if (result.decision === null) {
+          const refusal = `the decision file is unreadable: ${result.error ?? idForState}`;
+          logWarn(`issue ${issue}: ${refusal}`);
+          await changeLoop(issue, {
+            status: "needs-owner",
+            reason: refusal,
+            skipReason: null,
+            decision: idForState,
+            ...extra,
+          });
+          pending.add(issue);
+          return false;
+        }
+        decisionId = result.decision.id;
+        created = result.created;
+      }
+    }
+    // A recorded live process keeps its pid and stamp, so a later resume re-checks it first.
+    await changeLoop(issue, {
+      status: "needs-owner",
+      reason,
+      skipReason: null,
+      decision: decisionId,
+      ...(created ? { decisionAnswer: null } : {}),
+      ...extra,
+    });
+    pending.add(issue);
+    if (created) {
+      logInfo(`issue ${issue}: decision ${decisionId} created (${reason})`);
+      const read = await readDecision(runsRoot, batchId, decisionId);
+      const decision = read?.ok ? read.decision : null;
+      await notify({
+        kind: "decision",
+        title: "Batch decision needed",
+        text: `Batch ${batchId} issue ${issue} needs a decision: ${reason}. Options: ${optionKeysOf(decision)}. Recommended: ${recommendedOf(decision?.options ?? options)}. Answer: agent-loop batch answer --batch ${batchId} --decision ${decisionId} --option <key>`,
+      });
+    }
+    return created;
+  };
+
+  /**
+   * Applies the recorded answer of one pending decision. `resume` queues the loop and `abandon` or
+   * `skip` ends it as terminal and releases its claim. A live loop, a missing or malformed record,
+   * and an unknown option leave the loop pending.
+   */
+  const applyDecisionAnswer = async (issue, current) => {
+    if (
+      current.pid != null &&
+      (await ownerAlive({ pid: current.pid, startTime: current.startTime }))
+    ) {
+      return { kind: "pending" };
+    }
+    if (typeof current.decision !== "string") {
+      await markNeedsOwner(issue, current.reason ?? "needs-owner", {
+        evidence: current.reason ?? null,
+        extra: { prUndeclared: current.prUndeclared ?? null },
+      });
+      return { kind: "pending" };
+    }
+    const decision = await readDecision(runsRoot, batchId, current.decision);
+    if (decision === null || !decision.ok) {
+      logWarn(`issue ${issue}: decision ${current.decision} is unreadable. The loop stays pending`);
+      return { kind: "malformed" };
+    }
+    const answer = await readAnswer(
+      runsRoot,
+      batchId,
+      current.decision,
+      decisionOptions(decision.decision),
+      current.issue,
+    );
+    if (answer !== null && !answer.ok) {
+      logWarn(`issue ${issue}: answer ${current.decision} is unreadable. The loop stays pending`);
+      return { kind: "malformed" };
+    }
+    if (answer === null) return { kind: "pending" };
+    const option = answer.answer.option;
+    if (option === "resume") {
+      await changeLoop(issue, {
+        status: "queued",
+        reason: null,
+        skipReason: null,
+        decisionAnswer: option,
+      });
+      return { kind: "resume", loop: loopOf(issue) };
+    }
+    if (option === "abandon" || option === "skip") {
+      const patch =
+        option === "abandon"
+          ? { status: "failed", reason: ABANDON_REASON, skipReason: null }
+          : { status: "skipped", skipReason: SKIP_REASON, reason: "the owner stopped the loop" };
+      await changeLoop(issue, { ...patch, decisionAnswer: option });
+      await releaseClaim(runsRoot, repoKey, issue, { batchId });
+      return { kind: "terminal" };
+    }
+    logWarn(`issue ${issue}: decision ${current.decision} names an unknown option`);
+    return { kind: "malformed" };
+  };
+
+  return { markNeedsOwner, applyDecisionAnswer };
 }

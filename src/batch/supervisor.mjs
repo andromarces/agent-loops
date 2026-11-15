@@ -1,7 +1,6 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per item, prints progress on stderr, and returns one summary for stdout.
 import { stat } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { canonicalPath } from "../lib/canonical-path.mjs";
@@ -18,17 +17,7 @@ import {
 import { logError, logInfo, logWarn } from "../lib/log.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
-import {
-  ABANDON_REASON,
-  DECISION_OPTIONS,
-  SKIP_REASON,
-  createDecision,
-  newDecisionId,
-  optionsForReason,
-  readAnswer,
-  readDecision,
-  recommendedOf,
-} from "./decisions.mjs";
+import { createOwnerDecisions, readAnswer, readDecision } from "./decisions.mjs";
 import {
   blockedNumbers,
   checkItemEligibility,
@@ -697,121 +686,15 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
 
   const verifyWorkTree = deps.verifyWorkTree ?? verifyRecordedWorkTree;
 
-  const optionKeysOf = (decision) =>
-    (decision?.options ?? DECISION_OPTIONS).map((option) => option.key).join(", ");
-
-  const decisionOptions = (decision) => decision.options.map((option) => option.key);
-
-  const markNeedsOwner = async (issue, reason, { evidence = null, extra = {} } = {}) => {
-    const current = await readLoop(runsRoot, id, issue);
-    const attempt = Number.isInteger(current?.attempts) ? current.attempts : 0;
-    let decisionId = null;
-    let created = false;
-    const options = optionsForReason(reason);
-    const recommended = recommendedOf(options);
-
-    if (typeof current?.decision === "string") {
-      const existing = await readDecision(runsRoot, id, current.decision);
-      if (
-        existing !== null &&
-        existing.ok &&
-        existing.decision.reason === reason &&
-        existing.decision.attempt === attempt
-      ) {
-        const answer = await readAnswer(
-          runsRoot,
-          id,
-          current.decision,
-          decisionOptions(existing.decision),
-          issue,
-        );
-        const applied = current.decisionAnswer != null;
-        if (answer === null || !applied) decisionId = current.decision;
-      }
-    }
-    if (decisionId === null) {
-      let idForState = newDecisionId(id, issue, attempt, reason);
-      const existingAtId = await readDecision(runsRoot, id, idForState);
-      if (existingAtId !== null && !existingAtId.ok) {
-        const refusal = `the decision file is unreadable: ${existingAtId.reason}`;
-        logWarn(`issue ${issue}: ${refusal}`);
-        await changeLoop(issue, {
-          status: "needs-owner",
-          reason: refusal,
-          skipReason: null,
-          decision: idForState,
-          ...extra,
-        });
-        pendingDecisions.add(issue);
-        return false;
-      }
-      if (existingAtId !== null && existingAtId.ok) {
-        const sameState =
-          existingAtId.decision.reason === reason && existingAtId.decision.attempt === attempt;
-        const answer = await readAnswer(
-          runsRoot,
-          id,
-          idForState,
-          decisionOptions(existingAtId.decision),
-          issue,
-        );
-        if (sameState && answer === null) {
-          decisionId = idForState;
-        } else {
-          idForState = `${idForState}-${randomUUID().slice(0, 8)}`;
-        }
-      }
-      if (decisionId === null) {
-        const result = await createDecision({
-          runsRoot,
-          batchId: id,
-          id: idForState,
-          issue,
-          attempt,
-          reason,
-          evidence,
-          options,
-          recommended,
-        });
-        if (result.decision === null) {
-          const refusal = `the decision file is unreadable: ${result.error ?? idForState}`;
-          logWarn(`issue ${issue}: ${refusal}`);
-          await changeLoop(issue, {
-            status: "needs-owner",
-            reason: refusal,
-            skipReason: null,
-            decision: idForState,
-            ...extra,
-          });
-          pendingDecisions.add(issue);
-          return false;
-        }
-        decisionId = result.decision.id;
-        created = result.created;
-      }
-    }
-    // A recorded live process keeps its pid and stamp, so a later resume re-checks it first.
-    await changeLoop(issue, {
-      status: "needs-owner",
-      reason,
-      skipReason: null,
-      decision: decisionId,
-      ...(created ? { decisionAnswer: null } : {}),
-      ...extra,
-    });
-    pendingDecisions.add(issue);
-    if (created) {
-      logInfo(`issue ${issue}: decision ${decisionId} created (${reason})`);
-      const read = await readDecision(runsRoot, id, decisionId);
-      const decision = read?.ok ? read.decision : null;
-      await sendNotification({
-        kind: "decision",
-        title: "Batch decision needed",
-        text: `Batch ${id} issue ${issue} needs a decision: ${reason}. Options: ${optionKeysOf(decision)}. Recommended: ${recommendedOf(decision?.options ?? options)}. Answer: agent-loop batch answer --batch ${id} --decision ${decisionId} --option <key>`,
-      });
-    }
-    return created;
-  };
+  const { markNeedsOwner, applyDecisionAnswer } = createOwnerDecisions({
+    runsRoot,
+    batchId: id,
+    repoKey: prepared.repoKey,
+    pending: pendingDecisions,
+    changeLoop,
+    notify: sendNotification,
+    loopOf: (issue) => loops.get(issue),
+  });
 
   const markPrHeadUnresolved = async (
     issue,
@@ -840,57 +723,6 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         report,
       },
     });
-  };
-
-  const applyDecisionAnswer = async (issue, current) => {
-    if (isLive(current) && (await ownerAlive({ pid: current.pid, startTime: current.startTime }))) {
-      return { kind: "pending" };
-    }
-    if (typeof current.decision !== "string") {
-      await markNeedsOwner(issue, current.reason ?? "needs-owner", {
-        evidence: current.reason ?? null,
-        extra: { prUndeclared: current.prUndeclared ?? null },
-      });
-      return { kind: "pending" };
-    }
-    const decision = await readDecision(runsRoot, id, current.decision);
-    if (decision === null || !decision.ok) {
-      logWarn(`issue ${issue}: decision ${current.decision} is unreadable. The loop stays pending`);
-      return { kind: "malformed" };
-    }
-    const answer = await readAnswer(
-      runsRoot,
-      id,
-      current.decision,
-      decisionOptions(decision.decision),
-      current.issue,
-    );
-    if (answer !== null && !answer.ok) {
-      logWarn(`issue ${issue}: answer ${current.decision} is unreadable. The loop stays pending`);
-      return { kind: "malformed" };
-    }
-    if (answer === null) return { kind: "pending" };
-    const option = answer.answer.option;
-    if (option === "resume") {
-      await changeLoop(issue, {
-        status: "queued",
-        reason: null,
-        skipReason: null,
-        decisionAnswer: option,
-      });
-      return { kind: "resume", loop: loops.get(issue) };
-    }
-    if (option === "abandon" || option === "skip") {
-      const patch =
-        option === "abandon"
-          ? { status: "failed", reason: ABANDON_REASON, skipReason: null }
-          : { status: "skipped", skipReason: SKIP_REASON, reason: "the owner stopped the loop" };
-      await changeLoop(issue, { ...patch, decisionAnswer: option });
-      await releaseClaim(runsRoot, prepared.repoKey, issue, { batchId: id });
-      return { kind: "terminal" };
-    }
-    logWarn(`issue ${issue}: decision ${current.decision} names an unknown option`);
-    return { kind: "malformed" };
   };
 
   // A skipped launch writes one checkpoint, releases the claim when asked, then reports one line.
