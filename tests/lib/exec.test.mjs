@@ -69,35 +69,32 @@ test("exec merges env into the inherited child environment", async () => {
 });
 
 // Usefulness: verifies only a worker or reviewer spawn carries the run marker, so a headless orchestrator process, whose descendants include a nested parent, never holds it (issue #392).
-// Process: the marker is asserted from inside the real child, across four roles.
+// Options: `execOptionsFor` captures the child environment in process, so no child starts.
 test("exec marks a worker or reviewer spawn and leaves every other spawn unmarked", async () => {
   vi.stubEnv(SPAWNED_RUN_ENV, "");
-  const script = `console.log(process.env.${SPAWNED_RUN_ENV} || "none")`;
-  const spawn = async (options) =>
-    (await exec(process.execPath, ["-e", script], options)).stdout.trim();
-  const worker = await spawn({ role: "worker", cwd: tmpdir() });
+  const marker = async (options) => {
+    const { env } = await execOptionsFor(options);
+    return env[SPAWNED_RUN_ENV] || "none";
+  };
+  const worker = await marker({ role: "worker", cwd: tmpdir() });
   expect(worker).not.toBe("none");
-  expect(await spawn({ role: "reviewer", cwd: tmpdir() })).toBe(worker);
-  expect(await spawn({ role: "orchestrator", cwd: tmpdir() })).toBe("none");
-  expect(await spawn({ cwd: tmpdir() })).toBe("none");
+  expect(await marker({ role: "reviewer", cwd: tmpdir() })).toBe(worker);
+  expect(await marker({ role: "orchestrator", cwd: tmpdir() })).toBe("none");
+  expect(await marker({ cwd: tmpdir() })).toBe("none");
 });
 
 // Usefulness: verifies non-zero exit code throws ExecError with fields.
-// Process: the exit code and stderr come from a real child.
+// Process: the exit code and stderr come from one real child.
 test("exec throws ExecError on failure", async () => {
-  await expect(
-    exec(process.execPath, ["-e", 'console.error("err_msg"); process.exit(42);']),
-  ).rejects.toThrow(ExecError);
-
-  try {
-    await exec(process.execPath, ["-e", 'console.error("err_msg"); process.exit(42);']);
-  } catch (err) {
-    expect(err).toBeInstanceOf(ExecError);
-    expect(err.exitCode).toBe(42);
-    expect(err.stderr.trim()).toBe("err_msg");
-    expect(err.timedOut).toBe(false);
-    expect(err.isCanceled).toBe(false);
-  }
+  const error = await exec(process.execPath, [
+    "-e",
+    'console.error("err_msg"); process.exit(42);',
+  ]).catch((caught) => caught);
+  expect(error).toBeInstanceOf(ExecError);
+  expect(error.exitCode).toBe(42);
+  expect(error.stderr.trim()).toBe("err_msg");
+  expect(error.timedOut).toBe(false);
+  expect(error.isCanceled).toBe(false);
 });
 
 // Usefulness: verifies timeout aborts, sets timedOut, and names the cause not an exit code (#20).
