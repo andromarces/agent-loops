@@ -663,6 +663,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   const planTree = deps.planPrWorkTree ?? planPrWorkTree;
   const reconcile = deps.reconcileLoop ?? reconcileLoop;
   const cleanupWorkTree = deps.cleanupLoop ?? cleanupLoop;
+  const probeStartTime = deps.processStartTime ?? processStartTime;
   const verifyRecordedWorkTree = async (loop) => {
     const workTree = loop.workTree;
     if (!workTree?.path) return "the recorded work tree is missing";
@@ -1576,7 +1577,6 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     if (isLive(loop)) {
       // A recorded live PID is never restarted. Without a readable identity the loop needs its
       // owner instead of waiting forever (adr/0106-foreground-batch-scheduling.md decision 10).
-      const probeStartTime = deps.processStartTime ?? processStartTime;
       const current = await probeStartTime(loop.pid);
       if (pidAlive(loop.pid) && (loop.startTime == null || current === null)) {
         // Keep the recorded PID and stamp: a later resume must re-check it before any launch.
@@ -1776,7 +1776,10 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   for (const issue of manifest.issues) {
     const loop = loops.get(issue);
     if (loop !== null && isLive(loop)) {
-      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime })) slots.add(issue);
+      // A fresh cache reads through the injectable probe once, so the check is as fresh as a
+      // plain read and the probe covers every recorded-owner read on resume.
+      const cache = startTimeCache({ probe: probeStartTime });
+      if (await ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache)) slots.add(issue);
     }
   }
   await refreshPendingDecisions();

@@ -7,7 +7,7 @@ import { answerDecision, readDecision } from "../../src/batch/decisions.mjs";
 import { batchPaths, readLoop, updateLoop } from "../../src/batch/store.mjs";
 import { runBatch } from "../../src/batch/supervisor.mjs";
 import { endSubprocessTree } from "../../src/lib/exec-tree.mjs";
-import { pidAlive, processStartTime } from "../../src/lib/process-identity.mjs";
+import { pidAlive } from "../../src/lib/process-identity.mjs";
 import { tryStateLock } from "../../src/lib/state-lock.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { pollUntil } from "../wait-helpers.mjs";
@@ -573,16 +573,24 @@ test("a live recorded process with no start stamp is not restarted", async () =>
 });
 
 // Usefulness: acceptance (#1935) — a recovery wait over a live owner probes the start time once
-// per cache age window, and a dead pid still ends the wait on the next poll. Not redundant: no
-// other test observes the probe count of the recovery wait.
-test("a recovery wait probes a live owner's start time once per cache age window", async () => {
+// per cache age window, and an owner that reports dead ends the wait and lets recovery resume.
+// Not redundant: no other test observes the probe count of the recovery wait.
+test("a recovery wait probes a live owner once per cache age window and resumes after it dies", async () => {
   const repo = await batchRepo();
   const prepared = await preparedFor(repo, [1]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
+  const stamp = "darwin-lstart:1000";
+  const holder = { pid: 2_147_400_000, alive: true };
+  // The test names a holder pid that is no real process, so the liveness probe answers for that
+  // pid here and every other pid keeps the real check.
+  const realKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    if (pid !== holder.pid) return realKill(pid, signal);
+    if (holder.alive) return true;
+    throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+  });
   const child = childDouble({ hold: true });
   const controller = new AbortController();
-  const live = execa(process.execPath, ["-e", "setTimeout(() => {}, 30000)"]);
-  live.catch(() => {});
   try {
     const run = runBatch({
       prepared,
@@ -599,41 +607,40 @@ test("a recovery wait probes a live owner's start time once per cache age window
     await waitForLaunch(child);
     controller.abort();
     await run;
-    const startTime = await processStartTime(live.pid);
-    expect(startTime).not.toBeNull();
     await updateLoop(runsRoot, prepared.id, 1, (loop) => ({
       ...loop,
       status: "running",
-      pid: live.pid,
-      startTime,
+      pid: holder.pid,
+      startTime: stamp,
     }));
-    const probe = vi.fn(processStartTime);
-    const resumeChild = childDouble({ hold: true });
-    const resumeController = new AbortController();
+    const probe = vi.fn(async () => stamp);
+    const resumeChild = childDouble();
     const resumed = runBatch({
       prepared: { ...prepared, resume: true },
       runsRoot,
       gh: fakeGh(),
       deps: {
+        ...fakeGitDeps,
         notifier: noNotify,
         spawn: resumeChild.spawn,
         installSignal: false,
-        signal: resumeController.signal,
         processStartTime: probe,
       },
     });
+    // The startup slot check, the fresh recovery check, and the first wait poll each probe once.
+    // Further polls inside the cache age window must not.
     await pollUntil(() => (probe.mock.calls.length >= 2 ? true : undefined), 10_000);
-    // Two more recovery polls run inside the cache age window and must not probe again.
     await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(probe).toHaveBeenCalledTimes(2);
-    expect(probe.mock.calls.every(([pid]) => pid === live.pid)).toBe(true);
-    live.kill("SIGKILL");
-    resumeController.abort();
-    await resumed;
-    expect(resumeChild.calls).toHaveLength(0);
-    expect(probe).toHaveBeenCalledTimes(2);
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(probe.mock.calls.every(([pid]) => pid === holder.pid)).toBe(true);
+    holder.alive = false;
+    const launch = await waitForLaunch(resumeChild);
+    expect(launch.args).toContain("--continue-from");
+    expect(probe).toHaveBeenCalledTimes(3);
+    const result = await resumed;
+    expect(result.summary.loops[0].status).toBe("succeeded");
   } finally {
-    live.kill("SIGKILL");
+    kill.mockRestore();
     await cleanupRepo(repo);
   }
 });
