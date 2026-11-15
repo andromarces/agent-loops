@@ -549,6 +549,10 @@ test("a free-text task survives interrupt and resume with the same identity", as
   const prepared = preparedWith(items);
   const first = childDouble({ hold: true });
   const controller = new AbortController();
+  let markLaunched;
+  const launched = new Promise((resolve) => {
+    markLaunched = resolve;
+  });
   try {
     const start = runBatch({
       prepared,
@@ -557,12 +561,18 @@ test("a free-text task survives interrupt and resume with the same identity", as
       deps: {
         ...workTreeDeps,
         notifier: noNotify,
-        spawn: first.spawn,
+        // The launch signal follows the recorded spawn and transcript write, so a slow launch
+        // cannot leave the loop queued at the abort.
+        spawn: async (options) => {
+          const child = await first.spawn(options);
+          markLaunched();
+          return child;
+        },
         installSignal: false,
         signal: controller.signal,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await launched;
     controller.abort();
     const started = await start;
     expect(started.summary.loops[0].status).toBe("interrupted");
