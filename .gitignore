@@ -7,7 +7,16 @@
 .agents/
 .codegraph/
 .mcp.json
+.vscode/
+.github/copilot-instructions.md
+opencode.json
 opencode.jsonc
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Local notes
+docs/BACKLOG.md
 
 # Local environment and secrets
 .env
