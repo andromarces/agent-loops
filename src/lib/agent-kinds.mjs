@@ -8,7 +8,7 @@
 //   CLI is treated like a sandboxed one, because a wait it cannot perform costs a run.
 // - `waitsForChecks`: the CLI can also run `role wait-checks`. A `copilot` turn refuses that
 //   command with `Permission denied because no interactive user response was available` while
-//   `gh pr checks` runs (#432 probe, #495), so a `copilot` orchestrator cannot wait.
+//   `gh pr checks` runs, so a `copilot` orchestrator cannot wait.
 const AGENT_KINDS = {
   claude: { reportsResolvedModel: true, networkedReadOnly: true, waitsForChecks: true },
   codex: { reportsResolvedModel: false, networkedReadOnly: false, waitsForChecks: false },

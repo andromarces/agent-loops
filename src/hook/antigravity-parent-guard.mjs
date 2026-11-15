@@ -1,4 +1,4 @@
-// Antigravity CLI PreToolUse hook for the parent-edit guard (#88). Antigravity
+// Antigravity CLI PreToolUse hook for the parent-edit guard. Antigravity
 // names the session `conversationId` and the tool `toolCall.name`. It blocks a
 // tool call when a hook prints `{}`, prints an empty decision, or exits
 // non-zero, so every allow path here prints nothing and exits 0: the normal

@@ -101,7 +101,7 @@ function withOpenRun(args, requireOptions, fn, allowed = [], parentOperation = n
       throw new RoleError(`Run is already ${state.lifecycle}.`);
     }
     // A later call on an interrupted run re-checks the turn directory. The call that marked it
-    // interrupted kept that directory while a process of the dead child group ran (issue #1329).
+    // interrupted kept that directory while a process of the dead child group ran.
     if (state.lifecycle === "interrupted") {
       await recheckKeptTurnTmpdir(state.lastDispatch?.turnTmpdir);
     }
@@ -131,7 +131,7 @@ async function abort(args) {
     async (state, paths) => {
       // A dispatch process that died mid-turn left its charged turn unrecorded and its turn
       // directory with no owner. The lock acquisition proved the owner is dead, so do the recovery
-      // steps of the interrupted transition before the run ends (issue #1591).
+      // steps of the interrupted transition before the run ends.
       if (state.lifecycle === "dispatched") await recordUncertainTurn(state);
       state.lifecycle = "aborted";
       state.reason = args.reason;
@@ -147,7 +147,7 @@ async function abort(args) {
 /**
  * `extend`: raises `maxSteps` of a non-terminal run in place. The stored role
  * session ids and first-turn tracking keep working, where a new run starts
- * every role on a new session (#361). The new value must exceed both `stepsUsed`
+ * every role on a new session. The new value must exceed both `stepsUsed`
  * and the current `maxSteps`; `--max-steps` already passed the init range check
  * at parse time. The change is appended to `budgetChanges` with the steps used at
  * that point, so the history shows where the budget moved (ADR 0014). The
@@ -205,7 +205,7 @@ async function extend(args) {
  * whose worker opens the pull request. The change is one way, unset to a number: a run that
  * already holds a PR refuses it, so the declared PR cannot move. After it the run behaves as
  * one that passed `--pr` at init. A reviewer turn supplies the required-check status, and a finish
- * must end through `--require-ci <pr>` (#916). `review-only` refuses it, as it refuses `--pr`.
+ * must end through `--require-ci <pr>`. `review-only` refuses it, as it refuses `--pr`.
  */
 async function declarePr(args, { gh, signal } = {}) {
   rejectMisplacedFlags(args, "declare-pr");
@@ -307,7 +307,7 @@ async function refreshLocal(args, { signal } = {}) {
 /**
  * `set-model`: replaces the model of one role that has completed no turn.
  * A model that the CLI refused on the first turn of that role is repaired on the same run.
- * `abort` and a new run start every role on a new session (#1254). The role is the one whose
+ * `abort` and a new run start every role on a new session. The role is the one whose
  * `--<role>-model` flag the call carries, and exactly one is required. Only an `active` run takes
  * it: a `dispatched` or `interrupted` run can still have a child on the old model. A role with an
  * `ok` turn is refused, because its conversation already ran on the old model.
@@ -408,10 +408,10 @@ function requireStoredParentSession(args, state) {
  * `wait-checks`: polls the required checks of `--pr`, or every check of its head with `--all`.
  * It stops when none is pending, a conflict is read, or the bound elapses, then prints the states.
  * `--expect <name>` (repeatable, with `--all`) waits until each named check has a run on the head,
- * so a late check is not missed (#978).
- * `--head <sha>` waits until the PR head is that commit, and the result names that commit in `head` (#961).
+ * so a late check is not missed.
+ * `--head <sha>` waits until the PR head is that commit, and the result names that commit in `head`.
  * It reads status only, so it touches no run state and needs no init, and it applies the same `--cwd` rule as `dispatch`.
- * The bound starts at command entry, defaults to 300 seconds, and refuses `--timeout 0` (#329).
+ * The bound starts at command entry, defaults to 300 seconds, and refuses `--timeout 0`.
  */
 async function waitChecksOperation(
   args,
@@ -425,7 +425,7 @@ async function waitChecksOperation(
     // `assertWorkTree` is the real `assertGitWorkTree` unless a caller injects it.
     // A test can spend clock time on validation and check that the time comes out of the bound.
     assertWorkTree = assertGitWorkTree,
-    // Injectable so a test can use a short ceiling; production keeps the wait default (issue #1465).
+    // Injectable so a test can use a short ceiling; production keeps the wait default.
     childExitCeilingMs,
   } = {},
 ) {
@@ -438,7 +438,7 @@ async function waitChecksOperation(
     throw new RoleError("wait-checks refuses --timeout 0: the wait must stay bounded.");
   }
   // Taken at command entry, so no step of the command pushes it past the stated bound.
-  // Work-tree validation, every read, and the pauses between reads all come out of it (#329).
+  // Work-tree validation, every read, and the pauses between reads all come out of it.
   // Validation and every read share the bound, and the read runs in the `--cwd` work tree.
   const deadline = now() + (args.timeout ?? DEFAULT_WAIT_SECONDS) * 1000;
   const remaining = deadline - now();

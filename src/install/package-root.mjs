@@ -1,5 +1,5 @@
 // Detects an ephemeral package root (npx, pnpm dlx, yarn dlx, bunx) that installed files must
-// not name (#205, #207). The pnpm stable root lives in `stable-root.mjs`.
+// not name. The pnpm stable root lives in `stable-root.mjs`.
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
@@ -12,17 +12,12 @@ import { INHERITED_TMPDIR_ENV, readInheritedTmpdirs } from "../lib/inherited-tmp
 // ends. `<tmp>` is the system temporary directory, not a runner cache. The
 // runner or the OS can delete each directory at any time. A global install, a
 // project `node_modules`, and a linked clone all keep a stable package root.
-// Observed on macOS with bun 1.2.20 and yarn 4.9.2, and on Windows 11 with bun
-// 1.3.8 (#207). On Windows 11 with yarn 4.9.2, only `%TEMP%\xfs-<hex>\dlx-<pid>`
-// was observed, not the `<package>.zip\node_modules\<package>` suffix. On macOS,
-// yarn 1.22.22 has no `dlx` command, and its `create` command installed a probe
-// package under `<home>/.config/yarn/global`, a stable root.
-// Not verified: Linux (#707), and a `%TEMP%` that is a junction (#709). The match compares
-// canonical paths, so a link, a `..` segment, or on Windows an 8.3 short segment in the
-// package root or a temporary root does not change the result (#962, #1068).
+// The match compares canonical paths, so a link, a `..` segment, or on Windows
+// an 8.3 short segment in the package root or a temporary root does not change
+// the result.
 // known-limit: a UNC spelling of a local drive, such as \\127.0.0.1\C$\..., stays distinct
 // from C:\... because no realpath maps an administrative share to its drive. Such a package
-// root is rare. Add a share-to-drive mapping if one is ever observed (#1068).
+// root is rare. Add a share-to-drive mapping if one is ever observed.
 const EPHEMERAL_CACHE_DIRS = new Set(["_npx", "dlx"]);
 const BUNX_TEMP_DIR = /^bunx-\d+-[^@]+@[^@]+$/;
 const BUNX_SCOPE_TEMP_DIR = /^bunx-\d+-@[^@]+$/;
@@ -45,7 +40,7 @@ function rootAndSegments(path, pathApi) {
 }
 
 // The path module and the realpath of a platform. On Windows the native realpath expands an 8.3
-// short segment, which the JS realpath keeps (#1068).
+// short segment, which the JS realpath keeps.
 const platformApi = (platform) =>
   platform === "win32"
     ? { path: win32, realpath: realpathSync.native }
@@ -71,7 +66,7 @@ function failAt(failures, folder) {
 /**
  * The canonical spelling of `path`: the realpath of its deepest existing ancestor joined to the
  * rest, normalized, so a link such as macOS `/var` resolves to `/private/var` and a `..`
- * segment is resolved even when the path does not exist (#962). A path for another platform
+ * segment is resolved even when the path does not exist. A path for another platform
  * is only normalized. Returns `null` when a realpath fails for a reason other than a missing
  * path, such as EACCES or ELOOP, so the caller can fail closed.
  */
@@ -97,7 +92,7 @@ const SHORT_NAME_SHAPE = /^[^.\s]{1,8}(\.[^.\s]{1,3})?$/;
 
 /**
  * `path` with each segment replaced by its long name, without resolving a link, so a junction
- * keeps its own spelling (#1068). Every segment is either positively resolved or the whole
+ * keeps its own spelling. Every segment is either positively resolved or the whole
  * expansion returns `null` so the caller fails closed. Positively resolved is a name that the
  * parent listing holds, or the listing entry with the same file id, so a hand-set alias with no
  * `~<digit>` resolves too. A failed stat, listing, or sibling stat, and a listing with no matching
@@ -163,9 +158,9 @@ function isDanglingLink(path) {
 /**
  * `path` with a leading part resolved through links: for each proper ancestor, the realpath of
  * that ancestor joined to the rest, so a link spelling of a parent folder, such as a junction to
- * a temporary root, meets the root's own spelling while a link below it keeps its own name
- * (#1068). A missing ancestor is skipped, except a link whose target is gone, since that link may
- * have named a temporary root (#1074). Returns `null` when a realpath fails for another reason,
+ * a temporary root, meets the root's own spelling while a link below it keeps its own name.
+ * A missing ancestor is skipped, except a link whose target is gone, since that link may
+ * have named a temporary root. Returns `null` when a realpath fails for another reason,
  * so the caller can fail closed.
  */
 function resolvedParentSpellings(path, platform, failures) {
@@ -216,7 +211,7 @@ function spellings(path, platform, failures, related = () => false) {
 /**
  * The temporary roots: yarn dlx uses `os.tmpdir()`, bunx also uses `/tmp`. A Codex turn replaces
  * `os.tmpdir()` with a private directory, so the temporary directories that the turn inherited
- * count too (issue #955).
+ * count too.
  */
 function temporaryRoots() {
   const { valid, paths } = readInheritedTmpdirs();
@@ -244,9 +239,9 @@ function presentPrefixes(packageRoot, platform) {
 }
 
 /**
- * True when the package root sits in an npx or pnpm dlx cache (#205): the cache
+ * True when the package root sits in an npx or pnpm dlx cache: the cache
  * directory, a hash directory, then `node_modules`. On Windows the match folds
- * case, because an existing `_NPX` or `DLX` directory keeps its spelling (#625).
+ * case, because an existing `_NPX` or `DLX` directory keeps its spelling.
  */
 function isCacheRoot(packageRoot, platform) {
   const segments = splitPath(platform === "win32" ? packageRoot.toLowerCase() : packageRoot);
@@ -263,7 +258,7 @@ function isCacheRoot(packageRoot, platform) {
  * temporary root. The layout is `bunx-<uid>-<name>@<version>` (or
  * `bunx-<uid>-@<scope>` then `<name>@<version>`) then `node_modules`, or
  * `xfs-<hex>` then `dlx-<pid>` with `node_modules` below. The same layout under a
- * stable parent does not match (#207).
+ * stable parent does not match.
  */
 function isTempRunnerRoot(packageRoot, platform, tempRoots) {
   const fold = platform === "win32" ? (text) => text.toLowerCase() : (text) => text;
@@ -314,22 +309,17 @@ const EPHEMERAL = { kind: "ephemeral" };
 /**
  * `{ kind: "unreadable", folder }` when a check fails closed on a folder it cannot read, `EPHEMERAL`
  * for any other refusal, else `null`. `folder` is the first folder that a check cannot read.
- * Access failure and cost were verified on Windows 11 on 2026-10-25 (#709).
  */
 function packageRootRefusal(packageRoot, platform, tempRoots) {
   const failures = { unreadable: null };
   if (tempRoots.invalid === true) return EPHEMERAL;
   // `isEphemeralPackageRoot` also looks at each prefix of the package root once, before the first
-  // canonicalization. It refuses when a prefix that this look saw is missing at the second check
-  // (#1077). Tests cover a link spelling of a bunx and a yarn dlx layout that is renamed as the
-  // first canonicalization starts.
+  // canonicalization. It refuses when a prefix that this look saw is missing at the second check.
   const seen = presentPrefixes(packageRoot, platform);
   // `isEphemeralPackageRoot` takes the canonical path of the package root first, before it reads the
   // temporary roots. It accepts the path only when that canonical path is among the spellings of the
   // first check. A second check must give the same spellings. A rename or delete that lands after
-  // that first canonicalization has read the affected segment refuses the install (#1074). Tests
-  // cover a link to a layout directory that vanishes while the first check runs. They cover a link
-  // spelling of a temporary root that is renamed while the temporary roots are read.
+  // that first canonicalization has read the affected segment refuses the install.
   const initial = canonicalPath(packageRoot, platform, failures);
   // A path that cannot be resolved is a runner cache only when a spelling of it shows the layout,
   // under a temporary root as given or as its realpath resolves it.
@@ -383,8 +373,7 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
   if (matches(packageSpellings)) return EPHEMERAL;
   // The path is accepted only when a second check sees the same spellings, and when the canonical
   // path taken before the temporary roots were read is among them, so a path that changes while
-  // the check runs is refused (#1074). So is a prefix that the first look saw and that is gone now
-  // (#1077).
+  // the check runs is refused. So is a prefix that the first look saw and that is gone now.
   const again = spellings(packageRoot, platform, failures, related);
   if (seen.some((prefix) => !existsSync(prefix))) return EPHEMERAL;
   if (initial === null || again === null) return unresolved();
@@ -393,7 +382,7 @@ function packageRootRefusal(packageRoot, platform, tempRoots) {
     again.length !== packageSpellings.length ||
     again.some((spelling, i) => spelling !== packageSpellings[i]);
   // known-limit: a change that lands before that first look reads the affected segment, or while it
-  // reads it, is accepted (#1074, #1077). The process then never sees the segment present, so a
+  // reads it, is accepted. The process then never sees the segment present, so a
   // vanished link spelling of a temporary root looks the same as a missing stable path. The
   // missing-segment rule above keeps that path accepted on purpose. No check inside one process can
   // tell the two apart without refusing every missing stable path and missing default root. A change
@@ -425,8 +414,8 @@ const unencodableRootMessage = (packageRoot) =>
 /**
  * The reason that `install` refuses `packageRoot`, or null. An invalid
  * `AGENT_LOOP_INHERITED_TMPDIR` refuses every root. A folder that the check cannot read refuses
- * with its own message, since the root is then not known to be a runner cache (#1081). A root
- * that holds a character the generated files cannot encode is refused before any write (#1635).
+ * with its own message, since the root is then not known to be a runner cache. A root
+ * that holds a character the generated files cannot encode is refused before any write.
  */
 export function installRefusal(packageRoot) {
   if (hasUnencodableCharacter(packageRoot)) return unencodableRootMessage(packageRoot);

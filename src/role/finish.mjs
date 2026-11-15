@@ -19,7 +19,7 @@ import { validateAction } from "../contracts/orchestrator-action.mjs";
 import { RoleError } from "./envelope.mjs";
 import { releaseWorkTreeLock } from "./state.mjs";
 
-// V8 `JSON.parse` message heads that carry no input text, observed on Node 26 (#839).
+// V8 `JSON.parse` message heads that carry no input text, observed on Node 26.
 const JSON_POSITION_PHRASES = [
   "Bad escaped character",
   "Bad control character in string literal",
@@ -67,7 +67,7 @@ function describeJsonParseError(error) {
 /**
  * `finish`: accepts the summary as JSON on stdin, from active only, and sets the lifecycle to
  * `finished`. The summary holds five required keys and an optional notes key. A key other than
- * the six and `unresolvedCompare` is refused and named (#1021).
+ * the six and `unresolvedCompare` is refused and named.
  * `--compare-head <pr>` makes the PR-head half of the gate and records
  * `headCompare: "verified"` in the envelope and the state file. `--require-accept` and `--require-ci` gate the finish,
  * and every applicable refusal is reported in one error. A run that declared
@@ -98,8 +98,8 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   }
   // The summary arrives unwrapped, so the marker the headless action carries
   // beside `summary` sits beside the summary keys here. It moves out of the
-  // summary so the validator keeps its own boolean check (#281) and refuses
-  // every other unknown key (#1021).
+  // summary so the validator keeps its own boolean check and refuses
+  // every other unknown key.
   const action = { action: "finish", summary: value };
   if (isJsonObject(value) && value.unresolvedCompare !== undefined) {
     const { unresolvedCompare, ...summary } = value;
@@ -112,7 +112,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   }
   // Refusals are collected in the headless order, minus the `review-only`
   // condition this path cannot reach. The gate runs only when nothing above
-  // refused, so a refused finish never reads GitHub (#302).
+  // refused, so a refused finish never reads GitHub.
   const refusals = [];
   // The init-time `--pr` declaration is the run's PR input, so a declared run
   // can only end through the gate for that PR. A finish with no gate, or a gate
@@ -129,10 +129,9 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
     lastRole: state.lastResult?.role ?? null,
   });
   // The headless gate refuses the same combination with the same words, so the
-  // message is one function rather than two copies (#293). A finish that carries
+  // message is one function rather than two copies. A finish that carries
   // `unresolvedCompare` is refused under `--require-ci` and for a declared PR,
-  // because the gate resolves the compare. The accepted gap names issues #281,
-  // #286, #293, #302, and #336 (ADR 0009, ADR 0012).
+  // because the gate resolves the compare. The accepted gap is recorded in ADR 0009 and ADR 0012.
   const markerReason = unresolvedCompareReason({
     pr: declaredPr,
     requireCi: args.requireCi,
@@ -164,7 +163,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   }
   if (refusals.length > 0) {
     // A run that declares no PR and has only the marker refusal throws that
-    // refusal's own text, without the `Finish refused:` prefix (#302).
+    // refusal's own text, without the `Finish refused:` prefix.
     if (refusals.length === 1 && markerRefused && declaredPr === null) {
       throw new RoleError(`${markerReason}.`);
     }
@@ -205,8 +204,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   if (noRequiredChecks) {
     // A base branch with no required check leaves the gate verifying the PR
     // head, the clean reviewed tree, and the merge state only. The finish
-    // records that, so a reader never reads it as a pass on a checked branch
-    // (#336).
+    // records that, so a reader never reads it as a pass on a checked branch.
     state.noRequiredChecks = true;
     payload.noRequiredChecks = true;
     logInfo(
@@ -215,7 +213,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   }
   if (args.compareHead !== null) {
     // The runtime resolved the PR head, which `unresolvedCompare` records as not done. No check
-    // result is claimed, so a reader never reads this as a gated pass (#1098). A declared-PR run
+    // result is claimed, so a reader never reads this as a gated pass. A declared-PR run
     // still needs its gate.
     state.headCompare = "verified";
     payload.headCompare = "verified";
@@ -225,7 +223,7 @@ export async function finishRun(args, state, paths, { stdin, gh, signal }) {
   }
   if (validated.value.unresolvedCompare) {
     // Recorded in the envelope and beside the summary in the state file, so a
-    // recorded unresolved compare never reads as a verified finish (#281). A
+    // recorded unresolved compare never reads as a verified finish. A
     // verified finish keeps the current envelope and state. Both keep the finish
     // distinct from a verified one.
     state.unresolvedCompare = true;

@@ -1,5 +1,5 @@
 // Reads the check runs and commit statuses of a commit, and judges one required
-// context against them (#218). Both types are considered, because a required name
+// context against them. Both types are considered, because a required name
 // can appear as either type. The finish gate, the check wait, the status read, and
 // the source probe share these reads.
 import { ghApi, pagedRead } from "./gh-api.mjs";
@@ -25,7 +25,7 @@ const COMMIT_STATUS_STATES = new Set(["error", "failure", "pending", "success"])
 // a reply that is not the paginated shape, or that holds an entry the judgment cannot read, throws.
 // The reader then reports it as unresolved instead of judging the entries that did parse. The
 // latest entry for a name decides, so an id or a timestamp that cannot be ordered is malformed too.
-// Such an entry can rank an old pass above a newer failure (issue #349).
+// Such an entry can rank an old pass above a newer failure.
 function pagesOf(data, field, what) {
   if (!Array.isArray(data) || data.length === 0) {
     throw new Error(`malformed ${what} reply`);
@@ -251,7 +251,7 @@ export function evaluateContext({ name, appId }, commit, runs, statuses) {
   // The reason is the first unmet condition, which is what the gate reports. The
   // kind is the worst condition among all entries that share the name. A pending
   // latest entry does not hide a failing entry beside it. That entry can be
-  // another run, an earlier run, or a commit status (issue #349).
+  // another run, an earlier run, or a commit status.
   let problem = null;
   // A group whose order is unknown never passes. It fails when an entry failed
   // and is pending otherwise.

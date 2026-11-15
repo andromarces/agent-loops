@@ -1,7 +1,7 @@
 // Parses the closing block that reportBlock (src/prompts/rules.mjs) requires
 // from every child turn, plus the reviewer Verdict line. Both parse only the
 // final block. It starts at the last `Conclusion:` line, or at a lone required
-// label or `Verdict:` line directly above that line (issues #1592 and #1793).
+// label or `Verdict:` line directly above that line.
 // Labels or verdicts in earlier prose therefore never produce a verdict.
 
 const REPORT_LABELS = [
@@ -18,7 +18,7 @@ export const REPORT_LABEL_NAMES = REPORT_LABELS.map(([, label]) => label);
 const LABEL_NAMES = REPORT_LABEL_NAMES.join("|");
 const LABEL_OR_VERDICT = [...REPORT_LABEL_NAMES, "Verdict"].join("|");
 
-// Compiles each label pattern once, so a parse never compiles one per call (issue #1858).
+// Compiles each label pattern once, so a parse never compiles one per call.
 const LABEL_PATTERN_BY_KEY = new Map(
   [...REPORT_LABEL_NAMES, "Verdict"].map((label) => [
     label.toLowerCase(),
@@ -27,13 +27,12 @@ const LABEL_PATTERN_BY_KEY = new Map(
 );
 
 // A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
-// Only the six report labels gain this form, so a bold lead with another name stays text (issue
-// #1483).
+// Only the six report labels gain this form, so a bold lead with another name stays text.
 const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
 const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 
 // A column-0 line that holds only `**Label**`, for example `**Conclusion**`, with optional trailing
-// whitespace. Only the six report labels gain this form (issue #1585).
+// whitespace. Only the six report labels gain this form.
 const BOLD_HEADING_LABEL = `\\*\\*(?:${LABEL_NAMES})\\*\\*\\s*$`;
 const BOLD_HEADING_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES})\\*\\*\\s*$`, "i");
 
@@ -48,7 +47,7 @@ const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
 
 /**
  * True when `line` opens a known report label or a plain `Verdict` line at column 0, plain or bold.
- * A line inside a fenced code block is no known label (issue #1483).
+ * A line inside a fenced code block is no known label.
  * @param {string} line
  * @param {boolean} [fenced]
  * @returns {boolean}
@@ -58,7 +57,7 @@ function isKnownLabelLine(line, fenced = false) {
 }
 
 // Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
-// label inside a fence stays text (issue #1483).
+// label inside a fence stays text.
 function fencedLines(lines) {
   const fenced = Array.from({ length: lines.length }, () => false);
   let fence = null;
@@ -79,10 +78,9 @@ function fencedLines(lines) {
 
 /**
  * Returns the lines of `text` with each column-0 bold report label normalized to its plain form.
- * The forms are `**Label:**` (issue #1483) and a line that holds only `**Label**` (issue #1585).
+ * The forms are `**Label:**` and a line that holds only `**Label**`.
  * A bold label inside a fenced code block stays text. With `boldLabels` false, the lines are
- * unchanged. The fenced flags come with the lines, so a caller never scans the fences twice
- * (issue #1858).
+ * unchanged. The fenced flags come with the lines, so a caller never scans the fences twice.
  * @param {string} text
  * @param {boolean} [boldLabels]
  * @returns {{ lines: string[], fenced: boolean[] }}
@@ -113,7 +111,7 @@ function normalizedReportLines(text, boldLabels = true) {
 // A report label that indentation or markdown decoration hides from the strict
 // match, for example `**Deferred**: x`, `*Deferred:* x`, `### Deferred: x`,
 // `> Deferred: x`, or `  Deferred: x`. Such a value would otherwise be dropped,
-// so the whole block is unparseable and `raw` carries the text (issue #243).
+// so the whole block is unparseable and `raw` carries the text.
 // The Verdict label is excluded: a malformed verdict already maps to `unknown`
 // and never carries report text.
 const DECORATED_LABEL_LINE = new RegExp(
@@ -122,7 +120,7 @@ const DECORATED_LABEL_LINE = new RegExp(
 );
 
 // A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`. When it
-// folds into a label's list run, a label name in the bold lead is item text (issue #1006).
+// folds into a label's list run, a label name in the bold lead is item text.
 const BOLD_DASH_ITEM = /^\s*- \*\*/;
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
@@ -131,7 +129,7 @@ const BOLD_DASH_ITEM = /^\s*- \*\*/;
 // another list marker follows (`1.-x`, `1.*x`) are not lists: after a bullet
 // marker a `>` is rejected, and after an ordered marker a digit or a list marker
 // is rejected, so an ordinary sentence that opens this way does not blank the
-// block (issues #256 and #259).
+// block.
 const LIST_LINE = /^\s*(?:[-*+](?:\s+\S|[^\s\-*+>])|\d+[.)](?:\s+\S|[^\s\d\-*+]))/;
 
 // A markdown thematic break, for example `* * *` or `- - -`. It matches the
@@ -142,7 +140,7 @@ const TABLE_DELIMITER = /^:?-+:?$/;
 
 /**
  * True when the line is a Markdown table delimiter row: cells of only dashes with optional colons,
- * separated by `|`, with or without outer pipes. A line with no `|` is no delimiter row (issue #1366).
+ * separated by `|`, with or without outer pipes. A line with no `|` is no delimiter row.
  */
 function isTableDelimiter(line) {
   if (!line.includes("|")) {
@@ -170,17 +168,17 @@ function hasTablePair(lines) {
 
 // An emphasis run at line start needs a letter before the closing `*`. Right after the close, no
 // word character or `*` follows, and no letter or ASCII digit is glued after that character. A
-// leading `*` is also a spaceless bullet marker, whose accepted gap is in issue #275.
+// leading `*` is also a spaceless bullet marker.
 const EMPHASIS_LINE = /^\s*\*(?=\S)[^*]*(?<=\p{L})\*(?![\w*])(?![^\s]*[\p{L}\d])/u;
 
 // A report label name or `Verdict`, in any case, anywhere in the text, followed by optional
 // emphasis or code marks and whitespace and then a colon. It has no lead-in condition on purpose:
-// every lead-in rule missed another list shape (issue #449), so the rule is the widest
+// every lead-in rule missed another list shape, so the rule is the widest
 // one. It holds every label the strict match, DECORATED_LABEL_LINE, or LIST_LINE reads, and it
 // also holds a mid-sentence mention such as `the conclusion: none`. That mention fails closed.
 const LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]{0,2}\\s*:`, "i");
 
-// A label or `Verdict` mention that bars a prose line from introducing a folded list (issue #898).
+// A label or `Verdict` mention that bars a prose line from introducing a folded list.
 // It differs from LABEL_MENTION in one way: any run of emphasis or code marks may follow the name,
 // not at most two. A mark before the name needs no rule, because the match has no lead-in condition.
 const HEADING_LABEL_MENTION = new RegExp(`(?:${LABEL_OR_VERDICT})[*_\`]*\\s*:`, "i");
@@ -199,12 +197,12 @@ export function hasClosingBlockAttempt(response) {
 /**
  * The closing block runs from the last `Conclusion:` line to the end of the response, and is null
  * without that line. A lone required label line or a lone `Verdict:` line above it, with only blank
- * lines between, joins the block (issues #1592 and #1793). That label must appear once in the
+ * lines between, joins the block. That label must appear once in the
  * response outside a fence, so a quoted or repeated label stays out. The whole response is
  * normalized first, so a bold label starts a block as its plain form does. With `unlabeled`, a
  * response without a `Conclusion:` label takes the non-blank line directly before the first known
  * report label outside a fence as `Conclusion`. When a bold-lead narration paragraph sits there,
- * the nearest plain prose line above becomes `Conclusion` (issue #1597).
+ * the nearest plain prose line above becomes `Conclusion`.
  * @param {string} response
  * @param {{ unlabeled?: boolean, boldLabels?: boolean, diagnose?: boolean, blankFenced?: boolean, includeFencedStart?: boolean }} [options]
  * @returns {string[] | null}
@@ -219,10 +217,10 @@ function closingBlock(
     includeFencedStart = false,
   } = {},
 ) {
-  // A bold label inside a fenced code block stays text (issue #1483).
+  // A bold label inside a fenced code block stays text.
   const { lines, fenced } = normalizedReportLines(response, boldLabels);
   // A `Conclusion:` line inside a fence never starts the block, and a fenced line supplies no label
-  // when `blankFenced` holds (issue #1909). The guard scan keeps the origin/main start when
+  // when `blankFenced` holds. The guard scan keeps the origin/main start when
   // `includeFencedStart` holds.
   const blockFrom = (first) =>
     blankFenced ? withoutFencedLines(lines, first, fenced) : lines.slice(first);
@@ -252,7 +250,7 @@ function closingBlock(
     const prose = boldNarrationProseLine(lines, before);
     if (prose === -1) {
       // Diagnosis starts at the first known label when no prose line precedes it, so Why still
-      // names missing labels (issue #1520).
+      // names missing labels.
       return diagnose ? blockFrom(first) : null;
     }
     before = prose;
@@ -264,7 +262,7 @@ function closingBlock(
 
 /**
  * The block lines from `first`, with each fenced line blanked. A fenced line is quoted text, so it
- * never supplies a report label or a list (issue #1909). The blank keeps the line count that
+ * never supplies a report label or a list. The blank keeps the line count that
  * `textBeforeBlock` uses.
  * @param {string[]} lines
  * @param {number} first
@@ -276,7 +274,7 @@ function withoutFencedLines(lines, first, fenced) {
 }
 
 // The required labels a child can write in their own paragraph above `Conclusion:`, for example
-// `Blockers:` (issue #1592). The reviewer `Verdict:` line joins that set (issue #1793).
+// `Blockers:`. The reviewer `Verdict:` line joins that set.
 const LEADING_LABEL_LINES = [
   ...REPORT_LABELS.filter(([, , optional]) => !optional).map(([, label]) => [
     label,
@@ -287,10 +285,10 @@ const LEADING_LABEL_LINES = [
 
 /**
  * The index where the closing block starts: `start`, or the first lone required label or `Verdict:`
- * line above it. Only blank lines lie between that line and the block (issues #1592 and #1793).
+ * line above it. Only blank lines lie between that line and the block.
  * A label line inside a fence stays out. A label that another unfenced line repeats stays out too.
  * So a quoted label neither starts nor extends the block. `fenced` reuses the flags of an earlier
- * scan, so a caller that normalized the lines never scans the fences twice (issue #1858).
+ * scan, so a caller that normalized the lines never scans the fences twice.
  * @param {string[]} lines
  * @param {number} start
  * @param {boolean[]} [fenced]
@@ -319,13 +317,13 @@ export function leadingRequiredLabelStart(lines, start, fenced = fencedLines(lin
   }
 }
 
-// A column-0 line that opens a bold mark, for example `**Blocker.** The test failed` (issue #1597).
+// A column-0 line that opens a bold mark, for example `**Blocker.** The test failed`.
 const BOLD_LEAD_LINE = /^\*\*/;
 
 /**
  * The index of the plain prose line above a run of bold-lead narration paragraphs and blank lines,
  * or -1 when there is none. A child can write the conclusion as prose, then bold-lead paragraphs,
- * then the report labels with no `Conclusion:` line (issue #1597).
+ * then the report labels with no `Conclusion:` line.
  * @param {string[]} lines
  * @param {number} from the non-blank line directly above the first known label
  * @returns {number}
@@ -346,7 +344,7 @@ function boldNarrationProseLine(lines, from) {
  * The closing block with the parser's list folding applied, plus the value each report label reads
  * there. It is null when no closing block attempt exists. `parseReportBlock` and the missing-label
  * diagnosis share this step. A label is present exactly when the parser's label scan reads a value
- * for it (issue #1520).
+ * for it.
  * @param {string} response
  * @param {{ boldLabels?: boolean, diagnose?: boolean }} [options]
  * @returns {{ block: string[], lines: string[] | null, labels: Array<{ key: string, label: string, optional: boolean, value: string | null }> } | null}
@@ -420,8 +418,7 @@ export function parseReportBlock(response, { boldLabels = true } = {}) {
 
 // A pointer to earlier response text, anchored to a short pattern list. A noun phrase counts only
 // when `above` ends it, so a comparison such as `above target`, `above the limit`, or `above 80 %`
-// stays out. The detection is a heuristic: a pointer that the list misses stays undetected
-// (issue #1907).
+// stays out. The detection is a heuristic: a pointer that the list misses stays undetected.
 const ABOVE_NOUN_POINTER =
   /\b(?:the|this|that|these|those)\s+(?:[\p{L}\p{N}`*_-]+\s+){0,4}above(?=\s*(?:$|[.,;:!?)}\]—–]))/iu;
 const ABOVE_VERB_POINTER =
@@ -537,7 +534,7 @@ export function copiedTaskReportLabels(report, task) {
 /**
  * Every required label that a null report lacks, in report order: `Conclusion`, `Why`, then
  * `Blockers`. The list is empty when every required label is present or no closing block attempt
- * exists. A structural failure never hides a label that is absent (issue #1520).
+ * exists. A structural failure never hides a label that is absent.
  * @param {string} response
  * @returns {string[]}
  */
@@ -565,7 +562,7 @@ export function parsesOnlyWithBoldLabels(response, parsed = parseReportBlock(res
 /**
  * The report for one child result. A multi-part unidentified OpenCode report that parses only
  * through bold normalization is null. The first parse passes through, so a multi-part response
- * parses at most twice (issue #1858).
+ * parses at most twice.
  * @param {string} response
  * @param {boolean} [multiPartUnidentified]
  * @returns {ReturnType<typeof parseReportBlock>}
@@ -601,7 +598,7 @@ function withoutListMarker(line) {
 /**
  * The normalized content of each report label in `response`, from the last occurrence of the label
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
- * that the parser does not fold still counts as content (issue #1615).
+ * that the parser does not fold still counts as content.
  * @param {string} response
  * @returns {Map<string, string[]> | null}
  */
@@ -634,10 +631,10 @@ function originalLabelTokens(response) {
 
 // Maintainer triage: keep a parser fix for a regression, a dropped finding, or an incorrect
 // acceptance. Leave an unsupported format uncovered until the repair ships, and keep a repeated
-// repair failure actionable (issue #1615).
+// repair failure actionable.
 
 /**
- * True when a repaired report restates only what the original response already held (issue #1615).
+ * True when a repaired report restates only what the original response already held.
  * The repair is untrusted: each label keeps the normalized content of the original, whatever list
  * form it used, a label that the original left out may gain only `none`, and a reviewer verdict
  * must match an explicit original verdict. Any mismatch leaves the repair unused, so a repair can
@@ -707,19 +704,19 @@ export function repairedReportMatches(
 }
 
 // The list shapes that fold under a label: a `-` or an ordered `N.` marker at column 0, exactly
-// one ASCII space (U+0020), then an item (issue #915 added the ordered marker). Any other separator
+// one ASCII space (U+0020), then an item. Any other separator
 // (a tab, a nonbreaking space, a second space), a spaceless bullet, an indented bullet, a `*` or
 // `+` bullet, and an `N)` item stay lists that hasDroppedList rejects.
 const FOLDABLE_ITEM = /^(?:- |\d+\. )(?=\S)/;
 
-// The item shape that folds under a prose heading (issue #898): a dash item only. An ordered item
+// The item shape that folds under a prose heading: a dash item only. An ordered item
 // there stays a list that hasDroppedList rejects.
 const HEADING_ITEM = /^- (?=\S)/;
 
 // The nesting levels that fold into their parent item.
 // A sub-item line holds ASCII spaces up to the parent item text column.
 // Then come a `-` or `N. ` marker, one ASCII space, and the item.
-// The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four (issues #870, #1603, and #1917).
+// The indent is the parent text column: `- ` takes two spaces, `1. a` three, and `10. a` four.
 // Another indent width and a tab stay lists that hasDroppedList rejects.
 const foldableSubitem = (marker) => new RegExp(`^ {${marker.length}}(?:- |\\d+\\. )(?=\\S)`);
 
@@ -753,7 +750,7 @@ const VERDICT_WORD_THEN_SEPARATOR = new RegExp(
  * True when the line reads as a `Verdict` line under any markup or separator. After NFKC
  * normalization it skips leading non-letter, non-digit characters and one optional number. It then
  * holds `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or
- * whitespace. An ordered sub-item never folds it into item text (issue #1082).
+ * whitespace. An ordered sub-item never folds it into item text.
  */
 function readsAsVerdictLine(line) {
   return VERDICT_WORD_THEN_SEPARATOR.test(line.normalize("NFKC"));
@@ -778,7 +775,7 @@ function isFoldableSubitem(line, marker) {
 }
 
 /**
- * True when the line is an indented prose line that continues the item above (issue #1082): ASCII
+ * True when the line is an indented prose line that continues the item above: ASCII
  * spaces or tabs, then text that is neither a list, a thematic break, nor a report label or
  * `Verdict` line. An indented list line or label line is no continuation and keeps its earlier
  * outcome: hasDroppedList refuses the list, and the label line never folds into an item.
@@ -849,10 +846,10 @@ function appendToLabel(label, text) {
 }
 
 /**
- * A plain prose line that may introduce a folded list (issue #898): its first character is not
+ * A plain prose line that may introduce a folded list: its first character is not
  * whitespace, `*`, `_`, a backtick, `>`, or `#`, is not a list, and names no report label or
  * `Verdict` followed by any run of marks, optional whitespace, and a colon anywhere. A malformed or decorated label, a `Verdict` line, and a
- * `*` line (issue #275) therefore never supply a field value.
+ * `*` line therefore never supply a field value.
  */
 function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
@@ -861,8 +858,8 @@ function isPlainProseLine(line) {
 const BOLD_PROSE_LINE = /^\*\*[^*]+\*\*$/;
 
 /**
- * True when the line is a whole-line bold prose heading that can introduce a folded list (issue
- * #1367). Examples are `**Reviewer notes.**`. The bold must wrap the whole line, so a `*` bullet and
+ * True when the line is a whole-line bold prose heading that can introduce a folded list.
+ * Examples are `**Reviewer notes.**`. The bold must wrap the whole line, so a `*` bullet and
  * a `**bold** note` line with trailing text stay out.
  */
 function isBoldProseLine(line) {
@@ -871,10 +868,11 @@ function isBoldProseLine(line) {
 
 /**
  * Folds a run of `- ` items that directly follows a report label line into that label's value.
- * Markers drop, and items join each other and an existing value with "; " (issues #846 and #879).
- * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", " (issue #870).
+ * Markers drop, and items join each other and an existing value with "; ".
+ * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * A prose line with a `- ` run directly under it folds as `<prose>: <items>` after one or more blank
- * lines (issue #898). A dash or ordered run after one blank line joins the label, unless an ordered item reads as a Verdict line (issue #1348).
+ * lines. A dash or ordered run after one blank line joins the label, unless an ordered item reads
+ * as a Verdict line.
  * Every other list shape stays for hasDroppedList, and a shadowing repeat returns null while dispatch keeps `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
@@ -887,8 +885,8 @@ function foldEmptyLabelLists(lines) {
     if (PLAIN_LABEL_LINE.test(line)) {
       let { items, end } = takeItems(lines, i, FOLDABLE_ITEM);
       if (items.length === 0 && lines[i + 1]?.trim() === "") {
-        // One blank line then a dash or ordered run under the same label folds too (issues #1348
-        // and #1603). Two blank lines and every other list shape stay for hasDroppedList.
+        // One blank line then a dash or ordered run under the same label folds too.
+        // Two blank lines and every other list shape stay for hasDroppedList.
         // A blank-line ordered item that reads as a Verdict line stays unparseable.
         ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
       }
@@ -922,7 +920,7 @@ function foldEmptyLabelLists(lines) {
  * True when the block holds a list line the parser would drop. A label holds
  * one line, so a list anywhere in the block that foldEmptyLabelLists left is
  * dropped, including under an earlier occurrence of a label that a later
- * occurrence shadows and after the reviewer `Verdict:` line (issue #249).
+ * occurrence shadows and after the reviewer `Verdict:` line.
  * @param {string[]} lines
  * @returns {boolean}
  */
@@ -936,7 +934,7 @@ function hasDroppedList(lines) {
  * separator, whitespace, and a clause after the word also map to that word. A clause that names
  * either verdict maps to `unknown`, because it does not state one verdict. A verdict outside the
  * block, a missing line, or a malformed line maps to `unknown`, and process success never implies
- * acceptance. A `Verdict:` line inside a fenced code block supplies no verdict (issue #1909).
+ * acceptance. A `Verdict:` line inside a fenced code block supplies no verdict.
  * @param {string} response
  * @returns {"accept" | "reject" | "unknown"}
  */
@@ -946,8 +944,8 @@ export function parseVerdict(response) {
 
 /**
  * The verdict for the OpenCode split-message guard. It keeps the origin/main block start, fenced
- * lines included, so every stream that a split refused still refuses (issue #1483). It never
- * supplies a report or a gate (issue #1909).
+ * lines included, so every stream that a split refused still refuses. It never
+ * supplies a report or a gate.
  * @param {string} response
  * @returns {"accept" | "reject" | "unknown"}
  */
@@ -985,7 +983,7 @@ function lastLabeled(lines, label) {
 /**
  * The first failing acceptance check, "verdict" or "checks", or null when the review is accepted.
  * An accept counts only with a Checks line in the closing block. That matches the parent rule the
- * prompt states (#217) and the interactive --require-accept gate (issue #218). An accept without a
+ * prompt states and the interactive --require-accept gate. An accept without a
  * Checks line is treated as not accepted.
  * The optional stored report is the one the turn result carries, so a fail-closed null is kept.
  * @param {string} response

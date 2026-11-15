@@ -12,7 +12,7 @@ const labelLine = (names) => new RegExp(`^(?:${names.join("|")}):`, "i");
 
 // A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
 // so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
-// than becoming a verdict the model never wrote on its own line (issue #316).
+// than becoming a verdict the model never wrote on its own line.
 const LABEL_LINE = labelLine(REPORT_LABEL_NAMES);
 const BLOCK_LABEL_LINE = labelLine([...REPORT_LABEL_NAMES, "Verdict"]);
 const BLOCK_START = /^Conclusion:\s*/i;
@@ -20,20 +20,20 @@ const BLOCK_START = /^Conclusion:\s*/i;
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
 const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";
 
-// Upper bound, in UTF-16 code units, on the joined text of a stream error (issues #510 and #529).
+// Upper bound, in UTF-16 code units, on the joined text of a stream error.
 const ERROR_TEXT_LIMIT = 4000;
 
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
- * except that a part opening a report label starts its own line (issue #316), and a new message
- * starts its own line (issue #458). The last message that holds a closing block attempt governs
- * alone: earlier attempt-holding messages drop, messages without an attempt stay (issue #467).
- * The error text is redacted (ADR 0017) and bounded to its last 4000 code units (issues #510 and
- * #529). A later redaction pass with a different environment can grow it past that bound.
+ * except that a part opening a report label starts its own line, and a new message
+ * starts its own line. The last message that holds a closing block attempt governs
+ * alone: earlier attempt-holding messages drop, messages without an attempt stay.
+ * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
+ * redaction pass with a different environment can grow it past that bound.
  * @throws {Error} when two attempt-holding messages interleave in the stream, or when the
  * governing message is the unidentified one, joins to an accept verdict, and its closing block
- * label lines come from more than one part (issue #509).
+ * label lines come from more than one part.
  * @param {{ part?: { text?: string, messageID?: string } }[]} events
  * @returns {string}
  */
@@ -97,7 +97,7 @@ function joinMessages(messages) {
 /**
  * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
  * block starts at the last `Conclusion:` line, or at a lone required label line or `Verdict:`
- * line above it (issues #1592 and #1793). A label line touches every part that holds one of its
+ * line above it. A label line touches every part that holds one of its
  * characters, so a label cut across parts counts both. A line terminator or trailing space is no
  * character of the line. Text before the block and plain prose after it touch no label line.
  */

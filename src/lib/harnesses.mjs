@@ -1,4 +1,4 @@
-// Harness registry (#180). The one place that names each harness and the
+// Harness registry. The one place that names each harness and the
 // command names its process can carry. The installer, process-ancestry
 // detection, and `harness-check` all derive from it. Adapter kinds are a
 // separate mapping in `src/lib/agent-kinds.mjs`.

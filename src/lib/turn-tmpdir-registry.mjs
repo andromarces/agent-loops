@@ -6,7 +6,7 @@ import { logWarn } from "./log.mjs";
 import { stateRoot } from "./runstate.mjs";
 
 // The turn directories of every agent-loop process on the host, as one small file per directory
-// under the runs root (issue #1240, ADR 0069). The file is named for the directory and holds its
+// under the runs root (ADR 0069). The file is named for the directory and holds its
 // device and inode, so an entry counts as registered only while it is the directory that was
 // created. The file is untrusted input, because a turn can write to the runs root too: the report
 // only marks a registered entry and never leaves one out.

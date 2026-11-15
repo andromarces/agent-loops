@@ -1,4 +1,4 @@
-// Finds the version-independent pnpm package root that installed files must name (#305, #311).
+// Finds the version-independent pnpm package root that installed files must name.
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, parse, relative, resolve } from "node:path";
 
@@ -10,10 +10,10 @@ import { basename, dirname, join, parse, relative, resolve } from "node:path";
 // keeps `.pnpm` beside its global `node_modules` and links the package under that
 // `node_modules`, which `pnpm root -g` reports. Node resolves a module to the
 // store entry, which the upgrade replaces, so the store entry must not be written
-// into installed files (#305). pnpm 12 links a project install into the global
+// into installed files. pnpm 12 links a project install into the global
 // virtual store at `store/v11/links/<name>/<version>/<hash>/node_modules/<name>`,
 // and that path names a version but no project, so only the script path the bin
-// shim calls names the project link (#311).
+// shim calls names the project link.
 const VIRTUAL_STORE_DIR = ".pnpm";
 const VIRTUAL_STORE_LINKS_DIR = "links";
 const VIRTUAL_STORE_MODULES_DIR = "node_modules";

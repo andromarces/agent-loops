@@ -24,19 +24,18 @@ import {
 import { joinTextParts } from "./opencode-text.mjs";
 
 // Bounds for a failure message, so a long provider message cannot reach the dispatch envelope or
-// the state file (issue #326). No part of stdout or stderr is allowed into the message: a stream
+// the state file. No part of stdout or stderr is allowed into the message: a stream
 // carries model output, and stderr can carry a secret.
 const NO_DETAIL = "no provider error event in the output";
 const UNKNOWN_ERROR = "unknown error";
 
-// opencode marks a provider capacity reply on two sourced signals (issues #1017, #1614).
+// opencode marks a provider capacity reply on two sourced signals.
 // v0.0.0-dev-466 streams a provider overload as a `provider.internal` error whose structured
-// `status` is the provider's HTTP status. A probe against a local 529 server streamed that event,
-// and a 503 carries a generic service-unavailable message, so only 529 is marked.
+// `status` is the provider's HTTP status, and a 503 carries a generic service-unavailable message,
+// so only 529 is marked.
 // v0.0.0-dev-973 streams a provider overload as a `provider.rate-limit` error with `status` 429
-// and the provider error code `overloaded` in the structured response body. A probe against a
-// local 429 server streamed that event; a plain rate limit carries another code, and a quota is a
-// `provider.quota` event, so neither is marked.
+// and the provider error code `overloaded` in the structured response body. A plain rate limit
+// carries another code, and a quota is a `provider.quota` event, so neither is marked.
 const OVERLOAD_STATUS = 429;
 const OVERLOAD_CODE = "overloaded";
 
@@ -65,7 +64,7 @@ export async function runOpenCode(state, prompt, options = {}) {
   // OpenCode opens its session in the inherited PWD when that variable is set, not in the process
   // working directory. A worker child inherits the operator shell's PWD, which names the main
   // checkout while `cwd` is the linked run work tree, so the session would start in the main work
-  // tree (issue #1678).
+  // tree.
   if (execOptions.cwd) {
     execOptions.env = { ...execOptions.env, PWD: execOptions.cwd };
   }
@@ -113,7 +112,7 @@ export async function runOpenCode(state, prompt, options = {}) {
     // The stream carries model output and stderr can carry a secret, and `logDebug` writes to
     // stdout in the loop CLI, where a caller can persist it. The debug line therefore carries the
     // exit code and the byte counts only, and the full text stays on the error for a caller that
-    // asks for it (issue #326).
+    // asks for it.
     logDebug(
       `opencode exited with code ${err?.exitCode ?? "none"}: ${byteLength(err?.stdout)} stdout bytes, ${byteLength(err?.stderr)} stderr bytes`,
     );
@@ -126,7 +125,7 @@ export async function runOpenCode(state, prompt, options = {}) {
 
   // Every read below names a field of the event, so a line that parsed to another JSON value, such
   // as the `null` of a diagnostic line, is dropped first: reading it would throw a TypeError that
-  // replaces the adapter error (issue #335).
+  // replaces the adapter error.
   const events = parseJsonLines(stdout).filter(isJsonObject);
 
   // Once the child has exited, an aborted signal at any point before this function returns ends the
@@ -150,7 +149,6 @@ function hasMultipleUnidentifiedParts(events) {
   return events.filter((event) => !isNonEmptyString(event.part?.messageID)).length > 1;
 }
 
-/** Returns the first truthy `sessionID` of the events, which may hold non-object entries. */
 function firstSessionId(events) {
   return events.map((event) => event?.sessionID).find(Boolean);
 }
@@ -229,7 +227,7 @@ async function settleTurn(state, events, { requestedSessionId, execOptions, star
   // Defense-in-depth: if the CLI ever exits 0 with an error event, surface its detail instead of
   // falling through to the missing-text error. The session is recorded first, as it is on any turn.
   // The detail is the last well-formed one, described and capped as on the non-zero path, so a long
-  // provider message cannot reach the envelope here either (issue #335).
+  // provider message cannot reach the envelope here either.
   const errorDetail = lastErrorDetail(events);
 
   if (errorDetail || events.some((event) => event.type === "error")) {
@@ -340,7 +338,7 @@ async function exportedModels(sessionId, events, { cwd, timeout, signal, role },
  * carries none. Each completed step emits one `step_finish` part with `tokens` and `cost`, so
  * both fields sum across steps. No stream event names the model, so `models` is omitted. The read runs
  * before the failure message on the non-zero path, so it drops any value that is not a count
- * rather than letting a malformed one throw and cost the caller its exit code (issue #326).
+ * rather than letting a malformed one throw and cost the caller its exit code.
  */
 function setUsage(state, events) {
   const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
@@ -350,7 +348,7 @@ function setUsage(state, events) {
 
   for (const event of events) {
     // A line can parse to a non-event value, such as the `null` of a diagnostic line, so the type
-    // read must survive it (issue #326).
+    // read must survive it.
     if (event?.type !== "step_finish") {
       continue;
     }
@@ -373,7 +371,7 @@ function setUsage(state, events) {
   }
 
   // Two large finite values can sum to Infinity, which is not a count, so each total is dropped the
-  // same way a malformed input value is (issue #326).
+  // same way a malformed input value is.
   if (hasTokens) {
     tokens.input = usageNumber(tokens.input);
     tokens.output = usageNumber(tokens.output);
@@ -392,7 +390,7 @@ function setUsage(state, events) {
 /**
  * Builds the message for a failed turn. Only an ordinary non-zero exit reads the stream: a signal,
  * a timeout, and a spawn failure are reported as themselves, because the output a killed process
- * left behind names a provider error that is not why the turn died (#326).
+ * left behind names a provider error that is not why the turn died.
  */
 function failureMessage(err, events, timeout) {
   return sharedFailureMessage({
@@ -404,12 +402,10 @@ function failureMessage(err, events, timeout) {
   });
 }
 
-/** Returns whether a stream value is a token count or a cost: a finite, non-negative number. */
 function isUsageNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-/** Returns a stream usage value, or 0 for anything that is not a count, so a sum stays a number. */
 function usageNumber(value) {
   return isUsageNumber(value) ? value : 0;
 }
@@ -430,7 +426,7 @@ function lastErrorDetail(events) {
  * Returns the described detail of a provider error object, or an empty string when the object is
  * not one this adapter can read. Only the string fields and a string or number status reach
  * the format, so it cannot throw on the payload, and a field of any other type is a malformed
- * detail rather than a coerced one (issue #326).
+ * detail rather than a coerced one.
  */
 function providerDetail(error) {
   if (!isJsonObject(error)) {

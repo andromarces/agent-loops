@@ -34,7 +34,7 @@ import { initialPrompt, resultPrompt } from "./prompts/orchestrator.mjs";
 /**
  * Process exit code for a recorded finish that carries `unresolvedCompare`. The
  * loop still records the finish and prints its summary; the code is what tells
- * an exit-code-only consumer that the PR-head compare was not verified (#279).
+ * an exit-code-only consumer that the PR-head compare was not verified.
  * It is 4, not 3, because 3 is the harness-refusal code of `harness-check`.
  */
 export const UNRESOLVED_COMPARE_EXIT = 4;
@@ -47,8 +47,7 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * is the completion gate state, which the headless CLI records in the transcript for a later
  * `--continue-from`. Throws on fatal controller errors: orchestrator failure, detected mutation,
  * or cancel. A finish that records `unresolvedCompare` emits an `unresolved-compare` event and
- * reports `unresolvedCompare: true`, which the headless CLI maps to `UNRESOLVED_COMPARE_EXIT`
- * (#266, #279).
+ * reports `unresolvedCompare: true`, which the headless CLI maps to `UNRESOLVED_COMPARE_EXIT`.
  *
  * Finish gates: `evaluateFinish` in `finish-gate.mjs` owns every condition, the refusal order, the
  * corrective-turn rule, and the events. A worker turn resets the reviewed state to none, and only
@@ -57,16 +56,15 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  *   check must pass. A pass on a base branch with no required check emits `no-required-checks`.
  * - `compareHead`: the PR head must match the last reviewed state, for a repository whose
  *   required-check sources are unreadable. A pass emits `head-compare` and reports
- *   `headCompare: "verified"` (#1104).
- * - `pr`: the run declares its delivery PR, so a finish must pass `requireCi` for the same PR
- *   (#302).
+ *   `headCompare: "verified"`.
+ * - `pr`: the run declares its delivery PR, so a finish must pass `requireCi` for the same PR.
  * - `requireAccept`: a finish needs a later reviewer accept with a Checks line after a worker
  *   turn, or at least one reviewer report with no worker turn.
  * - `mode: "review-only"`: a finish needs a completed reviewer turn, whatever it returned.
  *
  * `mode`: the loop policy, with the values of the interactive `--mode`. `review-only`
  * dispatches no worker, so the CLI refuses `pr`, `requireAccept`, and `requireCi`, and the loop
- * refuses a `run_worker` action (#337).
+ * refuses a `run_worker` action.
  * `continued`: the run resumes the sessions of an earlier headless run. With neither `pr` nor
  * `requireCi`, it takes `earlierPr`, the PR that the earlier run declared (see
  * `declaredPrFromTranscript`), and emits a `pr-declared` event with `restored: true`. The gate
@@ -74,7 +72,7 @@ export const UNRESOLVED_COMPARE_EXIT = 4;
  * the work tree has the head and digest of its last reviewer turn. Otherwise it
  * resets and counts the work as unreviewed, so a finish under `requireAccept`
  * needs a reviewer accept in this run. A restore takes `lastReviewed` from the
- * current snapshot, never from the record (#362, #393).
+ * current snapshot, never from the record.
  * `copyLocalFiles` (default true): before the first turn and snapshot, copies the
  * untracked, ignored local files of the main work tree into a linked `cwd` and
  * emits one `local-files` event with the copied and skipped names (ADR 0018).
@@ -130,15 +128,15 @@ export async function runLoop(options) {
   // and this check holds for any other caller, before the first child spawn.
   refuseDeclaredPrConflict(continuedPr, { pr, requireCi, mode, compareHead });
   // The compare is for a run with no declared PR, because a declared PR ends through its gate. The
-  // CLI refuses the flags first, and this check holds for any other caller (#1104).
+  // CLI refuses the flags first, and this check holds for any other caller.
   if (compareHead !== null && (pr !== null || requireCi !== null)) {
     throw new Error(COMPARE_HEAD_INPUT_REFUSAL);
   }
 
   // A declared PR whose required-check sources the gate cannot read could only end through `abort`,
-  // so the start refuses it before any child spawn (#1092). A continued run that restored its PR
+  // so the start refuses it before any child spawn. A continued run that restored its PR
   // makes no read here: the earlier run read at its own start when it took `--pr`, or before it
-  // declared a PR that a worker turn opened (#1097).
+  // declared a PR that a worker turn opened.
   const readAtStart = pr !== null && continuedPr === null;
   if (readAtStart) {
     const unreadable = await unreadableGateReason({
@@ -168,7 +166,7 @@ export async function runLoop(options) {
 
   function stopLoop(exitCode, detail) {
     // A recorded unresolved compare leaves the loop on 0 while the headless
-    // process exits UNRESOLVED_COMPARE_EXIT, so the log names it (#279).
+    // process exits UNRESOLVED_COMPARE_EXIT, so the log names it.
     const marker = detail.unresolvedCompare
       ? ", unresolved compare recorded"
       : detail.headCompare
@@ -176,7 +174,7 @@ export async function runLoop(options) {
         : "";
     logInfo(`agent loop stopped (exit ${exitCode}${marker})`);
     // The gate state travels with the result, so the CLI can record it in the
-    // transcript for a later `--continue-from` to check against a replay (#393).
+    // transcript for a later `--continue-from` to check against a replay.
     return {
       exitCode,
       ...detail,
@@ -185,25 +183,25 @@ export async function runLoop(options) {
   }
 
   let stepsUsed = 0;
-  // Completion gate state (#234). Without `mode`, a worker turn marks work mode,
+  // Completion gate state. Without `mode`, a worker turn marks work mode,
   // and work mode needs a later reviewer accept. A run with no worker turn maps
   // to review-only and needs at least one reviewer report. `mode: "review-only"`
   // refuses a worker action. It also refuses a finish before a reviewer turn.
   //
   // A continued run restores the earlier run's gate state only when it is valid
   // and the current work tree is the state that run's last reviewer turn
-  // reviewed (#393). The CLI derives `earlierGate` from the result events of the
+  // reviewed. The CLI derives `earlierGate` from the result events of the
   // earlier transcript, never from a stored flag.
-  // Otherwise it resets conservatively (#362): the tree counts as changed and
+  // Otherwise it resets conservatively: the tree counts as changed and
   // unreviewed, so a reviewer accept on the current state is what
   // `--require-accept` needs, and `reviewerRan`, `lastReviewed`, and the
   // review-only turn flag start empty, so every gate reads only this run.
   const restoredGate = continued ? await matchingGate(earlierGate, cwd, { signal }) : null;
   // `reviewerTurnDispatched` counts any reviewer turn, whatever it returned, while `reviewerRan`
-  // counts only one that ended `ok`, because `--require-accept` reads that one (#337).
+  // counts only one that ended `ok`, because `--require-accept` reads that one.
   // `lastReviewed` is the runtime-owned identity of the last reviewer turn that the `--require-ci`
   // gate reads. Any later turn resets it, so a change made after that review cannot be gated
-  // against the older head (#293).
+  // against the older head.
   let gate = restoredGate ?? (continued ? resetGate() : freshGate());
   let finishRefused = false;
   // The PR input of the run: `--pr` from the start, or the one PR that the runtime resolves after
@@ -213,8 +211,8 @@ export async function runLoop(options) {
   const restoredPr = pr === null && requireCi === null ? continuedPr : null;
   let declaredPr = pr ?? restoredPr;
   // The PR that a worker turn opened and the runtime refused to declare, because the required-check
-  // sources are unreadable (#1097). The finish compares its head with the reviewed commit, as
-  // `--compare-head` does (ADR 0052, #1111). A continuation does not restore it: it takes the PR of a
+  // sources are unreadable. The finish compares its head with the reviewed commit, as
+  // `--compare-head` does (ADR 0052). A continuation does not restore it: it takes the PR of a
   // `pr-declared` record only, so a continuation resolves it again after its own worker turn.
   let undeclaredPr = null;
   // The PR that the finish gate checks: `--require-ci`, or the PR that the runtime declared. A PR
@@ -231,7 +229,7 @@ export async function runLoop(options) {
   }
 
   // The caller persists a pre-assigned id before the CLI starts, so a parent crash during a first
-  // turn leaves it (issue #564). The role state is not touched here: the adapter owns it.
+  // turn leaves it. The role state is not touched here: the adapter owns it.
   const assignedHook = onSessionAssigned && ((roleName) => (id) => onSessionAssigned(roleName, id));
 
   const instructions = initialPrompt({
@@ -315,7 +313,7 @@ export async function runLoop(options) {
     // review-only dispatches no worker, the same hard guard the interactive path
     // applies to `--role worker`. The run ends rather than retrying the action,
     // because a corrective turn would cost a step to reach the state the run
-    // started in (#337).
+    // started in.
     if (mode === "review-only" && action.action === "run_worker") {
       onEvent({ type: "refusal", reason: REVIEW_ONLY_WORKER_REFUSAL, stepsUsed });
       return stopLoop(1, { reason: REVIEW_ONLY_WORKER_REFUSAL });
@@ -343,8 +341,8 @@ export async function runLoop(options) {
         signal,
         stepsUsed,
         // The declared PR, or the gated PR when none is declared, is known before
-        // the turn and supplies the reviewer with the required-check status (#320,
-        // #350). A run with neither reads nothing, and the reviewer keeps its own
+        // the turn and supplies the reviewer with the required-check status. A run with neither
+        // reads nothing, and the reviewer keeps its own
         // read. The CLI refuses a `--pr` and a `--require-ci` that name different PRs.
         pr: declaredPr ?? requireCi,
         // The command text comes from the `--test-cmd` run input only (ADR 0017).
@@ -372,8 +370,8 @@ export async function runLoop(options) {
     onEvent({ type: "result", role: roleName, result, stepsUsed });
 
     // Set whatever the turn returned: a reviewer turn that ended in a handled error
-    // is still the report a `review-only` finish records (#337). The replay of a
-    // continued run applies the same transition (#393).
+    // is still the report a `review-only` finish records. The replay of a
+    // continued run applies the same transition.
     gate = applyResult(gate, roleName, result);
     finishRefused = false;
 
@@ -417,7 +415,7 @@ export async function runLoop(options) {
  * instructions before the same prompt, and its answer replaces the one the instructionless
  * conversation gave. Each call has its own mutation check, so an edit of the first call is
  * detected before the rerun can restore it. The earlier turns of the old conversation are lost.
- * One rerun only, and the mark is cleared on every exit (issue #396, ADR 0016).
+ * One rerun only, and the mark is cleared on every exit (ADR 0016).
  * @param {object} options
  */
 function createOrchestratorAdapter({
@@ -453,7 +451,7 @@ function createOrchestratorAdapter({
               // rerun: the missing prompt would start a session with no task. The id stays, so it
               // keeps the mark and the next resume checks it again. The restore sits inside the
               // mutation check, because a failed snapshot after the turn replaces this error with
-              // one that wraps it (issue #564).
+              // one that wraps it.
               if (
                 resumedUnconfirmed &&
                 readProp(err, "sessionMissing") &&
@@ -485,7 +483,7 @@ function createOrchestratorAdapter({
           );
           instructionsPending = false;
         }
-        // A cancel can land in the post-turn snapshot, after the adapter returned (#587).
+        // A cancel can land in the post-turn snapshot, after the adapter returned.
         throwIfCanceled(opts.signal, "orchestrator");
         return response;
       } catch (err) {
@@ -507,8 +505,8 @@ function createOrchestratorAdapter({
  * Resolves the PR that a worker turn opened, for a run with no PR input (ADR 0043). The head
  * compared is the work tree head that the runtime read after the turn, never a child report.
  * Returns `pr`, the PR number or null when the run stays undeclared, and `undeclaredPr`, the PR that
- * the runtime refused to declare because its required-check sources are unreadable (#1097), or null.
- * That PR gets the head compare at finish (#1111). A refusal to name one PR is logged as a
+ * the runtime refused to declare because its required-check sources are unreadable, or null.
+ * That PR gets the head compare at finish. A refusal to name one PR is logged as a
  * warning, except for no PR at all, which is the usual state of a task with no PR.
  * @returns {Promise<{ pr: number | null, undeclaredPr: number | null }>}
  */
@@ -520,8 +518,8 @@ async function declareWorkerPr({ result, cwd, gh, signal, readTimeoutMs }) {
     gh,
     signal,
     timeoutMs: readTimeoutMs,
-    // The same read as the start of a `--pr` run (#1092): a declared PR whose gate cannot read the
-    // required-check sources could only end through `abort`, so the run stays undeclared (#1097).
+    // The same read as the start of a `--pr` run: a declared PR whose gate cannot read the
+    // required-check sources could only end through `abort`, so the run stays undeclared.
     // The resolver runs it before its final identity check, so a head, branch, or remote that
     // moves during it leaves the run undeclared too (ADR 0043).
     confirm: async (pr) => {

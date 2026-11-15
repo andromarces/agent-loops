@@ -42,7 +42,7 @@ const CLAUDE_WORKTREES = [".claude", "worktrees"];
 
 // Claude Code names the holder of a lock in a `*.lock` file under `.claude/`, such as
 // `scheduled_tasks.lock`. A copy would claim a lock that no process of the linked work
-// tree holds, so the file is skipped and named (issue #964).
+// tree holds, so the file is skipped and named.
 const isClaudeLockFile = (rel) =>
   foldName(rel.split("/")[0]) === ".claude" && foldName(basename(rel)).endsWith(".lock");
 

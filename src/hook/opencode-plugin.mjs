@@ -1,4 +1,4 @@
-// OpenCode parent-guard plugin factory (#75, packaged by #139). The shipped
+// OpenCode parent-guard plugin factory. The shipped
 // entry point is the rendered template at
 // `src/install/templates/opencode/plugins/parent-guard.ts`, which imports this
 // factory and the shared decision logic by absolute URL. Keeping the behavior
@@ -16,7 +16,7 @@
 // The shared Claude and Codex skills set `metadata.opencode/autoinvoke: false`,
 // so OpenCode drops them from the model's skill list and the model cannot
 // auto-invoke one for an /agent-loop request. This command is then the only
-// `/agent-loop` entry point that carries the OpenCode session id (#150).
+// `/agent-loop` entry point that carries the OpenCode session id.
 //
 // The guard resolves the runs root from this server process's environment, so
 // an out-of-process `AGENT_LOOP_RUNS_ROOT` override (test-only) would desync
@@ -25,9 +25,9 @@
 import { parentInstructionParts } from "../lib/parent-instructions.mjs";
 
 // The permission actions that carry a file edit. A set, not a single constant,
-// so a further edit tool is one entry. A live probe against OpenCode
-// v0.0.0-dev-19933 showed the built-in `edit`, `write`, and `apply_patch` tools
-// all raise the `edit` action, so the set covers every built-in file-edit tool.
+// so a further edit tool is one entry. In OpenCode v0.0.0-dev-19933 the built-in
+// `edit`, `write`, and `apply_patch` tools all raise the `edit` action, so the set
+// covers every built-in file-edit tool.
 // `shell` is a different action and stays allowed. A tool served by an MCP
 // server raises its own action name and passes the guard.
 export const EDIT_ACTIONS = new Set(["edit"]);

@@ -11,8 +11,7 @@ import {
 
 // agy 1.4.12 writes one machine line to stderr for a failed turn: `AGY_ERROR: {...}`. Its
 // `short_error` field opens with the provider status and code, for example
-// `UNAVAILABLE (code 529): ...`, which a probe against a local 529 server captured. A provider
-// capacity reply carries code 529 (issue #1323).
+// `UNAVAILABLE (code 529): ...`. A provider capacity reply carries code 529.
 const AGY_ERROR_PREFIX = "AGY_ERROR: ";
 const CAPACITY_SHORT_ERROR = /^(?:[A-Z_]+ )?\(code 529\): /;
 
@@ -84,8 +83,8 @@ export async function runAgy(state, prompt, options = {}) {
     throw new Error("Antigravity did not return a conversation_id.");
   }
 
-  // In the probe (agy 1.2.13), a resumed id that agy does not have printed a not-found warning on
-  // stderr, exited 0, and ran the turn in a new conversation. The turn already ran, so a rerun would
+  // agy 1.2.13 prints a not-found warning on stderr for a resumed id it does not have, exits 0, and
+  // runs the turn in a new conversation. The turn already ran, so a rerun would
   // repeat its edits. The new id is adopted, and `conversationReplaced` tells the runtime that the
   // conversation never received the role preamble. The stderr text is not matched: any different id
   // means a new conversation.

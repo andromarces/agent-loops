@@ -22,7 +22,7 @@ const REMOVER_REFUSED = 3;
 // for the forced end that `execBounded` sends after a refused SIGTERM.
 const REMOVAL_BOUND_MS = 30_000;
 
-// Short on purpose: a deep path fails some runtimes on Windows (issue #903).
+// Short on purpose: a deep path fails some runtimes on Windows.
 const PREFIX = "al-";
 
 // Names of the directories that this process created and has not finished removing. Only these
@@ -38,8 +38,8 @@ export const isTurnTmpdirName = (name) => createdNames.has(name);
  * Runs `run(env)` with a private temporary directory for one child turn and removes it afterward
  * on every outcome. `env` sets `TMPDIR`, `TEMP`, and `TMP` to the directory, which `mkdtemp`
  * creates under the inherited temporary directory with a unique name, so the child and its
- * commands leave nothing in the inherited one and a concurrent process never loses an entry
- * (issue #955). `env` also pins the runs root, the test-slot directory, and the session-record
+ * commands leave nothing in the inherited one and a concurrent process never loses an entry.
+ * `env` also pins the runs root, the test-slot directory, and the session-record
  * directory to the paths that the parent resolves, so the child shares them with every other
  * process on the host. A value that the user set for one of those overrides wins. `env` also
  * lists the inherited temporary directories in `AGENT_LOOP_INHERITED_TMPDIR`, for the installer
@@ -109,7 +109,7 @@ async function createTurnTmpdir() {
  * known-limit: a directory nested below the target can still be swapped during the delete, and a
  * replacement between the final identity check and the `rmdir` loses at most an empty directory,
  * because Node has no directory-handle delete. The identity check relies on the device and inode
- * that the platform reports, which is not verified on Windows (issue #709). A mismatch there
+ * that the platform reports, which is not verified on Windows. A mismatch there
  * refuses and leaves the directory in place.
  */
 async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
@@ -137,7 +137,7 @@ async function removeTurnTmpdir({ dir, parentReal, device, inode }, boundMs) {
     failure(errorLine(err));
   } finally {
     // A directory that the removal refused or failed on stays in place, and its name is no longer
-    // the runtime's own, so a report can list it (issue #1024).
+    // the runtime's own, so a report can list it.
     createdNames.delete(basename(dir));
     await unregisterTurnTmpdir(basename(dir));
   }
@@ -234,7 +234,7 @@ function processGroupAlive(pgid) {
 
 /**
  * Re-checks the turn directory that a call kept after an interrupted turn and removes it when no
- * process of the dead child runs (issue #1329). Every guard of the first removal holds. A failure
+ * process of the dead child runs. Every guard of the first removal holds. A failure
  * warns and never throws, so the later call keeps its exit code and envelope.
  */
 export async function recheckKeptTurnTmpdir(record) {

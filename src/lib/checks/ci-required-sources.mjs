@@ -1,6 +1,6 @@
 // Reads the required-check sources of a base branch: repository rulesets, classic branch
-// protection, and `gh pr checks`. It also reads the pull request state that the CI gate judges
-// (#218, #336). The absence and resolution judgments live here.
+// protection, and `gh pr checks`. It also reads the pull request state that the CI gate judges.
+// The absence and resolution judgments live here.
 import {
   ghApiFailure,
   ghFailureText,
@@ -14,7 +14,7 @@ import { inOrder } from "./bounded-call.mjs";
 import { isJsonObject, tryParseJson } from "../json.mjs";
 
 // A source the caller cannot read answers 404 or 403, and the message names the
-// credential. Observed live on the classic-protection endpoint (#280, #295):
+// credential:
 //
 //   `Not Found`                             404  a token without repository admin.
 //   `Branch not protected`                  404  an admin, on a branch with no
@@ -28,13 +28,11 @@ import { isJsonObject, tryParseJson } from "../json.mjs";
 // empty union over an unknown source either way, so the gate treats them alike.
 // The second is not a permission problem: the branch simply has no classic
 // protection, and a ruleset-only repository answers it for an admin. That one
-// also states the absence, so it is the one of the four that establishes it
-// (issue #336).
+// also states the absence, so it is the one of the four that establishes it.
 //
 // A private repository on the GitHub Free plan answers 403 on the classic
 // protection, branch rules, and rulesets endpoints. Its message names the plan
-// instead of the credential (#301). The measurement covered two private Free-plan
-// repositories, with an admin classic PAT and an admin fine-grained PAT:
+// instead of the credential:
 //
 //   `Upgrade to GitHub Pro or make this repository public
 //    to enable this feature.`                     403  a private repository on
@@ -78,11 +76,11 @@ const UNREADABLE =
 
 // The exact 404 the classic protection endpoint writes only to a caller that can
 // read it, on a branch with no classic protection. It is the one unreadable reply
-// that proves the source holds no required check (issue #336). It is compared
+// that proves the source holds no required check. It is compared
 // whole, like the Free-plan 403 below, because an unanchored search also matches
 // the same text inside another error. A reply that merely quotes it, or carries
 // it beside a second line, says nothing about the branch. It must not read as an
-// absence (issue #336 review).
+// absence.
 const NOT_PROTECTED_404 = "gh: Branch not protected (HTTP 404)";
 
 // The exact reply a private Free-plan repository writes, compared whole so no
@@ -100,7 +98,7 @@ function isExactReply(stderr, text) {
  *
  * The classification is an allowlist, so it fails closed, and `ABSENT` is the only answer that lets
  * a finish pass. `ABSENT` comes only from a ruleset reply with no `required_status_checks` rule, or
- * the exact `Branch not protected` (404) of classic protection (#280, #295, #336).
+ * the exact `Branch not protected` (404) of classic protection.
  * @param {object} options
  * @param {(stderr: string) => boolean} options.absentOnError the one non-zero reply that proves
  *   this source holds no required check, compared whole
@@ -135,7 +133,7 @@ async function readRequiredSource(
     if (UNREADABLE.test(stderr) || isExactReply(stderr, FREE_PLAN_403)) {
       return { state: UNKNOWN, contexts: [] };
     }
-    // A non-zero reply that is not an unreadable shape still throws, which fails the run instead of the gate (#280).
+    // A non-zero reply that is not an unreadable shape still throws, which fails the run instead of the gate.
     throw ghApiFailure(args[0], reply);
   }
   const text = stdout.trim();
@@ -153,7 +151,7 @@ async function readRequiredSource(
   // `unparsed` marks a successful reply that is not the JSON object or array the
   // endpoint returns, or whose shape `malformed` cannot interpret. The gate
   // ignores it. The status read and the check wait refuse on it, because that
-  // reply can hide a required context (issue #349).
+  // reply can hide a required context.
   return {
     state,
     contexts,
@@ -166,8 +164,7 @@ async function readRequiredSource(
 // `HAS_CONTEXTS` names at least one, and `UNKNOWN` settles nothing.
 // `EMPTY` is the one outcome the ruleset source alone carries: a successful read
 // that found no rule. It is not a positive absence. It does not refuse the
-// per-check path, so a classic-only repository still finishes on that path
-// (issue #336).
+// per-check path, so a classic-only repository still finishes on that path.
 export const ABSENT = "absent";
 const HAS_CONTEXTS = "contexts";
 export const UNKNOWN = "unknown";
@@ -177,7 +174,7 @@ export const EMPTY = "empty";
 // update ruleset schemas. A rule entry is unknown rather than skipped when its
 // `type` is missing, is not a string, or is outside this list. A type this list
 // does not carry can be a required-status-check rule under a name the gate has not
-// seen (issue #336 review). The list is the documented one, not an observed one.
+// seen. The list is the documented one, not an observed one.
 // A future GitHub rule type makes such a read unknown, which refuses, and that is
 // the safe direction.
 const RULE_TYPES = new Set([
@@ -219,7 +216,7 @@ const PROTECTION = "classic branch protection";
  * `required_status_checks` rule. That is the only shape in which the read states that no
  * required-status-check rule applies to the branch. A malformed entry makes the whole read unknown
  * rather than skipped. An entry the gate cannot read can be a required-status-check rule that it
- * never enforced (issue #336).
+ * never enforced.
  * @param {unknown} data the parsed body.
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
@@ -228,7 +225,7 @@ export function classifyRulesets(data) {
   // of arrays. A body is not that shape when it is not an array of arrays, or when
   // it holds a page that is not an array. Such a read cannot account for every
   // page, so it settles nothing instead of being classified from the pages that
-  // arrived (issue #336 review).
+  // arrived.
   if (!Array.isArray(data) || data.some((page) => !Array.isArray(page))) {
     return { state: UNKNOWN, contexts: [] };
   }
@@ -236,20 +233,19 @@ export function classifyRulesets(data) {
     // A read that returned no page at all is not a read that found no rule. An
     // empty body from the paginated call is the same reply whether the branch has
     // no rule or the read returned nothing. Only the single empty page says the
-    // first (issue #336 review).
+    // first.
     return { state: UNKNOWN, contexts: [] };
   }
   if (data.every((page) => page.length === 0)) {
     // Exactly one empty page is the reply that says the branch has no rule, so it
     // is `EMPTY`. More than one empty page is an anomalous sequence. GitHub stops
     // paginating when there is no next page. A second empty page then means the
-    // read is not the complete result it claims to be (issue #336 review).
+    // read is not the complete result it claims to be.
     return { state: data.length === 1 ? EMPTY : UNKNOWN, contexts: [] };
   }
   if (data.some((page) => page.length === 0)) {
     // An empty page beside a page that holds rules settles nothing, for the same
-    // reason. A partial read must not be classified from the pages that did arrive
-    // (issue #336 review).
+    // reason. A partial read must not be classified from the pages that did arrive.
     return { state: UNKNOWN, contexts: [] };
   }
   const rules = data.flat();
@@ -261,8 +257,7 @@ export function classifyRulesets(data) {
     // A well-formed rule is an object that carries a string `type`.
     if (typeof rule.type !== "string" || !RULE_TYPES.has(rule.type)) {
       // A type the gate does not know can be a required-status-check rule under a
-      // name this list does not carry. It is therefore unknown rather than skipped
-      // (issue #336 review).
+      // name this list does not carry. It is therefore unknown rather than skipped.
       return { state: UNKNOWN, contexts: [] };
     }
     if (rule.type !== "required_status_checks") {
@@ -289,7 +284,7 @@ export function classifyRulesets(data) {
  * `checks` entries. A missing list is empty.
  * @param {Record<string, unknown>} required
  * @returns {{ name: string, appId: number | null }[] | null} `null` when either list is not an
- *   array or holds an entry that names no check (issue #1265).
+ *   array or holds an entry that names no check.
  */
 function protectionContexts(required) {
   const { contexts = [], checks = [] } = required;
@@ -319,7 +314,7 @@ function protectionContexts(required) {
  * `required_status_checks` is present but not an object, is unknown. A body with no
  * `required_status_checks` names no context, but it does not say the branch is unprotected. A
  * classic-protected branch can require reviews or a signed-off push without requiring a check, so
- * that body is unknown too (issue #336).
+ * that body is unknown too.
  * @param {unknown} data the parsed body.
  * @returns {{ state: string, contexts: { name: string, appId: number | null }[] }}
  */
@@ -338,7 +333,7 @@ function classifyProtection(data) {
 // Whether a classic protection body has a shape the status read and the check wait cannot interpret.
 // A body with no `required_status_checks` is interpretable: the branch is
 // protected without a required check. Any other shape that is not an object, a
-// list of names, or a list of `{ context }` entries is not (issue #349).
+// list of names, or a list of `{ context }` entries is not.
 function isProtectionMalformed(data) {
   if (!isJsonObject(data)) {
     return true;
@@ -394,12 +389,11 @@ export const NO_REQUIRED_CHECKS = /^no required checks reported on the '.+' bran
 
 // The `gh pr checks` exit code of a pending check, as `docs/orchestrator/reviewer-evidence.md` states
 // it for the reviewer read. Exit 1 covers a failing check, a read error, and a repository with no
-// required check, so the check list decides (#329).
+// required check, so the check list decides.
 export const EXIT_PENDING = 8;
 
 // The exact `gh pr checks` reply on a PR head that no check has reported on yet, as right after a
-// push. It is an empty list, not a read error, in the required and the all-checks read alike (#941,
-// #950).
+// push. It is an empty list, not a read error, in the required and the all-checks read alike.
 export const NO_CHECKS_YET = /^no checks reported on the '.+' branch$/;
 
 /**
@@ -431,8 +425,8 @@ export function requiredNamesOf({ status, stdout, stderr }) {
   // Any other exit, an empty list on a non-zero exit, and an error text that merely contains those
   // words are a failed read. The `NO_CHECKS_YET` reply is a failed read too.
   // The gate ignores `ok`. The status read and the check wait refuse on it, because the list can
-  // name a required check that no configuration source did (issue #349).
-  // The wait retries a clean server error or a transport failure (#1121, #1312).
+  // name a required check that no configuration source did.
+  // The wait retries a clean server error or a transport failure.
   // An unparseable reply is never retried.
   const transient =
     isCleanServerError({ stdout, stderr }) || isTransportFailure({ stdout, stderr });
@@ -465,8 +459,7 @@ function addContext(contexts, name, appId = null) {
 // The repository-rulesets source of `base`, classified. The endpoint paginates at 30 rules per page by
 // default, so a single read can stop before a required-status-check rule. It can then report an absence
 // for a branch that requires one. Every page is fetched by page number, never by a reply-supplied `Link`
-// URL. A body the gate cannot account for every page of is unknown or an error (issue #336
-// review, #1033).
+// URL. A body the gate cannot account for every page of is unknown or an error.
 function readRulesets(gh, slug, base, cwd) {
   // Its absentOnError predicate never matches, because that endpoint does not write the 404.
   return readRequiredSource(pagedRead(gh), [`repos/${slug}/rules/branches/${base}`], cwd, {
@@ -476,7 +469,7 @@ function readRulesets(gh, slug, base, cwd) {
 }
 
 // The classic branch-protection source of `base`, classified. With `retryable`, the read is a
-// status-classified `--include` read (#1091).
+// status-classified `--include` read.
 // Classic protection proves an absence only with the exact `Branch not protected` 404.
 function readProtection(gh, slug, base, cwd, retryable = false) {
   return readRequiredSource(
@@ -503,7 +496,7 @@ function readProtection(gh, slug, base, cwd, retryable = false) {
 export async function readRulesetState(gh, slug, base, cwd) {
   // The protection read is canceled once the ruleset state settles.
   // Only an `UNKNOWN` state waits for the protection read, because a failed read leaves no refusal standing.
-  // The names read of `gh pr checks --required` never decides the answer, so it is not made (#1182).
+  // The names read of `gh pr checks --required` never decides the answer, so it is not made.
   const [rules] = await inOrder(
     gh,
     [
@@ -521,7 +514,7 @@ export async function readRulesetState(gh, slug, base, cwd) {
  * `unknown` names every configuration source whose reply settled nothing, because such a source
  * can hold a required check that this caller never saw. An empty union is then a refusal that names
  * each source that settled nothing. An empty union over sources that each stated they hold no
- * required check is an established absence that the gate records (issue #336).
+ * required check is an established absence that the gate records.
  * `gh pr checks --required` contributes names and nothing else, so it never appears among those
  * sources and never establishes an absence.
  */
@@ -536,11 +529,11 @@ export async function requiredContexts(
   const contexts = new Map();
   const unknown = [];
   const unparsed = [];
-  // With `retryable`, the protection read is a status-classified `--include` read like the paged rules read (#1091).
+  // With `retryable`, the protection read is a status-classified `--include` read like the paged rules read.
   // A failed read of either source with a retryable status then carries `transient` for the next poll.
   // The default reads stay as the gate pins them.
-  // With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is not repeated (#1125).
-  // `sourceCache` is a Map the caller owns, and a clean ruleset or protection result is kept per base branch (#1267).
+  // With `names`, the `requiredNamesOf` result of a reply the caller already holds, the names read is not repeated.
+  // `sourceCache` is a Map the caller owns, and a clean ruleset or protection result is kept per base branch.
   // A repeated caller then reads each source once through the same Map.
 
   const cached = async (kind, read) => {
@@ -601,7 +594,7 @@ export async function requiredContexts(
     namesFailure: listed.failure ?? "",
     // The ruleset state is carried separately from `unknown`, because an empty read
     // is neither an absence nor a refusal. It contributes no contexts. It leaves
-    // the per-check path to the other sources (issue #336).
+    // the per-check path to the other sources.
     rulesetState: rules.state,
     protectionState: protection.state,
     contexts: values
@@ -616,13 +609,13 @@ export async function requiredContexts(
 
 /**
  * Whether the required contexts that `requiredContexts` resolved state an absence of a required
- * check. The gate and the check wait share it, so one rule decides it (issue #1013).
+ * check. The gate and the check wait share it, so one rule decides it.
  *
  * Returns `null` when a source names a required check, so there is no absence to decide, and the
  * caller judges each named check. With no named check, returns `{ absent: true }` when both the
  * rulesets and the classic protection stated they hold none. With no named check, returns
  * `{ unproven }` when the listed sources did not state an absence. A parent can only fix a source
- * it can see (issue #336).
+ * it can see.
  * @param {{ unknown: string[], rulesetState: string, protectionState: string, contexts: object[] }} required
  * @returns {{ absent: true } | { unproven: string[] } | null}
  */

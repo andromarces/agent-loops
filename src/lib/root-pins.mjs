@@ -26,7 +26,7 @@ export function rootPath(name) {
 /**
  * The environment entries that pin the runs root, the test-slot directory, and the session-record
  * directory of a child to the paths that this process resolves, so a `TMP`, `TEMP`, or `TMPDIR`
- * override inside the child cannot move them (issues #955, #970). A root that the user set to a
+ * override inside the child cannot move them. A root that the user set to a
  * non-empty value is left out, because an empty value counts as unset and a kept empty value would
  * let the child's `TMP` move the root.
  */

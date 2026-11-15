@@ -1,6 +1,6 @@
 // Gate refusal messages shared by the headless and interactive finish gates and the CLI.
 // One wording per refusal, shared by both paths, because the interactive path
-// states these rules and the headless path must not drift from it (#337).
+// states these rules and the headless path must not drift from it.
 export const REVIEW_ONLY_PR_REFUSAL =
   "--pr declares PR work, which needs the --require-ci gate; review-only rejects that gate.";
 export const REVIEW_ONLY_COMPARE_HEAD_REFUSAL =
@@ -11,7 +11,7 @@ export const REVIEW_ONLY_GATE_REFUSAL =
 // a parent reads one rule on both paths.
 export const REVIEW_ONLY_WORKER_REFUSAL = "mode review-only rejects a run_worker action";
 // The `--require-accept` refusal for a worker turn that ran after the last review. It is shared so
-// the interactive and headless paths cannot drift (#1516).
+// the interactive and headless paths cannot drift.
 export const WORKER_AFTER_REVIEW_ACCEPT_REFUSAL =
   "a worker turn ran after the last review, and a reviewer accept with a Checks line on the current state must come before finish";
 
@@ -41,8 +41,8 @@ const UNRESOLVED_COMPARE_WITH_CI =
  * The marker refusal for the run's PR input, or null when the run declares
  * neither a gate nor a PR. The marker stays the only record then. A declared
  * PR run needs the gate the same way a gated run does. It refuses the marker
- * too and names the gate it must reach, instead of a flag it never carried
- * (#302). The two paths share this function so the wording cannot drift.
+ * too and names the gate it must reach, instead of a flag it never carried.
+ * The two paths share this function so the wording cannot drift.
  * @param {object} options
  * @returns {string | null}
  */
@@ -66,8 +66,8 @@ export const COMPARE_HEAD_INPUT_REFUSAL =
 /**
  * The refusal of `--compare-head` beside a flag or marker that already settles the PR head, or null.
  * `--require-ci` resolves the head in its gate, and `unresolvedCompare` records that no one did.
- * Either one with this verified compare records two outcomes for one head (#1098).
- * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared (#1111).
+ * Either one with this verified compare records two outcomes for one head.
+ * `flag` is false for the compare of a worker-opened PR that the runtime left undeclared.
  * No flag selected it, so the refusal names the compare and not the flag.
  * @param {{ requireCi: number | null, unresolvedCompare: boolean, flag?: boolean }} options
  * @returns {string | null}

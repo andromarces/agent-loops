@@ -1,4 +1,4 @@
-// Install targets per harness (#139). `buildTargets` declares the files each harness
+// Install targets per harness. `buildTargets` declares the files each harness
 // creates and the one settings entry it owns, resolved against the installed
 // package. `src/install/templates/` holds the entry point and guard files. The
 // Antigravity entry comes from `templates/antigravity/hooks.json`.
@@ -100,7 +100,7 @@ export async function buildTargets(
   // The absolute invocation works from Git Bash and PowerShell alike, where the
   // bare `agent-loop` command is absent or resolves only to a Windows `.cmd`
   // shim. Bash does not resolve that shim, so a PATH lookup would report a
-  // missing command and the skill would misread it as a harness refusal (#151).
+  // missing command and the skill would misread it as a harness refusal.
   const cli = nodeCommand(
     forwardSlashes(pathApi.join(packageRoot, "src/cli.mjs"), platform),
     platform,
@@ -114,7 +114,7 @@ export async function buildTargets(
       .replaceAll("{{AGENT_LOOP_INSTRUCTIONS}}", forwardSlashes(instructions, platform))
       .replaceAll("__AGENT_LOOP_CLI__", cli);
   // The plugin holds the instructions path in a JavaScript string literal, so the
-  // value is escaped for that context rather than quoted as a shell word (#1635).
+  // value is escaped for that context rather than quoted as a shell word.
   const renderPluginPaths = (text) =>
     text.replaceAll(
       "{{AGENT_LOOP_INSTRUCTIONS}}",
@@ -226,7 +226,7 @@ export async function buildTargets(
   } else if (harness === "copilot") {
     const hook = JSON.parse(await template(templates, "copilot", "hooks", "parent-guard.json"));
     // Copilot consumes a flat permissionDecision object, so it runs its own
-    // guard script rather than the Claude/Codex hookSpecificOutput shape (#155).
+    // guard script rather than the Claude/Codex hookSpecificOutput shape.
     hook.hooks.PreToolUse[0].args = [
       pathApi.join(packageRoot, "src/hook/copilot-parent-guard.mjs"),
     ];

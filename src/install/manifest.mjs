@@ -1,4 +1,4 @@
-// The install manifest (#139). One record per touched target, at
+// The install manifest. One record per touched target, at
 // `<home>/.agent-loops/install.json`, so `agent-loop uninstall` can restore the
 // pre-install bytes and remove only entries it inserted. The baseline recorded
 // by the first install is immutable: later installs carry it forward untouched
@@ -36,8 +36,8 @@ export function manifestPath(home) {
 }
 
 /**
- * The lock file that serializes `install` and `uninstall` for one install home
- * (#193, #198). It sits beside `<home>/.agent-loops`, not inside it, so
+ * The lock file that serializes `install` and `uninstall` for one install home.
+ * It sits beside `<home>/.agent-loops`, not inside it, so
  * `removeManifest` can delete the directory while the lock is held. The key is
  * the location, so equivalent home spellings share one lock and no temp setting
  * (`TMPDIR`, `TEMP`) changes it. The lock is released in a `finally`, so a full

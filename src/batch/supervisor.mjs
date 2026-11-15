@@ -152,8 +152,8 @@ function undeclaredPrOf(loop, data) {
 }
 
 // The declared pull request of one transcript and the undeclared pull request that no declaration
-// leaves. An unreadable declaration throws (#1791), and the undeclared pull request of an
-// unreadable required-check source is read beside it (#1899).
+// leaves. An unreadable declaration throws, and the undeclared pull request of an
+// unreadable required-check source is read beside it.
 function pullRequestOf(loop, transcript) {
   const data = transcript.ok ? transcript.data : null;
   const declaredPr = declaredPrFromTranscript(data) ?? loop.pr;
@@ -1447,8 +1447,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     }
   };
 
-  // A pending-decision refresh takes the loop lock so a held lock reports paused, as #1728
-  // requires. A null result means another resume owns the loop and the caller keeps it pending.
+  // A pending-decision refresh takes the loop lock so a held lock reports paused.
+  // A null result means another resume owns the loop and the caller keeps it pending.
   const withLoopResult = async (issue, fn) => {
     const result = await withLoopLock(issue, fn);
     return result === LOCK_SKIPPED ? null : result;

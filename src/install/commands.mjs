@@ -1,4 +1,4 @@
-// CLI commands for `agent-loop install` and `agent-loop uninstall` (#139). The installer is
+// CLI commands for `agent-loop install` and `agent-loop uninstall`. The installer is
 // interactive when a TTY is present; `--harness` and `--yes` make it scriptable, and tests always
 // pass `--harness`.
 import { createInterface } from "node:readline/promises";
@@ -145,7 +145,7 @@ function printReports(reports, dryRun) {
     const detail = entry.detail ? ` (${entry.detail})` : "";
     if (entry.action === "note") {
       // Notes carry guidance past the 300-character log cap, so print them in
-      // full (#200).
+      // full.
       logInfoFull(`${entry.harness}: ${entry.detail}`);
       continue;
     }

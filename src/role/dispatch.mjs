@@ -98,7 +98,7 @@ function initialState(args) {
     lastResult: null,
     turns: [],
     // Marks a history that this version recorded from the run's first turn. A state written before
-    // `turns` existed lacks the mark, so it never refunds a refusal (issue #1565).
+    // `turns` existed lacks the mark, so it never refunds a refusal.
     turnsComplete: true,
   };
 }
@@ -106,7 +106,7 @@ function initialState(args) {
 /**
  * Archives a terminal state file as `state.<timestamp>.json` so a new run can
  * take its place. Absence is a no-op. Called only after every init check and
- * the prompt read pass, so a rejected init archives nothing (#123).
+ * the prompt read pass, so a rejected init archives nothing.
  */
 async function archiveState(paths, existing) {
   if (!existing) {
@@ -239,7 +239,7 @@ async function dispatchLocked(
       await refuseUnreadableGate(`--pr ${args.pr}`, { pr: args.pr, cwd: args.cwd, gh, signal });
     }
     // Init over a terminal run replaces its record, so re-check a turn directory that the ended run
-    // kept. Do this before the new state drops the record (issue #1329).
+    // kept. Do this before the new state drops the record.
     await recheckKeptTurnTmpdir(existing?.lastDispatch?.turnTmpdir);
     state = initialState(args);
   } else {
@@ -284,7 +284,7 @@ async function dispatchLocked(
   const sparseCheckout = init ? await readSparseCheckout(args.cwd) : null;
 
   // The turn history names a first turn of the role. A refunded first-turn refusal still records
-  // its entry, so a later refusal charges a step (issue #1565).
+  // its entry, so a later refusal charges a step.
   const firstRoleTurn = isFirstRoleTurn(state, roleName);
 
   // Charge the step before execution, matching the headless runtime.
@@ -307,21 +307,21 @@ async function dispatchLocked(
       signal,
       stepsUsed: state.stepsUsed,
       // The declared PR is the run's PR input, so a reviewer turn supplies the
-      // required-check status the runtime read (#320). A run that declares no PR
+      // required-check status the runtime read. A run that declares no PR
       // reads nothing, and the reviewer keeps its own read.
       pr: state.pr ?? null,
       reviewerSandbox: storedReviewerSandbox(state),
       // The copied local paths that the turn window hashes. An absent list reads no source.
       localFilesCopied: state.localFilesCopied ?? [],
       // A pre-assigned session id is written before the CLI starts. A crash during the turn
-      // still leaves the id for the resume after `--resume-interrupted` (issue #395). The
+      // still leaves the id for the resume after `--resume-interrupted`. The
       // result write below replaces it, with null when the turn kept no id.
       onSessionAssigned: async (id) => {
         recordRoleSession(state.roles[roleName], { sessionId: id, ...pickUnconfirmed(role, id) });
         await writeState(paths.stateFile, state);
       },
       // The record of the private turn directory is written before the CLI starts. A dispatch
-      // that dies mid-turn leaves it for the call that marks the run `interrupted` (issue #1207).
+      // that dies mid-turn leaves it for the call that marks the run `interrupted`.
       // The write is a precondition of the spawn: a failure starts no child and removes the turn
       // directory. `runChild` then handles it as any failed turn, so the run returns to `active`
       // with the step charged and an error result.
@@ -433,7 +433,7 @@ async function dispatchLocked(
 /**
  * True when the run marks its turn history complete from its first turn, and the history holds no
  * earlier turn of the role. A state written before `turns` existed has no mark, so it never
- * refunds a refusal, now or after a later write recreates part of the history (issue #1565).
+ * refunds a refusal, now or after a later write recreates part of the history.
  */
 function isFirstRoleTurn(state, roleName) {
   return (
@@ -445,8 +445,8 @@ function isFirstRoleTurn(state, roleName) {
 
 /**
  * Refunds the step charged for a first turn that a recognized model refusal ended, so the parent
- * can repair the model with `role set-model` and dispatch again inside the same budget (issue
- * #1565). The turn still records its entry, so a later refusal charges a step.
+ * can repair the model with `role set-model` and dispatch again inside the same budget. The turn
+ * still records its entry, so a later refusal charges a step.
  */
 function refundModelRefusalStep(state, roleName) {
   state.stepsUsed = Math.max(0, state.stepsUsed - 1);
@@ -483,7 +483,7 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
   if (state.lifecycle === "interrupted") {
     // Every later call re-checks the turn directory that the interrupted mark kept. The mark kept
     // it while a process of the dead child group ran. The call removes it once that group has
-    // ended (issue #1329).
+    // ended.
     await recheckKeptTurnTmpdir(state.lastDispatch?.turnTmpdir);
     if (!args.resumeInterrupted) {
       throw new RoleError(
@@ -491,7 +491,7 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
       );
     }
     // A hard kill of the dispatch leaves its claude child running, and the CLI accepts a resume of
-    // that session. The check comes before the step is charged (#671, ADR 0031).
+    // that session. The check comes before the step is charged (ADR 0031).
     await refuseHeldSessions(
       { [roleName]: state.roles[roleName] },
       { signal, flag: "--resume-interrupted", readProcessCommands },
@@ -507,7 +507,7 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
     // history is missing that turn. Record it here, marked `interrupted`: no
     // child ran, so there is no verdict and no reviewed head to record. Role
     // and time come from that turn's `lastDispatch`, because this call's
-    // `--role` need not be the role that ended uncertainly (#312).
+    // `--role` need not be the role that ended uncertainly.
     await recordUncertainTurn(state, roleName);
     await writeState(paths.stateFile, state);
     throw new RoleError(
@@ -584,7 +584,7 @@ function pickUnconfirmed(role, id) {
 
 /**
  * Copies the session id of a role copy to the role state. `sessionUnconfirmed` marks an id that
- * no CLI output has confirmed, so recovery verifies it before a resume (issue #395, ADR 0016).
+ * no CLI output has confirmed, so recovery verifies it before a resume (ADR 0016).
  * `conversationReplaced` is set only by a canceled turn that ran in a replaced conversation.
  * The next worker turn then sends the preamble (ADR 0027, decision 5). `taskSentTo` is the session
  * id of the conversation that last carried the init task, so no path needs its own mark for it.
@@ -670,7 +670,7 @@ function withSparseCheckout(payload, sparseCheckout) {
 /**
  * Records the charged turn that a dead dispatch left unrecorded and removes the turn directory that
  * it kept. `fallbackRole` names the role when the record holds none. The lock owner is dead, so no
- * child of that turn writes into its turn directory (#1207). The removal keeps the directory while
+ * child of that turn writes into its turn directory. The removal keeps the directory while
  * a process of the dead child may still run, and warns instead of throwing (ADR 0058, ADR 0063).
  * The caller writes the state.
  */
@@ -689,10 +689,10 @@ export async function recordUncertainTurn(state, fallbackRole = "worker") {
  * `lastDispatch` and `lastResult`. The entry records the turn's identity, not
  * its text: `role`, `status`, `verdict`, the reviewed `head`, and `at`. Report
  * and response text stay out of it, so the state file cannot grow with the text
- * a child returns (#312).
+ * a child returns.
  *
  * Exactly one entry exists per dispatched turn. A first turn that a recognized model refusal ends
- * charges no step but still records one, so a later refusal charges a step (issue #1565). An entry
+ * charges no step but still records one, so a later refusal charges a step. An entry
  * is written when a dispatch records its result, when a child fails, or when recovery records a
  * crash's uncertain turn. A dispatch past `maxSteps` is refused before it runs, so the array holds
  * at most `maxSteps` entries plus one refunded first-turn refusal for each role.
@@ -718,7 +718,7 @@ function recordTurn(state, roleName, result, at) {
 
 // Builds the envelope for one dispatched turn. When the closing block does not
 // parse, `raw` carries the whole response. A bounded tail can drop the head of a
-// long block, and with it the text the report was meant to preserve (issue #268).
+// long block, and with it the text the report was meant to preserve.
 function dispatchPayload(roleName, result) {
   if (result.status !== "ok") {
     return {
@@ -730,8 +730,8 @@ function dispatchPayload(roleName, result) {
   }
   const report = result.report;
   // The fields the dispatch envelope shares with the result prompt. `workTree` is the worker state
-  // the runtime read after the turn (#910), not the reviewer `reviewed` field. A reviewer
-  // `prChecks` is the status the runtime read for a declared PR (#320). The state file keeps it
+  // the runtime read after the turn, not the reviewer `reviewed` field. A reviewer
+  // `prChecks` is the status the runtime read for a declared PR. The state file keeps it
   // beside the response in `lastResult`. The turn history entry keeps its fixed shape (ADR 0008),
   // so the status is not recorded there.
   const payload = {
@@ -739,17 +739,16 @@ function dispatchPayload(roleName, result) {
     status: "ok",
     report,
     // The required labels that a null report lacks. It names the labels only, never the response
-    // text, which stays in `raw` (issue #1520).
+    // text, which stays in `raw`.
     ...(result.reportMissingLabels?.length > 0
       ? { reportMissingLabels: result.reportMissingLabels }
       : {}),
-    // A parsed report of either role names each label that points outside the block (issues #1907
-    // and #1910).
+    // A parsed report of either role names each label that points outside the block.
     ...(result.reportOutsideBlockLabels?.length > 0
       ? { reportOutsideBlockLabels: result.reportOutsideBlockLabels }
       : {}),
     // A parsed report of either role names each label whose value equals the value of the same
-    // label in the init task (issue #1914).
+    // label in the init task.
     ...(result.reportCopiedTaskLabels?.length > 0
       ? { reportCopiedTaskLabels: result.reportCopiedTaskLabels }
       : {}),

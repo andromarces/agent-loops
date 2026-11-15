@@ -164,7 +164,7 @@ export async function snapshotPackageStore({
  * Names the package store entries that appeared, changed, or vanished since `before`, sorted, at
  * most 20, each redacted like the test command output (ADR 0017), because a name is chosen by the
  * turn. The names are advisory only: the store is shared with every other process on the host,
- * so the runtime cannot attribute a change to the turn and never reverts one (issue #1045).
+ * so the runtime cannot attribute a change to the turn and never reverts one.
  * Returns [] when either read failed, or when the two reads saw different store roots.
  * @param {{ root: string, entries: Map<string, string> } | null} before
  * @param {{ cwd?: string }} [options] as for `snapshotPackageStore`

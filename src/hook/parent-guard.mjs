@@ -1,4 +1,4 @@
-// PreToolUse hook (#57). Claude Code registers it in ~/.claude/settings.json for
+// PreToolUse hook. Claude Code registers it in ~/.claude/settings.json for
 // Edit|Write|MultiEdit|NotebookEdit. Codex registers it in ~/.codex/hooks.json for
 // apply_patch. It reads the hook JSON from stdin. It prints a deny decision on stdout
 // only while the hook session is the parent of a non-terminal run.
