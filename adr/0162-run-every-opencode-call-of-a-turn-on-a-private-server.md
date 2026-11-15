@@ -42,10 +42,12 @@ of a live root, so a process whose root has exited is unreachable (ADR 0028).
   export, as they already do not reach the run. They come from the process environment.
 - The export keeps its cost and its failure handling (ADR 0026). A private server that fails to
   start fails the export, which leaves the resolved model unresolved.
-- **Accepted gap:** a live OpenCode install on Windows was not run for this change. The CLI help of
-  opencode v0.0.0-dev-1297 documents `--standalone` as "Run with a private server instead of the
-  background service" on `session export`, and the test covers the argument only. The live check is
-  tracked in issue #709.
+- **Live check on Windows, 2026-11-16:** opencode v0.0.0-dev-1297 on Windows 11. One worker turn of
+  a new OpenCode session ran from `main` after this change, with no OpenCode process alive before it.
+  20 s after the turn ended, no `opencode.exe` process was alive. A control run of
+  `opencode session export <id>` without `--standalone`, with no service running, started a detached
+  `opencode.exe serve --service` process within 5 s. The CLI help documents `--standalone` as "Run
+  with a private server instead of the background service". Recorded in issue #709.
 
 ## Alternatives
 
