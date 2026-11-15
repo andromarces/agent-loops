@@ -429,10 +429,10 @@ remove the work tree after it reads `halted`. Run the removal as a separate comm
 after you read the result. Never chain it after `finish` or `abort` in one command.
 
 The parent removes only the work tree that it created for this run. A work tree
-that it did not create for this run, such as a linked work tree that a user passes
-as `--cwd`, stays, and so does one that holds uncommitted or unpushed work that the
-run did not create. Keep that work tree until the work is committed or the user
-decides, and report it under `open` in the finish summary. The local files that init
+that it did not create for this run stays. A linked work tree that a user passes
+as `--cwd` is an example. So does one that holds uncommitted or unpushed work that
+the run did not create. Keep that work tree until the work is committed or the user
+decides. Report it under `open` in the finish summary. The local files that init
 copied into a kept work tree stay until the work tree is removed.
 
 Remove the work tree as [Removing a work tree](orchestrator/work-tree-removal.md) states.

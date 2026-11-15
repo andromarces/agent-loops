@@ -14,9 +14,10 @@ The orchestrator instructions said that the parent creates and owns the run work
 tree, and that it removes that work tree when the run ends. A user can pass a
 pre-existing linked work tree as `--cwd`, for example to review a fix that the
 parent already wrote there. A `review-first` or `review-only` run that accepts
-with no worker commit leaves that change uncommitted. A parent that followed the
-removal rule ran `git worktree remove --force`, which discarded the only copy of
-the change (issue #1932).
+with no worker commit leaves that change uncommitted. In the observed run, the
+parent kept the work tree only because it judged that the rule did not fit. A
+parent that follows the rule as written runs `git worktree remove --force` and
+discards the only copy of the change (issue #1932).
 
 ADR 0018 copies ignored local files of the main work tree into a linked `--cwd`
 at init. Those copies belonged to the run work tree, so their lifetime followed
@@ -53,8 +54,10 @@ it at a terminal lifecycle.
 
 ## Alternatives
 
-1. **Keep the unconditional removal rule.** Rejected. The observed run lost the
-   only copy of a change, and the rule gave the parent no exception to apply.
+1. **Keep the unconditional removal rule.** Rejected. A parent that follows it
+   removes the pre-existing work tree and discards the only copy of a change. The
+   observed parent kept the work tree only because it judged that the rule did not
+   fit.
 2. **Remove the work tree in the runtime.** Rejected. The cleanup stays a parent
    step, and the runtime cannot attribute uncommitted work to a run.
 3. **Keep the work tree whenever the run made no commit.** Rejected. A run that
