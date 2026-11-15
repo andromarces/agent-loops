@@ -3,7 +3,7 @@ import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see `withContinueRepo`). Every other
 // test, and every other command, reaches the real `execa`.
@@ -33,6 +33,11 @@ import {
 import { freePlanGh, prGateGh } from "./gh-doubles.mjs";
 import { createPsShim } from "./process-helpers.mjs";
 import { within } from "./wait-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)
@@ -264,7 +269,9 @@ test(
 test(
   "--continue-from restores the recorded reviewer accept on an unchanged tree",
   async () => {
-    const repo = await createTempRepo();
+    // The tree is unchanged, so `cleanRepoGit` answers every read and no `git` process runs.
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     // Outside the work tree: a transcript inside it is an untracked file that changes the tree.
     const transcriptDir = await mkdtemp(join(tmpdir(), "cli-test-gate-transcript-"));
     const transcriptPath = join(transcriptDir, "run.json");
@@ -314,6 +321,7 @@ test(
     } finally {
       process.exitCode = origExitCode;
       logSpy.mockRestore();
+      gitDouble.answer = null;
       await removePath(repo);
       await removePath(transcriptDir);
     }

@@ -996,13 +996,16 @@ test("a reordered value list of one remote key is reported by remote name", asyn
 test.each(["readdir", "lstat", "open", "readlink"])(
   "a failed %s of the hooks directory never exposes the path",
   async (operation) => {
-    const { repo, linked } = await createRepoWithLinkedWorkTree();
+    // A plain repository is enough: the case reads only its hooks directory, so no linked work
+    // tree is created.
+    const repo = await createTempRepo();
+    dirs.push(repo);
     const hooks = join(repo, ".git", "hooks");
     await mkdir(hooks, { recursive: true });
     await writeFile(join(hooks, "pre-push"), "#!/bin/sh\nexit 0\n");
     fsFailure.operation = operation;
 
-    const failure = await readSharedGit(linked).catch((err) => err);
+    const failure = await readSharedGit(repo).catch((err) => err);
     expect(failure).toBeInstanceOf(Error);
     expect(failure.message).toMatch(new RegExp(`EACCES`));
     const exposed = [

@@ -2,24 +2,42 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`untrackedFilesGit`): the turn snapshots a directory that holds the
+// files the case writes, and no `git` process runs.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { runChild } from "../src/child-turn.mjs";
 import { failedTurnEvidence } from "../src/lib/evidence/turn-evidence.mjs";
 import { ExecError } from "../src/lib/exec.mjs";
 import { MutationError } from "../src/lib/snapshot.mjs";
 import { scripted } from "./agent-doubles.mjs";
 import { removePath } from "./fs-helpers.mjs";
-import { createTempRepo } from "./git-helpers.mjs";
+import { createCleanRepoDir, untrackedFilesGit } from "./git-helpers.mjs";
 
-// Real Git: each turn reads the work tree of a real repository, so the snapshot matches Git.
+// The directory holds the files the case writes, and `untrackedFilesGit` reports each top-level
+// file, so a mutation check still sees a leak and no `git` process runs.
 let repo;
 let temp;
 beforeEach(async () => {
-  repo = await createTempRepo();
+  repo = await createCleanRepoDir();
+  gitDouble.answer = untrackedFilesGit;
   temp = await mkdtemp(join(tmpdir(), "inherited-"));
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temp);
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  gitDouble.answer = null;
   await removePath(repo);
   await removePath(temp);
 });

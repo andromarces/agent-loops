@@ -31,7 +31,9 @@ async function setup({ vpScript = "process.exit(0);" } = {}) {
   const globalConfig = join(dir, "global.gitconfig");
   await writeFile(globalConfig, "");
   const env = { GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" };
-  await execa("git", ["init", "-q", repo], { env });
+  // The guard reads only the presence of `.git`, so a directory stands for the work tree and no
+  // `git` process runs.
+  await mkdir(join(repo, ".git"), { recursive: true });
   // Process: the guard starts the stub `vp` as a child, so its exit code and signal surface here.
   const prepare = (extraEnv = {}) =>
     execa(process.execPath, [join(".vite-hooks", "install.mjs")], {

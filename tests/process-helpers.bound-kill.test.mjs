@@ -242,6 +242,7 @@ test.concurrent(
 // still end on its own. Otherwise a survivor lives without limit.
 // The marker path is a directory, so the write never succeeds.
 // The shim must still exit at its hard deadline, never before its ceiling.
+// Process: the case times a real killed shim, which no in-process double can show.
 test.concurrent(
   "a shim whose ceiling marker cannot be written still ends at its hard deadline",
   async () => {
@@ -269,6 +270,7 @@ test.concurrent(
 // Usefulness: acceptance (#670 review) — an exit that is not proven to precede the shim's ceiling
 // must not pass as a kill. The marker path is a directory, so a hard-deadline exit leaves no marker.
 // The call returns only after that exit, as a delayed record read or a paused parent does.
+// Process: the case observes the real exit of a shim past its ceiling, which no double can show.
 test.concurrent(
   "expectBoundKillsShim fails when the shim exit is first observed after its ceiling",
   async () => {

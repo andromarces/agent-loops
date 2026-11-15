@@ -2,10 +2,25 @@ import { exists } from "../fs-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+// Answers the shared Git and lockfile reads from memory (`roleReadsGit`), because no case here
+// asserts them. Every other command reaches the real `execa`, which the sparse cases need.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? (gitDouble.answer(command, args, options) ?? real.execa(command, args, options))
+        : real.execa(command, args, options),
+  };
+});
+
 import { readSparseCheckout } from "../../src/lib/sparse-checkout.mjs";
 import { executeRoleCommand } from "../../src/role/index.mjs";
-import { createLinkedWorkTree, createTempRepo } from "../git-helpers.mjs";
+import { createLinkedWorkTree, createTempRepo, roleReadsGit } from "../git-helpers.mjs";
 import {
   basicDeps,
   cleanup,
@@ -84,7 +99,11 @@ async function linkedWithInheritedSparse({ worktreeConfig = true } = {}) {
   return tree;
 }
 
+beforeEach(() => {
+  gitDouble.answer = roleReadsGit({ sharedGit: true, lockfile: true });
+});
 afterEach(async () => {
+  gitDouble.answer = null;
   vi.restoreAllMocks();
   await cleanup();
 });

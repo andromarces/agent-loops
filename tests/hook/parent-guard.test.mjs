@@ -3,7 +3,22 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`cleanRepoGit`): every case here asserts state and hook behavior, never
+// a Git result, so no `git` process runs.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { readStatesForSession, statePaths, writeSessionEntry } from "../../src/lib/runstate.mjs";
 import { GUARD_DENY_REASON, decideParentGuard, hookDecision } from "../../src/hook/decision.mjs";
 import { ANTIGRAVITY_GUARD } from "../../src/hook/antigravity-guarded-tools.mjs";
@@ -14,7 +29,7 @@ import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import { PACKAGE_ROOT } from "../install/install-helpers.mjs";
 import { restoreRunsRoot } from "../env-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
-import { createTempRepo } from "../git-helpers.mjs";
+import { createCleanRepoDir, cleanRepoGit } from "../git-helpers.mjs";
 
 const noopAdapter = {
   async run() {
@@ -85,10 +100,17 @@ async function loadPlugin() {
   return { hooks, commands, prompts };
 }
 
+/** A case repo whose Git reads are answered from memory, so no `git` process runs. */
+async function newRepo() {
+  const repo = await createCleanRepoDir();
+  gitDouble.answer = cleanRepoGit;
+  repos.push(repo);
+  return repo;
+}
+
 /** Registers a run under "parent-sess-1" against a fresh temp repo. */
 async function initRunForParent() {
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRepo();
   await initRunAt(repo);
   return repo;
 }
@@ -111,6 +133,7 @@ async function setup() {
 }
 
 afterEach(async () => {
+  gitDouble.answer = null;
   if (runsRoot === undefined) {
     return;
   }
@@ -192,8 +215,7 @@ test("deny decision names the orchestrator mode", async () => {
 // `readStatesForSession` on both sides, not a stub.
 test("index lookup finds the init state file written for a different --cwd", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRepo();
 
   const init = await executeRoleCommand(
     parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
@@ -220,9 +242,8 @@ test("index lookup finds the init state file written for a different --cwd", asy
 // active and releases only after every registered run is terminal.
 test("two concurrent runs from one parent session are both registered and guarded", async () => {
   await setup();
-  const repoA = await createTempRepo();
-  const repoB = await createTempRepo();
-  repos.push(repoA, repoB);
+  const repoA = await newRepo();
+  const repoB = await newRepo();
 
   const initFor = (repo, task) =>
     executeRoleCommand(
@@ -274,8 +295,7 @@ test("two concurrent runs from one parent session are both registered and guarde
 // pointing at a terminal state allows. Uses the real reader, not a stub.
 test("legacy single-path session index still guards its run", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRepo();
 
   const { stateFile } = statePaths({ cwd: repo });
   const legacyFile = statePaths({ parentSession: "legacy-parent" }).legacyIndexFile;
@@ -303,9 +323,8 @@ test("legacy single-path session index still guards its run", async () => {
 // alone allow.
 test("a corrupt record never hides another active run", async () => {
   await setup();
-  const repoA = await createTempRepo();
-  const repoB = await createTempRepo();
-  repos.push(repoA, repoB);
+  const repoA = await newRepo();
+  const repoB = await newRepo();
   await initRunAt(repoA);
 
   // Run B registers an entry whose state file is corrupt.
@@ -402,8 +421,7 @@ function runShellHookCommand(command, env, inputJson) {
 // A silent hook keeps the harness permission flow intact.
 test("hook script denies with PreToolUse JSON and stays silent otherwise", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRepo();
   await executeRoleCommand(
     parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
@@ -446,8 +464,7 @@ test("hook script denies with PreToolUse JSON and stays silent otherwise", async
 // command hook on a non-zero exit.
 test("installed Claude hook command runs the guard through a shell", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRepo();
   await executeRoleCommand(
     parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
     { agents: INIT_AGENTS, stdin: async () => "work" },
@@ -478,8 +495,7 @@ test("installed Claude hook command runs the guard through a shell", async () =>
 // permissionDecision object that Copilot CLI consumes.
 test("Copilot hook denies the matching session with its PreToolUse JSON shape", async () => {
   await setup();
-  const repo = await createTempRepo();
-  repos.push(repo);
+  const repo = await newRepo();
   await executeRoleCommand(
     parseRoleArgs(["dispatch", "--role", "worker", "--cwd", repo, ...INIT_OVERRIDES]),
     { agents: { fake1: noopAdapter, fake2: noopAdapter }, stdin: async () => "work" },
