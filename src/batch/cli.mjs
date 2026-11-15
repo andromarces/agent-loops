@@ -3,7 +3,6 @@
 // adr/0110-release-batch-slots-on-owner-decisions.md). stdout carries one JSON
 // object; progress and logs go to stderr.
 import { setLogsToStderr, logError } from "../lib/log.mjs";
-import { walkFlags } from "../lib/args.mjs";
 import { stateRoot } from "../lib/runstate.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { parseBatchArgs, prepareBatch, refuseRootInGitWorkTree, usage } from "./args.mjs";
@@ -113,43 +112,45 @@ Exit codes: 0 the issue set is created or the audit is removed, 1 the audit paus
 remove kept it, 2 a refused setting or a refusal before any state write, 130 SIGINT.
 `.trim();
 
+// The readers scan by hand rather than through `walkFlags`: `--help` wins over every later flag, and
+// a value flag accepts a dash argument, which are the orders that `batch status` and `batch answer`
+// document.
 function readIdFlag(argv, name) {
-  const values = { help: false, id: null };
-  walkFlags(
-    argv,
-    0,
-    (flag, readInline) => {
-      if (flag === "--help" || flag === "-h") {
-        values.help = true;
-        return true;
-      }
-      if (flag !== name) return false;
-      values.id = readInline(flag);
-      return true;
-    },
-    { error: usage },
-  );
-  return values;
+  let id = null;
+  for (let i = 0; i < argv.length; i += 1) {
+    const raw = argv[i];
+    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+    const flag = eq === -1 ? raw : raw.slice(0, eq);
+    if (flag === name) {
+      const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
+      if (!value) throw usage(`Missing value for ${name}.`);
+      id = value;
+      continue;
+    }
+    if (flag === "--help" || flag === "-h") return { help: true, id };
+    throw usage(`Unknown argument: ${raw}`);
+  }
+  return { help: false, id };
 }
 
 function readAnswerArgs(argv) {
   const values = { batch: null, decision: null, option: null, help: false };
-  const keys = { "--batch": "batch", "--decision": "decision", "--option": "option" };
-  walkFlags(
-    argv,
-    0,
-    (flag, readInline) => {
-      if (flag === "--help" || flag === "-h") {
-        values.help = true;
-        return true;
-      }
-      const key = keys[flag];
-      if (key === undefined) return false;
-      values[key] = readInline(flag);
-      return true;
-    },
-    { error: usage },
-  );
+  for (let i = 0; i < argv.length; i += 1) {
+    const raw = argv[i];
+    const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+    const flag = eq === -1 ? raw : raw.slice(0, eq);
+    if (flag === "--help" || flag === "-h") {
+      values.help = true;
+      continue;
+    }
+    const key = { "--batch": "batch", "--decision": "decision", "--option": "option" }[flag];
+    if (key === undefined) {
+      throw usage(`Unknown argument: ${raw}`);
+    }
+    const value = eq === -1 ? argv[++i] : raw.slice(eq + 1);
+    if (!value) throw usage(`Missing value for ${flag}.`);
+    values[key] = value;
+  }
   return values;
 }
 

@@ -1117,3 +1117,62 @@ test("a pending decision and a merge wait survive a resume", async () => {
     await cleanupRepo();
   }
 });
+
+// Usefulness: a failure after the child declares a pull request clears a stale undeclared one, so
+// the checkpoint never names the same pull request in both fields (ADR 0131).
+test("a failure after the child declares a pull request clears the stale undeclared one", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    pr: 41,
+    exitCode: 2,
+    // A record left by an earlier attempt holds an undeclared pull request when the child declares one.
+    beforeWrite: () =>
+      updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: 7 })),
+  });
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "failed",
+      reason: "exit-2",
+      pr: 41,
+      prUndeclared: null,
+    });
+    expect(await readLoop(runsRoot, prepared.id, 1)).toMatchObject({ pr: 41, prUndeclared: null });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a success after the child declares a pull request keeps the undeclared field clear,
+// so a stale record of an earlier attempt never names the same pull request in both fields (ADR 0131).
+test("a success after the child declares a pull request keeps the undeclared field clear", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const child = childDouble({
+    pr: 41,
+    beforeWrite: () =>
+      updateLoop(runsRoot, prepared.id, 1, (loop) => ({ ...loop, prUndeclared: 7 })),
+  });
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: 41,
+      prUndeclared: null,
+    });
+    expect(await readLoop(runsRoot, prepared.id, 1)).toMatchObject({ pr: 41, prUndeclared: null });
+  } finally {
+    await cleanupRepo();
+  }
+});

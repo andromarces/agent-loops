@@ -211,12 +211,15 @@ export function isTransportFailure({ stdout, stderr }) {
   );
 }
 
-/** Parses the JSON reply of the read `label`, naming that read in a parse failure. */
+/**
+ * Parses the JSON reply of the read `label`. A parse failure keeps the `SyntaxError` class of a
+ * direct `JSON.parse` and names the read.
+ */
 export function parseGhJson(label, text) {
   try {
     return JSON.parse(text);
   } catch (err) {
-    throw new Error(`${label} returned invalid JSON: ${err.message}`);
+    throw new SyntaxError(`${label} returned invalid JSON: ${err.message}`, { cause: err });
   }
 }
 

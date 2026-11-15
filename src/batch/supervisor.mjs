@@ -1353,6 +1353,11 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
 
   const readLoopTranscript = (file) => readTranscript(file, deps.readTranscript);
 
+  // The undeclared pull request that a finish writes. An explicit null clears a stale record of an
+  // earlier attempt; an omitted value keeps the stored one (ADR 0131).
+  const recordedUndeclared = (prUndeclared, loop) =>
+    prUndeclared === undefined ? (loop.prUndeclared ?? null) : prUndeclared;
+
   // Writes the success checkpoint, removes the loop's work tree, and releases its claim. Returns
   // the cleanup result so the caller can report it.
   const finishSuccess = async (
@@ -1370,7 +1375,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         stepsUsed,
         remainingSteps,
         pr: recordedPr,
-        prUndeclared: recordedPr == null ? (prUndeclared ?? loop.prUndeclared ?? null) : null,
+        prUndeclared: recordedPr == null ? recordedUndeclared(prUndeclared, loop) : null,
         pid: null,
         startTime: null,
       },
@@ -1404,7 +1409,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         stepsUsed,
         remainingSteps,
         ...(pr === undefined ? {} : { pr }),
-        prUndeclared: prUndeclared ?? loop.prUndeclared ?? null,
+        prUndeclared: recordedUndeclared(prUndeclared, loop),
         pid: null,
         startTime: null,
       },

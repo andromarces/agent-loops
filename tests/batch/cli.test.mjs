@@ -257,3 +257,10 @@ test("--from-audit of a paused audit exits 2 and writes no batch", async () => {
     await removePath(runsRoot);
   }
 });
+
+// Usefulness: `status --help` wins over a later flag with no value, as the other batch help paths do.
+test("status --help before a missing flag value prints usage and exits 0", async () => {
+  const { code, out } = await runQuiet(["status", "--help", "--batch"]);
+  expect(code).toBe(0);
+  expect(out).toContain("agent-loop batch status");
+});
