@@ -33,6 +33,8 @@ afterEach(() => {
   gitDouble.answer = null;
 });
 
+// Process: every case reads real Git state, because the mutation check and the status read are the
+// assertion.
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {
   const repo = await createTempRepo();

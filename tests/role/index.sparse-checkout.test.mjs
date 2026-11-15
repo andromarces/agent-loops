@@ -31,7 +31,8 @@ import {
   withRepo,
 } from "./helpers.mjs";
 
-// Every case drives real Git in a real repository, because the report must match what Git reads.
+// Process: every case seeds and reads real Git sparse-checkout state, because the report must
+// match what Git prints.
 
 const git = (cwd, args) => execa("git", args, { cwd });
 

@@ -739,9 +739,8 @@ test("a transcript PR declaration reaches the resumed attempt", async () => {
   }
 });
 
-// Process-level exception: a forced kill must end a descendant that inherited the group, so it
-// needs its own real process tree. Comment: this is the only case in this file that spawns a
-// process tree outside the child double.
+// Process: a forced kill must end a descendant that inherited the group, so the case needs its own
+// real process tree; it is the only case in this file that spawns outside the child double.
 test("a forced kill ends the child process tree", async () => {
   const script = [
     "const { spawn } = require('node:child_process');",

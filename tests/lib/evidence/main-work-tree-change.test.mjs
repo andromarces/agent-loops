@@ -67,8 +67,9 @@ vi.mock("../../../src/lib/git-read.mjs", async (importOriginal) => {
 let tree;
 let template;
 
-// Process: the shared pair is seeded once, with real commits, and each case copies it. Only the
-// reads that follow a case's own change start `git`, because the change report must match Git.
+// Process: the shared pair is seeded once, with real commits, and each case copies it. The commits
+// and refs that a case writes, and the reads that follow, stay real, because the change report must
+// match Git.
 beforeAll(async () => {
   template = await createLinkedWorkTree({
     seed: async (main) => {

@@ -203,7 +203,9 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await removePath(dir);
 });
 
-// Real Git: the shared state read must match what Git reports for a linked work tree.
+// Process: the shared state read must match what Git reports for a linked work tree, so each case
+// reads and writes a real repository. The config, remote, and hook writes in a case stay real
+// because the reported change is the assertion.
 // A copy of the seeded main and linked work tree pair, so the shared state sits in the common
 // directory and the case starts no `git worktree add`. The copy rewrites the two absolute path
 // records of the pair, so each case still holds its own linked work tree.

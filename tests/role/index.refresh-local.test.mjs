@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
 // Answers the shared Git and lockfile reads from memory (`roleReadsGit`), because no case here
 // asserts them. Every other command reaches the real `execa`.
+// Process: the copy's own Git reads are the refresh behavior under assertion, so each case reads a
+// real repository.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();

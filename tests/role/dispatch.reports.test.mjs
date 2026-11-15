@@ -36,6 +36,8 @@ vi.mock("../../src/lib/evidence/tmpdir-entries.mjs", async (importOriginal) => {
 // git-helpers.mjs, `roleReadsGit` for an unasserted read group, and `newCleanRunRepo` for the
 // cases that assert no Git result. Every other test, and every other command, reaches the real
 // `execa`.
+// Process: the adapter's real `git remote` and `git config` writes, and the real main work tree
+// reads, are the shared-state change that the envelope asserts.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
 vi.mock("execa", async (importOriginal) => {
   const real = await importOriginal();

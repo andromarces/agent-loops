@@ -72,6 +72,7 @@ const exitCode = process.exitCode;
 
 // A case starts on a directory whose `git` calls are answered from memory. A case that asserts a
 // real Git result, such as the mutation check, calls `useRealRepo` first.
+// Process: `useRealRepo` builds a real repository because the case reads the real mutation check.
 async function useRealRepo() {
   await removePath(repo);
   gitDouble.answer = null;
