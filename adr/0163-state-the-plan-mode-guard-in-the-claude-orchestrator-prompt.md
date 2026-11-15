@@ -62,6 +62,7 @@ Andro Marces
 ## Links
 
 - [Issue #1990: Headless Claude orchestrator aborts because it reads its plan-mode guard as a block](https://github.com/andromarces/agent-loops/issues/1990)
+- [Pull request #1993](https://github.com/andromarces/agent-loops/pull/1993)
 - Implementation: the headless prompt in [src/prompts/orchestrator.mjs](../src/prompts/orchestrator.mjs)
 - Tests: [tests/prompts/orchestrator.test.mjs](../tests/prompts/orchestrator.test.mjs)
 - [ADR Index](README.md)
