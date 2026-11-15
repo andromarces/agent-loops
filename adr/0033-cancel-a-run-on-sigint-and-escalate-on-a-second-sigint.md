@@ -70,6 +70,7 @@ Andro Marces
 
 - Partially superseded by [ADR 0036](0036-bound-every-snapshot-path-read-and-end-the-evidence-snapshot-on-a-second-cancel.md) (decision 8)
 - [Issue #669: SIGINT can end the runtime by signal before the cancel handler finishes](https://github.com/andromarces/agent-loops/issues/669)
+- [PR #706: Record the SIGINT cancel decision in ADR 0033](https://github.com/andromarces/agent-loops/pull/706)
 - [Issue #695: Verify the SIGINT cancel path during a live agent turn on macOS or Linux](https://github.com/andromarces/agent-loops/issues/695)
 - [Issue #708: Verification checklist: macOS](https://github.com/andromarces/agent-loops/issues/708)
 - [Issue #1326: End the Codex reviewer command tree on POSIX after a parent signal](https://github.com/andromarces/agent-loops/issues/1326)

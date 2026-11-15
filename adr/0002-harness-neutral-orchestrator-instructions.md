@@ -47,6 +47,7 @@ Andro Marces
 
 - [ADR 0001: Hybrid orchestrator with deterministic runtime](0001-hybrid-orchestrator-runtime.md)
 - [Issue #56: Harness-neutral orchestrator instructions](https://github.com/andromarces/agent-loops/issues/56)
+- [PR #65: Add ADR 0002 for harness-neutral orchestrator instructions](https://github.com/andromarces/agent-loops/pull/65)
 - [Issue #75: Wire the parent-edit guard for OpenCode through a plugin session-id channel](https://github.com/andromarces/agent-loops/issues/75)
 - [Pull Request #80: feat: guard OpenCode parent edits through a plugin session-id channel](https://github.com/andromarces/agent-loops/pull/80)
 - [ADR 0003: GitHub Copilot CLI session entry point and parent guard](0003-copilot-session-entrypoint-and-parent-guard.md)
