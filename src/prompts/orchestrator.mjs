@@ -316,8 +316,7 @@ const PR_HEAD_COMPARE =
 /**
  * The wait rule of a finish that compares one PR head instead of gating it: the bounded required
  * wait on the reviewed head, the all-checks wait after a refusal, or the fallback for an
- * orchestrator that cannot wait. Shared by a `--compare-head` run and a worker-opened PR that the
- * runtime refused to declare, so both prompts state one wording.
+ * orchestrator that cannot wait.
  */
 function checkWaitRule({ pr, orchestratorKind = null, timeout = null, waitCommand = null }) {
   const bound = headlessWaitSeconds(timeout);
