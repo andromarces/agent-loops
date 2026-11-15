@@ -748,7 +748,11 @@ test("reviewer prompt tells the reviewer not to report the runtime scratch folde
 // Usefulness: verifies a turn with no scratch folder keeps the earlier wording and names no folder,
 // because a failed creation must not send the reviewer to a path that does not exist.
 test("reviewer prompt without a scratch folder names none", () => {
-  expect(reviewerPrompt({ prompt: "check the fix" })).not.toContain("scratch folder");
+  const prompt = reviewerPrompt({ prompt: "check the fix" });
+  expect(prompt).not.toContain("scratch folder");
+  expect(prompt).toContain(
+    "Put the output of a test, build, or probe under an ignored path inside the repository first, such as an ignored cache directory. Use a temporary path outside the repository only when no ignored path fits.",
+  );
 });
 
 // Usefulness: verifies acceptance #1024 — the reviewer is told to reach the system temporary
