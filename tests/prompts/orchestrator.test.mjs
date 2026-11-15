@@ -1582,7 +1582,9 @@ test("the headless prompt omits rules for fields a headless run never receives",
   // The `localFilesDiffer` field is added only to a `role dispatch` envelope.
   expect(prompt).not.toContain("localFilesDiffer");
   expect(prompt).not.toContain("A later dispatch envelope");
+  expect(prompt).not.toContain("For `source`, the main work tree changed after init.");
   expect(instructions).toContain("localFilesDiffer");
+  expect(instructions).toContain("For `source`, the main work tree changed after init.");
 
   // A refused `--cwd` ends a headless run before its first orchestrator turn.
   for (const rule of [
