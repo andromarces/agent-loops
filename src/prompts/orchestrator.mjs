@@ -453,6 +453,19 @@ function modeBlock(mode) {
 // local work tree, so the rule is advisory.
 const REMOTE_WRITE_RULE = `You must NOT write to GitHub or any remote. ${REMOTE_WRITE_ACTIONS} A status read changes nothing, so it is not a write, and agent-loop role wait-checks stays allowed where the run permits it.`;
 
+/**
+ * The plan-mode guard of a read-only Claude turn. `runClaude` passes `--permission-mode plan` as a
+ * write guard, and a model can read the CLI reminder as a block and abort the loop. The rule is
+ * stated only for a Claude orchestrator, because no other adapter runs a read-only turn in plan
+ * mode.
+ * @param {string | null} orchestratorKind
+ * @returns {string}
+ */
+function planModeBlock(orchestratorKind) {
+  if (orchestratorKind !== "claude") return "";
+  return `\nThis turn runs in plan mode as a write guard only, and plan mode is never a reason to abort: you act by returning your JSON decision, and the runtime carries out that action. Do not write a plan file.`;
+}
+
 // Closes the result and refusal prompts: the remote-write rule, then the next-action request.
 const NEXT_ACTION_TAIL = `${REMOTE_WRITE_RULE}
 
@@ -497,7 +510,7 @@ export function initialPrompt({
     `
 You are the orchestrator in an automated multi-agent coding loop.
 Your role is to direct the workflow to complete the user task.
-You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a run that ends with a PR gate or a compare-head finish allows. The block below states it.
+You must NOT edit files, and you must NOT run agent CLIs or background processes directly. The one exception is a pull request check status read, which a run that ends with a PR gate or a compare-head finish allows. The block below states it.${planModeBlock(orchestratorKind)}
 ${REMOTE_WRITE_RULE}
 
 You have two child roles:
