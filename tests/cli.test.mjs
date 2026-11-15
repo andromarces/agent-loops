@@ -377,7 +377,9 @@ test.each([
 ])(
   "orchestrator that throws %j records a transcript error and prints an error line",
   async (thrown, expectedText) => {
-    const repo = await createTempRepo();
+    // The directory is not a repository, so `cleanRepoGit` answers the reads and no process runs.
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     const transcriptPath = join(repo, "transcript.json");
     const origExitCode = process.exitCode;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -418,6 +420,7 @@ test.each([
     } finally {
       process.exitCode = origExitCode;
       errorSpy.mockRestore();
+      gitDouble.answer = null;
       await removePath(repo);
     }
   },

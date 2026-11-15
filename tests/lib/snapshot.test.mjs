@@ -3,6 +3,20 @@ import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
+
+// Answers `git` from memory (`cleanRepoGit`) for the falsy-value cases, which assert no Git result.
+const gitDouble = vi.hoisted(() => ({ answer: null }));
+vi.mock("execa", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    execa: (command, args, options) =>
+      gitDouble.answer && command === "git"
+        ? gitDouble.answer(command, args, options)
+        : real.execa(command, args, options),
+  };
+});
+
 import { execa } from "execa";
 import { sha256 } from "../../src/lib/hash.mjs";
 import { cancelOnSigInt } from "../../src/lib/sigint.mjs";
@@ -18,7 +32,7 @@ import {
   workTreeRoot,
 } from "../../src/lib/snapshot.mjs";
 import { removePath } from "../fs-helpers.mjs";
-import { createTempRepo } from "../git-helpers.mjs";
+import { createCleanRepoDir, createTempRepo, cleanRepoGit } from "../git-helpers.mjs";
 import {
   ABORT_KILL_TEST_TIMEOUT_MS,
   BOUND_KILL_TEST_TIMEOUT_MS,
@@ -440,7 +454,9 @@ test("withMutationCheck prioritizes MutationError when inner function throws", a
 test.each([null, undefined, 0, ""])(
   "withMutationCheck rethrows falsy thrown value %j",
   async (thrown) => {
-    const repo = await createTempRepo();
+    // The directory is not a repository, so `cleanRepoGit` answers the reads and no process runs.
+    const repo = await createCleanRepoDir();
+    gitDouble.answer = cleanRepoGit;
     try {
       await expect(
         withMutationCheck(repo, "orchestrator", async () => {
@@ -448,6 +464,7 @@ test.each([null, undefined, 0, ""])(
         }),
       ).rejects.toBe(thrown);
     } finally {
+      gitDouble.answer = null;
       await removePath(repo);
     }
   },
