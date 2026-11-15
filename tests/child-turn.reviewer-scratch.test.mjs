@@ -1,7 +1,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory (`untrackedFilesGit`) for the cases that assert no Git result, so no
 // `git` process runs. The mutation and ignore cases keep a real repository.
@@ -36,6 +36,11 @@ async function dropRepo(repo) {
   gitDouble.answer = null;
   await removePath(repo);
 }
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 const SCRATCH_PARENT = ".agent-loop";
 
@@ -79,7 +84,7 @@ test("an ok reviewer turn gets a scratch folder that the runtime removes afterwa
     expect(await exists(seen.dir)).toBe(false);
     expect(await exists(join(repo, SCRATCH_PARENT))).toBe(false);
   } finally {
-    await removePath(repo);
+    await dropRepo(repo);
   }
 });
 

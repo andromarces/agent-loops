@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see
 // `withContinueRepo`); every other test, and every other command, reaches the real `execa`.
@@ -32,6 +32,11 @@ import {
   untrackedFilesGit,
 } from "./git-helpers.mjs";
 import { createBarrierTest } from "./barrier-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // Every test body runs through a body barrier (issue #943)
 const test = createBarrierTest();

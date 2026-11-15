@@ -1,6 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the test that switches it on (see `gitAbortingPostTurn` in
 // git-helpers.mjs); every other test reaches the real `execa`.
@@ -27,6 +27,11 @@ import {
   gitAbortingPostTurn,
   cleanRepoGit,
 } from "./git-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // 16. Usefulness: verifies reviewer mutation is detected, fatal, and does not revert changes.
 test("reviewer mutation is detected and fatal", async () => {

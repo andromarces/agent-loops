@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import { workerPrompt } from "../src/prompts/worker.mjs";
 
 // The prompt of a later worker turn: the task text and the repeated rules, with no preamble.
@@ -35,6 +35,11 @@ import {
 } from "./git-helpers.mjs";
 import { prGateGh } from "./gh-doubles.mjs";
 import { gateRoles, REVIEW_ACCEPT, REVIEW_REJECT, SUMMARY } from "./run-fixtures.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // Usefulness: verifies a worker turn that ran in a replacement conversation is followed by one
 // preamble-only turn in that conversation, in the same step, and never reruns the task, so its

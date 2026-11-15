@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 // Answers `git` from memory (`cleanRepoGit`) for the falsy-value cases, which assert no Git result.
 const gitDouble = vi.hoisted(() => ({ answer: null }));
@@ -41,6 +41,11 @@ import {
   processExists,
   withGitHangingAfter,
 } from "../process-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 
 // Runs `onFirstChunk` once, after the consumer takes the first chunk of the next streamed file
 // read, so a test can change the file or cancel the read while the read is in progress.

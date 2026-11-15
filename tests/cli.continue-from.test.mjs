@@ -3,7 +3,7 @@ import { lstat, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, vi } from "vite-plus/test";
+import { afterEach, expect, vi } from "vite-plus/test";
 
 // Answers `git` from memory for the tests that switch it on (see `withContinueRepo`). Every other
 // test, and every other command, reaches the real `execa`.
@@ -33,6 +33,11 @@ import {
 import { freePlanGh, prGateGh } from "./gh-doubles.mjs";
 import { createPsShim } from "./process-helpers.mjs";
 import { within } from "./wait-helpers.mjs";
+
+// Every case starts with a fresh double, also after a case that fails before its cleanup.
+afterEach(() => {
+  gitDouble.answer = null;
+});
 import { createBarrierTest } from "./barrier-helpers.mjs";
 
 // Every test body runs through a body barrier (issue #943)

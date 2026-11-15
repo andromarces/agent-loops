@@ -358,12 +358,13 @@ test("the call that marks a killed dispatch interrupted removes its turn directo
 
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
 // does not fail the call and the run is still marked `interrupted`.
-// In-process: the state of a killed turn is written directly, because this case asserts the absent
-// directory, not the death of a process.
+// In-process: the durable `dispatched` state of a killed turn is written directly, so the case
+// still proves the transition to `interrupted`.
 test("a recorded turn directory that is gone does not fail the interrupted mark", async () => {
   const repo = await newRunRepo();
   await initRun(repo, { agents: basicDeps().agents });
-  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo);
+  expect((await readRepoState(repo)).lifecycle).toBe("dispatched");
   await removePath(dir);
 
   const next = await nextCall(repo, tmpRoot);
@@ -374,12 +375,13 @@ test("a recorded turn directory that is gone does not fail the interrupted mark"
 
 // Usefulness: verifies issue #1207 acceptance 2, that a directory which replaced the recorded one
 // is not followed or removed, and the run is still marked `interrupted`.
-// In-process: the state of a killed turn is written directly, because this case asserts the
-// replacement guard, not the death of a process.
+// In-process: the durable `dispatched` state of a killed turn is written directly, so the case
+// still proves the transition to `interrupted`.
 test("a directory that replaced the recorded turn directory keeps its content", async () => {
   const repo = await newRunRepo();
   await initRun(repo, { agents: basicDeps().agents });
-  const { dir, tmpRoot } = await interruptedWithKeptDir(repo);
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo);
+  expect((await readRepoState(repo)).lifecycle).toBe("dispatched");
   renameSync(dir, join(tmpRoot, "moved"));
   mkdirSync(dir);
   const sentinel = join(dir, "sentinel.txt");
@@ -394,12 +396,14 @@ test("a directory that replaced the recorded turn directory keeps its content", 
 
 // Usefulness: verifies issue #1207 review blocker 2, that a child of the dead dispatch which still
 // runs keeps its turn directory, and the run is still marked `interrupted`.
-// Process: a live child is what the guard reads, so the case starts one and records its pid.
+// Process: a live child is what the guard reads, so the case starts one and records its pid. The
+// durable `dispatched` state is written in process, so the case still proves the transition.
 test("a live child of the killed dispatch keeps the turn directory", async () => {
   const repo = await newRunRepo();
   await initRun(repo, { agents: basicDeps().agents });
   const child = liveChild();
-  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo, { child });
+  expect((await readRepoState(repo)).lifecycle).toBe("dispatched");
   expect(processExists(child.pid)).toBe(true);
 
   const next = await nextCall(repo, tmpRoot);
@@ -484,7 +488,7 @@ test("a later abort removes the turn directory kept for a dead child group", asy
   const repo = await newRunRepo();
   await initRun(repo, { agents: basicDeps().agents });
   const child = liveChild();
-  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo, { child });
   await nextCall(repo, tmpRoot);
   expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
 
@@ -505,7 +509,7 @@ test("a later call keeps the turn directory and warns while the dead child group
   const repo = await newRunRepo();
   await initRun(repo, { agents: basicDeps().agents });
   const child = liveChild();
-  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo, { child });
   await nextCall(repo, tmpRoot);
   expect(existsSync(join(dir, "leftover.txt"))).toBe(true);
 
@@ -531,7 +535,7 @@ test("a later call keeps a directory that replaced the kept turn directory", asy
   const repo = await newRunRepo();
   await initRun(repo, { agents: basicDeps().agents });
   const child = liveChild();
-  const { dir, tmpRoot } = await interruptedWithKeptDir(repo, { child });
+  const { dir, tmpRoot } = await dispatchedWithKeptDir(repo, { child });
   await nextCall(repo, tmpRoot);
   renameSync(dir, join(tmpRoot, "moved"));
   mkdirSync(dir);
