@@ -1432,6 +1432,43 @@ test("compare-head prompt renders bounded wait commands or a full-suite requirem
   expect(initialPrompt({ task: "t", maxSteps: 3 })).not.toContain("all-checks wait");
 });
 
+// Usefulness: verifies a result prompt that follows a pr-undeclared event states the same bounded
+// wait rule as a compare-head run, and the same fallback when the orchestrator cannot wait, so a
+// loop whose worker opens the PR mid-run cannot finish with its checks still running (issue #1987).
+test("a pr-undeclared result prompt carries the compare-head wait rule", () => {
+  const result = { role: "worker", status: "ok", response: "opened PR #42" };
+  const waitCommand = [{ shell: "bash or cmd", command: "agent-loop role wait-checks --cwd work" }];
+  const waiting = resultPrompt({
+    result,
+    stepsUsed: 1,
+    maxSteps: 5,
+    undeclaredPr: 42,
+    orchestratorKind: "claude",
+    timeout: 30,
+    waitCommand,
+  });
+  expect(waiting).toContain(
+    "agent-loop role wait-checks --cwd work --pr 42 --head <reviewed.head> --timeout 10",
+  );
+  expect(waiting).toContain(
+    "agent-loop role wait-checks --cwd work --all --pr 42 --head <reviewed.head> --timeout 10",
+  );
+  expect(waiting).toContain("run the required wait on the reviewed head first");
+  expect(waiting).toContain("run the all-checks wait on the same head");
+  expect(waiting).toContain("A pending or failing check goes into notDone or blocks the finish.");
+
+  const fallback = resultPrompt({
+    result,
+    stepsUsed: 1,
+    maxSteps: 5,
+    undeclaredPr: 42,
+    orchestratorKind: "codex",
+  });
+  expect(fallback).toContain("require a full test suite through the test slot wrapper.");
+  expect(fallback).toContain("Require a read of every check on the reviewed head instead.");
+  expect(fallback).toContain("A pending or failing check goes into notDone or blocks the finish.");
+});
+
 // Usefulness: verifies requirement "each child prompt rule has one wording" (issue #1185). A rule
 // that two prompt surfaces state in two wordings lets a child read them as two rules, and a later
 // edit to one copy leaves the other stale. The scan renders every surface that states the rule.

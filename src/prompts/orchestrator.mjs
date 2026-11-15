@@ -314,6 +314,37 @@ const PR_HEAD_COMPARE =
   "the PR is open, its head is the reviewed commit, and the reviewed tree is clean";
 
 /**
+ * The wait rule of a finish that compares one PR head instead of gating it: the bounded required
+ * wait on the reviewed head, the all-checks wait after a refusal, or the fallback for an
+ * orchestrator that cannot wait. Shared by a `--compare-head` run and a worker-opened PR that the
+ * runtime refused to declare, so both prompts state one wording.
+ */
+function checkWaitRule({ pr, orchestratorKind = null, timeout = null, waitCommand = null }) {
+  const bound = headlessWaitSeconds(timeout);
+  const canWait =
+    agentHas(orchestratorKind, "waitsForChecks") && waitCommand !== null && bound !== null;
+  const requiredWait = canWait
+    ? waitCommand
+        .map(
+          ({ shell, command }) =>
+            `${shell}: ${command} --pr ${pr} --head <reviewed.head> --timeout ${bound}`,
+        )
+        .join(" ; ")
+    : "";
+  const allWait = canWait
+    ? waitCommand
+        .map(
+          ({ shell, command }) =>
+            `${shell}: ${command} --all --pr ${pr} --head <reviewed.head> --timeout ${bound}`,
+        )
+        .join(" ; ")
+    : "";
+  return canWait
+    ? `\n- Before you finish, run the required wait on the reviewed head first. Run it from any directory with this command for your shell, exactly as written: ${requiredWait}.\n- When that wait refuses because no source can state the required checks, run the all-checks wait on the same head. Run it from any directory with this command for your shell, exactly as written: ${allWait}.\n- A pending or failing check goes into notDone or blocks the finish. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus ${CEILING_WORD}, before this turn ends.`
+    : "\n- Before you finish, require a full test suite through the test slot wrapper. Require a read of every check on the reviewed head instead. A pending or failing check goes into notDone or blocks the finish. This run cannot wait for the checks.";
+}
+
+/**
  * The `--compare-head` line: the runtime compares the PR head at finish and reads no required-check
  * source, for a repository whose sources are unreadable.
  */
@@ -322,28 +353,7 @@ function compareHeadBlock(
   { orchestratorKind = null, timeout = null, waitCommand = null } = {},
 ) {
   if (compareHead === null) return "";
-  const bound = headlessWaitSeconds(timeout);
-  const canWait =
-    agentHas(orchestratorKind, "waitsForChecks") && waitCommand !== null && bound !== null;
-  const requiredWait = canWait
-    ? waitCommand
-        .map(
-          ({ shell, command }) =>
-            `${shell}: ${command} --pr ${compareHead} --head <reviewed.head> --timeout ${bound}`,
-        )
-        .join(" ; ")
-    : "";
-  const allWait = canWait
-    ? waitCommand
-        .map(
-          ({ shell, command }) =>
-            `${shell}: ${command} --all --pr ${compareHead} --head <reviewed.head> --timeout ${bound}`,
-        )
-        .join(" ; ")
-    : "";
-  const waitRule = canWait
-    ? `\n- Before you finish, run the required wait on the reviewed head first. Run it from any directory with this command for your shell, exactly as written: ${requiredWait}.\n- When that wait refuses because no source can state the required checks, run the all-checks wait on the same head. Run it from any directory with this command for your shell, exactly as written: ${allWait}.\n- A pending or failing check goes into notDone or blocks the finish. The command names the Node binary, the CLI script, and the work tree of this run. The runtime owns the bound, so the command returns within ${bound} seconds plus ${CEILING_WORD}, before this turn ends.`
-    : "\n- Before you finish, require a full test suite through the test slot wrapper. Require a read of every check on the reviewed head instead. A pending or failing check goes into notDone or blocks the finish. This run cannot wait for the checks.";
+  const waitRule = checkWaitRule({ pr: compareHead, orchestratorKind, timeout, waitCommand });
   return `
 - This run compares the PR head (--compare-head ${compareHead}): at finish, the runtime reads the PR head of PR #${compareHead} and refuses the finish until ${PR_HEAD_COMPARE}. ${NO_CHECK_CLAIM} You do not compare the PR head yourself, and a finish with "unresolvedCompare": true is refused: the compare resolves that head. A passing finish records a head-compare event and the run exits 0. The transcript records the flag, but a continuation does not restore it: each invocation selects --compare-head again, and omitting it on a continuation runs no runtime compare. Dispatch the reviewer on the current state before you finish.${waitRule}`;
 }
@@ -628,10 +638,14 @@ A finish with "unresolvedCompare": true is refused. The gate resolves that compa
  * sources are unreadable. The runtime compares
  * the head of that PR at finish instead (ADR 0052).
  */
-function undeclaredPrNote(pr) {
+function undeclaredPrNote(
+  pr,
+  { orchestratorKind = null, timeout = null, waitCommand = null } = {},
+) {
+  const waitRule = checkWaitRule({ pr, orchestratorKind, timeout, waitCommand });
   return `The worker turn opened PR #${pr}. The runtime did not declare it. It failed to read the required-check sources of the repository. The runtime compares the PR head of PR #${pr} at finish. It refuses the finish until ${PR_HEAD_COMPARE}. A closed or merged PR refuses it.
 
-${NO_CHECK_CLAIM} You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused. The compare resolves that head. Dispatch the reviewer on the current state before you finish.`;
+${NO_CHECK_CLAIM} You did not choose the PR, and you do not compare the PR head yourself. A finish with "unresolvedCompare": true is refused. The compare resolves that head. Dispatch the reviewer on the current state before you finish.${waitRule}`;
 }
 
 export function resultPrompt({
@@ -640,6 +654,10 @@ export function resultPrompt({
   maxSteps,
   declaredPr = null,
   undeclaredPr = null,
+  orchestratorKind = null,
+  timeout = null,
+  cwd = process.cwd(),
+  waitCommand = waitChecksCommand({ cwd }),
 }) {
   const stepsRemaining = Math.max(0, maxSteps - stepsUsed);
   const payload = {
@@ -673,7 +691,7 @@ export function resultPrompt({
     `
 Role execution result:
 ${JSON.stringify(payload, null, 2)}
-${declaredPr === null ? "" : `\n${declaredPrNote(declaredPr)}\n`}${undeclaredPr === null ? "" : `\n${undeclaredPrNote(undeclaredPr)}\n`}
+${declaredPr === null ? "" : `\n${declaredPrNote(declaredPr)}\n`}${undeclaredPr === null ? "" : `\n${undeclaredPrNote(undeclaredPr, { orchestratorKind, timeout, waitCommand })}\n`}
 ${NEXT_ACTION_TAIL}
 `.trim(),
   );

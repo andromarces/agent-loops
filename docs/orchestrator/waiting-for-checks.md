@@ -276,7 +276,8 @@ unresolved. A `noRequiredChecks`
 envelope never comes from `--all`. Use `--all` only after `noRequiredChecks`
 or after the refusal above that no source states the required checks. A
 `--compare-head` run takes the same path, so it runs `--all` after that refusal.
-When the required wait reads a required check, it stays the one to run. `--all` is
+A run whose worker opened a PR that the runtime refused to declare takes it too,
+because its result prompt states the same waits. When the required wait reads a required check, it stays the one to run. `--all` is
 refused on every other role operation, and so is `--head`. `--all` takes `--head`
 as the required wait does.
 

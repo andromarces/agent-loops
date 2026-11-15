@@ -98,6 +98,7 @@ async function runWorkerPrRun({
   orchReplies,
   remoteUrl = "https://github.com/owner/repo.git",
   preReadHead = null,
+  orchestratorKind = "orch",
   extra = {},
 }) {
   gitState.head = CLEAN_REPO_HEAD;
@@ -111,13 +112,19 @@ async function runWorkerPrRun({
     const rev = scripted([REVIEW_ACCEPT, REVIEW_ACCEPT]);
     const orch = scripted(orchReplies);
     const events = [];
+    const roles = gateRoles();
+    roles.orchestrator = { kind: orchestratorKind, sessionId: null };
     const result = await runLoop({
       task: "PR work: address issue 919 through a PR that the worker opens.",
       cwd: repo,
       maxSteps: 6,
       gh,
-      roles: gateRoles(),
-      agents: { orch, work: scripted(["worker opened the PR", "worker again"]), rev },
+      roles,
+      agents: {
+        [orchestratorKind]: orch,
+        work: scripted(["worker opened the PR", "worker again"]),
+        rev,
+      },
       onEvent: (event) => events.push(event),
       ...extra,
     });
@@ -398,6 +405,28 @@ test("a worker-opened PR whose required-check sources are unreadable is compared
     expect(text).toContain("warn: no PR declared after the worker turn");
     expect(text).toContain("repository rulesets could not be read");
     expect(text).toContain("head compare");
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+// Usefulness: verifies the result prompt of a loop whose worker opens the PR mid-run states the
+// bounded check wait that follows a pr-undeclared event, so the loop waits on the reviewed head
+// before it finishes (issue #1987).
+test("the result prompt of an undeclared worker-opened PR states the check wait", async () => {
+  const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { orch } = await runWorkerPrRun({
+      gh: declareGh([MATCH], [], [PASSING_RUN], freePlanGh(CLEAN_REPO_HEAD)),
+      orchReplies: [work, review, finish()],
+      orchestratorKind: "claude",
+    });
+
+    const prompt = orch.recorded[1].prompt;
+    expect(prompt).toContain("run the required wait on the reviewed head first");
+    expect(prompt).toMatch(/--pr 42 --head <reviewed\.head> --timeout \d+/);
+    expect(prompt).toMatch(/--all --pr 42 --head <reviewed\.head> --timeout \d+/);
+    expect(prompt).toContain("A pending or failing check goes into notDone or blocks the finish.");
   } finally {
     warn.mockRestore();
   }

@@ -400,6 +400,9 @@ export async function runLoop(options) {
       maxSteps,
       declaredPr: newlyDeclared,
       undeclaredPr: newlyUndeclared,
+      orchestratorKind: orchestrator?.kind ?? null,
+      timeout,
+      cwd,
     });
   }
 }
