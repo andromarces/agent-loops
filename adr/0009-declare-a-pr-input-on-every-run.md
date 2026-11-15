@@ -160,6 +160,7 @@ Andro Marces
 ## Links
 
 - [Issue #302: Require a PR input on every run so an omitted unresolvedCompare marker cannot read as verified](https://github.com/andromarces/agent-loops/issues/302)
+- [PR #334: Declare a PR input on a run so a declared PR run must be gated](https://github.com/andromarces/agent-loops/pull/334)
 - Implementation:
   - Source: `missingGateRefusal` in `src/lib/gate-refusal.mjs`
   - Source: The finish gate in `src/role/finish.mjs`
