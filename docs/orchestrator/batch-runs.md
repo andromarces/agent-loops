@@ -8,7 +8,7 @@ The last settings are the setup command, the test command, the timeout, and the 
 
 A batch item is a GitHub issue, a GitHub pull request, or a free-text task. The selection is explicit `--issue <n>` entries in launch order. It is also one `--from-audit <audit id>` for the frozen issue set of a finished audit, or one `--items-file <path>` JSON list. The runtime adds no selector such as "all open pull requests". The skill lists the pull requests itself and turns each one into a `pr` item. Each item carries `work-first`, `review-first`, or `review-only`.
 
-The default is `work-first` for an issue and a task, and `review-first` for a pull request. An item carries its own `task` text when it has one, which replaces the template for that item only.
+The default is `work-first` for an issue and a task, and `review-first` for a pull request. An item carries its own `task` text when it has one, which replaces the template for that item only and renders `{issue}`, `{title}`, `{branch}`, and `{repo}`.
 
 Turn a mixed request such as "work on every item of my local list, and review every open PR" into one `--items-file` list. Give each local item `{ "kind": "task", "text": "<the task>", "id": "<short-slug>" }`. Give each pull request `{ "kind": "pr", "number": <n>, "mode": "review-only" }` when the request is a review. Otherwise leave the default `review-first` when worker corrections are needed. Keep a GitHub issue as `{ "kind": "issue", "number": <n> }`.
 

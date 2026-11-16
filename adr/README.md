@@ -96,7 +96,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0118 — [Remove a finished audit work tree and store](0118-remove-a-finished-audit-work-tree-and-store.md) — accepted
 - 0119 — [Start a batch from the frozen issue set of a finished audit](0119-start-a-batch-from-the-frozen-issue-set-of-a-finished-audit.md) — partially-superseded — Partially superseded by [ADR 0121](0121-mix-issue-pull-request-and-task-items-in-one-batch.md).
 - 0120 — [Take an operator focus and keep every actionable finding](0120-take-an-operator-focus-and-keep-every-actionable-finding.md) — accepted
-- 0121 — [Run issue, pull request, and free-text task items in one batch](0121-mix-issue-pull-request-and-task-items-in-one-batch.md) — accepted
+- 0121 — [Run issue, pull request, and free-text task items in one batch](0121-mix-issue-pull-request-and-task-items-in-one-batch.md) — partially-superseded — Partially superseded by [ADR 0165](0165-render-task-placeholders-in-a-per-item-task-text.md).
 - 0122 — [Report the open PR of the work tree branch in the worker envelope](0122-report-the-open-pr-of-the-work-tree-branch-in-the-worker-envelope.md) — accepted
 - 0123 — [Shard the macOS CI test job behind a fan-in required context](0123-shard-the-macos-ci-test-job.md) — accepted
 - 0124 — [Drop Node 22 support before its end of life](0124-drop-node-22-support.md) — partially-superseded — Partially superseded by [ADR 0155](0155-run-macos-and-windows-ci-on-node-26.md).
@@ -124,3 +124,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0162 — [Run every OpenCode call of a turn on a private server](0162-run-every-opencode-call-of-a-turn-on-a-private-server.md) — accepted
 - 0163 — [State the plan-mode guard in the Claude orchestrator prompt](0163-state-the-plan-mode-guard-in-the-claude-orchestrator-prompt.md) — partially-superseded — Partially superseded by [ADR 0164](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md).
 - 0164 — [Retry a first-turn Claude orchestrator abort that names plan mode](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) — accepted
+- 0165 — [Render the task placeholders in a per-item task text](0165-render-task-placeholders-in-a-per-item-task-text.md) — accepted
