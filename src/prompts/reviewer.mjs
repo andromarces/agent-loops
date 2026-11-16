@@ -1,5 +1,6 @@
 import { escapeLineSeparators } from "./escape.mjs";
 import {
+  PR_BODY_SCOPE,
   REMOTE_WRITE_ACTIONS,
   SHELL_EXCEPTION,
   SHELL_ONLY_LIMIT_SENTENCE,
@@ -35,9 +36,14 @@ Verdict: accept or reject. One word, nothing else on the line.`;
 const NO_READABLE_CHECKS_RULE =
   "When no readable required-check status covers the reviewed head, an accept needs more than a targeted test run. Run a full test suite through the test slot wrapper, or read every check on the reviewed head. A targeted test run alone does not support an accept. Report CI that is pending in Checks.";
 
+// A false claim in the body outlives an accepted note, because the orchestrator does not forward an
+// accepted note to the worker. The check reads the claims, not the style, and it keeps the body
+// scope that the worker prompt applies.
+const PR_BODY_CHECK_RULE = `When the task names a pull request, check that each claim in the pull request body matches the reviewed head. ${PR_BODY_SCOPE} Report a claim that the reviewed head contradicts as a blocker. A wording or style finding goes in \`Notes\`.`;
+
 // Fixed review scope every reviewer turn carries, so a parent prompt that
 // restates the spec does not hide a weakened guard or contract.
-const reviewerRules = (noReadableChecks) => `Review scope, in addition to the task below:
+const reviewerRules = (noReadableChecks, prWork) => `Review scope, in addition to the task below:
 - Trace each changed input, flag, or code path through the existing validators and guards that consume it.
 - Report a change that weakens an existing guard or documented contract as a blocker, unless the task explicitly approves that change.
 - Explicit approval names the guard or the contract. A general requirement that weakens a guard as a side effect is not approval.
@@ -52,7 +58,7 @@ ${noReadableChecks ? `- ${NO_READABLE_CHECKS_RULE}\n` : ""}- When the task names
   - Exit code 1 covers a failing check, a repository with no required check, and a read error. Report a blocker only when the output lists a failing required check. Report any other exit 1 as unresolved in Checks.
   - The command omits a check that has not started, so a read pass covers only the listed checks.
   - The read reflects the PR head on GitHub. When that head differs from the local reviewed head, report the mismatch in Checks.
-  - When gh cannot read the checks, report the status as unresolved in Checks. Report a pass only when the read shows one.`;
+  - When gh cannot read the checks, report the status as unresolved in Checks. Report a pass only when the read shows one.${prWork ? `\n  - ${PR_BODY_CHECK_RULE}` : ""}`;
 
 // The status a declared-PR run read for the PR head, as two lines inside the
 // required-check group. These lines replace the group's own read for this turn
@@ -205,6 +211,7 @@ const sandboxNotes = {
 // The runtime does not detect a breach.
 /**
  * Builds a reviewer turn prompt from one options object.
+ * `pr` names the run's PR; it adds the PR body accuracy check when set.
  * `prChecks` adds the runtime-read required-check status.
  * `sandboxMode` adds the sandbox note for "none", "read-only", or "workspace-write".
  * `task` adds the init task block.
@@ -213,6 +220,7 @@ const sandboxNotes = {
  */
 export function reviewerPrompt({
   prompt,
+  pr = null,
   prChecks = null,
   testRun = null,
   sandboxMode = null,
@@ -222,6 +230,7 @@ export function reviewerPrompt({
 }) {
   const supplied = prChecks === null ? "" : `\n${runtimeReadLines(prChecks).join("\n")}`;
   const noReadableChecks = requiredCheckSourceUnreadable || prChecks?.status === "unresolved";
+  const prWork = pr !== null || prChecks !== null;
   const tests = testRun === null ? "" : `\n\n${testRunLines(testRun).join("\n")}`;
   const sandbox =
     sandboxMode === null
@@ -239,7 +248,7 @@ ${processRule}
 ${secretFileRule}
 ${testSlotRule()}
 
-${reviewerRules(noReadableChecks)}${supplied}${tests}${sandbox}
+${reviewerRules(noReadableChecks, prWork)}${supplied}${tests}${sandbox}
 
 ${reviewerReportBlock}
 

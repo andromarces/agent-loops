@@ -75,6 +75,7 @@ Operations: `dispatch` (default), `finish`, `abort`, `extend`, `declare-pr`, `re
 - The reviewer prompt carries a fixed review scope on every turn, which sets what a blocker is (issue #1073).
   - The scope also bars contact with a host or service that the task does not name. GitHub reads that the rules allow stay allowed. A local process or loopback server that a check starts stays allowed (issue #1522).
   - When the task names a pull request, that prompt also carries a required-check read (issues #313 and #317).
+  - When the run names a PR, that prompt also checks that each claim in the pull request body matches the reviewed head, under the worker body scope. A contradicted claim is a blocker (issue #2000).
   - `--require-ci` still enforces that read (issues #313 and #317).
 - A run that declares `--pr` also gets a runtime-read advisory status before each reviewer turn (issues #320, #349, and #350).
 - A required check that is still pending after a wait is not a finish condition (issue #319).

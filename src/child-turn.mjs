@@ -324,6 +324,7 @@ export async function runChild(options) {
             (first, turnTask) =>
               reviewerPrompt({
                 prompt: TASK_ONLY_REVIEW,
+                pr,
                 sandboxMode: sandbox,
                 task: turnTask,
                 requiredCheckSourceUnreadable,
@@ -489,6 +490,7 @@ export async function runChild(options) {
               return runFn((first, turnTask) =>
                 reviewerPrompt({
                   prompt,
+                  pr,
                   prChecks,
                   testRun,
                   sandboxMode: sandbox,
