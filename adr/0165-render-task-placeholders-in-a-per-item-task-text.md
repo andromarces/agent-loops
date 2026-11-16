@@ -82,6 +82,7 @@ Andro Marces
 ## Links
 
 - [Issue #1998: Render template placeholders in the per-item task text of a batch](https://github.com/andromarces/agent-loops/issues/1998)
+- [PR #1999: Render template placeholders in a per-item task text](https://github.com/andromarces/agent-loops/pull/1999)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0121: Run issue, pull request, and free-text task items in one batch](0121-mix-issue-pull-request-and-task-items-in-one-batch.md)
 - [Implementation: headless worker](../src/batch/worker.mjs)
