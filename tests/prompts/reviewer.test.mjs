@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { expect, test } from "vite-plus/test";
-import { testSlotRule } from "../../src/prompts/rules.mjs";
+import { PR_BODY_SCOPE, testSlotRule } from "../../src/prompts/rules.mjs";
 import { reviewerPrompt } from "../../src/prompts/reviewer.mjs";
 import { workerPrompt } from "../../src/prompts/worker.mjs";
 
@@ -131,6 +131,26 @@ test("reviewer prompt reports an unresolved check status instead of assuming a p
   expect(prompt).toMatch(/cannot read the checks.*unresolved/i);
   expect(prompt).toMatch(/differs from the local reviewed head/i);
   expect(prompt).toMatch(/pass only when the read shows one/i);
+});
+
+// Usefulness: verifies acceptance #2000: a reviewer turn for a run that names a PR checks that the
+// PR body's claims match the reviewed head, under the worker body scope, and reports a contradicted
+// claim as a blocker so the loop cannot finish on a body that misstates the change.
+test("reviewer prompt checks the PR body against the reviewed head for PR work", () => {
+  const prompt = reviewerPrompt({ prompt: "review the change", pr: 2000 });
+  expect(prompt).toContain(
+    "When the task names a pull request, check that each claim in the pull request body matches the reviewed head.",
+  );
+  expect(prompt).toContain(PR_BODY_SCOPE);
+  expect(prompt).toContain("Report a claim that the reviewed head contradicts as a blocker.");
+  expect(prompt).toContain("A wording or style finding goes in `Notes`.");
+});
+
+// Usefulness: verifies the body-accuracy rule stays out of a turn that names no PR, so a review-only
+// or non-PR task carries no rule about a body it never reads (acceptance #2000).
+test("reviewer prompt omits the PR body check when no PR is named", () => {
+  const prompt = reviewerPrompt({ prompt: "check the tests" });
+  expect(prompt).not.toContain("pull request body");
 });
 
 const namesPullRequest = (text) => /\bprs?\b/i.test(text) || /pull[ -]requests?/i.test(text);

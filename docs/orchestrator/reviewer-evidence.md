@@ -29,6 +29,13 @@ reviewer turn then reads `gh pr checks <pr> --required` for the reviewed
 head. The command reads status only and changes nothing. The `--require-ci`
 finish gate stays the enforcement point.
 
+A run that names a PR also gets a body check in the reviewer prompt. The reviewer
+checks that each claim in the pull request body matches the reviewed head. The
+body scope is the worker's: it describes only the committed or published
+repository state and names no untracked file, local-only change, local probe, or
+machine-specific path. A claim that the reviewed head contradicts is a blocker.
+A wording or style finding goes in `Notes`.
+
 ## The runtime supplies the required-check status
 
 A run that names its PR with `--pr <pr>`, or gates it with `--require-ci <pr>`,
