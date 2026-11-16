@@ -2,7 +2,13 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+The superseded part is decision 5's sentence that a `task` field "replaces the task template for that item only", which read as verbatim text ([ADR 0165](0165-render-task-placeholders-in-a-per-item-task-text.md)). Every other part of decision 5, and every other decision, consequence, and acceptance check stays in force.
+
+## Superseded by
+
+[adr/0165-render-task-placeholders-in-a-per-item-task-text.md](0165-render-task-placeholders-in-a-per-item-task-text.md) partially supersedes this ADR. The replaced part is decision 5's sentence that a `task` field "replaces the task template for that item only", which `taskTextFor` read as verbatim text. A per-item `task` now renders `{issue}`, `{title}`, `{branch}`, and `{repo}`, and refuses an unknown placeholder before any state write. Every other sentence of decision 5, and every other decision, consequence, and acceptance check stays in force.
 
 ## Supersedes
 

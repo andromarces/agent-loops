@@ -533,6 +533,84 @@ test("per-item task text replaces the template for that item only", async () => 
   }
 });
 
+// Usefulness: the batch id is created at start, so a per-item task that names {branch} must receive
+// the loop branch instead of the literal placeholder.
+test("a per-item task renders the loop branch and the other placeholders", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+  const items = [
+    {
+      kind: "issue",
+      number: 1,
+      key: 1,
+      mode: "work-first",
+      task: "Push {branch} for {issue} {title} of {repo}",
+    },
+  ];
+  const prepared = preparedWith(items);
+  const child = childDouble();
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: mixedGh(),
+      deps: { ...workTreeDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    const first = child.calls.find((call) => call.cwd.endsWith("issue-1"));
+    expect(first.args[first.args.indexOf("--task") + 1]).toBe(
+      `Push batch/${prepared.id}/1 for 1 issue 1 of C:/repo`,
+    );
+  } finally {
+    await removePath(runsRoot);
+  }
+});
+
+// Usefulness: an unknown placeholder in a per-item task would reach the child verbatim, so it is
+// refused before any state write.
+test("a per-item task with an unknown placeholder is a usage error", async () => {
+  const { dir, file } = await itemsFile([
+    { kind: "issue", number: 1, task: "Do {issue} for {owner}" },
+  ]);
+  try {
+    expect(() => parseBatchArgs([...ROLE_ARGS, "--items-file", file])).toThrow(
+      "Unknown task placeholder: {owner}.",
+    );
+  } finally {
+    await removePath(dir);
+  }
+});
+
+// Usefulness: a free-text item has no issue number or pull request title, so a per-item task renders
+// its identity and its own text rather than a null title.
+test("a per-item task on a free-text item renders its identity and text", async () => {
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));
+  const items = [
+    {
+      kind: "task",
+      text: "Fix the help typo",
+      id: "fix-help-typo",
+      key: "task-fix-help-typo",
+      mode: "work-first",
+      task: "{issue}: {title} on {branch}",
+    },
+  ];
+  const prepared = preparedWith(items);
+  const child = childDouble();
+  try {
+    await runBatch({
+      prepared,
+      runsRoot,
+      gh: mixedGh(),
+      deps: { ...workTreeDeps, notifier: noNotify, spawn: child.spawn, installSignal: false },
+    });
+    const first = child.calls.find((call) => call.cwd.endsWith("task-fix-help-typo"));
+    expect(first.args[first.args.indexOf("--task") + 1]).toBe(
+      `task-fix-help-typo: Fix the help typo on batch/${prepared.id}/task-fix-help-typo`,
+    );
+  } finally {
+    await removePath(runsRoot);
+  }
+});
+
 // Usefulness: a free-text task keeps its identity, branch, work tree, transcript, and budget on resume.
 test("a free-text task survives interrupt and resume with the same identity", async () => {
   const runsRoot = await mkdtemp(join(tmpdir(), "batch-items-runs-"));

@@ -52,7 +52,8 @@ The item list is explicit --issue entries, a JSON --items-file list, or the froz
 set of a created audit with --from-audit; exactly one source is required.
 An items-file entry is { kind, number | text, mode, task, id }: kind is issue, pr, or
 task; mode is work-first, review-first, or review-only; task replaces the template for
-that item; id is required for a task item only. The default mode is work-first for an
+that item and renders {issue}, {title}, {branch}, and {repo}, with an unknown placeholder
+refused; id is required for a task item only. The default mode is work-first for an
 issue and a task, and review-first for a pull request.
 An issue keeps its own branch and eligibility. A pull request runs on its head branch in
 every mode and is skipped before launch when that head moved or it is closed. A task runs

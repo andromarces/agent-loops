@@ -120,9 +120,19 @@ export async function spawnHeadless({ args, cwd, logPath, deps = {} }) {
     },
   });
 }
-/** The task text of one item. An explicit per-item task replaces the template for that item. */
+/**
+ * The task text of one item. An explicit per-item task replaces the template for that item and
+ * renders the same placeholders.
+ */
 export function taskTextFor({ item, loop, prepared, title, branch }) {
-  if (typeof item.task === "string" && item.task.trim() !== "") return item.task;
+  if (typeof item.task === "string" && item.task.trim() !== "") {
+    return renderTask(item.task, {
+      issue: item.number ?? item.key,
+      title: item.kind === "task" ? item.text : title,
+      branch,
+      repo: prepared.repo,
+    });
+  }
   if (item.kind === "task") {
     const base = item.text ?? loop.text ?? "";
     const delivery =

@@ -240,6 +240,9 @@ export function parseBatchArgs(argv) {
     } catch (err) {
       throw usage(err.message);
     }
+    for (const item of options.items) {
+      if (item.task !== null) validateTemplate(item.task, { requireIssue: false });
+    }
     options.issues = options.items.map((item) => item.key);
   }
   if (options.loops === null) throw usage("Missing required --loops.");
