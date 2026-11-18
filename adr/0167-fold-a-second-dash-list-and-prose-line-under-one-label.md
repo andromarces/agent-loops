@@ -23,7 +23,7 @@ The issue offers a fold or a prompt bar. The fold follows [ADR 0140](0140-fold-e
 ## Decision
 
 1. **Fold one second dash list after one blank line.** A single extra `- ` run joins the label value with `; ` after exactly one blank line. A third run, two blank lines, an ordered second run, a repeated label, and a label-reading prose line still refuse.
-2. **Fold a plain prose line and its dash list across one blank line.** Exactly one blank line must precede the prose line, and its `- ` items must follow after one blank line. The pair joins the label above as `<prose>: <items>`, and the fold consumes both blanks. A whole-line bold heading keeps its rule: its list must sit directly under it.
+2. **Fold a plain prose line and its dash list across one blank line.** For the new fold, exactly one blank line must precede the prose line, and its `- ` items must follow after one blank line. The pair joins the label above as `<prose>: <items>`, and the fold consumes both blanks. A whole-line bold heading keeps its rule: its list must sit directly under it.
 3. **Apply the fold once.** The shared parse in `src/lib/report.mjs` serves the dispatch envelope, interactive `role finish --require-accept`, and headless `runLoop` with `requireAccept` true.
 4. **Keep every other rejection.** A decorated label and a list after the reviewer `Verdict:` line stay unparseable. A prose line with a label name, a two-blank-line gap, and an ordered list under a prose line also stay unparseable.
 5. **State the rule in the prompt and the docs.** `reportBlock` in `src/prompts/rules.mjs` and `docs/orchestrator/closing-block.md` state both new folds.
