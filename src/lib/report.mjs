@@ -975,8 +975,8 @@ function trimTrailingBlanks(out) {
  * A prose lead follows the prose-lead rules, the whole-line bold heading included.
  * Markers drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * Another blank count starts no new section and keeps the earlier result, while a label repeat or a
- * table pair returns null with `raw`.
+ * A repeat after a folded label, or a folded section with a content line, an extra-blank prose
+ * lead, or a table pair, nulls with `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
