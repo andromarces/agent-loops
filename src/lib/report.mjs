@@ -975,8 +975,7 @@ function trimTrailingBlanks(out) {
  * A prose lead follows the prose-lead rules, the whole-line bold heading included.
  * Markers drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * Null only from a label that took a section after a blank line, or from a label that took items
- * and appears again later.
+ * Null only from a split section, defined below, or a folded label that repeats.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
@@ -1079,10 +1078,11 @@ function foldEmptyLabelLists(lines) {
     out.push(line);
   }
   // A sectioned label holds only its value line, blanks, and later label lines.
+  // A split section is a later bare dash run after one blank, or a prose lead with one blank before
+  // it and its list.
   // The scan runs to the next known label or the end of the block.
-  // Null when a label that took a section after a blank line holds a later non-blank line before the
-  // next label.
-  // Null when such a label takes a prose lead without exactly one blank before it.
+  // Null when a split section holds a later non-blank line before the next label or the block end.
+  // Null when a split section takes a prose lead without exactly one blank before it.
   for (const at of sectioned) {
     for (let j = at + 1; j < out.length; j++) {
       if (isKnownLabelLine(out[j])) {
@@ -1095,7 +1095,7 @@ function foldEmptyLabelLists(lines) {
     }
   }
   // The fold flattens a table inside a new section, so the table guard reads the block first.
-  // Null when the block holds a table pair and a label took a section after a blank line.
+  // Null when the block holds a table pair and a label took a split section.
   // Every block that parsed at ffaf28d0 still parses with the same values.
   if (invalid.size > 0 || (tableInBlock && sectioned.size > 0)) {
     return null;
