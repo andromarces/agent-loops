@@ -473,6 +473,35 @@ test("--require-accept accepts a reviewer report with a deeper list level", asyn
   expect((await readRepoState(repo)).lifecycle).toBe("finished");
 });
 
+// Usefulness: verifies interactive --require-accept accepts a second dash list and its prose line (issue #2005).
+test("--require-accept accepts a reviewer report with a second dash list", async () => {
+  await setup();
+  const repo = await useCleanRepo();
+  await initWorkerRun(repo);
+  await dispatchReviewer(
+    repo,
+    [
+      "Conclusion: the state passes.",
+      "Why:",
+      "- **Tests:** pass",
+      "- **Lint:** clean",
+      "",
+      "Evidence:",
+      "",
+      "- **1:** the parser folds",
+      "- **2:** the prompt states it",
+      "",
+      "Blockers: none",
+      "Checks: npm test",
+      "Verdict: accept",
+    ].join("\n"),
+  );
+
+  const result = await finishCall(repo, ["--require-accept"]);
+  expect(result.exitCode).toBe(0);
+  expect((await readRepoState(repo)).lifecycle).toBe("finished");
+});
+
 // A `git` answer that reports a cancel for a call that carries an aborted signal, as execa does,
 // and answers as `cleanRepoGit` otherwise.
 const cancelAwareGit = (command, args, options) =>

@@ -1481,16 +1481,214 @@ test("parseReportBlock folds a dash list that one blank line sets apart from its
   ).toMatchObject({ why: "keep this; item one", blockers: "none" });
 });
 
-// Usefulness: verifies two blank lines, a split item, a star bullet, and a repeated label stay unparseable (#1348).
+// Usefulness: verifies two blank lines, a star bullet, and a repeated label stay unparseable (#1348).
 test("parseReportBlock returns null for a list outside the one-blank-line fold", () => {
   for (const tail of [
     "Notes: value\n\n\n- a",
-    "Notes: value\n- a\n\n- b",
     "Notes: value\n\n* a",
     "Notes: value\n\n- a\n\nNotes: later",
   ]) {
     expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
   }
+});
+
+// Usefulness: verifies the issue #2005 shape keeps both dash lists and the prose line, so no report is null.
+test("parseReportBlock folds a second dash list and its prose line under one label", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- **Tests:** pass",
+    "- **Lint:** clean",
+    "",
+    "What changed:",
+    "",
+    "- **1:** the parser folds",
+    "- **2:** the prompt states it",
+    "",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "**Tests:** pass; **Lint:** clean; What changed: **1:** the parser folds; **2:** the prompt states it",
+  });
+});
+
+// Usefulness: verifies a second dash run after one blank line joins the value, the #2005 replay row.
+test("parseReportBlock folds a second dash list that one blank line sets apart", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\n\n- item two`)).toMatchObject(
+    {
+      notes: "keep this; item one; item two",
+    },
+  );
+});
+
+// Usefulness: verifies a second run refuses two blank lines, an ordered list, a repeat, and a label prose.
+test("parseReportBlock returns null for a second dash list outside the fold", () => {
+  for (const tail of [
+    "Notes: value\n- a\n\n\n- b",
+    "Notes: value\n- a\n\n1. b",
+    "Notes: value\n- a\n\n- b\n\nNotes: later",
+    "Notes: value\n- a\n\nSee the Notes: line\n\n- b",
+    "Notes: value\n- a\n\n- b\nVerdict: reject\n- c",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
+  }
+});
+
+// Usefulness: verifies one blank line between a plain prose line and its dash list folds as #2005 needs.
+test("parseReportBlock folds a dash list one blank line under a plain prose line", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes:\n\nSummary:\n\n- a\n- b`)).toMatchObject({
+    notes: "Summary: a; b",
+  });
+  expect(parseReportBlock(`${REPORT}\nNotes: keep\n\n**Heading**\n\n- a`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nNotes: keep\n\nSummary:\n\n1. a`)).toBeNull();
+});
+
+// Usefulness: verifies the prose fold keeps a following Verdict line, so a review accept stays readable.
+test("parseReportBlock keeps a Verdict line after a folded prose list", () => {
+  const response = `${REPORT}\nChecks:\n\nEvidence:\n\n- a\nVerdict: accept`;
+  expect(parseReportBlock(response)).toMatchObject({ checks: "Evidence: a" });
+  expect(parseVerdict(response)).toBe("accept");
+});
+
+// Usefulness: verifies every bare dash section after one blank line keeps its items, as #2005 records.
+test("parseReportBlock folds three dash lists under one label", () => {
+  const response = ["Conclusion: done", "Why:", "- a", "", "- b", "", "- c", "Blockers: none"].join(
+    "\n",
+  );
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; b; c" });
+});
+
+// Usefulness: verifies two blank lines before a prose lead refuse its blank-separated list, as origin/main did.
+test("parseReportBlock returns null for two blanks before a prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: x",
+    "",
+    "",
+    "Evidence:",
+    "",
+    "- a",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a prose lead directly after a folded list needs its own blank line, as origin/main did.
+test("parseReportBlock returns null for a prose lead with no blank line above it", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "Evidence:",
+    "",
+    "- b",
+    "Next lead:",
+    "",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a prose lead section adds a third dash run under one label, as #2005 records.
+test("parseReportBlock folds a third dash run after a prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "- b",
+    "",
+    "Evidence:",
+    "",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; b; Evidence: c" });
+});
+
+// Usefulness: verifies a prose-lead chain keeps every dash run, because origin/main kept them.
+test("parseReportBlock folds a third dash run in a prose chain", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "Evidence:",
+    "- b",
+    "Next lead:",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next lead: c" });
+});
+
+// Usefulness: verifies two blank-separated prose subsections keep all three runs, as origin/main did.
+test("parseReportBlock folds two prose subsections after an initial dash run", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "Evidence:",
+    "- b",
+    "",
+    "Next:",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next: c" });
+});
+
+// Usefulness: verifies an ordered initial run leaves the prose subsections room to fold, as origin/main did.
+test("parseReportBlock folds two prose subsections after an ordered run", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "1. a",
+    "",
+    "Evidence:",
+    "- b",
+    "",
+    "Next:",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next: c" });
+});
+
+// Usefulness: verifies a whole-line bold lead starts a section, as origin/main accepts it as a lead.
+test("parseReportBlock folds a whole-line bold lead as a section", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "- b",
+    "",
+    "**Bold lead**",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; b; **Bold lead**: c" });
+});
+
+// Usefulness: verifies a table inside a section dash item still refuses the block, as the table rule states.
+test("parseReportBlock returns null for a table inside a section dash item", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "- | a |",
+    "  | - |",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
 });
 
 // Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before
@@ -1503,7 +1701,6 @@ test("parseReportBlock returns null for a prose and list shape outside the headi
     "Notes: x\n\nprose one\nHeading:\n- a",
     "Verdict: accept\n\nHeading:\n- a",
     "Notes: x\n\nHeading:\n- a\n\nNotes: later",
-    "Notes: x\n\nHeading:\n\n- a",
     "Notes: x\n\nHeading:\n* a",
     "Notes: x\n\nHeading:\n1. a",
     "Checks: x\n\nHeading:\n1. a\n   - b",

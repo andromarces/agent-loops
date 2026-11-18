@@ -27,17 +27,23 @@ An ordered sub-item at the parent text column folds the same way. So `- a`, two 
 
 An indented non-list line (ASCII spaces or tabs, then text) directly after an item or its sub-items folds into that item with a space, so `- a`, `  - b`, and `  more` read `a, b more`. An indented line never folds when it reads as a label line: after NFKC normalization, it skips every leading character that is no letter or digit and one optional number, then holds a report label name or `Verdict`, any case, optional whitespace, and a character that is no letter, digit, or whitespace. Any colon variant (`:`, `：`, `∶`), any other separator, and any count or kind of markup around the name then refuse (`**Verdict:** x`, `Verdict***: x`, `1 Verdict: x`, and `> Verdict： x` after two spaces are examples), so the items after it stay unparseable lists. A label word that a letter follows (`Notes about x`), or whitespace and then a letter (`Why this matters:`), is prose and folds. An indented list line there is no continuation and stays unparseable.
 
-The run ends at the first line that is not a `- ` or `N. ` item, a sub-item of the item above it, or an indented continuation line of that item, so a blank line or unindented prose between
-the label and the list breaks it. Two shapes with a blank line fold anyway.
+The run ends at the first line that is not a `- ` or `N. ` item, a sub-item, or an indented continuation
+line. A blank line or unindented prose inside a list breaks it.
 
-The first shape is one blank line after the label line, then a `- ` or `N. ` list directly under that blank
-line. The items join the label value with `; `, so `Why: x`, a blank line, and `- a` read `x; a`. An
-empty `Notes:` reads `a`. The list takes dash or ordered items. Two blank lines under the
-label before the list stay unparseable.
+After the label value, any number of sections follow, with one blank line before each. A section is
+a bare dash list, or a prose lead with its dash list. The lead follows the prose-lead rules, the
+whole-line bold heading included. The list sits directly under the lead, or after one blank line
+when the lead is plain prose. A section needs exactly one blank line before it. Two blank lines, or
+no blank line before it, start no new section, so the existing rules decide that shape.
 
-The second shape has prose. A blank line follows the label line (or its folded list). One prose line
-comes next, and a `- ` list directly under it folds too. The list takes dash items only. An
-ordered list there stays unparseable.
+The label's own list sits directly under the label or after one blank line. It takes dash or
+ordered items. The items join the label value with `; `, so `Why: x`, a blank line, and `- a` read
+`x; a`. An empty `Notes:` reads `a`. A bare dash section joins the same value after one blank line,
+so `- a`, a blank line, and `- b` read `a; b`.
+
+A prose section joins the label value after one blank line. The prose line comes next, and its `- `
+list sits directly under it or after one blank line. The list takes dash items only. An ordered
+list there stays unparseable.
 
 The prose and its list join the value of the label just above, as `; <prose>: <items>`. The prose
 drops a trailing colon first, so `Why: x`, a blank line, `Design settled:`, and `- a` read
@@ -92,9 +98,9 @@ single-part response, and every response whose labels use only the `Label:` form
 
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
-makes the block unparseable. A prose line directly after the label with no blank line,
-a blank line between the prose and its list, a second prose line before the list, prose after
-the reviewer `Verdict:` line, and a later repeat of the label stay unparseable.
+makes the block unparseable. A prose line directly after the label with no blank line stays
+unparseable. A second prose line before the list, prose after
+the reviewer `Verdict:` line, and a later repeat of the label also stay unparseable.
 
 Any other list in the closing block makes the block unparseable, so the list surfaces
 through `raw` instead of being dropped. Examples are bullets after the reviewer `Verdict:` line,

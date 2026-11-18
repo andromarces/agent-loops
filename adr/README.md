@@ -115,7 +115,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0137 — [Name a report value copied from the init task](0137-name-a-report-value-copied-from-the-init-task.md) — accepted
 - 0138 — [Run one test command at a time in the child test-run rule](0138-run-one-test-command-at-a-time-in-the-child-test-run-rule.md) — accepted
 - 0139 — [Name no outside-block label without outside text](0139-name-no-outside-block-label-without-outside-text.md) — accepted
-- 0140 — [Fold every closing-block list level](0140-fold-every-closing-block-list-level.md) — accepted
+- 0140 — [Fold every closing-block list level](0140-fold-every-closing-block-list-level.md) — partially-superseded — Partially superseded by [ADR 0167](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md).
 - 0141 — [Allow the Copilot write tool on a worker turn](0141-allow-the-copilot-write-tool-on-a-worker-turn.md) — accepted
 - 0145 — [Keep a pre-existing work tree that holds uncommitted work](0145-keep-a-pre-existing-work-tree-with-uncommitted-work.md) — accepted
 - 0148 — [Omit dead rules from the headless orchestrator prompt](0148-omit-dead-rules-from-the-headless-orchestrator-prompt.md) — accepted
@@ -126,3 +126,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0164 — [Retry a first-turn Claude orchestrator abort that names plan mode](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) — accepted
 - 0165 — [Render the task placeholders in a per-item task text](0165-render-task-placeholders-in-a-per-item-task-text.md) — accepted
 - 0166 — [Restate the full-suite rule beside the worker task text](0166-restate-the-full-suite-rule-beside-the-worker-task-text.md) — accepted
+- 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — accepted
