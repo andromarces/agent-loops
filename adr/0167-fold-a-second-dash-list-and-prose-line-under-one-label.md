@@ -24,29 +24,34 @@ The second review round found a third run through a prose lead. This ADR now sta
 
 The third review round found that a two-run cap dropped 192 `origin/main` shapes, an ordered first run included. This ADR now states the general section rule and the zero-regression bar.
 
+The fourth review round found a bold lead and a folded table in new sections. This ADR now names the lead rules and the table refusal.
+
 ## Decision
 
-1. **Accept any number of sections under a label.** After the label value, one blank line comes before each section. A section is a bare dash run, or a plain prose line with its dash run. The prose run sits directly under its line or after one blank line.
-2. **Keep every origin/main result.** Every shape that parses at `origin/main` keeps the same items and value here. Two blank lines, a section with no blank line before it, and every other shape keep their `origin/main` result. A blank that one section consumes never counts for the next.
+1. **Accept any number of sections under a label.** After the label value, exactly one blank line comes before each section. A section is a bare dash run, or a prose lead with its dash run. The lead follows the prose-lead rules, the whole-line bold heading included. A plain lead's list sits directly under it or after one blank line, and a bold lead's list sits directly under it.
+2. **Keep every origin/main result.** Every shape that parses at `origin/main` keeps the same items and value here. Two blank lines, or no blank line before a section, start no new section, so the `origin/main` result stays. A blank that one section consumes never counts for the next.
 3. **Apply the fold once.** The shared parse in `src/lib/report.mjs` serves the dispatch envelope, interactive `role finish --require-accept`, and headless `runLoop` with `requireAccept` true.
-4. **Keep every other rejection.** A decorated label and a list after the reviewer `Verdict:` line stay unparseable. A prose line with a label name and a colon, a two-blank-line gap, and an ordered list under a prose line also stay unparseable.
-5. **State the rule in the prompt and the docs.** `reportBlock` in `src/prompts/rules.mjs` and `docs/orchestrator/closing-block.md` state the section rule and the refusals.
+4. **Keep every other rejection.** A decorated label, a list after the reviewer `Verdict:` line, and a table pair stay unparseable. A prose line with a label name and a colon, and an ordered list under a prose line, also stay unparseable.
+5. **State the rule in the prompt and the docs.** `reportBlock` in `src/prompts/rules.mjs` and `docs/orchestrator/closing-block.md` state the section rule, the bold lead, and the refusals.
 
 ## Consequences
 
 - The issue #2005 shape parses, and every item of both dash lists and the prose line stays in the value.
 - Two blank-separated prose subsections, after a dash or ordered first run, keep all three runs.
+- A whole-line bold lead starts a new section, and its list sits directly under it.
+- A table inside a new section keeps the block unparseable, as the table rule states.
 - Every shape that parsed at `origin/main` keeps its value here, so the differential check found no regression.
-- Two blank lines, a section with no blank line before it, and every other shape keep their `origin/main` result.
+- Two blank lines, or no blank line before a section, start no new section.
 - The dispatch envelope, the interactive gate, and the headless gate read the same report, because all three use the shared parse.
 - A repair turn no longer treats the second dash list as a defect that needs no content change.
 
 ### Probe
 
-- The differential check enumerated 488,280 sequences of up to eight units. The units are a dash run, an ordered run, a prose lead, one blank line, and two blank lines.
-- 2,243 sequences are newly parseable, and every one matches the general section rule.
+- The differential check enumerated 6,725,600 sequences of up to eight units. The units are a dash run, an ordered run, a prose lead, a bold lead, a table item, one blank line, and two blank lines.
+- 2,465 sequences are newly parseable, and every one matches the general section rule.
 - No sequence regresses, so every shape that parsed at `origin/main` keeps its value here.
-- The two review shapes parse here and at `origin/main`. One has a dash first run, and the other an ordered first run.
+- No newly parseable sequence holds a table item, so the table guard covers every new section.
+- The two earlier review shapes parse here and at `origin/main`.
 
 ## Alternatives
 

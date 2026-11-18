@@ -230,10 +230,11 @@ test("the closing-block rule states the one-blank-line list fold", () => {
     /dash or ordered list under a label after one blank line[^.]*joins that label's value/,
   );
   expect(reportBlock).toMatch(/any number of sections follow, with one blank line before each/);
-  expect(reportBlock).toMatch(/A section is a bare dash list, or a prose line with its dash list/);
+  expect(reportBlock).toMatch(/A section is a bare dash list, or a prose lead with its dash list/);
   expect(reportBlock).toMatch(
-    /A section with no blank line before it, or two blank lines before it, stays unparseable/,
+    /The lead follows the prose-lead rules, the whole-line bold heading included/,
   );
+  expect(reportBlock).toMatch(/Two blank lines, or no blank line before it, start no new section/);
   expect(reportBlock).toMatch(/ordered list under that plain prose line stays unparseable/);
   expect(reportBlock).toMatch(
     /two blank lines under a label before a list make the block unparseable/,

@@ -963,25 +963,26 @@ function isBoldProseLine(line) {
   return BOLD_PROSE_LINE.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
-/**
- * Folds each section under a report label line into that label's value. A section is a bare dash
- * run, or a prose line with its `- ` run, and one blank line comes before each.
- * Markers drop, and sections join each other and an existing value with a semicolon and a space.
- * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * A prose run sits directly under its line or after one blank line, as `<prose>: <items>`.
- * Two blank lines, a section with no blank line before it, and a label repeat return null with `raw`.
- * @param {string[]} lines
- * @returns {string[] | null}
- */
 function trimTrailingBlanks(out) {
   while (out.length > 0 && out.at(-1).trim() === "") {
     out.pop();
   }
 }
 
+/**
+ * Folds each section under a report label line into that label's value. A section is a bare dash
+ * run, or a prose lead with its `- ` run, and exactly one blank line comes before each.
+ * A prose lead follows the prose-lead rules, the whole-line bold heading included.
+ * Markers drop, and sections join each other and an existing value with a semicolon and a space.
+ * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
+ * A section with another blank count, a label repeat, or a table pair returns null with `raw`.
+ * @param {string[]} lines
+ * @returns {string[] | null}
+ */
 function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
+  const tableInBlock = hasTablePair(lines);
   // Labels that took a section fold, labels past the general rule, and labels that broke it.
   const sectioned = new Set();
   const nonCanonical = new Set();
@@ -1088,7 +1089,8 @@ function foldEmptyLabelLists(lines) {
       }
     }
   }
-  if (invalid.size > 0) {
+  // The fold flattens a table inside a new section, so the table guard reads the block first.
+  if (invalid.size > 0 || (tableInBlock && sectioned.size > 0)) {
     return null;
   }
   return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;

@@ -31,9 +31,10 @@ The run ends at the first line that is not a `- ` or `N. ` item, a sub-item, or 
 line. A blank line or unindented prose inside a list breaks it.
 
 After the label value, any number of sections follow, with one blank line before each. A section is
-a bare dash list, or a prose line with its dash list. The prose list sits directly under its line or
-after one blank line. A section with no blank line before it, or two blank lines before it, stays
-unparseable.
+a bare dash list, or a prose lead with its dash list. The lead follows the prose-lead rules, the
+whole-line bold heading included. The list sits directly under the lead, or after one blank line
+when the lead is plain prose. A section needs exactly one blank line before it. Two blank lines, or
+no blank line before it, start no new section, so the existing rules decide that shape.
 
 The label's own list sits directly under the label or after one blank line. It takes dash or
 ordered items. The items join the label value with `; `, so `Why: x`, a blank line, and `- a` read

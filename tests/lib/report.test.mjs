@@ -1661,6 +1661,36 @@ test("parseReportBlock folds two prose subsections after an ordered run", () => 
   expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next: c" });
 });
 
+// Usefulness: verifies a whole-line bold lead starts a section, as origin/main accepts it as a lead.
+test("parseReportBlock folds a whole-line bold lead as a section", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "- b",
+    "",
+    "**Bold lead**",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; b; **Bold lead**: c" });
+});
+
+// Usefulness: verifies a table inside a section dash item still refuses the block, as the table rule states.
+test("parseReportBlock returns null for a table inside a section dash item", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "- | a |",
+    "  | - |",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
 // Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before
 // the prose, no prose heading, prose after another prose line, prose after the `Verdict:` line, and
 // a repeat of the label that took the heading list, so no list drops without a `raw` signal.
