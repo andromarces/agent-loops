@@ -975,7 +975,8 @@ function trimTrailingBlanks(out) {
  * A prose lead follows the prose-lead rules, the whole-line bold heading included.
  * Markers drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * A section with another blank count, a label repeat, or a table pair returns null with `raw`.
+ * Null when the guards below reject a label in `sectioned`, a table pair beside one, or a folded
+ * label that appears again.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
@@ -984,6 +985,8 @@ function foldEmptyLabelLists(lines) {
   const folded = [];
   const tableInBlock = hasTablePair(lines);
   // Labels that took a section fold, labels past the general rule, and labels that broke it.
+  // `sectioned` gains a label from the `extra` dash loop, the bare-dash branch, or
+  // `foldedAfterBlank`.
   const sectioned = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
@@ -1040,6 +1043,7 @@ function foldEmptyLabelLists(lines) {
         foldedAfterBlank = items.length > 0;
       }
       if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
+        // Adds the label to `invalid` when it is `sectioned` and `oneBlankBefore` is false.
         if (sectioned.has(at) && !oneBlankBefore) {
           invalid.add(at);
         }
@@ -1078,6 +1082,8 @@ function foldEmptyLabelLists(lines) {
     out.push(line);
   }
   // A sectioned label holds only its value line, blanks, and later label lines.
+  // The scan runs to the next known label or the end of the block.
+  // Null when the scan adds a label in `sectioned` to `invalid`.
   for (const at of sectioned) {
     for (let j = at + 1; j < out.length; j++) {
       if (isKnownLabelLine(out[j])) {
@@ -1090,9 +1096,12 @@ function foldEmptyLabelLists(lines) {
     }
   }
   // The fold flattens a table inside a new section, so the table guard reads the block first.
+  // Null when `invalid` is not empty, or `tableInBlock` holds and `sectioned` is not empty.
+  // Every block that parsed at ffaf28d0 still parses with the same values.
   if (invalid.size > 0 || (tableInBlock && sectioned.size > 0)) {
     return null;
   }
+  // Null when a folded label's `lastLabeled` index differs from its fold index.
   return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;
 }
 
