@@ -50,6 +50,7 @@ Andro Marces
 ## Links
 
 - [Issue #2002: Worker turn can run a full test suite outside the test-slot wrapper](https://github.com/andromarces/agent-loops/issues/2002)
+- [PR #2003: Restate the full-suite rule beside the worker task text](https://github.com/andromarces/agent-loops/pull/2003)
 - [ADR 0040: Run the test command in a test slot](0040-run-the-test-command-in-a-test-slot.md)
 - [ADR 0044: Route a targeted run through the test slot while any slot is held](0044-route-a-targeted-run-through-the-test-slot-while-a-slot-is-held.md)
 - [Implementation: prompt rules](../src/prompts/rules.mjs)
