@@ -35,9 +35,12 @@ line. The items join the label value with `; `, so `Why: x`, a blank line, and `
 empty `Notes:` reads `a`. The list takes dash or ordered items. Two blank lines under the
 label before the list stay unparseable.
 
+A second `- ` list after one blank line joins the same value too, so `- a`, a blank line, and `- b`
+read `a; b`.
+
 The second shape has prose. A blank line follows the label line (or its folded list). One prose line
-comes next, and a `- ` list directly under it folds too. The list takes dash items only. An
-ordered list there stays unparseable.
+comes next, and a `- ` list directly under it or after one blank line folds too. The list takes dash
+items only. An ordered list there stays unparseable.
 
 The prose and its list join the value of the label just above, as `; <prose>: <items>`. The prose
 drops a trailing colon first, so `Why: x`, a blank line, `Design settled:`, and `- a` read
@@ -92,9 +95,9 @@ single-part response, and every response whose labels use only the `Label:` form
 
 A `- ` item or sub-item that opens with a bold report label name, for example
 `- **Notes:** ran`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
-makes the block unparseable. A prose line directly after the label with no blank line,
-a blank line between the prose and its list, a second prose line before the list, prose after
-the reviewer `Verdict:` line, and a later repeat of the label stay unparseable.
+makes the block unparseable. A prose line directly after the label with no blank line stays
+unparseable. A second prose line before the list, prose after
+the reviewer `Verdict:` line, and a later repeat of the label also stay unparseable.
 
 Any other list in the closing block makes the block unparseable, so the list surfaces
 through `raw` instead of being dropped. Examples are bullets after the reviewer `Verdict:` line,

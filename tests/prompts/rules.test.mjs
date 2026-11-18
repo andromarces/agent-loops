@@ -211,8 +211,9 @@ test("the closing-block rule states the ordered list fold and forbids bold headi
 // prompt matches the parser contract and the plain-prose limits.
 test("the closing-block rule states the heading and list fold", () => {
   expect(reportBlock).toMatch(
-    /blank line[^.]*one plain prose line[^.]*list directly under it joins the label above/,
+    /blank line[^.]*one plain prose line[^.]*dash list joins the label above/,
   );
+  expect(reportBlock).toMatch(/directly under the prose line or after one blank line/);
 });
 
 // Usefulness: verifies the closing-block rule states the #1348 blank-line fold and the #1603 ordered-list extension, so prompt and parser agree.
@@ -220,6 +221,7 @@ test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
     /dash or ordered list under a label after one blank line[^.]*joins that label's value/,
   );
+  expect(reportBlock).toMatch(/second dash list after one blank line joins that value too/);
   expect(reportBlock).toMatch(/ordered list under that plain prose line stays unparseable/);
   expect(reportBlock).toMatch(
     /two blank lines under a label before a list make the block unparseable/,
@@ -330,7 +332,7 @@ test("the closing-block rule forbids only the two observed shapes", () => {
     /sub-items[^.]*folds into its parent item with a comma/,
     /indented prose line directly after an item or its sub-items folds/,
     /dash or ordered list under a label after one blank line[^.]*joins/,
-    /blank line[^.]*one plain prose line[^.]*list directly under it joins/,
+    /blank line[^.]*one plain prose line[^.]*dash list joins/,
   ]) {
     expect(reportBlock, fold.source).toMatch(fold);
   }

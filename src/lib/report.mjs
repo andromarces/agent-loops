@@ -967,10 +967,11 @@ function isBoldProseLine(line) {
  * Folds a run of `- ` items that directly follows a report label line into that label's value.
  * Markers drop, and items join each other and an existing value with "; ".
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * A prose line with a `- ` run directly under it folds as `<prose>: <items>` after one or more blank
- * lines. A dash or ordered run after one blank line joins the label, unless an ordered item reads
- * as a Verdict line.
- * Every other list shape stays for hasDroppedList, and a shadowing repeat returns null while dispatch keeps `raw`.
+ * A prose line folds with its `- ` run, directly under it or after one blank line, as `<prose>: <items>`.
+ * A dash or ordered run after one blank line joins the label, unless an ordered item reads as a
+ * Verdict line.
+ * A second dash run joins the same value, and every other list shape stays for hasDroppedList, so a
+ * shadowing repeat returns null with `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
@@ -987,6 +988,15 @@ function foldEmptyLabelLists(lines) {
         // A blank-line ordered item that reads as a Verdict line stays unparseable.
         ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
       }
+      // A second dash run after one blank line joins the same label (issue #2005).
+      while (items.length > 0 && lines[end + 1]?.trim() === "") {
+        const next = takeItems(lines, end + 1, HEADING_ITEM);
+        if (next.items.length === 0) {
+          break;
+        }
+        items.push(...next.items);
+        end = next.end;
+      }
       if (items.length > 0) {
         const label = line.trim();
         folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });
@@ -1000,7 +1010,11 @@ function foldEmptyLabelLists(lines) {
       out.at(-1).trim() === ""
     ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
-      const { items, end } = takeItems(lines, i, HEADING_ITEM);
+      let { items, end } = takeItems(lines, i, HEADING_ITEM);
+      if (items.length === 0 && isPlainProseLine(line) && lines[i + 1]?.trim() === "") {
+        // One blank line between a plain prose line and its dash list folds too (issue #2005).
+        ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
+      }
       if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
         out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);

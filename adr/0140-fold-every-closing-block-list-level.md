@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0167: Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md). The replaced part is the "prose between two lists" item of decision 3. Decisions 1, 2, 4, and 5 stay in force, and so does every other rejection of decision 3.
 
 ## Supersedes
 
