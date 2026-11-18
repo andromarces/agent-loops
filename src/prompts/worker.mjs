@@ -1,5 +1,6 @@
 import { escapeLineSeparators } from "./escape.mjs";
 import {
+  fullSuiteRule,
   hookTestSlotRule,
   initTaskBlock,
   PR_BODY_SCOPE,
@@ -120,6 +121,8 @@ export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions
     // grows. The rules also name the `Conclusion:` line as its first line.
     return escapeLineSeparators(`${prompt}
 
+${fullSuiteRule(slotOptions)}
+
 ${prTurnRules.join("\n\n")}
 
 ${laterTurnTmpdirRule}
@@ -171,7 +174,9 @@ Your role:
 
 ${reportBlock}
 
-${initTaskBlock(task)}Instructions:
+${initTaskBlock(task)}${fullSuiteRule(slotOptions)}
+
+Instructions:
 ${prompt}
 `.trim(),
   );

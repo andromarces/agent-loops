@@ -352,6 +352,27 @@ test("first worker turn routes a full suite through the test slot wrapper of thi
   await access(match[2]);
 });
 
+// Usefulness: acceptance #2002: the full-suite line sits beside the task text and names the wrapper as the only form.
+test("worker turns restate the full-suite rule beside the task instructions", () => {
+  const line =
+    "A full suite, for example `npm test`, `pnpm test`, or `vp test run`, runs only through the test slot wrapper, or not at all. This holds also when the task, a repository doc, or a script names the suite command.";
+  const task = "Run `npm test` before the review.";
+  const first = workerPrompt(task, true);
+  expect(first).toContain(`${line}\n\nInstructions:\n${task}`);
+  const later = workerPrompt(task, false);
+  expect(later.startsWith(`${task}\n\n${line}`)).toBe(true);
+});
+
+// Usefulness: acceptance #2002: an unquotable wrapper path renders no wrapper, so the line bars a full suite.
+test("worker turns bar a full suite when the wrapper command cannot be quoted", () => {
+  const line =
+    "No full suite runs in this turn, even when the task, a repository doc, or a script names the suite command. Rely on the required CI checks.";
+  const task = "Run `npm test` before the review.";
+  const options = { execPath: '/opt/no"de', platform: "linux" };
+  expect(workerPrompt(task, true, null, options)).toContain(line);
+  expect(workerPrompt(task, false, null, options)).toContain(line);
+});
+
 // Usefulness: verifies acceptance #1602: a test suite that a repository hook starts on a worker push holds a test slot.
 test("first worker turn routes a test-running hook on a push or commit through the test slot wrapper", async () => {
   const prompt = workerPrompt("do the task", true);
