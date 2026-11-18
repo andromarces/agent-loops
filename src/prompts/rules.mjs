@@ -13,7 +13,7 @@ Put quoted or multi-paragraph text before the closing block, not inside it, and 
 
 Every nesting level of sub-items folds into its parent item with a comma. Each sub-item line holds spaces to the parent text column, a dash or \`N. \` marker, one space, then the text. An ordered list (\`1. item\`) under a label joins that label's value the same way. Its sub-items sit at the column where the item text starts. A dash or ordered list under a label after one blank line joins that label's value too, with \`; \` when the label holds text. An ordered list under that plain prose line stays unparseable, and two blank lines under a label before a list make the block unparseable.
 
-A second dash list after one blank line joins that value too.
+After the label value, any number of sections follow, with one blank line before each. A section is a bare dash list, or a prose line with its dash list. The prose list sits directly under its line or after one blank line. A section with no blank line before it, or two blank lines before it, stays unparseable.
 
 An indented prose line directly after an item or its sub-items folds into that item with a space, unless it reads as a label line: after Unicode NFKC normalization, skip every leading character that is no letter or digit and one optional number, then a report label name or \`Verdict\`, any case, optional whitespace, and a character that is no letter, digit, or whitespace follow. Any colon variant, separator, or markup count therefore refuses, and a label word that a letter, or whitespace and a letter, follows is prose.
 

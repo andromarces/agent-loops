@@ -22,29 +22,31 @@ The issue offers a fold or a prompt bar. The fold follows [ADR 0140](0140-fold-e
 
 The second review round found a third run through a prose lead. This ADR now states the whole unit sequence under one label.
 
+The third review round found that a two-run cap dropped 192 `origin/main` shapes, an ordered first run included. This ADR now states the general section rule and the zero-regression bar.
+
 ## Decision
 
-1. **Accept one explicit unit sequence under a label.** The value takes at most one dash run directly under the label or after one blank line. One more dash run can follow after one blank line. Plain prose leads follow, each with its dash run directly under it or after one blank line.
-2. **Count every dash run.** A prose lead's dash run counts. At most two runs join one value. A third run, a prose chain past two runs, and every other list shape leave a dropped list, so the block is unparseable.
+1. **Accept any number of sections under a label.** After the label value, one blank line comes before each section. A section is a bare dash run, or a plain prose line with its dash run. The prose run sits directly under its line or after one blank line.
+2. **Keep every origin/main result.** Every shape that parses at `origin/main` keeps the same items and value here. Two blank lines, a section with no blank line before it, and every other shape keep their `origin/main` result. A blank that one section consumes never counts for the next.
 3. **Apply the fold once.** The shared parse in `src/lib/report.mjs` serves the dispatch envelope, interactive `role finish --require-accept`, and headless `runLoop` with `requireAccept` true.
 4. **Keep every other rejection.** A decorated label and a list after the reviewer `Verdict:` line stay unparseable. A prose line with a label name and a colon, a two-blank-line gap, and an ordered list under a prose line also stay unparseable.
-5. **State the rule in the prompt and the docs.** `reportBlock` in `src/prompts/rules.mjs` and `docs/orchestrator/closing-block.md` state both new folds and the two-run limit.
+5. **State the rule in the prompt and the docs.** `reportBlock` in `src/prompts/rules.mjs` and `docs/orchestrator/closing-block.md` state the section rule and the refusals.
 
 ## Consequences
 
 - The issue #2005 shape parses, and every item of both dash lists and the prose line stays in the value.
-- The replay row with no blank lines before the prose stays null, because the prose fold needs the blank line above.
-- A third dash run, including a prose chain past two runs, keeps its `origin/main` refusal.
-- A two-blank-line gap and a prose lead with no blank line above keep their `origin/main` refusal.
+- Two blank-separated prose subsections, after a dash or ordered first run, keep all three runs.
+- Every shape that parsed at `origin/main` keeps its value here, so the differential check found no regression.
+- Two blank lines, a section with no blank line before it, and every other shape keep their `origin/main` result.
 - The dispatch envelope, the interactive gate, and the headless gate read the same report, because all three use the shared parse.
 - A repair turn no longer treats the second dash list as a defect that needs no content change.
 
 ### Probe
 
-- The differential check enumerated 340 sequences of up to four units under one label. The units are a dash run, a prose lead, one blank line, and two blank lines.
-- Eight sequences differ from `origin/main`. Seven are second-run shapes, and one is a prose lead with a blank-separated list.
-- An extended check over 87,380 sequences of up to eight units found 1,575 differences. Every one is a second-run, prose-blank-list, or three-run shape.
-- The second-round blocker shape holds two runs, a prose lead, and a third run. It returns null here and at `origin/main`.
+- The differential check enumerated 488,280 sequences of up to eight units. The units are a dash run, an ordered run, a prose lead, one blank line, and two blank lines.
+- 2,243 sequences are newly parseable, and every one matches the general section rule.
+- No sequence regresses, so every shape that parsed at `origin/main` keeps its value here.
+- The two review shapes parse here and at `origin/main`. One has a dash first run, and the other an ordered first run.
 
 ## Alternatives
 

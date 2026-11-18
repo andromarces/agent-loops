@@ -1553,12 +1553,12 @@ test("parseReportBlock keeps a Verdict line after a folded prose list", () => {
   expect(parseVerdict(response)).toBe("accept");
 });
 
-// Usefulness: verifies a third dash run under one label stays null, as origin/main did at review.
-test("parseReportBlock returns null for a third dash list under one label", () => {
+// Usefulness: verifies every bare dash section after one blank line keeps its items, as #2005 records.
+test("parseReportBlock folds three dash lists under one label", () => {
   const response = ["Conclusion: done", "Why:", "- a", "", "- b", "", "- c", "Blockers: none"].join(
     "\n",
   );
-  expect(parseReportBlock(response)).toBeNull();
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; b; c" });
 });
 
 // Usefulness: verifies two blank lines before a prose lead refuse its blank-separated list, as origin/main did.
@@ -1594,8 +1594,8 @@ test("parseReportBlock returns null for a prose lead with no blank line above it
   expect(parseReportBlock(response)).toBeNull();
 });
 
-// Usefulness: verifies a prose lead cannot add a third dash run under one label, as origin/main did.
-test("parseReportBlock returns null for a third dash run after a prose lead", () => {
+// Usefulness: verifies a prose lead section adds a third dash run under one label, as #2005 records.
+test("parseReportBlock folds a third dash run after a prose lead", () => {
   const response = [
     "Conclusion: done",
     "Why:",
@@ -1608,11 +1608,11 @@ test("parseReportBlock returns null for a third dash run after a prose lead", ()
     "- c",
     "Blockers: none",
   ].join("\n");
-  expect(parseReportBlock(response)).toBeNull();
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; b; Evidence: c" });
 });
 
-// Usefulness: verifies a prose-lead chain stops at two dash runs, so a third lead leaves a dropped list.
-test("parseReportBlock returns null for a third dash run in a prose chain", () => {
+// Usefulness: verifies a prose-lead chain keeps every dash run, because origin/main kept them.
+test("parseReportBlock folds a third dash run in a prose chain", () => {
   const response = [
     "Conclusion: done",
     "Why:",
@@ -1624,7 +1624,41 @@ test("parseReportBlock returns null for a third dash run in a prose chain", () =
     "- c",
     "Blockers: none",
   ].join("\n");
-  expect(parseReportBlock(response)).toBeNull();
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next lead: c" });
+});
+
+// Usefulness: verifies two blank-separated prose subsections keep all three runs, as origin/main did.
+test("parseReportBlock folds two prose subsections after an initial dash run", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "Evidence:",
+    "- b",
+    "",
+    "Next:",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next: c" });
+});
+
+// Usefulness: verifies an ordered initial run leaves the prose subsections room to fold, as origin/main did.
+test("parseReportBlock folds two prose subsections after an ordered run", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "1. a",
+    "",
+    "Evidence:",
+    "- b",
+    "",
+    "Next:",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({ why: "a; Evidence: b; Next: c" });
 });
 
 // Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before

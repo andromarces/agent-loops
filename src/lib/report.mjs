@@ -964,21 +964,28 @@ function isBoldProseLine(line) {
 }
 
 /**
- * Folds a run of `- ` items that directly follows a report label line into that label's value.
- * Markers drop, and items join each other and an existing value with "; ".
+ * Folds each section under a report label line into that label's value. A section is a bare dash
+ * run, or a prose line with its `- ` run, and one blank line comes before each.
+ * Markers drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * A prose line folds with its `- ` run, directly under it or after one blank line, as `<prose>: <items>`.
- * A dash or ordered run after one blank line joins the label, unless an ordered item reads as a
- * Verdict line.
- * At most two dash runs join, a prose lead counts its run, and a label repeat returns null with `raw`.
+ * A prose run sits directly under its line or after one blank line, as `<prose>: <items>`.
+ * Two blank lines, a section with no blank line before it, and a label repeat return null with `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
+function trimTrailingBlanks(out) {
+  while (out.length > 0 && out.at(-1).trim() === "") {
+    out.pop();
+  }
+}
+
 function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
-  // Dash runs folded into each label line, so a prose lead counts its run (issue #2005).
-  const runs = new Map();
+  // Labels that took a section fold, labels past the general rule, and labels that broke it.
+  const sectioned = new Set();
+  const nonCanonical = new Set();
+  const invalid = new Set();
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (PLAIN_LABEL_LINE.test(line)) {
@@ -989,20 +996,23 @@ function foldEmptyLabelLists(lines) {
         // A blank-line ordered item that reads as a Verdict line stays unparseable.
         ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
       }
-      let runCount = items.length > 0 ? 1 : 0;
-      // At most one second dash run after one blank line joins the same label (issue #2005).
-      if (runCount === 1 && lines[end + 1]?.trim() === "") {
+      let extra = false;
+      // Any number of bare dash sections, each after exactly one blank line (issue #2005).
+      while (items.length > 0 && lines[end + 1]?.trim() === "") {
         const next = takeItems(lines, end + 1, HEADING_ITEM);
-        if (next.items.length > 0) {
-          items.push(...next.items);
-          end = next.end;
-          runCount = 2;
+        if (next.items.length === 0) {
+          break;
         }
+        items.push(...next.items);
+        end = next.end;
+        extra = true;
       }
       if (items.length > 0) {
         const label = line.trim();
         folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });
-        runs.set(out.length, runCount);
+        if (extra) {
+          sectioned.add(out.length);
+        }
         out.push(appendToLabel(label, items.join("; ")));
         i = end;
         continue;
@@ -1013,33 +1023,73 @@ function foldEmptyLabelLists(lines) {
       out.at(-1).trim() === ""
     ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
-      const used = runs.get(at) ?? 0;
+      const oneBlankBefore = i >= 2 && lines[i - 1]?.trim() === "" && lines[i - 2]?.trim() !== "";
       let { items, end } = takeItems(lines, i, HEADING_ITEM);
       let foldedAfterBlank = false;
       if (
         items.length === 0 &&
         isPlainProseLine(line) &&
-        lines[i - 1]?.trim() === "" &&
-        lines[i - 2]?.trim() !== "" &&
-        lines[i + 1]?.trim() === ""
+        oneBlankBefore &&
+        lines[i + 1]?.trim() === "" &&
+        !nonCanonical.has(at)
       ) {
         // Exactly one blank line before the prose and one before its dash list folds (issue #2005).
-        // The fold consumes both blanks, so a later prose lead needs its own blank line.
+        // The fold consumes both blanks, so a later section needs its own blank line.
         ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
         foldedAfterBlank = items.length > 0;
       }
-      if (items.length > 0 && used < 2 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
+      if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
+        if (sectioned.has(at) && !oneBlankBefore) {
+          invalid.add(at);
+        }
+        if (!oneBlankBefore) {
+          nonCanonical.add(at);
+        }
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
-        runs.set(at, used + 1);
         out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);
         if (foldedAfterBlank) {
-          out.pop();
+          sectioned.add(at);
+          trimTrailingBlanks(out);
         }
         i = end;
         continue;
       }
+    } else if (
+      isFoldableItem(line, HEADING_ITEM) &&
+      i >= 2 &&
+      lines[i - 1]?.trim() === "" &&
+      lines[i - 2]?.trim() !== ""
+    ) {
+      // A bare dash section after a preceding section, with exactly one blank line before it.
+      const at = out.findLastIndex((entry) => entry.trim() !== "");
+      if (at >= 0 && PLAIN_LABEL_LINE.test(out[at]) && !nonCanonical.has(at)) {
+        const { items, end } = takeItems(lines, i - 1, HEADING_ITEM);
+        if (items.length > 0) {
+          folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
+          sectioned.add(at);
+          out[at] = appendToLabel(out[at], items.join("; "));
+          trimTrailingBlanks(out);
+          i = end;
+          continue;
+        }
+      }
     }
     out.push(line);
+  }
+  // A sectioned label holds only its value line, blanks, and later label lines.
+  for (const at of sectioned) {
+    for (let j = at + 1; j < out.length; j++) {
+      if (isKnownLabelLine(out[j])) {
+        break;
+      }
+      if (out[j].trim() !== "") {
+        invalid.add(at);
+        break;
+      }
+    }
+  }
+  if (invalid.size > 0) {
+    return null;
   }
   return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;
 }
