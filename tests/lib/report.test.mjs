@@ -1522,9 +1522,6 @@ test("parseReportBlock folds a second dash list that one blank line sets apart",
       notes: "keep this; item one; item two",
     },
   );
-  expect(parseReportBlock(`${REPORT}\nNotes:\n- a\n\n- b\n\n- c`)).toMatchObject({
-    notes: "a; b; c",
-  });
 });
 
 // Usefulness: verifies a second run refuses two blank lines, an ordered list, a repeat, and a label prose.
@@ -1554,6 +1551,47 @@ test("parseReportBlock keeps a Verdict line after a folded prose list", () => {
   const response = `${REPORT}\nChecks:\n\nEvidence:\n\n- a\nVerdict: accept`;
   expect(parseReportBlock(response)).toMatchObject({ checks: "Evidence: a" });
   expect(parseVerdict(response)).toBe("accept");
+});
+
+// Usefulness: verifies a third dash run under one label stays null, as origin/main did at review.
+test("parseReportBlock returns null for a third dash list under one label", () => {
+  const response = ["Conclusion: done", "Why:", "- a", "", "- b", "", "- c", "Blockers: none"].join(
+    "\n",
+  );
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies two blank lines before a prose lead refuse its blank-separated list, as origin/main did.
+test("parseReportBlock returns null for two blanks before a prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: x",
+    "",
+    "",
+    "Evidence:",
+    "",
+    "- a",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a prose lead directly after a folded list needs its own blank line, as origin/main did.
+test("parseReportBlock returns null for a prose lead with no blank line above it", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "Evidence:",
+    "",
+    "- b",
+    "Next lead:",
+    "",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
 });
 
 // Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before

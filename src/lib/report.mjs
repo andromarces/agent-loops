@@ -970,8 +970,8 @@ function isBoldProseLine(line) {
  * A prose line folds with its `- ` run, directly under it or after one blank line, as `<prose>: <items>`.
  * A dash or ordered run after one blank line joins the label, unless an ordered item reads as a
  * Verdict line.
- * A second dash run joins the same value, and every other list shape stays for hasDroppedList, so a
- * shadowing repeat returns null with `raw`.
+ * One second dash run joins the same value, and other list shapes stay for hasDroppedList, so a
+ * label repeat returns null with `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
@@ -988,14 +988,13 @@ function foldEmptyLabelLists(lines) {
         // A blank-line ordered item that reads as a Verdict line stays unparseable.
         ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
       }
-      // A second dash run after one blank line joins the same label (issue #2005).
-      while (items.length > 0 && lines[end + 1]?.trim() === "") {
+      // At most one second dash run after one blank line joins the same label (issue #2005).
+      if (items.length > 0 && lines[end + 1]?.trim() === "") {
         const next = takeItems(lines, end + 1, HEADING_ITEM);
-        if (next.items.length === 0) {
-          break;
+        if (next.items.length > 0) {
+          items.push(...next.items);
+          end = next.end;
         }
-        items.push(...next.items);
-        end = next.end;
       }
       if (items.length > 0) {
         const label = line.trim();
@@ -1011,13 +1010,25 @@ function foldEmptyLabelLists(lines) {
     ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
       let { items, end } = takeItems(lines, i, HEADING_ITEM);
-      if (items.length === 0 && isPlainProseLine(line) && lines[i + 1]?.trim() === "") {
-        // One blank line between a plain prose line and its dash list folds too (issue #2005).
+      let foldedAfterBlank = false;
+      if (
+        items.length === 0 &&
+        isPlainProseLine(line) &&
+        lines[i - 1]?.trim() === "" &&
+        lines[i - 2]?.trim() !== "" &&
+        lines[i + 1]?.trim() === ""
+      ) {
+        // Exactly one blank line before the prose and one before its dash list folds (issue #2005).
+        // The fold consumes both blanks, so a later prose lead needs its own blank line.
         ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
+        foldedAfterBlank = items.length > 0;
       }
       if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
         out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);
+        if (foldedAfterBlank) {
+          out.pop();
+        }
         i = end;
         continue;
       }
