@@ -35,7 +35,7 @@ The runtime has no signal for a test run outside the slot. A run outside the slo
 
 - A worker reads the full-suite bar beside the task command that it is about to run.
 - A later turn carries the bar without the full preamble.
-- The change is prompt text, a reference page, and this ADR. It adds no runtime field.
+- The change is prompt text, `docs/reference/role.md`, `docs/reference/test-slot.md`, and this ADR. It adds no runtime field.
 
 ## Alternatives
 
