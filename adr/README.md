@@ -125,3 +125,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0163 — [State the plan-mode guard in the Claude orchestrator prompt](0163-state-the-plan-mode-guard-in-the-claude-orchestrator-prompt.md) — partially-superseded — Partially superseded by [ADR 0164](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md).
 - 0164 — [Retry a first-turn Claude orchestrator abort that names plan mode](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) — accepted
 - 0165 — [Render the task placeholders in a per-item task text](0165-render-task-placeholders-in-a-per-item-task-text.md) — accepted
+- 0166 — [Restate the full-suite rule beside the worker task text](0166-restate-the-full-suite-rule-beside-the-worker-task-text.md) — accepted

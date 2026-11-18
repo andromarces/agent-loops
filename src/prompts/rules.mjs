@@ -236,6 +236,20 @@ ${TARGETED_RUN_BOUND_ITEMS}
   - ${NO_LOAD_GENERATORS}`;
 }
 
+// The line sits beside the task text, where a task, a repository doc, or a script names its own test
+// command (ADR 0166).
+/**
+ * The full-suite restatement of the worker prompt (ADR 0166). It names the test slot wrapper as the
+ * only form of a full suite when this run can render it. A path that cannot be quoted renders no
+ * wrapper, so the line bars a full suite in this turn and names the required CI checks.
+ */
+export function fullSuiteRule(options) {
+  if (slotCommandForms(options) === null) {
+    return "No full suite runs in this turn, even when the task, a repository doc, or a script names the suite command. Rely on the required CI checks.";
+  }
+  return "A full suite, for example `npm test`, `pnpm test`, or `vp test run`, runs only through the test slot wrapper, or not at all. This holds also when the task, a repository doc, or a script names the suite command.";
+}
+
 // A held test slot must not make a worker skip or reorder the red run: the wait stays inside the
 // turn, and a run that did not start reaches `Checks` (ADR 0096).
 
