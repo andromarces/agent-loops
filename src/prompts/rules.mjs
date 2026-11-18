@@ -192,8 +192,8 @@ const TARGETED_RUN_BOUND_ITEMS = `
   - A targeted run covers at most 10 test files in total, and never a whole directory.
 `;
 
-// The wrapper command of a full suite. Both slot rules branch on whether it can be quoted, so the
-// direct fallback of ADR 0044 covers the red run too (ADR 0096).
+// The wrapper command of a full suite. `testSlotRule`, `fullSuiteRule`, and `redRunRule` branch on
+// whether it can be quoted. The direct fallback of ADR 0044 covers the red run too (ADR 0096).
 const slotCommandForms = (options) =>
   cliCommandForms(() => "test-slot -- <suite command as separate arguments>", options);
 
