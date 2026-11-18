@@ -1594,6 +1594,39 @@ test("parseReportBlock returns null for a prose lead with no blank line above it
   expect(parseReportBlock(response)).toBeNull();
 });
 
+// Usefulness: verifies a prose lead cannot add a third dash run under one label, as origin/main did.
+test("parseReportBlock returns null for a third dash run after a prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "- b",
+    "",
+    "Evidence:",
+    "",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a prose-lead chain stops at two dash runs, so a third lead leaves a dropped list.
+test("parseReportBlock returns null for a third dash run in a prose chain", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- a",
+    "",
+    "Evidence:",
+    "- b",
+    "Next lead:",
+    "- c",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
 // Usefulness: verifies the shapes that stay unparseable next to the #898 rule: no blank line before
 // the prose, no prose heading, prose after another prose line, prose after the `Verdict:` line, and
 // a repeat of the label that took the heading list, so no list drops without a `raw` signal.

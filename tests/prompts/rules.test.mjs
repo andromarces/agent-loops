@@ -216,6 +216,14 @@ test("the closing-block rule states the heading and list fold", () => {
   expect(reportBlock).toMatch(/directly under the prose line or after one blank line/);
 });
 
+// Usefulness: verifies a label name in prose refuses only before a colon, so `Checks completed:` stays prose.
+test("the closing-block rule refuses a prose label name only before a colon", () => {
+  expect(reportBlock).toMatch(
+    /A report label name or `Verdict`, in any case, followed by any run of asterisks, underscores, or backticks, optional whitespace, and a colon refuses it\./,
+  );
+  expect(reportBlock).not.toMatch(/must not hold a report label name or `Verdict` in any case/);
+});
+
 // Usefulness: verifies the closing-block rule states the #1348 blank-line fold and the #1603 ordered-list extension, so prompt and parser agree.
 test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(

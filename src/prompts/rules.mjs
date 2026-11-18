@@ -21,7 +21,7 @@ A bold heading line that groups a dash list outside the prose fold below makes t
 
 A blank line, then one plain prose line, then a dash list joins the label above as the prose, a colon, and the items. The dash list sits directly under the prose line or after one blank line. A whole-line bold heading is the one \`*\` exception: \`**Reviewer notes.**\` above \`- a\` reads \`**Reviewer notes.**: a\`. Any other list or nesting, an indented label, or a decorated label makes the whole block unparseable. A line that starts with \`*\` either counts as a list or is dropped from the block, so write none.
 
-The prose line must not start with whitespace, an asterisk, an underscore, a backtick, a greater-than sign, or a hash. It must not be a list, and it must not hold a report label name or \`Verdict\` in any case. Any run of asterisks, underscores, or backticks, optional whitespace, and a colon after that name anywhere refuses it.
+The prose line must not start with whitespace, an asterisk, an underscore, a backtick, a greater-than sign, or a hash. It must not be a list. A report label name or \`Verdict\`, in any case, followed by any run of asterisks, underscores, or backticks, optional whitespace, and a colon refuses it.
 
 The block holds no Markdown table: a table makes it unparseable. Put tabular data in \`- \` items, one row per item.
 

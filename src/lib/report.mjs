@@ -970,14 +970,15 @@ function isBoldProseLine(line) {
  * A prose line folds with its `- ` run, directly under it or after one blank line, as `<prose>: <items>`.
  * A dash or ordered run after one blank line joins the label, unless an ordered item reads as a
  * Verdict line.
- * One second dash run joins the same value, and other list shapes stay for hasDroppedList, so a
- * label repeat returns null with `raw`.
+ * At most two dash runs join, a prose lead counts its run, and a label repeat returns null with `raw`.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
 function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
+  // Dash runs folded into each label line, so a prose lead counts its run (issue #2005).
+  const runs = new Map();
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (PLAIN_LABEL_LINE.test(line)) {
@@ -988,17 +989,20 @@ function foldEmptyLabelLists(lines) {
         // A blank-line ordered item that reads as a Verdict line stays unparseable.
         ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
       }
+      let runCount = items.length > 0 ? 1 : 0;
       // At most one second dash run after one blank line joins the same label (issue #2005).
-      if (items.length > 0 && lines[end + 1]?.trim() === "") {
+      if (runCount === 1 && lines[end + 1]?.trim() === "") {
         const next = takeItems(lines, end + 1, HEADING_ITEM);
         if (next.items.length > 0) {
           items.push(...next.items);
           end = next.end;
+          runCount = 2;
         }
       }
       if (items.length > 0) {
         const label = line.trim();
         folded.push({ label: label.slice(0, label.indexOf(":")), index: out.length });
+        runs.set(out.length, runCount);
         out.push(appendToLabel(label, items.join("; ")));
         i = end;
         continue;
@@ -1009,6 +1013,7 @@ function foldEmptyLabelLists(lines) {
       out.at(-1).trim() === ""
     ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
+      const used = runs.get(at) ?? 0;
       let { items, end } = takeItems(lines, i, HEADING_ITEM);
       let foldedAfterBlank = false;
       if (
@@ -1023,8 +1028,9 @@ function foldEmptyLabelLists(lines) {
         ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
         foldedAfterBlank = items.length > 0;
       }
-      if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
+      if (items.length > 0 && used < 2 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
+        runs.set(at, used + 1);
         out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);
         if (foldedAfterBlank) {
           out.pop();
