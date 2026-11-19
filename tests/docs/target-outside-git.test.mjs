@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,11 +43,15 @@ test.skipIf(!hasBash)(
 
     const base = await mkdtemp(join(tmpdir(), "target-outside-git-"));
     try {
-      const git = (args) => execa("git", args, { cwd: base });
+      const git = (args, options = {}) => execa("git", args, { cwd: base, ...options });
+      const gitLines = async (args, input) =>
+        (await git(args, { input })).stdout.trim().split("\n");
       await git(["init", "-q", "repo"]);
-      await git(["-C", "repo", "config", "core.autocrlf", "false"]);
-      await git(["-C", "repo", "config", "user.name", "Tester"]);
-      await git(["-C", "repo", "config", "user.email", "test@example.com"]);
+      const configPath = join(base, "repo", ".git", "config");
+      await writeFile(
+        configPath,
+        `${await readFile(configPath, "utf8")}[core]\n\tautocrlf = false\n[user]\n\tname = Tester\n\temail = test@example.com\n`,
+      );
       await writeFile(join(base, "repo", ".git", "info", "attributes"), "* -text\n");
       await writeFile(join(base, "repo", "modified.txt"), "modified before\n");
       await writeFile(join(base, "repo", "modified-exec.txt"), "exec before\n");
@@ -55,19 +59,20 @@ test.skipIf(!hasBash)(
       await git(["-C", "repo", "add", "--", "modified.txt", "modified-exec.txt", "deleted.txt"]);
       await git(["-C", "repo", "update-index", "--chmod=+x", "--", "modified-exec.txt"]);
       await git(["-C", "repo", "commit", "-q", "-m", "import"]);
-      const imported = (await git(["-C", "repo", "rev-parse", "HEAD"])).stdout.trim();
 
       await writeFile(join(base, "repo", "modified.txt"), "modified after\n");
       await writeFile(join(base, "repo", "modified-exec.txt"), "exec after\n");
       await mkdir(join(base, "repo", "sub"));
       await writeFile(join(base, "repo", "sub", "added-exec.txt"), "added exec\n");
       await writeFile(join(base, "repo", "sub", "added-plain.txt"), "added plain\n");
-      await git(["-C", "repo", "rm", "-q", "--", "deleted.txt"]);
+      await rm(join(base, "repo", "deleted.txt"));
       await git([
         "-C",
         "repo",
         "add",
+        "--all",
         "--",
+        "deleted.txt",
         "modified.txt",
         "modified-exec.txt",
         "sub/added-exec.txt",
@@ -82,28 +87,18 @@ test.skipIf(!hasBash)(
         "modified-exec.txt",
         "sub/added-exec.txt",
       ]);
-      await git([
-        "-C",
-        "repo",
-        "update-index",
-        "--chmod=-x",
-        "--",
-        "modified.txt",
-        "sub/added-plain.txt",
-      ]);
       await git(["-C", "repo", "commit", "-q", "-m", "reviewed"]);
-      const reviewed = (await git(["-C", "repo", "rev-parse", "HEAD"])).stdout.trim();
+      const [reviewed, imported] = await gitLines(["-C", "repo", "rev-parse", "HEAD", "HEAD^"]);
 
       await writeFile(join(base, "modified.txt"), "modified before\n");
       await chmod(join(base, "modified.txt"), 0o640);
       await writeFile(join(base, "modified-exec.txt"), "exec before\n");
       if (!isWindows) await chmod(join(base, "modified-exec.txt"), 0o755);
       await writeFile(join(base, "deleted.txt"), "deleted before\n");
-      const original = (await git(["hash-object", "--no-filters", "--", "modified.txt"])).stdout;
-      const originalExec = (await git(["hash-object", "--no-filters", "--", "modified-exec.txt"]))
-        .stdout;
-      const originalDeleted = (await git(["hash-object", "--no-filters", "--", "deleted.txt"]))
-        .stdout;
+      const [original, originalExec, originalDeleted] = await gitLines(
+        ["hash-object", "--no-filters", "--stdin-paths"],
+        "modified.txt\nmodified-exec.txt\ndeleted.txt\n",
+      );
 
       const render = (block, values) =>
         block
@@ -242,14 +237,18 @@ delivery_status=$?
       const run = await execa("bash", ["run.sh"], { cwd: base, reject: false, all: true });
       expect(run.exitCode, run.all).toBe(0);
 
-      for (const item of cases) {
-        const blob = (
-          await git(["-C", "repo", "rev-parse", `${reviewed}:${item.file}`])
-        ).stdout.trim();
-        const delivered = (
-          await git(["hash-object", "--no-filters", "--", item.target])
-        ).stdout.trim();
-        expect(delivered, `${item.label} content`).toBe(blob);
+      const blobs = await gitLines([
+        "-C",
+        "repo",
+        "rev-parse",
+        ...cases.map((item) => `${reviewed}:${item.file}`),
+      ]);
+      const delivered = await gitLines(
+        ["hash-object", "--no-filters", "--stdin-paths"],
+        `${cases.map((item) => item.target).join("\n")}\n`,
+      );
+      for (const [index, item] of cases.entries()) {
+        expect(delivered[index], `${item.label} content`).toBe(blobs[index]);
         if (!isWindows) {
           expect((await stat(join(base, item.target))).mode & 0o777, item.label).toBe(item.mode);
         }
