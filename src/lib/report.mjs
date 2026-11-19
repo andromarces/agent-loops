@@ -1082,7 +1082,8 @@ function foldEmptyLabelLists(lines) {
     out.push(line);
   }
   // A sectioned label holds only its value line, blanks, and later label lines.
-  // The scan runs to the next known label or the end of the block.
+  // The scan stops at the `isKnownLabelLine` break, the non-blank line that adds the label to
+  // `invalid`, or the end of `out`.
   // Null when the scan adds a label in `sectioned` to `invalid`.
   for (const at of sectioned) {
     for (let j = at + 1; j < out.length; j++) {
