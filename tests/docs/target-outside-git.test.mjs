@@ -66,7 +66,18 @@ test.skipIf(!hasBash)(
       await writeFile(join(base, "repo", "sub", "added-exec.txt"), "added exec\n");
       await writeFile(join(base, "repo", "sub", "added-plain.txt"), "added plain\n");
       await rm(join(base, "repo", "deleted.txt"));
-      await git(["-C", "repo", "add", "--all"]);
+      await git([
+        "-C",
+        "repo",
+        "add",
+        "--all",
+        "--",
+        "deleted.txt",
+        "modified.txt",
+        "modified-exec.txt",
+        "sub/added-exec.txt",
+        "sub/added-plain.txt",
+      ]);
       await git([
         "-C",
         "repo",
