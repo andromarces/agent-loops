@@ -572,9 +572,10 @@ function textBeforeBlock(response, block = closingBlock(response, { unlabeled: t
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
  * the block. The check reads one text per label: the folded value with each item's own lead left
- * out, built with the fold's separators, so a label name that starts a dash item is item text rather
- * than a reference, at any nesting depth, while a name inside prose or another item's text stays a
- * reference and keeps the whole value internal, as main does.
+ * out, built as diagnostic text for this check. Its separators and lead markup can differ from the
+ * folded value, so it is no copy of the value. A label name that starts a dash item is item text
+ * rather than a reference, at any nesting depth, while a name inside prose or another item's text
+ * stays a reference and keeps the whole value internal, as main does.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
  * code block. A reviewer turn passes `exception: false`, because its prompt bars every reference to
@@ -903,7 +904,10 @@ function isContinuationLine(line) {
 // The lead of a dash or ordered item, plain or bold, for example `Checks:` or `**Checks:**`.
 const ITEM_LEAD = new RegExp(`^(?:\\*\\*)?(?:${LABEL_NAMES})(?:\\*\\*)?:`, "i");
 
-/** The text of an item without the report label lead it opens with. */
+/**
+ * The text of an item with its own report label lead left out, for the diagnostic outside-block
+ * text. Its separators and lead markup can differ from the folded value.
+ */
 function withoutItemLead(text) {
   return text.replace(ITEM_LEAD, "");
 }
@@ -912,7 +916,8 @@ function withoutItemLead(text) {
  * The text of the item at `start` and of its direct sub-items at every deeper level, joined with
  * ", ", and the last line used. `marker` is the full marker prefix of the parent line, so its
  * length is the column where the sub-item marker starts. `masked` is the same text with the lead
- * of each part left out.
+ * of each part left out, for the diagnostic outside-block text; its separators and lead markup can
+ * differ from the folded value.
  */
 function takeSubitems(lines, start, marker) {
   const [subMarker] = lines[start].match(foldableSubitem(marker));
@@ -1013,8 +1018,9 @@ function trimTrailingBlanks(out) {
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * `masked` holds, per label, one text for the outside-block check: the folded value with each
- * item's own lead left out as it is appended, and the same separators as the value. A continuation
- * line stays in the item text it continues.
+ * item's own lead left out, built as diagnostic text. Its separators and lead markup can differ
+ * from the folded value, so it is no copy of the value. A continuation line stays in the item text
+ * it continues.
  * @param {string[]} lines
  * @returns {{ lines: string[], masked: Map<string, string> } | null}
  */
@@ -1027,9 +1033,9 @@ function foldEmptyLabelLists(lines) {
   const sectioned = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
-  // The outside-block text of each label: the folded value with each item's own lead left out as
-  // it is appended, built with the same separators as the value. A later occurrence of a label
-  // replaces the earlier one.
+  // The outside-block text of each label: the folded value with each item's own lead left out,
+  // built as diagnostic text. Its separators and lead markup can differ from the folded value, so
+  // it is no copy of the value. A later occurrence of a label replaces the earlier one.
   const masked = new Map();
   const labelKey = (labelText) =>
     LABEL_KEY_BY_NAME.get(labelText.slice(0, labelText.indexOf(":")).trim().toLowerCase()) ?? null;
