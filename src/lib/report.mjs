@@ -534,25 +534,42 @@ const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closin
 const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
 
 // A folded item lead at the start of a folded segment: the value start, or after an item join
-// (`; `), a sub-item join (`, `), or a prose lead (`: `). Only the plain and bold forms fold as
-// item text, so it names no field of this block and the pointer keeps its outside-block signal. A
-// code, italic, or underscored name in inline text stays a reference (issue #2014 review).
+// (`; `), a sub-item join (`, `), or a prose lead (`: `). Only a mention that the block supplies
+// as the start of a dash item counts as a lead, so a label name in prose text, after a colon or
+// any other punctuation included, stays an internal reference (issue #2014 review).
 const FOLDED_ITEM_LEAD = new RegExp(
-  `(?:^|; |, |: )(?:\\*\\*)?(?:${LABEL_OR_VERDICT})(?:\\*\\*)?:`,
+  `(?:^|; |, |: )((?:\\*\\*)?(?:${LABEL_OR_VERDICT})(?:\\*\\*)?:)`,
   "gi",
 );
 
+// The lead of a dash item at any indentation, for example `Checks:` or `**Checks:**`.
+const DASH_ITEM_LEAD = new RegExp(`^\\s*- ((?:\\*\\*)?(?:${LABEL_NAMES})(?:\\*\\*)?:)`, "i");
+
 /** True when `value` names a report label or `Verdict` outside a folded item lead. */
-function namesBlockLabel(value) {
-  return NAMED_LABEL_POINTER.test(value.replace(FOLDED_ITEM_LEAD, ""));
+function namesBlockLabel(value, leads) {
+  return NAMED_LABEL_POINTER.test(
+    value.replace(FOLDED_ITEM_LEAD, (match, lead) => (leads.has(lead) ? "" : match)),
+  );
+}
+
+/** The lead text that starts each dash item of `block`, at any nesting depth. */
+function dashItemLeads(block) {
+  const leads = new Set();
+  for (const line of block ?? []) {
+    const match = line.match(DASH_ITEM_LEAD);
+    if (match) {
+      leads.add(match[1]);
+    }
+  }
+  return leads;
 }
 
 const BLOCKQUOTE_LINE = /^\s{0,3}>/;
 const FENCE_LINE = /^\s{0,3}(?:`{3,}|~{3,})/;
 
 /** True when `value` points at response text outside the closing block. */
-function pointsOutsideBlock(value) {
-  if (typeof value !== "string" || namesBlockLabel(value)) {
+function pointsOutsideBlock(value, leads) {
+  if (typeof value !== "string" || namesBlockLabel(value, leads)) {
     return false;
   }
   return [ABOVE_NOUN_POINTER, ABOVE_VERB_POINTER, CLOSING_BLOCK_POINTER].some((pattern) =>
@@ -571,8 +588,7 @@ function paragraphCount(text) {
 }
 
 /** The response text before the closing block, or the empty string when there is none. */
-function textBeforeBlock(response) {
-  const block = closingBlock(response, { unlabeled: true });
+function textBeforeBlock(response, block = closingBlock(response, { unlabeled: true })) {
   if (!block) {
     return "";
   }
@@ -585,7 +601,8 @@ function textBeforeBlock(response) {
  * order, for example `["Why"]`. The detection is a heuristic over a small pattern list: a noun
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
- * the block.
+ * the block. A label name that starts a dash item is item text rather than a reference, at any
+ * nesting depth; a name inside prose text stays a reference.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
  * code block. A reviewer turn passes `exception: false`, because its prompt bars every reference to
@@ -599,13 +616,15 @@ export function outsideBlockReportLabels(response, report, { exception = true } 
   if (!report) {
     return [];
   }
-  const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key])).map(
+  const block = closingBlock(response, { unlabeled: true });
+  const leads = dashItemLeads(block);
+  const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key], leads)).map(
     ([, label]) => label,
   );
   if (labels.length === 0) {
     return [];
   }
-  const before = textBeforeBlock(response);
+  const before = textBeforeBlock(response, block);
   if (before.trim() === "") {
     return [];
   }

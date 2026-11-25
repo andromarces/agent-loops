@@ -2934,6 +2934,20 @@ test("outsideBlockReportLabels names a folded label item at every fold position"
   }
 });
 
+// Usefulness: verifies a label name inside inline prose stays an internal reference after a
+// colon, so only the start of a dash item is a folded item lead (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps a label name after prose punctuation internal", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: The test results are listed above: Checks: all three jobs passed.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
 // Usefulness: verifies a code-formatted label name inside inline text stays an internal reference,
 // so the base ADR 0139 result holds when the named field is in the same block (issue #2014 review).
 test("outsideBlockReportLabels keeps a code-formatted inline label mention internal", () => {
