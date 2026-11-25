@@ -34,6 +34,8 @@ The issue offers a fold or a prompt bar. The fold follows [ADR 0140](0140-fold-e
 - Every shape that parsed before keeps its value, because the exemption only skips a rejection that returns null and never changes the fold.
 - The dispatch envelope, the interactive gate, and the headless gate read the same report, because all three use the shared parse.
 - A repair turn is no longer needed for this shape.
+- The table refusal of ADR 0167 still holds. A table pair anywhere in the block, including one indented under a folded item, makes the block unparseable, so the plain and bold forms cannot clear the acceptance gate through a table.
+- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because a name that a colon closes is a heading, not a cross-reference. This holds for the plain and bold forms.
 
 ### Probe
 

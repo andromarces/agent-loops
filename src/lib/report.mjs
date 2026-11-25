@@ -524,8 +524,10 @@ const ABOVE_VERB_POINTER =
   /\b(?:see|as|stated|described|shown|explained|listed|noted|given|written)\s+(?:it\s+)?above\b/iu;
 const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closing\s+block\b/iu;
 
-// A value that names a report label or `Verdict` points inside the same block.
-const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
+// A value that names a report label or `Verdict` with no colon after the name points inside the
+// same block. A name that a colon closes is a heading or a folded item lead, so it is no
+// cross-reference and the pointer keeps its outside-block signal (issue #2014 review).
+const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b(?![*_\`]*\\s*:)`, "i");
 
 const BLOCKQUOTE_LINE = /^\s{0,3}>/;
 const FENCE_LINE = /^\s{0,3}(?:`{3,}|~{3,})/;
@@ -1098,10 +1100,11 @@ function foldEmptyLabelLists(lines) {
       }
     }
   }
-  // The fold flattens a table inside a new section, so the table guard reads the block first.
-  // Null when `invalid` is not empty, or `tableInBlock` holds and `sectioned` is not empty.
-  // Every block that parsed at ffaf28d0 still parses with the same values.
-  if (invalid.size > 0 || (tableInBlock && sectioned.size > 0)) {
+  // The fold consumes a table under a folded item or a new section, so the table guard reads the
+  // block first. Null when `invalid` is not empty or the block holds a table pair, which ADR 0167
+  // keeps unparseable. Every block that parsed at ffaf28d0 keeps its values, except a folded table
+  // pair, which stays unparseable.
+  if (invalid.size > 0 || tableInBlock) {
     return null;
   }
   // Null when a folded label's `lastLabeled` index differs from its fold index.

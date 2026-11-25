@@ -1950,6 +1950,17 @@ test("parseReportBlock refuses a table after a list item", () => {
   }
 });
 
+// Usefulness: verifies a table pair indented under a folded label item keeps the block unparseable,
+// so a reviewer accept cannot clear the gate through a table (issue #2014 review, ADR 0167). The
+// plain and bold item leads both count.
+test("parseReportBlock refuses a table indented under a folded label item", () => {
+  for (const lead of ["- Checks: the table follows", "- **Checks:** the table follows"]) {
+    const response = `Conclusion: done\nWhy:\n${lead}\n  | a | b |\n  | --- | --- |\n\nBlockers: none\nChecks: pnpm test passed\nVerdict: accept`;
+    expect(parseReportBlock(response), lead).toBeNull();
+    expect(acceptanceFailure(response), lead).toBe("checks");
+  }
+});
+
 // Usefulness: verifies the exact all-bold shape from issue #1483 parses with every field kept. A
 // worker that bolds every label yields a report instead of null. No other test covers a block that
 // holds no plain label.
@@ -2872,6 +2883,19 @@ test("outsideBlockReportLabels leaves a pointer that names a block label out", (
   expect(outsideBlockReportLabels(after, parseReportBlock(after))).toEqual([]);
   const before = `The gate listing is green.\n\nConclusion: done\nWhy: see the Why line above\nBlockers: none`;
   expect(outsideBlockReportLabels(before, parseReportBlock(before))).toEqual([]);
+});
+
+// Usefulness: verifies the outside-block signal fires for a pointer inside a folded label item, so
+// an item lead is item text and not an internal cross-reference (issue #2014 review). The plain and
+// bold leads both count.
+test("outsideBlockReportLabels names a pointer inside a folded label item", () => {
+  for (const lead of [
+    "- Checks: see the test results before the closing block.",
+    "- **Checks:** see the test results before the closing block.",
+  ]) {
+    const response = `The test results sit above this block.\n\nConclusion: done\nWhy:\n- Finding 1: one\n${lead}\n\nBlockers: none\nChecks: pnpm test passed`;
+    expect(outsideBlockReportLabels(response, parseReportBlock(response)), lead).toEqual(["Why"]);
+  }
 });
 
 // Usefulness: verifies a comparison in another label keeps the quoted-text exception (issue #1907).
