@@ -572,8 +572,8 @@ function textBeforeBlock(response, block = closingBlock(response, { unlabeled: t
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
  * the block. The check reads one text per label: the folded value with each item's own lead
- * removed through its colon, so a lead that opens an item leaves the space after the colon and a
- * bold lead keeps its closing `**`, and with the fold's join rule: `; ` when the text so far holds
+ * removed through its colon, so a lead keeps any space after its colon and a bold lead keeps its
+ * closing `**`, and with the fold's join rule: `; ` when the text so far holds
  * a non-space character, otherwise one space, with the bare sections joined before the inline
  * value. So a label name that starts a dash item is item text rather than a reference, at any
  * nesting depth, while a name inside prose or another item's text stays a
@@ -1019,8 +1019,8 @@ function trimTrailingBlanks(out) {
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * `masked` holds, per label, one text for the outside-block check: the folded value with each
- * item's own lead removed through its colon as it is appended, so a lead that opens an item leaves
- * the space after the colon and a bold lead keeps its closing `**`. A join holds `; ` when the text
+ * item's own lead removed through its colon as it is appended, so a lead keeps any space after its
+ * colon and a bold lead keeps its closing `**`. A join holds `; ` when the text
  * so far holds a non-space character and one space otherwise; the bare sections join first and
  * their text joins the inline value last. A continuation line stays in the item text it continues.
  * @param {string[]} lines
@@ -1036,8 +1036,8 @@ function foldEmptyLabelLists(lines) {
   const nonCanonical = new Set();
   const invalid = new Set();
   // The outside-block text of each label: the folded value with each item's own lead removed
-  // through its colon as it is appended, so a lead that opens an item leaves the space after the
-  // colon and a bold lead keeps its closing `**`. A join holds `; ` when the text so far holds a
+  // through its colon as it is appended, so a lead keeps any space after its colon and a bold lead
+  // keeps its closing `**`. A join holds `; ` when the text so far holds a
   // non-space character and one space otherwise; the bare sections join first and their text joins
   // the inline value last. A later occurrence of a label replaces the earlier one.
   const masked = new Map();
