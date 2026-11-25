@@ -2948,6 +2948,34 @@ test("outsideBlockReportLabels keeps a label name after prose punctuation intern
   expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 
+// Usefulness: verifies a wrapped item sentence stays in one piece, so the pointer and the label
+// name of the same sentence reach the same check as on main (issue #2014 review). The first shape
+// points outside; the second names a field inside.
+test("outsideBlockReportLabels keeps a wrapped item sentence in one piece", () => {
+  const pointer = [
+    "The test results sit above this block.",
+    "",
+    "Conclusion: done",
+    "Why:",
+    "- Checks: See the test results before",
+    "  the closing block.",
+    "Blockers: none",
+    "Checks: pnpm test passed",
+  ].join("\n");
+  expect(outsideBlockReportLabels(pointer, parseReportBlock(pointer))).toEqual(["Why"]);
+  const internal = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why:",
+    "- As listed above",
+    "  in Checks, all three jobs passed.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(internal, parseReportBlock(internal))).toEqual([]);
+});
+
 // Usefulness: verifies each item is checked with its own lead removed, so an inline mention keeps
 // its own result and the item lead cannot shield the item text (issue #2014 review). The first
 // shape holds no pointer; the second one must raise the signal from the item text.

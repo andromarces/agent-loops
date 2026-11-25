@@ -912,7 +912,8 @@ function withoutItemLead(text) {
  * The text of the item at `start` and of its direct sub-items at every deeper level, joined with
  * ", ", and the last line used. `marker` is the full marker prefix of the parent line, so its
  * length is the column where the sub-item marker starts. `pieces` holds the same text split for the
- * outside-block check: each part with its own lead removed.
+ * outside-block check: each part with its own lead removed, and a continuation line joined to the
+ * piece it continues.
  */
 function takeSubitems(lines, start, marker) {
   const [subMarker] = lines[start].match(foldableSubitem(marker));
@@ -956,7 +957,9 @@ function takeItems(lines, start, pattern, { refuseOrderedVerdict = false } = {})
     while (i + 1 < lines.length && isContinuationLine(lines[i + 1])) {
       const next = lines[++i].trim();
       continuation.push(next);
-      pieces.push(next);
+      // A continuation joins the piece it continues, with the space the fold uses, so a wrapped
+      // sentence reaches one check rather than two (issue #2014 review).
+      pieces[pieces.length - 1] += ` ${next}`;
     }
     items.push([parts.join(", "), ...continuation].join(" "));
   }
@@ -1010,7 +1013,8 @@ function trimTrailingBlanks(out) {
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * `pieces` holds, per label, the text the outside-block check reads: the inline value, each prose
- * lead, and each item with its own lead removed. The fold separators never join two pieces.
+ * lead, and each item with its own lead removed, with a continuation line joined to the piece it
+ * continues. The fold separators never join two pieces.
  * @param {string[]} lines
  * @returns {{ lines: string[], pieces: Map<string, string[]> } | null}
  */
