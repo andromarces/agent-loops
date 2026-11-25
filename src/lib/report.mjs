@@ -476,6 +476,12 @@ function reportDetail(response, { boldLabels = true } = {}) {
   if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !LABEL_DASH_ITEM.test(line))) {
     return null;
   }
+  // The fold consumes a table under a folded item or a new section, so the table guard reads the
+  // block first. ADR 0167 keeps a block that holds a table pair unparseable. The fold still runs,
+  // so the missing-label and copied-task diagnostics keep every other label's value.
+  if (hasTablePair(block)) {
+    return null;
+  }
   if (
     !lines ||
     lines.some((line) => DECORATED_LABEL_LINE.test(line)) ||
@@ -524,17 +530,28 @@ const ABOVE_VERB_POINTER =
   /\b(?:see|as|stated|described|shown|explained|listed|noted|given|written)\s+(?:it\s+)?above\b/iu;
 const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closing\s+block\b/iu;
 
-// A value that names a report label or `Verdict` with no colon after the name points inside the
-// same block. A name that a colon closes is a heading or a folded item lead, so it is no
-// cross-reference and the pointer keeps its outside-block signal (issue #2014 review).
-const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b(?![*_\`]*\\s*:)`, "i");
+// A value that names a report label or `Verdict` points inside the same block.
+const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
+
+// A folded item lead in a label value: a report label name and a colon at the value start or after
+// the `; ` item separator, plain or bold. It is item text, so it names no field of this block and
+// the pointer keeps its outside-block signal (issue #2014 review).
+const FOLDED_ITEM_LEAD = new RegExp(
+  `(?:^|; )[*_\`]{0,2}(?:${LABEL_OR_VERDICT})[*_\`]{0,2}\\s*:`,
+  "gi",
+);
+
+/** True when `value` names a report label or `Verdict` outside a folded item lead. */
+function namesBlockLabel(value) {
+  return NAMED_LABEL_POINTER.test(value.replace(FOLDED_ITEM_LEAD, ""));
+}
 
 const BLOCKQUOTE_LINE = /^\s{0,3}>/;
 const FENCE_LINE = /^\s{0,3}(?:`{3,}|~{3,})/;
 
 /** True when `value` points at response text outside the closing block. */
 function pointsOutsideBlock(value) {
-  if (typeof value !== "string" || NAMED_LABEL_POINTER.test(value)) {
+  if (typeof value !== "string" || namesBlockLabel(value)) {
     return false;
   }
   return [ABOVE_NOUN_POINTER, ABOVE_VERB_POINTER, CLOSING_BLOCK_POINTER].some((pattern) =>
@@ -979,15 +996,14 @@ function trimTrailingBlanks(out) {
  * A prose lead follows the prose-lead rules, the whole-line bold heading included.
  * Markers drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * Null when the guards below reject a label in `sectioned`, a table pair beside one, or a folded
- * label that appears again.
+ * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
+ * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * @param {string[]} lines
  * @returns {string[] | null}
  */
 function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
-  const tableInBlock = hasTablePair(lines);
   // Labels that took a section fold, labels past the general rule, and labels that broke it.
   // `sectioned` gains a label from the `extra` dash loop, the bare-dash branch, or
   // `foldedAfterBlank`.
@@ -1100,11 +1116,9 @@ function foldEmptyLabelLists(lines) {
       }
     }
   }
-  // The fold consumes a table under a folded item or a new section, so the table guard reads the
-  // block first. Null when `invalid` is not empty or the block holds a table pair, which ADR 0167
-  // keeps unparseable. Every block that parsed at ffaf28d0 keeps its values, except a folded table
-  // pair, which stays unparseable.
-  if (invalid.size > 0 || tableInBlock) {
+  // Null when `invalid` is not empty. Every block that parsed at ffaf28d0 keeps its values, except
+  // a table pair, which the caller refuses before it reads this result.
+  if (invalid.size > 0) {
     return null;
   }
   // Null when a folded label's `lastLabeled` index differs from its fold index.

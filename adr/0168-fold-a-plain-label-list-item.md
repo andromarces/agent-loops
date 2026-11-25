@@ -31,11 +31,11 @@ The issue offers a fold or a prompt bar. The fold follows [ADR 0140](0140-fold-e
 
 - The issue #2013 shape parses with every field, and the `Checks:` item stays in the `Why` value as text.
 - A sub-item that opens with a plain label name folds into its parent item with `, `.
-- Every shape that parsed before keeps its value, because the exemption only skips a rejection that returns null and never changes the fold.
+- Every shape that parsed before keeps its value, because the exemption only skips a rejection that returns null and never changes the fold. The approved table refusal of ADR 0167 is the exception: a block that holds a table pair stays unparseable, and every other label keeps its folded value for the missing-label and copied-task diagnostics.
 - The dispatch envelope, the interactive gate, and the headless gate read the same report, because all three use the shared parse.
 - A repair turn is no longer needed for this shape.
-- The table refusal of ADR 0167 still holds. A table pair anywhere in the block, including one indented under a folded item, makes the block unparseable, so the plain and bold forms cannot clear the acceptance gate through a table.
-- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because a name that a colon closes is a heading, not a cross-reference. This holds for the plain and bold forms.
+- The table refusal of ADR 0167 still holds. A table pair anywhere in the block, including one indented under a folded item, makes the block unparseable, so the plain and bold forms cannot clear the acceptance gate through a table. The refusal reads the block before the fold, so the other labels keep their folded values for diagnosis.
+- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because a label name at the value start or after the `; ` item separator is a folded item lead, not a cross-reference. A label mention elsewhere, such as `As listed above in Checks: all three jobs passed.`, stays internal as ADR 0139 requires. This holds for the plain and bold forms.
 
 ### Probe
 
@@ -57,6 +57,7 @@ Andro Marces
 - [Issue #2013](https://github.com/andromarces/agent-loops/issues/2013)
 - [PR #2014: Fold a closing-block list item that opens with a plain label name](https://github.com/andromarces/agent-loops/pull/2014)
 - [ADR 0167: Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md)
+- [ADR 0139: Name no outside-block label without outside text](0139-name-no-outside-block-label-without-outside-text.md)
 - [ADR 0140: Fold every closing-block list level](0140-fold-every-closing-block-list-level.md)
 - Implementation:
   - Fold: `LABEL_DASH_ITEM` and `reportDetail` in `src/lib/report.mjs`

@@ -72,6 +72,23 @@ test("missingRequiredReportLabels reads a folded list under a required label", (
   expect(missingRequiredReportLabels(response)).toEqual(["Blockers"]);
 });
 
+// Usefulness: verifies a table under one label does not discard the folded value of another, so a
+// block that holds a table still names only the labels that are absent (issue #2014 review). The
+// table refusal stays in the report itself.
+test("missingRequiredReportLabels keeps a folded label when another label holds a table", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- 12 passed",
+    "Blockers: none",
+    "Notes:",
+    "| a | b |",
+    "| --- | --- |",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
 // Usefulness: verifies a folded list under each required label counts as present and the block
 // parses (issue #1520). A label is present exactly when the parser reads a value for it.
 test.each([
@@ -2898,6 +2915,21 @@ test("outsideBlockReportLabels names a pointer inside a folded label item", () =
   }
 });
 
+// Usefulness: verifies a label mention with a colon after a preposition stays an internal
+// reference, so the base outside-block result holds when the named field is in the same block
+// (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps a label mention with a colon after a preposition", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: As listed above in Checks: all three jobs passed.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
 // Usefulness: verifies a comparison in another label keeps the quoted-text exception (issue #1907).
 test("outsideBlockReportLabels keeps the quoted-text exception with a comparison label", () => {
   const response = [
@@ -2962,6 +2994,22 @@ test("copiedTaskReportLabels reads each label value of a partial task block", ()
   const report = parseReportBlock(response);
   expect(report).not.toBeNull();
   expect(copiedTaskReportLabels(report, task)).toEqual(["Conclusion", "Why"]);
+});
+
+// Usefulness: verifies a table in the init task does not hide the folded values of its other
+// labels, so an exact copy of Why is still named (issue #2014 review).
+test("copiedTaskReportLabels reads a folded task label beside a table", () => {
+  const task = [
+    "Conclusion: task conclusion",
+    "Why:",
+    "- 12 passed",
+    "Blockers: none",
+    "Notes:",
+    "| a | b |",
+    "| --- | --- |",
+  ].join("\n");
+  const response = "Conclusion: worker conclusion\nWhy: 12 passed\nBlockers: none";
+  expect(copiedTaskReportLabels(parseReportBlock(response), task)).toEqual(["Why"]);
 });
 
 // Usefulness: verifies a report whose values differ from the task carries no label, so the parent
