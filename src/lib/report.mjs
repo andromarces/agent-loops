@@ -533,10 +533,10 @@ const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closin
 // A value that names a report label or `Verdict` points inside the same block.
 const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
 
-// A folded item lead at the start of a folded segment: the value start, or after an item join
-// (`; `), a sub-item join (`, `), or a prose lead (`: `). Only a mention that the block supplies
-// as the start of a dash item counts as a lead, so a label name in prose text, after a colon or
-// any other punctuation included, stays an internal reference (issue #2014 review).
+// A candidate item lead in a value: the value start, or after an item join (`; `), a sub-item join
+// (`, `), or a prose lead (`: `). A candidate is item text only when it matches the next dash item
+// lead of the same label, so a label name in prose, or a lead of another label's list, stays an
+// internal reference (issue #2014 review).
 const FOLDED_ITEM_LEAD = new RegExp(
   `(?:^|; |, |: )((?:\\*\\*)?(?:${LABEL_OR_VERDICT})(?:\\*\\*)?:)`,
   "gi",
@@ -545,23 +545,48 @@ const FOLDED_ITEM_LEAD = new RegExp(
 // The lead of a dash item at any indentation, for example `Checks:` or `**Checks:**`.
 const DASH_ITEM_LEAD = new RegExp(`^\\s*- ((?:\\*\\*)?(?:${LABEL_NAMES})(?:\\*\\*)?:)`, "i");
 
-/** True when `value` names a report label or `Verdict` outside a folded item lead. */
-function namesBlockLabel(value, leads) {
-  return NAMED_LABEL_POINTER.test(
-    value.replace(FOLDED_ITEM_LEAD, (match, lead) => (leads.has(lead) ? "" : match)),
-  );
-}
+// A report label line of the normalized block, for example `Conclusion: done`.
+const BLOCK_LABEL_LINE = new RegExp(`^(${LABEL_NAMES}):`, "i");
 
-/** The lead text that starts each dash item of `block`, at any nesting depth. */
-function dashItemLeads(block) {
-  const leads = new Set();
+/**
+ * The dash item leads of each report label, in fold order, from the label's last line to the next
+ * label line. An item folds into the label above it, so a lead belongs to that label's value and to
+ * no other value. A label that appears twice keeps the leads after its last line, as the value
+ * does.
+ * @param {string[] | null} block
+ * @returns {Map<string, string[]>}
+ */
+function foldedItemLeads(block) {
+  const leads = new Map();
+  let current = null;
   for (const line of block ?? []) {
-    const match = line.match(DASH_ITEM_LEAD);
-    if (match) {
-      leads.add(match[1]);
+    const label = line.match(BLOCK_LABEL_LINE);
+    if (label) {
+      current = LABEL_KEY_BY_NAME.get(label[1].toLowerCase()) ?? null;
+      if (current !== null) {
+        leads.set(current, []);
+      }
+      continue;
+    }
+    const lead = line.match(DASH_ITEM_LEAD);
+    if (lead && current !== null) {
+      leads.get(current).push(lead[1]);
     }
   }
   return leads;
+}
+
+/** True when `value` names a report label or `Verdict` outside its own folded item leads. */
+function namesBlockLabel(value, leads) {
+  let next = 0;
+  const kept = value.replace(FOLDED_ITEM_LEAD, (match, lead) => {
+    if (next < leads.length && leads[next] === lead) {
+      next++;
+      return "";
+    }
+    return match;
+  });
+  return NAMED_LABEL_POINTER.test(kept);
 }
 
 const BLOCKQUOTE_LINE = /^\s{0,3}>/;
@@ -601,8 +626,9 @@ function textBeforeBlock(response, block = closingBlock(response, { unlabeled: t
  * order, for example `["Why"]`. The detection is a heuristic over a small pattern list: a noun
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
- * the block. A label name that starts a dash item is item text rather than a reference, at any
- * nesting depth; a name inside prose text stays a reference.
+ * the block. A label name that starts a dash item is item text rather than a reference, but only
+ * inside the value that the item folded into, at any nesting depth; a name inside prose text, or a
+ * lead of another label's list, stays a reference.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
  * code block. A reviewer turn passes `exception: false`, because its prompt bars every reference to
@@ -617,10 +643,10 @@ export function outsideBlockReportLabels(response, report, { exception = true } 
     return [];
   }
   const block = closingBlock(response, { unlabeled: true });
-  const leads = dashItemLeads(block);
-  const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key], leads)).map(
-    ([, label]) => label,
-  );
+  const leads = foldedItemLeads(block);
+  const labels = REPORT_LABELS.filter(([key]) =>
+    pointsOutsideBlock(report[key], leads.get(key) ?? []),
+  ).map(([, label]) => label);
   if (labels.length === 0) {
     return [];
   }

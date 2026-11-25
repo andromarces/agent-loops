@@ -2948,6 +2948,22 @@ test("outsideBlockReportLabels keeps a label name after prose punctuation intern
   expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 
+// Usefulness: verifies a lead belongs only to the value its own dash item folded into, so the same
+// spelling in another label's list never strips an inline mention (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps a lead matched to its own label value", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: **Checks:** is listed above with the exact counts.",
+    "Blockers: none",
+    "Notes:",
+    "- **Checks:** Run links are archived.",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
 // Usefulness: verifies a code-formatted label name inside inline text stays an internal reference,
 // so the base ADR 0139 result holds when the named field is in the same block (issue #2014 review).
 test("outsideBlockReportLabels keeps a code-formatted inline label mention internal", () => {
