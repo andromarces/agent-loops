@@ -712,16 +712,17 @@ function withoutListMarker(line) {
  * that the parser does not fold still counts as content. `named` holds every label that a line names,
  * so a label line with no content stays apart from a label that the response omits. `holds` holds
  * every label with a parsed value or a word in the content scan, so a dash value counts as held and
- * a list the parser drops still counts by its words.
+ * a list the parser drops still counts by its words. `perLabel` is true only when the parser
+ * returns per-label values; a failed fold reads the raw block and keeps the inherited comparison.
  * @param {string} response
- * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string> } | null}
+ * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string>, perLabel: boolean } | null}
  */
 function originalLabelTokens(response) {
   const shared = foldedReportBlock(response, { diagnose: true });
   if (!shared) {
     return null;
   }
-  const { block, labels } = shared;
+  const { block, labels, lines } = shared;
   const sections = new Map();
   const named = new Set();
   let current = null;
@@ -752,7 +753,7 @@ function originalLabelTokens(response) {
       (key) => parsedValue.get(key) !== null || (sections.get(key)?.length ?? 0) > 0,
     ),
   );
-  return { sections, named, holds };
+  return { sections, named, holds, perLabel: lines !== null };
 }
 
 /** True when both lists hold the same words in the same order. */
@@ -771,8 +772,11 @@ function sameTokens(left, right) {
  * the original wrote with no value is empty, not absent, so the repair must leave it empty. A label
  * that the original omits may gain only a `none` finding, whose sole word is `none` in any case. A
  * dash value is a value the original holds, so it keeps the same comparison as any other held
- * value. A word that the repair adds, drops, or moves between labels leaves the repair unused, so a
- * repair can never create an acceptance that the original response did not state (issue #2015).
+ * value. The empty-label rule applies only when the parser returns per-label values for the
+ * original block. When the fold fails and the parser reads the raw block, the inherited comparison
+ * alone applies, with no added-value check. A word that the repair adds, drops, or moves between
+ * labels leaves the repair unused, so a repair can never create an acceptance that the original
+ * response did not state (issue #2015).
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -792,14 +796,14 @@ export function repairedReportMatches(
   if (original === null) {
     return false;
   }
-  const { sections: originals, named, holds } = original;
+  const { sections: originals, named, holds, perLabel } = original;
   for (const [key] of REPORT_LABELS) {
     const originalTokens = originals.get(key) ?? [];
     const repaired = reportContentTokens(report[key] ?? "");
-    if (!holds.has(key)) {
-      // The original left this label empty or omitted, so the parser reads any value as an addition,
-      // a lone dash included. An empty line stays empty; a label that no line names may gain only a
-      // `none` finding, whose sole word is `none` in any case.
+    if (perLabel && !holds.has(key)) {
+      // The parser returned per-label values, and the original left this label empty or omitted, so
+      // any value is an addition, a lone dash included. An empty line stays empty; a label that no
+      // line names may gain only a `none` finding, whose sole word is `none` in any case.
       const repairedValue = report[key];
       if (repairedValue === null) {
         continue;
@@ -812,7 +816,8 @@ export function repairedReportMatches(
       }
       continue;
     }
-    // A label that holds a value keeps it as the earlier rule compares it, a dash value included.
+    // The inherited comparison. It applies to every held label, and to every label when the fold
+    // failed and the parser read the raw block.
     if (originalTokens.length === 0) {
       if (
         repaired.length > 0 &&

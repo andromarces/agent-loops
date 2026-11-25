@@ -169,6 +169,28 @@ const LISTED_DASH_NOTES_REPAIRED = [
   "- -",
   "Verdict: accept",
 ].join("\n");
+// A repeated Checks label makes the fold fall back to raw lines, so the parser returns no
+// per-label values for the original block. The repair removes the duplicate and keeps the dash.
+const FALLBACK_DASH_NOTES = [
+  "Conclusion: done",
+  "Why: tests pass",
+  "Blockers: none",
+  "Checks:",
+  "- npm test passed",
+  "Checks: npm test passed",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
+const FALLBACK_DASH_NOTES_REPAIRED = [
+  "Conclusion: done",
+  "Why: tests pass",
+  "Blockers: none",
+  "Checks: npm test passed",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -681,6 +703,25 @@ test("a repair keeps a listed dash label value that the original holds", async (
     why: "first line second line",
     notes: "-",
   });
+  expect(result.reportRepairOutcome).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a fallback original keeps main's result for a faithful repair"
+// (issue #2015 review). The repeated Checks label makes the fold fall back to raw lines, so the new
+// added-value check does not apply and the Notes dash stays accepted.
+test("a fallback original keeps the inherited result for a listed dash", async () => {
+  const agent = scripted([FALLBACK_DASH_NOTES, FALLBACK_DASH_NOTES_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(FALLBACK_DASH_NOTES_REPAIRED);
+  expect(result.report).toMatchObject({ notes: "-" });
   expect(result.reportRepairOutcome).toBeUndefined();
 });
 
