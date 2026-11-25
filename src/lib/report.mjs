@@ -571,10 +571,12 @@ function textBeforeBlock(response, block = closingBlock(response, { unlabeled: t
  * order, for example `["Why"]`. The detection is a heuristic over a small pattern list: a noun
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
- * the block. The check reads one text per label: the folded value with each item's own lead left
- * out, built with the fold's separators except between two folded sections when the earlier
- * sections hold no text after lead removal, so a label name that starts a dash item is item text
- * rather than a reference, at any nesting depth, while a name inside prose or another item's text stays a
+ * the block. The check reads one text per label: the folded value with each item's own lead
+ * removed through its colon, so a lead that opens an item leaves the space after the colon and a
+ * bold lead keeps its closing `**`, and with the fold's join rule: `; ` when the text so far holds
+ * a non-space character, otherwise one space, with the bare sections joined before the inline
+ * value. So a label name that starts a dash item is item text rather than a reference, at any
+ * nesting depth, while a name inside prose or another item's text stays a
  * reference and keeps the whole value internal, as main does.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
@@ -904,7 +906,10 @@ function isContinuationLine(line) {
 // The lead of a dash or ordered item, plain or bold, for example `Checks:` or `**Checks:**`.
 const ITEM_LEAD = new RegExp(`^(?:\\*\\*)?(?:${LABEL_NAMES})(?:\\*\\*)?:`, "i");
 
-/** The text of an item without the report label lead it opens with. */
+/**
+ * The text of an item without the report label lead it opens with up to and including the lead's
+ * colon. A bold lead such as `**Checks:**` keeps its closing `**`.
+ */
 function withoutItemLead(text) {
   return text.replace(ITEM_LEAD, "");
 }
@@ -913,7 +918,7 @@ function withoutItemLead(text) {
  * The text of the item at `start` and of its direct sub-items at every deeper level, joined with
  * ", ", and the last line used. `marker` is the full marker prefix of the parent line, so its
  * length is the column where the sub-item marker starts. `masked` is the same text with the lead
- * of each part left out.
+ * of each part removed through its colon, so a bold lead keeps its closing `**`.
  */
 function takeSubitems(lines, start, marker) {
   const [subMarker] = lines[start].match(foldableSubitem(marker));
@@ -1014,9 +1019,10 @@ function trimTrailingBlanks(out) {
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * `masked` holds, per label, one text for the outside-block check: the folded value with each
- * item's own lead left out as it is appended, and the same separators as the value, except between
- * two folded sections when the earlier sections hold no text after lead removal, which holds one
- * space. A continuation line stays in the item text it continues.
+ * item's own lead removed through its colon as it is appended, so a lead that opens an item leaves
+ * the space after the colon and a bold lead keeps its closing `**`. A join holds `; ` when the text
+ * so far holds a non-space character and one space otherwise; the bare sections join first and
+ * their text joins the inline value last. A continuation line stays in the item text it continues.
  * @param {string[]} lines
  * @returns {{ lines: string[], masked: Map<string, string> } | null}
  */
@@ -1029,10 +1035,11 @@ function foldEmptyLabelLists(lines) {
   const sectioned = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
-  // The outside-block text of each label: the folded value with each item's own lead left out as
-  // it is appended, built with the same separators as the value, except that a boundary where the
-  // earlier sections hold no text after lead removal holds one space. A later occurrence of a label
-  // replaces the earlier one.
+  // The outside-block text of each label: the folded value with each item's own lead removed
+  // through its colon as it is appended, so a lead that opens an item leaves the space after the
+  // colon and a bold lead keeps its closing `**`. A join holds `; ` when the text so far holds a
+  // non-space character and one space otherwise; the bare sections join first and their text joins
+  // the inline value last. A later occurrence of a label replaces the earlier one.
   const masked = new Map();
   const labelKey = (labelText) =>
     LABEL_KEY_BY_NAME.get(labelText.slice(0, labelText.indexOf(":")).trim().toLowerCase()) ?? null;
