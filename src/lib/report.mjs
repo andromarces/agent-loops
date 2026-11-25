@@ -533,11 +533,12 @@ const CLOSING_BLOCK_POINTER = /\b(?:above|before|earlier in)\s+(?:the\s+)?closin
 // A value that names a report label or `Verdict` points inside the same block.
 const NAMED_LABEL_POINTER = new RegExp(`\\b(?:${LABEL_OR_VERDICT})\\b`, "i");
 
-// A folded item lead in a label value: a report label name and a colon at the value start or after
-// the `; ` item separator, plain or bold. It is item text, so it names no field of this block and
-// the pointer keeps its outside-block signal (issue #2014 review).
+// A folded item lead at the start of a folded segment: the value start, or after an item join
+// (`; `), a sub-item join (`, `), or a prose lead (`: `). Only the plain and bold forms fold as
+// item text, so it names no field of this block and the pointer keeps its outside-block signal. A
+// code, italic, or underscored name in inline text stays a reference (issue #2014 review).
 const FOLDED_ITEM_LEAD = new RegExp(
-  `(?:^|; )[*_\`]{0,2}(?:${LABEL_OR_VERDICT})[*_\`]{0,2}\\s*:`,
+  `(?:^|; |, |: )(?:\\*\\*)?(?:${LABEL_OR_VERDICT})(?:\\*\\*)?:`,
   "gi",
 );
 

@@ -35,7 +35,7 @@ The issue offers a fold or a prompt bar. The fold follows [ADR 0140](0140-fold-e
 - The dispatch envelope, the interactive gate, and the headless gate read the same report, because all three use the shared parse.
 - A repair turn is no longer needed for this shape.
 - The table refusal of ADR 0167 still holds. A table pair anywhere in the block, including one indented under a folded item, makes the block unparseable, so the plain and bold forms cannot clear the acceptance gate through a table. The refusal reads the block before the fold, so the other labels keep their folded values for diagnosis.
-- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because a label name at the value start or after the `; ` item separator is a folded item lead, not a cross-reference. A label mention elsewhere, such as `As listed above in Checks: all three jobs passed.`, stays internal as ADR 0139 requires. This holds for the plain and bold forms.
+- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because an unformatted or bold label name and a colon at the start of a folded segment is an item lead, not a cross-reference. The segment starts the value or follows an item join, a sub-item join, or a prose lead, so the rule covers every nesting depth and a prose lead. A code-formatted name in inline text, and a label mention elsewhere, such as `As listed above in Checks: all three jobs passed.`, stay internal as ADR 0139 requires. This holds for the plain and bold forms.
 
 ### Probe
 

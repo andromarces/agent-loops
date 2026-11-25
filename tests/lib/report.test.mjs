@@ -2915,6 +2915,39 @@ test("outsideBlockReportLabels names a pointer inside a folded label item", () =
   }
 });
 
+// Usefulness: verifies a folded item lead raises the outside-block signal at every fold position,
+// so a nested sub-item, a prose-led item, and their bold forms all keep the signal (issue #2014
+// review). The lead is item text wherever the fold places it.
+test("outsideBlockReportLabels names a folded label item at every fold position", () => {
+  const preamble = "The test results sit above this block.\n\n";
+  const pointer = "see the test results before the closing block.";
+  const responses = [
+    `Conclusion: done\nWhy:\n- Validation\n  - Checks: ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+    `Conclusion: done\nWhy:\n- Validation\n  - **Checks:** ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+    `Conclusion: done\nWhy: validated\n\nValidation\n- Checks: ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+    `Conclusion: done\nWhy: validated\n\nValidation\n- **Checks:** ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+  ];
+  for (const response of responses) {
+    const full = preamble + response;
+    expect(parseReportBlock(full), response).not.toBeNull();
+    expect(outsideBlockReportLabels(full, parseReportBlock(full)), response).toEqual(["Why"]);
+  }
+});
+
+// Usefulness: verifies a code-formatted label name inside inline text stays an internal reference,
+// so the base ADR 0139 result holds when the named field is in the same block (issue #2014 review).
+test("outsideBlockReportLabels keeps a code-formatted inline label mention internal", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: `Checks:` is listed above with the exact counts.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
 // Usefulness: verifies a label mention with a colon after a preposition stays an internal
 // reference, so the base outside-block result holds when the named field is in the same block
 // (issue #2014 review, ADR 0139).
