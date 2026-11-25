@@ -118,6 +118,7 @@ test("a null worker report is repaired inside one charged step", async () => {
     deferred: "none",
   });
   expect(result.payload).not.toHaveProperty("raw");
+  expect(result.payload).not.toHaveProperty("reportRepairOutcome");
   expect(worker.recorded).toHaveLength(2);
   expect(worker.recorded[1].incomingSessionId).toBe("sess-1");
   expect((await readRepoState(repo)).stepsUsed).toBe(1);
@@ -140,8 +141,32 @@ test("a failed worker report repair leaves the original raw and the step charged
   expect(result.payload.report).toBeNull();
   expect(result.payload.raw).toBe(invalid);
   expect(result.payload.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.payload.reportRepairOutcome).toBe("null");
   expect(worker.recorded).toHaveLength(2);
   expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
+// Usefulness: verifies acceptance "when the repair does not recover the block, the envelope names
+// the repair outcome, with no response text" (issue #2015). A moved word makes the restatement
+// mismatch, so the payload names the outcome and keeps the original response in raw.
+test("a mismatched worker repair names the outcome in the envelope", async () => {
+  const repo = await newCleanRepo();
+  const invalid = "Conclusion: done\nWhy: tests pass\nChecks: npm test failed\nNotes: to run";
+  const moved =
+    "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test failed to run\nNotes:";
+  const worker = recordingAdapter([invalid, moved]);
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.payload.report).toBeNull();
+  expect(result.payload.raw).toBe(invalid);
+  expect(result.payload.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.payload.reportRepairOutcome).toBe("mismatched");
+  expect((await readRepoState(repo)).lastResult.reportRepairOutcome).toBe("mismatched");
 });
 
 // Usefulness: verifies requirement "a worker turn whose adapter returns no string response fails"

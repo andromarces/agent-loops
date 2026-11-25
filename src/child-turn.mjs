@@ -153,6 +153,7 @@ export async function runProbeTurn({
  * @param {object} options
  * @returns {Promise<
  *   { role: string, status: "ok", response: string, report: object | null, reportMissingLabels?: string[],
+ *     reportRepairOutcome?: "not-run" | "failed" | "null" | "mismatched",
  *     reportOutsideBlockLabels?: string[], reportCopiedTaskLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
@@ -388,10 +389,11 @@ export async function runChild(options) {
   /**
    * Runs the one closing-block repair turn that follows a null report. The turn
    * stays in the same session and asks for formatting only, so it repeats no work. A reviewer
-   * repair runs under its own mutation check. Returns null when the repair fails, the session is
-   * lost or replaced, the repaired response still parses to null, or the repaired report does not
-   * match the original response, so the caller keeps the original response and its evidence. A
-   * cancel ends the turn on the fatal error path.
+   * repair runs under its own mutation check. Returns the repaired response and report on a match.
+   * A repair that fails, runs in a lost or replaced session, returns no string, still parses to
+   * null, or does not match the original response returns only its outcome: `failed`, `null`, or
+   * `mismatched`. The caller keeps the original response and its evidence on every outcome but a
+   * match. A cancel ends the turn on the fatal error path.
    */
   const repairClosingBlock = async (originalResponse) => {
     const sessionId = role.sessionId;
@@ -411,7 +413,7 @@ export async function runChild(options) {
       // A cancel that lands with a handled repair failure still ends the turn as a cancel.
       throwIfCanceled(signal, roleName);
       logWarn(`${roleName}: the closing-block repair turn failed: ${errorLine(err)}`);
-      return null;
+      return { outcome: "failed" };
     }
     throwIfCanceled(signal, roleName);
     if (
@@ -421,24 +423,24 @@ export async function runChild(options) {
       logWarn(`${roleName}: the closing-block repair ran in a lost or replaced conversation`);
       role.conversationReplaced = true;
       keepReplacedMark = true;
-      return null;
+      return { outcome: "failed" };
     }
     if (typeof repairedResponse !== "string") {
       logWarn(`${roleName}: the closing-block repair returned no string response`);
-      return null;
+      return { outcome: "failed" };
     }
     const report = reportForResult(repairedResponse, role.multiPartUnidentified === true);
     if (report === null) {
       logWarn(`${roleName}: the closing-block repair still did not parse`);
-      return null;
+      return { outcome: "null" };
     }
     if (
       !repairedReportMatches(originalResponse, repairedResponse, report, { reviewer: isReviewer })
     ) {
       logWarn(`${roleName}: the closing-block repair does not match the original response`);
-      return null;
+      return { outcome: "mismatched" };
     }
-    return { response: repairedResponse, report };
+    return { outcome: "recovered", response: repairedResponse, report };
   };
 
   // Declared outside the try so a turn that fails after the command ran still
@@ -545,12 +547,16 @@ export async function runChild(options) {
     }
     let report = reportForResult(response, multiPartUnidentified);
     // A null report gets one repair turn in the same session. A repair that succeeds replaces the
-    // response and the report; a failed one leaves the original response in `raw`.
+    // response and the report; any other outcome leaves the original response in `raw` and names
+    // the outcome, so the parent can tell a failed, null, or mismatched repair apart.
+    let reportRepairOutcome = null;
     if (report === null) {
       const repaired = await repairClosingBlock(response);
-      if (repaired !== null) {
+      if (repaired.report) {
         response = repaired.response;
         report = repaired.report;
+      } else {
+        reportRepairOutcome = repaired.outcome;
       }
     }
     // A null report names every required label it lacks, so the parent and the log carry no response
@@ -586,6 +592,9 @@ export async function runChild(options) {
       response,
       report,
       ...(reportMissingLabels.length > 0 ? { reportMissingLabels } : {}),
+      // A null report names why its one repair turn did not recover it. The field holds one outcome
+      // word, never response text.
+      ...(report === null ? { reportRepairOutcome: reportRepairOutcome ?? "not-run" } : {}),
       // The field holds label names only, never response text.
       ...(outsideBlockLabels.length > 0 ? { reportOutsideBlockLabels: outsideBlockLabels } : {}),
       // The field holds label names only, never task or response text.

@@ -76,7 +76,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0086 — [Leave out a read-only access whose modification time predates the turn window](0086-leave-out-a-read-only-access-whose-modification-time-predates-the-turn-window.md) — partially-superseded — Partially superseded by [ADR 0107](0107-report-a-restored-main-work-tree-edit-that-preserves-the-modification-time.md).
 - 0088 — [Recover the killed turn when abort ends a dispatched run](0088-recover-the-killed-turn-when-abort-ends-a-dispatched-run.md) — accepted
 - 0093 — [Report a held inherited temporary directory name apart from the possible leftovers](0093-report-a-held-inherited-tmpdir-name-apart-from-the-possible-leftovers.md) — superseded — Superseded by [ADR 0095](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md).
-- 0094 — [Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md) — partially-superseded — Partially superseded by [ADR 0140](0140-fold-every-closing-block-list-level.md). Partially superseded by [ADR 0169](0169-let-a-repair-move-content-when-only-a-required-label-is-absent.md).
+- 0094 — [Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md) — partially-superseded — Partially superseded by [ADR 0140](0140-fold-every-closing-block-list-level.md).
 - 0095 — [Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md) — partially-superseded — Partially superseded by [ADR 0108](0108-report-a-literal-system-temporary-directory-entry-in-the-inherited-tmpdir-field.md).
 - 0096 — [Wait for a held slot in a bounded red run and report a miss](0096-wait-for-a-held-slot-in-a-bounded-red-run-and-report-a-miss.md) — accepted
 - 0099 — [Let a targeted run include tests that read a changed non-module file by path](0099-let-a-targeted-run-include-tests-that-read-a-changed-non-module-file-by-path.md) — accepted
@@ -128,4 +128,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0166 — [Restate the full-suite rule beside the worker task text](0166-restate-the-full-suite-rule-beside-the-worker-task-text.md) — accepted
 - 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — partially-superseded — Partially superseded by [ADR 0168](0168-fold-a-plain-label-list-item.md).
 - 0168 — [Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md) — accepted
-- 0169 — [Let a repair move content when only a required label is absent](0169-let-a-repair-move-content-when-only-a-required-label-is-absent.md) — accepted
+- 0169 — [Name the outcome of a repair that does not recover a closing block](0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md) — accepted

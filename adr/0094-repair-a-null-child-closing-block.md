@@ -4,7 +4,7 @@
 
 partially-superseded
 
-This ADR supersedes no earlier decision. It keeps [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md) as a narrow accounting exception for a first Codex model refusal and adds no general refund policy. Decision 9 is superseded by [ADR 0140](0140-fold-every-closing-block-list-level.md), which folds every closing-block list level. Decision 5 is partially superseded by [ADR 0169](0169-let-a-repair-move-content-when-only-a-required-label-is-absent.md), which lets a repair move content between present labels when an absent required label is the original block's only defect. The other parts of decision 5 and the other decisions stay in force.
+This ADR supersedes no earlier decision. It keeps [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md) as a narrow accounting exception for a first Codex model refusal and adds no general refund policy. Decision 9 is superseded by [ADR 0140](0140-fold-every-closing-block-list-level.md), which folds every closing-block list level. The other decisions stay in force.
 
 ## Date
 

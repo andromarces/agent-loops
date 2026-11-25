@@ -463,24 +463,23 @@ function foldedReportBlock(response, { boldLabels = true, diagnose = false } = {
 }
 
 /**
- * The folded closing block when every structural guard accepts it, so only an absent required label
- * can still make a report null. Null on every other defect. The fold still runs on a rejected
- * block for the missing-label and copied-task diagnostics, which call `foldedReportBlock` direct.
+ * The closing block of `response` as report values, or null when the block does not parse.
  * @param {string} response
  * @param {{ boldLabels?: boolean }} [options]
- * @returns {ReturnType<typeof foldedReportBlock>}
+ * @returns {{ report: object } | null}
  */
-function readableReportDetail(response, { boldLabels = true } = {}) {
+function reportDetail(response, { boldLabels = true } = {}) {
   const shared = foldedReportBlock(response, { boldLabels });
   if (!shared) {
     return null;
   }
-  const { block, lines } = shared;
+  const { block, lines, labels } = shared;
   if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !LABEL_DASH_ITEM.test(line))) {
     return null;
   }
   // The fold consumes a table under a folded item or a new section, so the table guard reads the
-  // block first. ADR 0167 keeps a block that holds a table pair unparseable.
+  // block first. ADR 0167 keeps a block that holds a table pair unparseable. The fold still runs,
+  // so the missing-label and copied-task diagnostics keep every other label's value.
   if (hasTablePair(block)) {
     return null;
   }
@@ -492,34 +491,6 @@ function readableReportDetail(response, { boldLabels = true } = {}) {
   ) {
     return null;
   }
-  return shared;
-}
-
-/**
- * True when the only defect of the closing block is at least one absent required label: every
- * structural guard accepts the block and every label it holds has a value.
- * @param {string} response
- * @returns {boolean}
- */
-function lacksOnlyRequiredLabels(response) {
-  const shared = readableReportDetail(response);
-  return (
-    shared !== null && shared.labels.some(({ optional, value }) => !optional && value === null)
-  );
-}
-
-/**
- * The closing block of `response` as report values, or null when the block does not parse.
- * @param {string} response
- * @param {{ boldLabels?: boolean }} [options]
- * @returns {{ report: object } | null}
- */
-function reportDetail(response, { boldLabels = true } = {}) {
-  const shared = readableReportDetail(response, { boldLabels });
-  if (!shared) {
-    return null;
-  }
-  const { labels } = shared;
   const report = {};
   for (const { key, optional, value } of labels) {
     if (!value) {
@@ -738,9 +709,10 @@ function withoutListMarker(line) {
 /**
  * The normalized content of each report label in `response`, from the last occurrence of the label
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
- * that the parser does not fold still counts as content.
+ * that the parser does not fold still counts as content. `named` holds every label that a line names,
+ * so a label line with no content stays apart from a label that the response omits.
  * @param {string} response
- * @returns {Map<string, string[]> | null}
+ * @returns {{ sections: Map<string, string[]>, named: Set<string> } | null}
  */
 function originalLabelTokens(response) {
   const block = closingBlock(response, { unlabeled: true, diagnose: true });
@@ -748,6 +720,7 @@ function originalLabelTokens(response) {
     return null;
   }
   const sections = new Map();
+  const named = new Set();
   let current = null;
   for (const line of block) {
     const match = line.match(REPORT_LABEL_LINE);
@@ -755,6 +728,7 @@ function originalLabelTokens(response) {
       current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
       if (current !== null) {
         sections.set(current, reportContentTokens(match[2]));
+        named.add(current);
       }
       continue;
     }
@@ -766,91 +740,12 @@ function originalLabelTokens(response) {
       sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
     }
   }
-  return sections;
+  return { sections, named };
 }
 
 /** True when both lists hold the same words in the same order. */
 function sameTokens(left, right) {
   return left.length === right.length && left.every((token, index) => token === right[index]);
-}
-
-/** True when both lists hold the same words with the same counts, in any order. */
-function sameTokensIgnoringOrder(left, right) {
-  if (left.length !== right.length) {
-    return false;
-  }
-  const sortedLeft = left.toSorted();
-  const sortedRight = right.toSorted();
-  return sortedLeft.every((token, index) => token === sortedRight[index]);
-}
-
-/** True when `required` appears in `tokens` in order. An empty `required` always matches. */
-function isTokenSubsequence(required, tokens) {
-  let at = 0;
-  for (const token of tokens) {
-    if (token === required[at]) {
-      at++;
-    }
-    if (at === required.length) {
-      return true;
-    }
-  }
-  return required.length === 0;
-}
-
-/** True when every label keeps the normalized content of the same label in the original response. */
-function labelsRestated(originals, report) {
-  return REPORT_LABELS.every(([key]) => {
-    const original = originals.get(key) ?? [];
-    const repaired = reportContentTokens(report[key] ?? "");
-    if (original.length === 0) {
-      return (
-        repaired.length === 0 || (repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
-      );
-    }
-    return sameTokens(original, repaired);
-  });
-}
-
-/**
- * True when a repair moves content between labels without losing or adding a word, for the narrow
- * case where an absent required label is the original block's only defect (issue #2015).
- * `Conclusion` and a `Blockers` value keep their own content, `Checks` keeps every original word in
- * order, and a label that the original left out gains only `none`. Another present label may trade
- * content, so a canonical restatement can move a section that the parser folded under one label to
- * another.
- */
-function relabeledRepairMatches(response, originals, report) {
-  if (!lacksOnlyRequiredLabels(response)) {
-    return false;
-  }
-  for (const [key] of REPORT_LABELS) {
-    const original = originals.get(key) ?? [];
-    if (original.length > 0) {
-      continue;
-    }
-    const repaired = reportContentTokens(report[key] ?? "");
-    if (repaired.length > 0 && !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))) {
-      return false;
-    }
-  }
-  for (const key of ["conclusion", "blockers"]) {
-    const original = originals.get(key) ?? [];
-    if (original.length > 0 && !sameTokens(original, reportContentTokens(report[key] ?? ""))) {
-      return false;
-    }
-  }
-  if (
-    !isTokenSubsequence(originals.get("checks") ?? [], reportContentTokens(report.checks ?? ""))
-  ) {
-    return false;
-  }
-  const kept = REPORT_LABELS.map(([key]) => key).filter(
-    (key) => (originals.get(key)?.length ?? 0) > 0,
-  );
-  const originalAll = kept.flatMap((key) => originals.get(key));
-  const repairedAll = kept.flatMap((key) => reportContentTokens(report[key] ?? ""));
-  return sameTokensIgnoringOrder(originalAll, repairedAll);
 }
 
 // Maintainer triage: keep a parser fix for a regression, a dropped finding, or an incorrect
@@ -860,11 +755,11 @@ function relabeledRepairMatches(response, originals, report) {
 /**
  * True when a repaired report restates only what the original response already held.
  * The repair is untrusted: each label keeps the normalized content of the original, whatever list
- * form it used, a label that the original left out may gain only `none`, and a reviewer verdict
- * must match an explicit original verdict. When an absent required label is the only defect, a
- * present label may give its content to another present label, so a canonical restatement that
- * moves a folded section still matches (issue #2015). Any mismatch leaves the repair unused, so a
- * repair can never create an acceptance that the original response did not state.
+ * form it used, a label that the original omits may gain only `none`, and a reviewer verdict
+ * must match an explicit original verdict. A label line that the original wrote with no value is
+ * empty, not absent, so the repair must leave it empty. Any addition, drop, or move of content,
+ * between labels included, leaves the repair unused, so a repair can never create an acceptance
+ * that the original response did not state (issue #2015 review).
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -880,12 +775,34 @@ export function repairedReportMatches(
   if (!report) {
     return false;
   }
-  const originals = originalLabelTokens(response);
-  if (originals === null) {
+  const original = originalLabelTokens(response);
+  if (original === null) {
     return false;
   }
-  if (!labelsRestated(originals, report) && !relabeledRepairMatches(response, originals, report)) {
-    return false;
+  const { sections: originals, named } = original;
+  for (const [key] of REPORT_LABELS) {
+    const originalTokens = originals.get(key) ?? [];
+    const repaired = reportContentTokens(report[key] ?? "");
+    if (originalTokens.length === 0) {
+      // A label line with no value is empty, not absent: the repair must leave it empty. Only a
+      // label that no line names may gain `none`.
+      if (named.has(key)) {
+        if (repaired.length > 0) {
+          return false;
+        }
+        continue;
+      }
+      if (
+        repaired.length > 0 &&
+        !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
+      ) {
+        return false;
+      }
+      continue;
+    }
+    if (!sameTokens(originalTokens, repaired)) {
+      return false;
+    }
   }
   if (reviewer) {
     const originalVerdict = parseVerdict(response);

@@ -370,9 +370,8 @@ test("a repair that changes a shape 1 finding does not match", () => {
   expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
 });
 
-// Usefulness: verifies a repair cannot move a Blockers value to another label when an absent
-// required label is the only defect, so the relaxation for a moved section never hides a blocker
-// (issue #2015).
+// Usefulness: verifies a repair cannot move a Blockers value to another label, so a restatement
+// that moves content never hides a blocker (issue #2015).
 test("a repair that moves a blocker to another label does not match", () => {
   const original = [
     "Conclusion: done",

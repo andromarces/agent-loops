@@ -743,6 +743,11 @@ function dispatchPayload(roleName, result) {
     ...(result.reportMissingLabels?.length > 0
       ? { reportMissingLabels: result.reportMissingLabels }
       : {}),
+    // A null report names why its one repair turn did not recover it. The field holds one outcome
+    // word, never response text.
+    ...(typeof result.reportRepairOutcome === "string"
+      ? { reportRepairOutcome: result.reportRepairOutcome }
+      : {}),
     // A parsed report of either role names each label that points outside the block.
     ...(result.reportOutsideBlockLabels?.length > 0
       ? { reportOutsideBlockLabels: result.reportOutsideBlockLabels }

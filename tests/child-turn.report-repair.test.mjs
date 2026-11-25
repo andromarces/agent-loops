@@ -90,6 +90,42 @@ const ABSENT_BLOCKERS_REPAIRED = [
   "Deferred: none.",
 ].join("\n");
 
+// A reviewer repair that moves the words `to run` from Deferred to Checks, so the failed check
+// reads `failed to run`. The original Why is an explicit empty line with indented prose under it.
+const REVIEWER_MOVED = [
+  "Conclusion: done",
+  "Why:",
+  "  The suite failed.",
+  "Blockers: none",
+  "Checks: npm test failed",
+  "Deferred: to run",
+  "Verdict: accept",
+].join("\n");
+const REVIEWER_MOVED_REPAIRED = [
+  "Conclusion: done",
+  "Why: The suite failed.",
+  "Blockers: none",
+  "Checks: npm test failed to run",
+  "Deferred:",
+  "Verdict: accept",
+].join("\n");
+// A worker repair that swaps which suite passed while keeping every word.
+const SWAPPED_WHY = [
+  "Conclusion: done",
+  "Why: suite one passed. suite two failed.",
+  "Checks: none",
+].join("\n");
+const SWAPPED_WHY_REPAIRED = [
+  "Conclusion: done",
+  "Why: suite one failed. suite two passed.",
+  "Blockers: none",
+  "Checks: none",
+].join("\n");
+// An explicit empty Blockers line is not an absent Blockers line.
+const EMPTY_BLOCKERS = "Conclusion: done\nWhy: tests pass\nBlockers:\nChecks: npm test";
+const EMPTY_BLOCKERS_REPAIRED =
+  "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
+
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
 let repo;
@@ -135,6 +171,7 @@ test("a null report starts one repair turn in the same session", async () => {
     deferred: "none",
   });
   expect(result.reportMissingLabels).toBeUndefined();
+  expect(result.reportRepairOutcome).toBeUndefined();
 
   const invocations = events.filter((event) => event.type === "invocation");
   expect(invocations).toHaveLength(2);
@@ -158,6 +195,7 @@ test("a repair that still parses to null leaves the original response", async ()
   expect(result.response).toBe(INVALID);
   expect(result.report).toBeNull();
   expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("null");
 });
 
 // Usefulness: verifies requirement "reviewer mutation detection still applies; a repair that writes
@@ -206,6 +244,7 @@ test("a failed repair keeps the original response and the session", async () => 
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(INVALID);
   expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("failed");
   expect(role.sessionId).toBe(agent.recorded[0].sessionId);
 });
 
@@ -481,10 +520,10 @@ test("a repair accepts joined wrapped lines", async () => {
   expect(result.report).toMatchObject({ why: "first line second line" });
 });
 
-// Usefulness: verifies requirement "a worker response that lacks only the Blockers label yields a
-// non-null report after the repair turn, with Blockers set to none" (issue #2015). The canonical
-// restatement moves the folded section from Why to Checks without losing a word.
-test("a repair recovers a block whose only defect is an absent required label", async () => {
+// Usefulness: verifies requirement "a worker response in the issue shape names why the repair did
+// not recover it, with no response text" (issue #2015). The canonical restatement moves the folded
+// section from Why to Checks, which the exact match refuses.
+test("an issue #2015 shape names the mismatched repair outcome", async () => {
   const agent = scripted([ABSENT_BLOCKERS, ABSENT_BLOCKERS_REPAIRED]);
   const result = await runChild({
     agents: { fake: agent },
@@ -496,13 +535,66 @@ test("a repair recovers a block whose only defect is an absent required label", 
 
   expect(agent.recorded).toHaveLength(2);
   expect(result.status).toBe("ok");
-  expect(result.response).toBe(ABSENT_BLOCKERS_REPAIRED);
-  expect(result.report).toMatchObject({
-    conclusion: "the setup works.",
-    why: "The profile holds the right values. The check confirms it.",
-    blockers: "none",
+  expect(result.response).toBe(ABSENT_BLOCKERS);
+  expect(result.report).toBeNull();
+  expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair never accepts a restatement that moves content between
+// labels" (issue #2015 review). The move makes a failed reviewer check read as a check not yet run,
+// and the original empty Why line must not turn that into an accept.
+test("a reviewer repair that moves a word into Checks is refused", async () => {
+  const agent = scripted([REVIEWER_MOVED, REVIEWER_MOVED_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
   });
-  expect(result.reportMissingLabels).toBeUndefined();
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(REVIEWER_MOVED);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair never accepts a restatement that moves content between
+// labels" (issue #2015 review). The swap reverses which suite passed while keeping each word.
+test("a worker repair that swaps which suite passed is refused", async () => {
+  const agent = scripted([SWAPPED_WHY, SWAPPED_WHY_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(SWAPPED_WHY);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "an explicit empty label is not an absent label" (issue #2015
+// review). The repair may not fill an empty Blockers line with none.
+test("a repair cannot fill an explicitly empty required label", async () => {
+  const agent = scripted([EMPTY_BLOCKERS, EMPTY_BLOCKERS_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(EMPTY_BLOCKERS);
+  expect(result.report).toBeNull();
+  expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("mismatched");
 });
 
 // Usefulness: verifies requirement "the policy for a parsed report without a reviewer Checks line or
