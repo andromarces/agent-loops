@@ -572,8 +572,9 @@ function textBeforeBlock(response, block = closingBlock(response, { unlabeled: t
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
  * the block. The check reads one text per label: the folded value with each item's own lead left
- * out, built with the fold's separators, so a label name that starts a dash item is item text rather
- * than a reference, at any nesting depth, while a name inside prose or another item's text stays a
+ * out, built with the fold's separators except between two folded sections when the earlier
+ * sections hold no text after lead removal, so a label name that starts a dash item is item text
+ * rather than a reference, at any nesting depth, while a name inside prose or another item's text stays a
  * reference and keeps the whole value internal, as main does.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
@@ -1013,8 +1014,9 @@ function trimTrailingBlanks(out) {
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * `masked` holds, per label, one text for the outside-block check: the folded value with each
- * item's own lead left out as it is appended, and the same separators as the value. A continuation
- * line stays in the item text it continues.
+ * item's own lead left out as it is appended, and the same separators as the value, except between
+ * two folded sections when the earlier sections hold no text after lead removal, which holds one
+ * space. A continuation line stays in the item text it continues.
  * @param {string[]} lines
  * @returns {{ lines: string[], masked: Map<string, string> } | null}
  */
@@ -1028,7 +1030,8 @@ function foldEmptyLabelLists(lines) {
   const nonCanonical = new Set();
   const invalid = new Set();
   // The outside-block text of each label: the folded value with each item's own lead left out as
-  // it is appended, built with the same separators as the value. A later occurrence of a label
+  // it is appended, built with the same separators as the value, except that a boundary where the
+  // earlier sections hold no text after lead removal holds one space. A later occurrence of a label
   // replaces the earlier one.
   const masked = new Map();
   const labelKey = (labelText) =>
