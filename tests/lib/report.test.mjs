@@ -2976,10 +2976,25 @@ test("outsideBlockReportLabels keeps a wrapped item sentence in one piece", () =
   expect(outsideBlockReportLabels(internal, parseReportBlock(internal))).toEqual([]);
 });
 
-// Usefulness: verifies each item is checked with its own lead removed, so an inline mention keeps
-// its own result and the item lead cannot shield the item text (issue #2014 review). The first
-// shape holds no pointer; the second one must raise the signal from the item text.
-test("outsideBlockReportLabels checks each item with its own lead removed", () => {
+// Usefulness: verifies one text per label reaches the check, so a label name in a pointer's value
+// keeps the pointer internal even when another item holds it (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels judges the whole label value once", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: All three jobs passed, as listed above.",
+    "- See the Checks field for the exact counts.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies the whole label value reaches one check with each item lead removed, so an
+// inline mention keeps the value internal while an item lead cannot shield a pointer (issue #2014
+// review, ADR 0139). The last shape is the observable lead removal.
+test("outsideBlockReportLabels judges the whole value with each item lead removed", () => {
   const sameValue = [
     "The gate listing is green.",
     "",
@@ -2999,7 +3014,17 @@ test("outsideBlockReportLabels checks each item with its own lead removed", () =
     "- **Checks:** see the test results before the closing block.",
     "Blockers: none",
   ].join("\n");
-  expect(outsideBlockReportLabels(pointer, parseReportBlock(pointer))).toEqual(["Why"]);
+  expect(outsideBlockReportLabels(pointer, parseReportBlock(pointer))).toEqual([]);
+  const pointerOnly = [
+    "The test results sit above this block.",
+    "",
+    "Conclusion: done",
+    "Why: The results follow",
+    "- Checks: see the test results before the closing block.",
+    "Blockers: none",
+    "Checks: pnpm test passed",
+  ].join("\n");
+  expect(outsideBlockReportLabels(pointerOnly, parseReportBlock(pointerOnly))).toEqual(["Why"]);
 });
 
 // Usefulness: verifies the separator before a dash lead stays, so removing a lead never joins the
