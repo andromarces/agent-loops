@@ -126,4 +126,5 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0164 — [Retry a first-turn Claude orchestrator abort that names plan mode](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) — accepted
 - 0165 — [Render the task placeholders in a per-item task text](0165-render-task-placeholders-in-a-per-item-task-text.md) — accepted
 - 0166 — [Restate the full-suite rule beside the worker task text](0166-restate-the-full-suite-rule-beside-the-worker-task-text.md) — accepted
-- 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — accepted
+- 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — partially-superseded — Partially superseded by [ADR 0168](0168-fold-a-plain-label-list-item.md).
+- 0168 — [Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md) — accepted

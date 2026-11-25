@@ -241,10 +241,13 @@ test("the closing-block rule states the one-blank-line list fold", () => {
   );
 });
 
-// Usefulness: verifies the closing-block rule states that a bold label name opening a list item
-// is item text inside a run and unparseable outside one (issue #1006), so the prompt matches the parser.
-test("the closing-block rule states the bold label name list item", () => {
-  expect(reportBlock).toMatch(/dash item or sub-item[^.]*bold report label name[^.]*item text/);
+// Usefulness: verifies the closing-block rule states that a plain or bold label name opening a list
+// item is item text inside a run and unparseable outside one (issues #1006 and #2013), so the prompt
+// matches the parser.
+test("the closing-block rule states the plain or bold label name list item", () => {
+  expect(reportBlock).toMatch(
+    /dash item or sub-item[^.]*report label name, plain or bold[^.]*item text/,
+  );
   expect(reportBlock).toMatch(/outside a list under a label[^.]*unparseable/);
 });
 

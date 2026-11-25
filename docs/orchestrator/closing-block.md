@@ -96,9 +96,9 @@ A report that parses only because bold labels were normalized fails closed into 
 OpenCode response has more than one unidentified part. The report is null in that case. A
 single-part response, and every response whose labels use only the `Label:` form or the lone `Label` form, keeps its result.
 
-A `- ` item or sub-item that opens with a bold report label name, for example
-`- **Notes:** ran`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
-makes the block unparseable. A prose line directly after the label with no blank line stays
+A `- ` item or sub-item that opens with a report label name, plain or bold, for example
+`- Notes: ran` or `- **Deferred:** later`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
+makes the block unparseable (issues #1006 and #2013). A prose line directly after the label with no blank line stays
 unparseable. A second prose line before the list, prose after
 the reviewer `Verdict:` line, and a later repeat of the label also stay unparseable.
 

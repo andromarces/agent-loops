@@ -209,9 +209,11 @@ const DECORATED_LABEL_LINE = new RegExp(
   "i",
 );
 
-// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`. When it
-// folds into a label's list run, a label name in the bold lead is item text.
-const BOLD_DASH_ITEM = /^\s*- \*\*/;
+// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`, or a
+// plain report label name and a colon, for example `- Checks: ran`. When it folds into a label's
+// list run, the lead is item text (issues #1006 and #2013). Outside a run, the dropped-list guard
+// blanks the block.
+const LABEL_DASH_ITEM = new RegExp(`^\\s*- (?:\\*\\*|(?:${LABEL_NAMES}):)`, "i");
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
@@ -471,7 +473,7 @@ function reportDetail(response, { boldLabels = true } = {}) {
     return null;
   }
   const { block, lines, labels } = shared;
-  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !BOLD_DASH_ITEM.test(line))) {
+  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !LABEL_DASH_ITEM.test(line))) {
     return null;
   }
   if (

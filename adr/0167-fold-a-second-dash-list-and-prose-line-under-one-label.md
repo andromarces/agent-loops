@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Partially superseded by [ADR 0168: Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md). The replaced part is the decorated-label rejection of decision 4, for a `- ` item or sub-item that opens with a plain report label name and a colon inside a list run that folds under a label. Every other decorated label stays unparseable. Decisions 1, 2, 3, and 5 stay in force, and so does every other rejection of decision 4.
 
 ## Supersedes
 

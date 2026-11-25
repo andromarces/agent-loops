@@ -1820,6 +1820,40 @@ test("parseReportBlock returns null for a decorated label item outside a list ru
   expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- **Checks:** ran`)).toBeNull();
 });
 
+// Usefulness: verifies a list item inside a label's list run that opens with a plain report label
+// name is item text, so the closing block of issue #2013 keeps its fields; no existing test covers a
+// plain label-named lead inside a run.
+test("parseReportBlock folds an item that opens with a plain label name into the label above", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- Finding 1: first evidence",
+    "- Checks: the pre-commit hook and the pre-push lint passed.",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes:",
+    "- a note",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "Finding 1: first evidence; Checks: the pre-commit hook and the pre-push lint passed.",
+    checks: "pnpm test passed",
+    notes: "a note",
+  });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n  - Notes: b\nBlockers: none"),
+  ).toMatchObject({ why: "a, Notes: b" });
+});
+
+// Usefulness: verifies a plain label item outside a list run still blanks the block when the same
+// shape folds inside a run (issue #2013), so the #243 refusal is not weakened.
+test("parseReportBlock returns null for a plain label item outside a list run", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n\n\n- Checks: ran`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- Checks: ran`)).toBeNull();
+});
+
 // Usefulness: verifies a bold label after a folded list is read as a label. The list text and the
 // bold fields both survive (issue #1483).
 test("parseReportBlock reads a bold label after a folded list", () => {
