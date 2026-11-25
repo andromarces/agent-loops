@@ -2948,6 +2948,47 @@ test("outsideBlockReportLabels keeps a label name after prose punctuation intern
   expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
 });
 
+// Usefulness: verifies each item is checked with its own lead removed, so an inline mention keeps
+// its own result and the item lead cannot shield the item text (issue #2014 review). The first
+// shape holds no pointer; the second one must raise the signal from the item text.
+test("outsideBlockReportLabels checks each item with its own lead removed", () => {
+  const sameValue = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: **Checks:** is listed above with the exact counts.",
+    "- **Checks:** Run links are archived.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(sameValue, parseReportBlock(sameValue))).toEqual([]);
+  const pointer = [
+    "The test results sit above this block.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: **Checks:** is listed above with the exact counts.",
+    "- **Checks:** see the test results before the closing block.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(pointer, parseReportBlock(pointer))).toEqual(["Why"]);
+});
+
+// Usefulness: verifies the separator before a dash lead stays, so removing a lead never joins the
+// words around it and the internal reference survives (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps the separator before a dash item lead", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Notes: archived logs",
+    "Why: See the results as listed above in Notes",
+    "- **Checks**:CI logs are archived.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
 // Usefulness: verifies a lead belongs only to the value its own dash item folded into, so the same
 // spelling in another label's list never strips an inline mention (issue #2014 review, ADR 0139).
 test("outsideBlockReportLabels keeps a lead matched to its own label value", () => {
