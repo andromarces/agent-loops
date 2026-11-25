@@ -16,8 +16,8 @@ A per-label exact match cannot accept a canonical restatement that moves the fol
 
 ## Decision
 
-1. **Keep the per-label exact match.** A repaired report is used only when every label holds the same normalized content as the same label in the original response. A repair never alters, adds, drops, or moves content between labels. The reviewer verdict rule and the accept evidence rule of ADR 0094 decision 5 stay.
-2. **Keep an empty label apart from an absent one.** A label line with no value is empty. Only a label that no line names may gain `none` on repair, and the added value must be exactly `none`: the parsed value decides, not its word count, so a lone dash or another wordless value is content the original did not hold. An empty label must stay empty.
+1. **Keep the per-label exact match.** A repaired report is used only when every label holds the same normalized content as the same label in the original response. A repair never alters, adds, drops, or moves a word between labels. The reviewer verdict rule and the accept evidence rule of ADR 0094 decision 5 stay.
+2. **Keep an empty label apart from an absent one.** A label that holds a value keeps it under decision 1, and a dash value counts as a held value. The parsed value, not its word count, decides whether the original left a label empty or omitted. A label line with no value is empty, so the repair must leave it empty. Only a label that no line names may gain a finding, and only a value whose sole word is `none`, in any case, is that finding.
 3. **Name the repair outcome on a null report.** When the repair does not recover the block, the turn result and the dispatch envelope carry `reportRepairOutcome` with one value: `not-run`, `failed`, `null`, or `mismatched`. The field holds no response text. `not-run` is the fallback when a null report has no repair attempt. `repairedReportMatches` in `src/lib/report.mjs` applies the content rule, and `runChild` in `src/child-turn.mjs` sets the outcome.
 4. **Take the outcome route for issue #2015.** The issue records the repair outcome as unknown, and the exact match does not accept a restatement that moves the folded section. A faithful restatement that keeps the section under its original label still recovers the report.
 5. **Change no parser shape.** The block that parses keeps its current behavior, and the envelope gains one field.
@@ -27,8 +27,12 @@ A per-label exact match cannot accept a canonical restatement that moves the fol
 - The guard is unchanged from ADR 0094 decision 5 except for the empty-label rule, so a repair can never turn a failed check, a passed suite, or a blocker into different content.
 - A failed, null, or mismatched repair is now distinguishable in the envelope without response text, so the parent can tell whether the repair turn ran and why it did not recover the block.
 - A canonical restatement that moves a folded section leaves `report` null and `raw` carries the original response. The parent reads `reportRepairOutcome` for the reason.
-- An explicitly empty required label still makes the report null, and a repair cannot clear that state with `none`.
+- An explicitly empty required label still makes the report null, and a repair cannot clear that state with a value.
 - Every shape from the issue that a faithful restatement can keep label by label still recovers.
+
+### Probe
+
+The probe compared `repairedReportMatches` from the base source at `4e7e4ee4` with this change on the issue shapes. Every input the base accepts is accepted here except the two intended cases: an explicitly empty label that gains a value, and an omitted label that gains a value other than a `none` finding. A held dash value, kept or dropped, and a `None.` value stay accepted. The moved section and the word move stay refused.
 
 ## Alternatives
 

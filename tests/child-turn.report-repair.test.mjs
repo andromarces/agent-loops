@@ -127,6 +127,26 @@ const EMPTY_BLOCKERS_REPAIRED =
   "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
 // A dash carries no word, but the parser reads it as the label value.
 const BLOCKERS_DASH_REPAIRED = "Conclusion: done\nWhy: tests pass\nBlockers: -\nChecks: npm test";
+// A reviewer repair joins a wrapped Why and keeps a dash Notes value unchanged. The star list
+// under Checks makes the original block null, so the repair turn runs.
+const DASH_NOTES = [
+  "Conclusion: done",
+  "Why: first line",
+  "  second line",
+  "Blockers: none",
+  "Checks: npm test failed",
+  "* npm run lint",
+  "Notes: -",
+  "Verdict: accept",
+].join("\n");
+const DASH_NOTES_REPAIRED = [
+  "Conclusion: done",
+  "Why: first line second line",
+  "Blockers: none",
+  "Checks: npm test failed; npm run lint",
+  "Notes: -",
+  "Verdict: accept",
+].join("\n");
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -597,6 +617,27 @@ test("a repair cannot fill an explicitly empty required label", async () => {
   expect(result.report).toBeNull();
   expect(result.reportMissingLabels).toEqual(["Blockers"]);
   expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair keeps every label value that the original holds, a dash
+// value included" (issue #2015 review). The wrapped Why joins and the Notes dash stays unchanged.
+test("a repair keeps a dash label value that the original holds", async () => {
+  const agent = scripted([DASH_NOTES, DASH_NOTES_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(DASH_NOTES_REPAIRED);
+  expect(result.report).toMatchObject({
+    why: "first line second line",
+    notes: "-",
+  });
+  expect(result.reportRepairOutcome).toBeUndefined();
 });
 
 // Usefulness: verifies requirement "a repair cannot fill an explicitly empty label with a value the

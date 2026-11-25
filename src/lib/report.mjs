@@ -710,9 +710,10 @@ function withoutListMarker(line) {
  * The normalized content of each report label in `response`, from the last occurrence of the label
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
  * that the parser does not fold still counts as content. `named` holds every label that a line names,
- * so a label line with no content stays apart from a label that the response omits.
+ * so a label line with no content stays apart from a label that the response omits. `holds` holds
+ * every label whose value is not empty, and a dash value counts as a held value.
  * @param {string} response
- * @returns {{ sections: Map<string, string[]>, named: Set<string> } | null}
+ * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string> } | null}
  */
 function originalLabelTokens(response) {
   const block = closingBlock(response, { unlabeled: true, diagnose: true });
@@ -721,6 +722,7 @@ function originalLabelTokens(response) {
   }
   const sections = new Map();
   const named = new Set();
+  const inlineValue = new Map();
   let current = null;
   for (const line of block) {
     const match = line.match(REPORT_LABEL_LINE);
@@ -728,6 +730,7 @@ function originalLabelTokens(response) {
       current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
       if (current !== null) {
         sections.set(current, reportContentTokens(match[2]));
+        inlineValue.set(current, match[2].trim());
         named.add(current);
       }
       continue;
@@ -740,7 +743,10 @@ function originalLabelTokens(response) {
       sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
     }
   }
-  return { sections, named };
+  const holds = new Set(
+    [...named].filter((key) => inlineValue.get(key) !== "" || (sections.get(key)?.length ?? 0) > 0),
+  );
+  return { sections, named, holds };
 }
 
 /** True when both lists hold the same words in the same order. */
@@ -755,11 +761,12 @@ function sameTokens(left, right) {
 /**
  * True when a repaired report restates only what the original response already held.
  * The repair is untrusted: each label keeps the normalized content of the original, whatever list
- * form it used, a label that the original omits may gain only `none`, and a reviewer verdict
- * must match an explicit original verdict. A label line that the original wrote with no value is
- * empty, not absent, so the repair must leave it empty. Any addition, drop, or move of content,
- * between labels included, leaves the repair unused, so a repair can never create an acceptance
- * that the original response did not state (issue #2015 review).
+ * form it used, and a reviewer verdict must match an explicit original verdict. A label line that
+ * the original wrote with no value is empty, not absent, so the repair must leave it empty. A label
+ * that the original omits may gain only a `none` finding, whose sole word is `none` in any case. A
+ * dash value is a value the original holds, so it keeps the same comparison as any other held
+ * value. A word that the repair adds, drops, or moves between labels leaves the repair unused, so a
+ * repair can never create an acceptance that the original response did not state (issue #2015).
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -779,26 +786,37 @@ export function repairedReportMatches(
   if (original === null) {
     return false;
   }
-  const { sections: originals, named } = original;
+  const { sections: originals, named, holds } = original;
   for (const [key] of REPORT_LABELS) {
     const originalTokens = originals.get(key) ?? [];
-    if (originalTokens.length === 0) {
-      // The parsed value decides an empty or absent label, not its word count: a lone dash has no
-      // word but the parser reads it as a value. A label line with no value is empty, not absent,
-      // so the repair must leave it empty. Only a label that no line names may gain `none`.
+    const repaired = reportContentTokens(report[key] ?? "");
+    if (!holds.has(key)) {
+      // The original left this label empty or omitted, so the parser reads any value as an addition,
+      // a lone dash included. An empty line stays empty; a label that no line names may gain only a
+      // `none` finding, whose sole word is `none` in any case.
       const repairedValue = report[key];
-      if (named.has(key)) {
-        if (repairedValue !== null) {
-          return false;
-        }
+      if (repairedValue === null) {
         continue;
       }
-      if (repairedValue !== null && !NO_REPAIRED_FINDING.test(repairedValue)) {
+      if (named.has(key)) {
+        return false;
+      }
+      if (!(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))) {
         return false;
       }
       continue;
     }
-    if (!sameTokens(originalTokens, reportContentTokens(report[key] ?? ""))) {
+    // A label that holds a value keeps it as the earlier rule compares it, a dash value included.
+    if (originalTokens.length === 0) {
+      if (
+        repaired.length > 0 &&
+        !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
+      ) {
+        return false;
+      }
+      continue;
+    }
+    if (!sameTokens(originalTokens, repaired)) {
       return false;
     }
   }
