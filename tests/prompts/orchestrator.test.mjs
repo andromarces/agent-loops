@@ -325,6 +325,24 @@ test("resultPrompt carries the outside-block report labels of each role", () => 
   }
 });
 
+// Usefulness: verifies the headless result payload carries why the one repair turn did not recover
+// the block, so a headless parent sees the outcome the dispatch envelope names (issue #2015).
+test("resultPrompt carries the repair outcome of a null report", () => {
+  const prompt = resultPrompt({
+    result: {
+      role: "worker",
+      status: "ok",
+      response: "Conclusion: done",
+      report: null,
+      reportMissingLabels: ["Blockers"],
+      reportRepairOutcome: "mismatched",
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(prompt).toContain('"reportRepairOutcome": "mismatched"');
+});
+
 // Usefulness: verifies the headless prompt names the outside-block field for both roles and its
 // restatement turn (issue #1910).
 test("the headless prompt states the outside-block report label rule", () => {

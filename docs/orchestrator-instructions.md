@@ -163,6 +163,10 @@ Example reviewer envelope:
   `["Why"]`, and holds no response text. A child turn whose adapter returns a
   missing or non-string response ends `status: "error"`, not `ok` with
   `report: null`.
+  - When the repair does not recover the block, `reportRepairOutcome` names
+    `not-run`, `failed`, `null`, or `mismatched`, and holds no response text.
+    Treat the report as not accepted; the field tells you whether the repair ran
+    and why it did not recover the block.
   - A worker or reviewer report that points at text outside the closing block adds `reportOutsideBlockLabels`, which names each such label and holds no response text. Dispatch one turn of the same role that asks for the named result inside the closing block. The detail is in [Closing block list rules](orchestrator/closing-block.md#report-text-outside-the-block).
   - A worker or reviewer report whose value equals an init task label value adds `reportCopiedTaskLabels`, which names each copied label and holds no response text. Dispatch one turn of the same role that asks for the copied result, restated inside the closing block. The detail is in [Closing block list rules](orchestrator/closing-block.md#report-values-copied-from-the-init-task).
 - `report.checks` names the commands that ran in that child turn and their

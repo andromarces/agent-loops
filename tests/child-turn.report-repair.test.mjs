@@ -64,6 +64,133 @@ const WRAPPED_WHY =
   "Conclusion: done\nWhy: first line\n  second line\nBlockers: none\nChecks: npm test\n* npm run lint";
 const WRAPPED_WHY_REPAIRED =
   "Conclusion: done\nWhy: first line second line\nBlockers: none\nChecks: npm test; npm run lint";
+// The issue #2015 shape: every label but Blockers is present, and a prose lead with a dash list
+// follows Why. The parser folds that section into the Why value.
+const ABSENT_BLOCKERS = [
+  "Conclusion: the setup works.",
+  "",
+  "Why: The profile holds the right values. The check confirms it.",
+  "",
+  "Blocker-free verification detail (setup):",
+  "- positive (key auth): loaded; reached the host.",
+  "- no-ssh control (no key): refused; logged.",
+  "- negative control (bad key): refused; logged.",
+  "",
+  "Checks: node --test passed",
+  "Notes: none",
+  "Deferred: none.",
+].join("\n");
+// The canonical restatement keeps every word but puts the folded section under Checks.
+const ABSENT_BLOCKERS_REPAIRED = [
+  "Conclusion: the setup works.",
+  "Why: The profile holds the right values. The check confirms it.",
+  "Blockers: none",
+  "Checks: node --test passed; Blocker-free verification detail (setup): positive (key auth): loaded; reached the host.; no-ssh control (no key): refused; logged.; negative control (bad key): refused; logged.",
+  "Notes: none",
+  "Deferred: none.",
+].join("\n");
+
+// A reviewer repair that moves the words `to run` from Deferred to Checks, so the failed check
+// reads `failed to run`. The original Why is an explicit empty line with indented prose under it.
+const REVIEWER_MOVED = [
+  "Conclusion: done",
+  "Why:",
+  "  The suite failed.",
+  "Blockers: none",
+  "Checks: npm test failed",
+  "Deferred: to run",
+  "Verdict: accept",
+].join("\n");
+const REVIEWER_MOVED_REPAIRED = [
+  "Conclusion: done",
+  "Why: The suite failed.",
+  "Blockers: none",
+  "Checks: npm test failed to run",
+  "Deferred:",
+  "Verdict: accept",
+].join("\n");
+// A worker repair that swaps which suite passed while keeping every word.
+const SWAPPED_WHY = [
+  "Conclusion: done",
+  "Why: suite one passed. suite two failed.",
+  "Checks: none",
+].join("\n");
+const SWAPPED_WHY_REPAIRED = [
+  "Conclusion: done",
+  "Why: suite one failed. suite two passed.",
+  "Blockers: none",
+  "Checks: none",
+].join("\n");
+// An explicit empty Blockers line is not an absent Blockers line.
+const EMPTY_BLOCKERS = "Conclusion: done\nWhy: tests pass\nBlockers:\nChecks: npm test";
+const EMPTY_BLOCKERS_REPAIRED =
+  "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
+// A dash carries no word, but the parser reads it as the label value.
+const BLOCKERS_DASH_REPAIRED = "Conclusion: done\nWhy: tests pass\nBlockers: -\nChecks: npm test";
+// A reviewer repair joins a wrapped Why and keeps a dash Notes value unchanged. The star list
+// under Checks makes the original block null, so the repair turn runs.
+const DASH_NOTES = [
+  "Conclusion: done",
+  "Why: first line",
+  "  second line",
+  "Blockers: none",
+  "Checks: npm test failed",
+  "* npm run lint",
+  "Notes: -",
+  "Verdict: accept",
+].join("\n");
+const DASH_NOTES_REPAIRED = [
+  "Conclusion: done",
+  "Why: first line second line",
+  "Blockers: none",
+  "Checks: npm test failed; npm run lint",
+  "Notes: -",
+  "Verdict: accept",
+].join("\n");
+// The same repair, with the dash written as a dash list item. The parser folds the item into the
+// Notes value.
+const LISTED_DASH_NOTES = [
+  "Conclusion: done",
+  "Why: first line",
+  "  second line",
+  "Blockers: none",
+  "Checks: npm test failed",
+  "* npm run lint",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
+const LISTED_DASH_NOTES_REPAIRED = [
+  "Conclusion: done",
+  "Why: first line second line",
+  "Blockers: none",
+  "Checks: npm test failed; npm run lint",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
+// A repeated Checks label makes the fold fall back to raw lines, so the parser returns no
+// per-label values for the original block. The repair removes the duplicate and keeps the dash.
+const FALLBACK_DASH_NOTES = [
+  "Conclusion: done",
+  "Why: tests pass",
+  "Blockers: none",
+  "Checks:",
+  "- npm test passed",
+  "Checks: npm test passed",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
+const FALLBACK_DASH_NOTES_REPAIRED = [
+  "Conclusion: done",
+  "Why: tests pass",
+  "Blockers: none",
+  "Checks: npm test passed",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -110,6 +237,7 @@ test("a null report starts one repair turn in the same session", async () => {
     deferred: "none",
   });
   expect(result.reportMissingLabels).toBeUndefined();
+  expect(result.reportRepairOutcome).toBeUndefined();
 
   const invocations = events.filter((event) => event.type === "invocation");
   expect(invocations).toHaveLength(2);
@@ -133,6 +261,7 @@ test("a repair that still parses to null leaves the original response", async ()
   expect(result.response).toBe(INVALID);
   expect(result.report).toBeNull();
   expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("null");
 });
 
 // Usefulness: verifies requirement "reviewer mutation detection still applies; a repair that writes
@@ -181,6 +310,7 @@ test("a failed repair keeps the original response and the session", async () => 
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(INVALID);
   expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("failed");
   expect(role.sessionId).toBe(agent.recorded[0].sessionId);
 });
 
@@ -454,6 +584,182 @@ test("a repair accepts joined wrapped lines", async () => {
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(WRAPPED_WHY_REPAIRED);
   expect(result.report).toMatchObject({ why: "first line second line" });
+});
+
+// Usefulness: verifies requirement "a worker response in the issue shape names why the repair did
+// not recover it, with no response text" (issue #2015). The canonical restatement moves the folded
+// section from Why to Checks, which the exact match refuses.
+test("an issue #2015 shape names the mismatched repair outcome", async () => {
+  const agent = scripted([ABSENT_BLOCKERS, ABSENT_BLOCKERS_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.status).toBe("ok");
+  expect(result.response).toBe(ABSENT_BLOCKERS);
+  expect(result.report).toBeNull();
+  expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair never accepts a restatement that moves content between
+// labels" (issue #2015 review). The move makes a failed reviewer check read as a check not yet run,
+// and the original empty Why line must not turn that into an accept.
+test("a reviewer repair that moves a word into Checks is refused", async () => {
+  const agent = scripted([REVIEWER_MOVED, REVIEWER_MOVED_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(REVIEWER_MOVED);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair never accepts a restatement that moves content between
+// labels" (issue #2015 review). The swap reverses which suite passed while keeping each word.
+test("a worker repair that swaps which suite passed is refused", async () => {
+  const agent = scripted([SWAPPED_WHY, SWAPPED_WHY_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(SWAPPED_WHY);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "an explicit empty label is not an absent label" (issue #2015
+// review). The repair may not fill an empty Blockers line with none.
+test("a repair cannot fill an explicitly empty required label", async () => {
+  const agent = scripted([EMPTY_BLOCKERS, EMPTY_BLOCKERS_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(EMPTY_BLOCKERS);
+  expect(result.report).toBeNull();
+  expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair keeps every label value that the original holds, a dash
+// value included" (issue #2015 review). The wrapped Why joins and the Notes dash stays unchanged.
+test("a repair keeps a dash label value that the original holds", async () => {
+  const agent = scripted([DASH_NOTES, DASH_NOTES_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(DASH_NOTES_REPAIRED);
+  expect(result.report).toMatchObject({
+    why: "first line second line",
+    notes: "-",
+  });
+  expect(result.reportRepairOutcome).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a label whose parsed value the original holds keeps the same
+// comparison, a listed dash included" (issue #2015 review). The parser folds the dash item, and the
+// repair keeps it unchanged while joining the wrapped Why.
+test("a repair keeps a listed dash label value that the original holds", async () => {
+  const agent = scripted([LISTED_DASH_NOTES, LISTED_DASH_NOTES_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(LISTED_DASH_NOTES_REPAIRED);
+  expect(result.report).toMatchObject({
+    why: "first line second line",
+    notes: "-",
+  });
+  expect(result.reportRepairOutcome).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a fallback original keeps main's result for a faithful repair"
+// (issue #2015 review). The repeated Checks label makes the fold fall back to raw lines, so the new
+// added-value check does not apply and the Notes dash stays accepted.
+test("a fallback original keeps the inherited result for a listed dash", async () => {
+  const agent = scripted([FALLBACK_DASH_NOTES, FALLBACK_DASH_NOTES_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(FALLBACK_DASH_NOTES_REPAIRED);
+  expect(result.report).toMatchObject({ notes: "-" });
+  expect(result.reportRepairOutcome).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a repair cannot fill an explicitly empty label with a value the
+// original did not hold" (issue #2015 review). A lone dash has no word but the parser reads it as a
+// value, so the matcher must refuse it.
+test("a repair cannot fill an explicitly empty label with a dash", async () => {
+  const agent = scripted([EMPTY_BLOCKERS, BLOCKERS_DASH_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(EMPTY_BLOCKERS);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a label that the original omits may gain only none" (issue
+// #2015 review). A lone dash is a value the original did not hold.
+test("a repair cannot gain a dash for an absent label", async () => {
+  const agent = scripted([INVALID, BLOCKERS_DASH_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(INVALID);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
 });
 
 // Usefulness: verifies requirement "the policy for a parsed report without a reviewer Checks line or

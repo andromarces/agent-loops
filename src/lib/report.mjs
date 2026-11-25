@@ -710,16 +710,22 @@ function withoutListMarker(line) {
 /**
  * The normalized content of each report label in `response`, from the last occurrence of the label
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
- * that the parser does not fold still counts as content.
+ * that the parser does not fold still counts as content. `named` holds every label that a line names,
+ * so a label line with no content stays apart from a label that the response omits. `holds` holds
+ * every label with a parsed value or a word in the content scan, so a dash value counts as held and
+ * a list the parser drops still counts by its words. `perLabel` is true only when the parser
+ * returns per-label values; a failed fold reads the raw block and keeps the inherited comparison.
  * @param {string} response
- * @returns {Map<string, string[]> | null}
+ * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string>, perLabel: boolean } | null}
  */
 function originalLabelTokens(response) {
-  const block = closingBlock(response, { unlabeled: true, diagnose: true });
-  if (!block) {
+  const shared = foldedReportBlock(response, { diagnose: true });
+  if (!shared) {
     return null;
   }
+  const { block, labels, lines } = shared;
   const sections = new Map();
+  const named = new Set();
   let current = null;
   for (const line of block) {
     const match = line.match(REPORT_LABEL_LINE);
@@ -727,6 +733,7 @@ function originalLabelTokens(response) {
       current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
       if (current !== null) {
         sections.set(current, reportContentTokens(match[2]));
+        named.add(current);
       }
       continue;
     }
@@ -738,7 +745,21 @@ function originalLabelTokens(response) {
       sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
     }
   }
-  return sections;
+  // The parsed label value decides a wordless value: a dash, inline or folded from a list, is a
+  // value the original holds. The content scan still marks a label whose words the parser drops,
+  // such as a star-list finding, so the inherited comparison stays unchanged for that shape.
+  const parsedValue = new Map(labels.map(({ key, value }) => [key, value]));
+  const holds = new Set(
+    REPORT_LABELS.map(([key]) => key).filter(
+      (key) => parsedValue.get(key) !== null || (sections.get(key)?.length ?? 0) > 0,
+    ),
+  );
+  return { sections, named, holds, perLabel: lines !== null };
+}
+
+/** True when both lists hold the same words in the same order. */
+function sameTokens(left, right) {
+  return left.length === right.length && left.every((token, index) => token === right[index]);
 }
 
 // Maintainer triage: keep a parser fix for a regression, a dropped finding, or an incorrect
@@ -748,9 +769,15 @@ function originalLabelTokens(response) {
 /**
  * True when a repaired report restates only what the original response already held.
  * The repair is untrusted: each label keeps the normalized content of the original, whatever list
- * form it used, a label that the original left out may gain only `none`, and a reviewer verdict
- * must match an explicit original verdict. Any mismatch leaves the repair unused, so a repair can
- * never create an acceptance that the original response did not state.
+ * form it used, and a reviewer verdict must match an explicit original verdict. A label line that
+ * the original wrote with no value is empty, not absent, so the repair must leave it empty. A label
+ * that the original omits may gain only a `none` finding, whose sole word is `none` in any case. A
+ * dash value is a value the original holds, so it keeps the same comparison as any other held
+ * value. The empty-label rule applies only when the parser returns per-label values for the
+ * original block. When the fold fails and the parser reads the raw block, the inherited comparison
+ * alone applies, with no added-value check. A word that the repair adds, drops, or moves between
+ * labels leaves the repair unused, so a repair can never create an acceptance that the original
+ * response did not state (issue #2015).
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -766,14 +793,33 @@ export function repairedReportMatches(
   if (!report) {
     return false;
   }
-  const originals = originalLabelTokens(response);
-  if (originals === null) {
+  const original = originalLabelTokens(response);
+  if (original === null) {
     return false;
   }
+  const { sections: originals, named, holds, perLabel } = original;
   for (const [key] of REPORT_LABELS) {
-    const original = originals.get(key) ?? [];
+    const originalTokens = originals.get(key) ?? [];
     const repaired = reportContentTokens(report[key] ?? "");
-    if (original.length === 0) {
+    if (perLabel && !holds.has(key)) {
+      // The parser returned per-label values, and the original left this label empty or omitted, so
+      // any value is an addition, a lone dash included. An empty line stays empty; a label that no
+      // line names may gain only a `none` finding, whose sole word is `none` in any case.
+      const repairedValue = report[key];
+      if (repairedValue === null) {
+        continue;
+      }
+      if (named.has(key)) {
+        return false;
+      }
+      if (!(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))) {
+        return false;
+      }
+      continue;
+    }
+    // The inherited comparison. It applies to every held label, and to every label when the fold
+    // failed and the parser read the raw block.
+    if (originalTokens.length === 0) {
       if (
         repaired.length > 0 &&
         !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
@@ -782,10 +828,7 @@ export function repairedReportMatches(
       }
       continue;
     }
-    if (
-      original.length !== repaired.length ||
-      original.some((token, index) => token !== repaired[index])
-    ) {
+    if (!sameTokens(originalTokens, repaired)) {
       return false;
     }
   }
