@@ -12,27 +12,23 @@ accepted
 
 Issue #2015 records an OpenCode worker turn whose closing block held every report label but `Blockers`, with a prose lead and a dash list under `Why`. [ADR 0167](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) folds that section into the `Why` value. The issue records the repair outcome as unknown and offers two changes: recover the block when the repair restates the original content label by label, or name the repair outcome in the envelope.
 
-A per-label exact match cannot accept a canonical restatement that moves the folded section from `Why` to `Checks`. Allowing a cross-label move would weaken the guard that [ADR 0094](0094-repair-a-null-child-closing-block.md) decision 5 sets. A reviewer probe reproduced a report with an empty `Why:` line and indented prose: moving the words `to run` from `Deferred` to `Checks` turned `npm test failed` into `npm test failed to run` and cleared the accept gate. A worker repair could likewise swap which suite passed. The same probe showed that an explicitly empty `Blockers:` line took the rule reserved for an absent label, so a repair could fill it with `none`.
+A per-label exact match cannot accept a canonical restatement that moves the folded section from `Why` to `Checks`. Allowing a cross-label move would weaken the guard that [ADR 0094](0094-repair-a-null-child-closing-block.md) decision 5 sets: a repair could move a word from `Deferred` to `Checks` and turn `npm test failed` into `npm test failed to run`, or swap which suite passed. The matcher must also tell a held dash value from a label that the original left empty, whether the dash stands inline or as a dash list item.
 
 ## Decision
 
 1. **Keep the per-label exact match.** A repaired report is used only when every label holds the same normalized content as the same label in the original response. A repair never alters, adds, drops, or moves a word between labels. The reviewer verdict rule and the accept evidence rule of ADR 0094 decision 5 stay.
-2. **Keep an empty label apart from an absent one.** A label that holds a value keeps it under decision 1, and a dash value counts as a held value. The parsed value, not its word count, decides whether the original left a label empty or omitted. A label line with no value is empty, so the repair must leave it empty. Only a label that no line names may gain a finding, and only a value whose sole word is `none`, in any case, is that finding.
+2. **Keep an empty label apart from an absent one.** A label that holds a value keeps it under decision 1. A dash value, inline or folded from a list, counts as a held value because the parsed label value says so. A label line that the parser returns as empty is empty, not absent, so the repair must leave it empty. Only a label that no line names may gain a finding, and only a value whose sole word is `none`, in any case, is that finding. The inherited content scan still supplies words that the parser drops, such as a star-list finding, so that shape keeps its comparison.
 3. **Name the repair outcome on a null report.** When the repair does not recover the block, the turn result and the dispatch envelope carry `reportRepairOutcome` with one value: `not-run`, `failed`, `null`, or `mismatched`. The field holds no response text. `not-run` is the fallback when a null report has no repair attempt. `repairedReportMatches` in `src/lib/report.mjs` applies the content rule, and `runChild` in `src/child-turn.mjs` sets the outcome.
 4. **Take the outcome route for issue #2015.** The issue records the repair outcome as unknown, and the exact match does not accept a restatement that moves the folded section. A faithful restatement that keeps the section under its original label still recovers the report.
 5. **Change no parser shape.** The block that parses keeps its current behavior, and the envelope gains one field.
 
 ## Consequences
 
-- The guard is unchanged from ADR 0094 decision 5 except for the empty-label rule, so a repair can never turn a failed check, a passed suite, or a blocker into different content.
+- The guard is unchanged from ADR 0094 decision 5 except for the empty-label rule, so a repair can never turn a failed check, a passed suite, or a blocker into different words.
 - A failed, null, or mismatched repair is now distinguishable in the envelope without response text, so the parent can tell whether the repair turn ran and why it did not recover the block.
 - A canonical restatement that moves a folded section leaves `report` null and `raw` carries the original response. The parent reads `reportRepairOutcome` for the reason.
 - An explicitly empty required label still makes the report null, and a repair cannot clear that state with a value.
 - Every shape from the issue that a faithful restatement can keep label by label still recovers.
-
-### Probe
-
-The probe compared `repairedReportMatches` from the base source at `4e7e4ee4` with this change on the issue shapes. Every input the base accepts is accepted here except the two intended cases: an explicitly empty label that gains a value, and an omitted label that gains a value other than a `none` finding. A held dash value, kept or dropped, and a `None.` value stay accepted. The moved section and the word move stay refused.
 
 ## Alternatives
 
@@ -55,5 +51,5 @@ Andro Marces
   - Content match: `repairedReportMatches` in `src/lib/report.mjs`
   - Repair outcome: `runChild` in `src/child-turn.mjs`, `dispatchPayload` in `src/role/dispatch.mjs`, and `resultPrompt` in `src/prompts/orchestrator.mjs`
   - Docs: `docs/orchestrator/closing-block.md`, `docs/reference/role.md`, and `docs/orchestrator-instructions.md`
-  - Tests: `tests/child-turn.report-repair.test.mjs`, `tests/role/dispatch.reports.test.mjs`, and `tests/prompts/orchestrator.test.mjs`
+  - Tests: `tests/child-turn.report-repair.test.mjs`, `tests/lib/report.test.mjs`, `tests/role/dispatch.reports.test.mjs`, and `tests/prompts/orchestrator.test.mjs`
 - [ADR Index](README.md)

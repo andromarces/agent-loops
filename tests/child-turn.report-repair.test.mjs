@@ -147,6 +147,28 @@ const DASH_NOTES_REPAIRED = [
   "Notes: -",
   "Verdict: accept",
 ].join("\n");
+// The same repair, with the dash written as a dash list item. The parser folds the item into the
+// Notes value.
+const LISTED_DASH_NOTES = [
+  "Conclusion: done",
+  "Why: first line",
+  "  second line",
+  "Blockers: none",
+  "Checks: npm test failed",
+  "* npm run lint",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
+const LISTED_DASH_NOTES_REPAIRED = [
+  "Conclusion: done",
+  "Why: first line second line",
+  "Blockers: none",
+  "Checks: npm test failed; npm run lint",
+  "Notes:",
+  "- -",
+  "Verdict: accept",
+].join("\n");
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -633,6 +655,28 @@ test("a repair keeps a dash label value that the original holds", async () => {
 
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(DASH_NOTES_REPAIRED);
+  expect(result.report).toMatchObject({
+    why: "first line second line",
+    notes: "-",
+  });
+  expect(result.reportRepairOutcome).toBeUndefined();
+});
+
+// Usefulness: verifies requirement "a label whose parsed value the original holds keeps the same
+// comparison, a listed dash included" (issue #2015 review). The parser folds the dash item, and the
+// repair keeps it unchanged while joining the wrapped Why.
+test("a repair keeps a listed dash label value that the original holds", async () => {
+  const agent = scripted([LISTED_DASH_NOTES, LISTED_DASH_NOTES_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "reviewer",
+    prompt: "review",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(LISTED_DASH_NOTES_REPAIRED);
   expect(result.report).toMatchObject({
     why: "first line second line",
     notes: "-",

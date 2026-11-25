@@ -711,18 +711,19 @@ function withoutListMarker(line) {
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
  * that the parser does not fold still counts as content. `named` holds every label that a line names,
  * so a label line with no content stays apart from a label that the response omits. `holds` holds
- * every label whose value is not empty, and a dash value counts as a held value.
+ * every label with a parsed value or a word in the content scan, so a dash value counts as held and
+ * a list the parser drops still counts by its words.
  * @param {string} response
  * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string> } | null}
  */
 function originalLabelTokens(response) {
-  const block = closingBlock(response, { unlabeled: true, diagnose: true });
-  if (!block) {
+  const shared = foldedReportBlock(response, { diagnose: true });
+  if (!shared) {
     return null;
   }
+  const { block, labels } = shared;
   const sections = new Map();
   const named = new Set();
-  const inlineValue = new Map();
   let current = null;
   for (const line of block) {
     const match = line.match(REPORT_LABEL_LINE);
@@ -730,7 +731,6 @@ function originalLabelTokens(response) {
       current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
       if (current !== null) {
         sections.set(current, reportContentTokens(match[2]));
-        inlineValue.set(current, match[2].trim());
         named.add(current);
       }
       continue;
@@ -743,8 +743,14 @@ function originalLabelTokens(response) {
       sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
     }
   }
+  // The parsed label value decides a wordless value: a dash, inline or folded from a list, is a
+  // value the original holds. The content scan still marks a label whose words the parser drops,
+  // such as a star-list finding, so the inherited comparison stays unchanged for that shape.
+  const parsedValue = new Map(labels.map(({ key, value }) => [key, value]));
   const holds = new Set(
-    [...named].filter((key) => inlineValue.get(key) !== "" || (sections.get(key)?.length ?? 0) > 0),
+    REPORT_LABELS.map(([key]) => key).filter(
+      (key) => parsedValue.get(key) !== null || (sections.get(key)?.length ?? 0) > 0,
+    ),
   );
   return { sections, named, holds };
 }
