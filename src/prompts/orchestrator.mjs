@@ -711,6 +711,7 @@ export function resultPrompt({
       ...TURN_EVIDENCE_FIELDS,
       "reportOutsideBlockLabels",
       "reportCopiedTaskLabels",
+      "reportRepairOutcome",
       "shellDenied",
     ]),
     ...(declaredPr === null ? {} : { declaredPr }),

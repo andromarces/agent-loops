@@ -370,6 +370,98 @@ test("a repair that changes a shape 1 finding does not match", () => {
   expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
 });
 
+// Usefulness: verifies a repair cannot move a Blockers value to another label, so a restatement
+// that moves content never hides a blocker (issue #2015).
+test("a repair that moves a blocker to another label does not match", () => {
+  const original = [
+    "Conclusion: done",
+    "Blockers: tests fail",
+    "Checks: npm test",
+    "Notes: flaky",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: none",
+    "Blockers: none",
+    "Checks: npm test; tests fail",
+    "Notes: flaky",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
+});
+
+// Usefulness: verifies a faithful repair keeps every label shape the parser folds, so a label that
+// the parser reads as non-empty is never treated as empty (issue #2015 review). The star list under
+// Checks makes each original block null.
+test("a faithful repair keeps each folded label shape", () => {
+  const shapes = {
+    inline: { lines: ["Notes: keep"], repaired: ["Notes: keep"] },
+    dashList: { lines: ["Notes:", "- -"], repaired: ["Notes:", "- -"] },
+    nestedList: {
+      lines: ["Notes:", "- keep", "  - deep"],
+      repaired: ["Notes:", "- keep", "  - deep"],
+    },
+    proseContinuation: {
+      lines: ["Notes: first line", "  second line"],
+      repaired: ["Notes: first line second line"],
+    },
+    boldLead: {
+      lines: ["Notes: keep", "", "**Detail.**", "- one"],
+      repaired: ["Notes: keep", "", "**Detail.**", "- one"],
+    },
+  };
+  for (const [name, { lines, repaired }] of Object.entries(shapes)) {
+    const original = [
+      "Conclusion: done",
+      "Why: tests pass",
+      "Blockers: none",
+      "Checks: npm test failed",
+      "* npm run lint",
+      ...lines,
+    ].join("\n");
+    const repairedResponse = [
+      "Conclusion: done",
+      "Why: tests pass",
+      "Blockers: none",
+      "Checks: npm test failed; npm run lint",
+      ...repaired,
+    ].join("\n");
+    const report = parseReportBlock(repairedResponse);
+    expect(report, name).not.toBeNull();
+    expect(report.notes, name).toBeTruthy();
+    expect(repairedReportMatches(original, repairedResponse, report), name).toBe(true);
+  }
+});
+
+// Usefulness: verifies a fallback original keeps the inherited match for a faithful repair, so the
+// added-value check never applies when the parser returns no per-label values (issue #2015 review).
+test("a fallback original keeps the inherited match for a faithful repair", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks:",
+    "- npm test passed",
+    "Checks: npm test passed",
+    "Notes:",
+    "- -",
+    "Verdict: accept",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "Blockers: none",
+    "Checks: npm test passed",
+    "Notes:",
+    "- -",
+    "Verdict: accept",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report, { reviewer: true })).toBe(true);
+});
+
 // Usefulness: verifies an ordered list (`N. ` at column 0) directly under a label folds like a
 // dash list, and that its sub-items fold at the column where the item text starts, so a worker that
 // mirrors an ordered list from its parent prompt still yields a report (issue #915).

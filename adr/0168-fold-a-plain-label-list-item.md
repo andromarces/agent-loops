@@ -35,13 +35,15 @@ The issue offers a fold or a prompt bar. The fold follows [ADR 0140](0140-fold-e
 - The dispatch envelope, the interactive gate, and the headless gate read the same report, because all three use the shared parse.
 - A repair turn is no longer needed for this shape.
 - The table refusal of ADR 0167 still holds. A table pair anywhere in the block, including one indented under a folded item, makes the block unparseable, so the plain and bold forms cannot clear the acceptance gate through a table. The refusal reads the block before the fold, so the other labels keep their folded values for diagnosis.
-- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because an unformatted or bold label name and a colon that starts a dash item is an item lead, not a cross-reference. The fold builds, per label, one text with each item's own lead left out at build time and the fold's separators kept, and the unchanged check runs once on it. Inline prose and a wrapped continuation keep their place in that text, so the rule covers any nesting depth, a dash item that follows a prose line, and a wrapped sentence. A label name inside prose text, after a colon or any other punctuation included, such as `As listed above in Checks: all three jobs passed.`, a name in another item's text, and a code-formatted name in inline text stay internal as ADR 0139 requires. This holds for the plain and bold forms.
+- The outside-block signal still fires for a pointer inside a folded item, such as `- Checks: see the test results before the closing block.`, because an unformatted or bold label name and a colon that starts a dash item is an item lead, not a cross-reference. The fold builds, per label, one text for the unchanged outside-block check, with each item's own lead left out. Its separators and lead markup can differ from the folded value, so the text is diagnostic and no copy of the value (issue #2016). Inline prose and a wrapped continuation keep their place in that text, so the rule covers any nesting depth, a dash item that follows a prose line, and a wrapped sentence. A label name inside prose text, after a colon or any other punctuation included, such as `As listed above in Checks: all three jobs passed.`, a name in another item's text, and a code-formatted name in inline text stay internal as ADR 0139 requires. This holds for the plain and bold forms.
 
 ### Probe
 
 - The probe ran `parseReportBlock` from source `df133ff1` on the issue shape and on a sub-item shape, `- a` then `  - Notes: b`. Both returned null.
 - The same probe on the change returns the full report for the issue shape, with `why` as `Finding 1: one; Finding 2: two; Checks: the pre-commit hook (oxfmt) and the pre-push lint passed.`, and `a, Notes: b` for the sub-item shape.
 - The same item outside a run, after the `Verdict:` line, after two blank lines, and at a three-space indent still returns null.
+- The probe for issue #2016 on a lead-only opening section, `Why:` then `- Checks:`, one blank line, then `- see the results above`, reads `why` as `Checks:; see the results above`, builds the check text `  see the results above`, and keeps the outside-block signal `["Why"]`.
+- The same probe with `Why: Summary` builds `Summary;  see above` before a later bare list and `Summary; ; Evidence: see above` before a later `Evidence` prose section.
 
 ## Alternatives
 
@@ -55,6 +57,7 @@ Andro Marces
 ## Links
 
 - [Issue #2013](https://github.com/andromarces/agent-loops/issues/2013)
+- [Issue #2016](https://github.com/andromarces/agent-loops/issues/2016)
 - [PR #2014: Fold a closing-block list item that opens with a plain label name](https://github.com/andromarces/agent-loops/pull/2014)
 - [ADR 0167: Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md)
 - [ADR 0139: Name no outside-block label without outside text](0139-name-no-outside-block-label-without-outside-text.md)

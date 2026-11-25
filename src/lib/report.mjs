@@ -572,9 +572,10 @@ function textBeforeBlock(response, block = closingBlock(response, { unlabeled: t
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
  * the block. The check reads one text per label: the folded value with each item's own lead left
- * out, built with the fold's separators, so a label name that starts a dash item is item text rather
- * than a reference, at any nesting depth, while a name inside prose or another item's text stays a
- * reference and keeps the whole value internal, as main does.
+ * out, built as diagnostic text for this check. Its separators and lead markup can differ from the
+ * folded value, so it is no copy of the value. A label name that starts a dash item is item text
+ * rather than a reference, at any nesting depth, while a name inside prose or another item's text
+ * stays a reference and keeps the whole value internal, as main does.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
  * code block. A reviewer turn passes `exception: false`, because its prompt bars every reference to
@@ -709,16 +710,22 @@ function withoutListMarker(line) {
 /**
  * The normalized content of each report label in `response`, from the last occurrence of the label
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
- * that the parser does not fold still counts as content.
+ * that the parser does not fold still counts as content. `named` holds every label that a line names,
+ * so a label line with no content stays apart from a label that the response omits. `holds` holds
+ * every label with a parsed value or a word in the content scan, so a dash value counts as held and
+ * a list the parser drops still counts by its words. `perLabel` is true only when the parser
+ * returns per-label values; a failed fold reads the raw block and keeps the inherited comparison.
  * @param {string} response
- * @returns {Map<string, string[]> | null}
+ * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string>, perLabel: boolean } | null}
  */
 function originalLabelTokens(response) {
-  const block = closingBlock(response, { unlabeled: true, diagnose: true });
-  if (!block) {
+  const shared = foldedReportBlock(response, { diagnose: true });
+  if (!shared) {
     return null;
   }
+  const { block, labels, lines } = shared;
   const sections = new Map();
+  const named = new Set();
   let current = null;
   for (const line of block) {
     const match = line.match(REPORT_LABEL_LINE);
@@ -726,6 +733,7 @@ function originalLabelTokens(response) {
       current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
       if (current !== null) {
         sections.set(current, reportContentTokens(match[2]));
+        named.add(current);
       }
       continue;
     }
@@ -737,7 +745,21 @@ function originalLabelTokens(response) {
       sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
     }
   }
-  return sections;
+  // The parsed label value decides a wordless value: a dash, inline or folded from a list, is a
+  // value the original holds. The content scan still marks a label whose words the parser drops,
+  // such as a star-list finding, so the inherited comparison stays unchanged for that shape.
+  const parsedValue = new Map(labels.map(({ key, value }) => [key, value]));
+  const holds = new Set(
+    REPORT_LABELS.map(([key]) => key).filter(
+      (key) => parsedValue.get(key) !== null || (sections.get(key)?.length ?? 0) > 0,
+    ),
+  );
+  return { sections, named, holds, perLabel: lines !== null };
+}
+
+/** True when both lists hold the same words in the same order. */
+function sameTokens(left, right) {
+  return left.length === right.length && left.every((token, index) => token === right[index]);
 }
 
 // Maintainer triage: keep a parser fix for a regression, a dropped finding, or an incorrect
@@ -747,9 +769,15 @@ function originalLabelTokens(response) {
 /**
  * True when a repaired report restates only what the original response already held.
  * The repair is untrusted: each label keeps the normalized content of the original, whatever list
- * form it used, a label that the original left out may gain only `none`, and a reviewer verdict
- * must match an explicit original verdict. Any mismatch leaves the repair unused, so a repair can
- * never create an acceptance that the original response did not state.
+ * form it used, and a reviewer verdict must match an explicit original verdict. A label line that
+ * the original wrote with no value is empty, not absent, so the repair must leave it empty. A label
+ * that the original omits may gain only a `none` finding, whose sole word is `none` in any case. A
+ * dash value is a value the original holds, so it keeps the same comparison as any other held
+ * value. The empty-label rule applies only when the parser returns per-label values for the
+ * original block. When the fold fails and the parser reads the raw block, the inherited comparison
+ * alone applies, with no added-value check. A word that the repair adds, drops, or moves between
+ * labels leaves the repair unused, so a repair can never create an acceptance that the original
+ * response did not state (issue #2015).
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -765,14 +793,33 @@ export function repairedReportMatches(
   if (!report) {
     return false;
   }
-  const originals = originalLabelTokens(response);
-  if (originals === null) {
+  const original = originalLabelTokens(response);
+  if (original === null) {
     return false;
   }
+  const { sections: originals, named, holds, perLabel } = original;
   for (const [key] of REPORT_LABELS) {
-    const original = originals.get(key) ?? [];
+    const originalTokens = originals.get(key) ?? [];
     const repaired = reportContentTokens(report[key] ?? "");
-    if (original.length === 0) {
+    if (perLabel && !holds.has(key)) {
+      // The parser returned per-label values, and the original left this label empty or omitted, so
+      // any value is an addition, a lone dash included. An empty line stays empty; a label that no
+      // line names may gain only a `none` finding, whose sole word is `none` in any case.
+      const repairedValue = report[key];
+      if (repairedValue === null) {
+        continue;
+      }
+      if (named.has(key)) {
+        return false;
+      }
+      if (!(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))) {
+        return false;
+      }
+      continue;
+    }
+    // The inherited comparison. It applies to every held label, and to every label when the fold
+    // failed and the parser read the raw block.
+    if (originalTokens.length === 0) {
       if (
         repaired.length > 0 &&
         !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
@@ -781,10 +828,7 @@ export function repairedReportMatches(
       }
       continue;
     }
-    if (
-      original.length !== repaired.length ||
-      original.some((token, index) => token !== repaired[index])
-    ) {
+    if (!sameTokens(originalTokens, repaired)) {
       return false;
     }
   }
@@ -903,7 +947,10 @@ function isContinuationLine(line) {
 // The lead of a dash or ordered item, plain or bold, for example `Checks:` or `**Checks:**`.
 const ITEM_LEAD = new RegExp(`^(?:\\*\\*)?(?:${LABEL_NAMES})(?:\\*\\*)?:`, "i");
 
-/** The text of an item without the report label lead it opens with. */
+/**
+ * The text of an item with its own report label lead left out, for the diagnostic outside-block
+ * text. Its separators and lead markup can differ from the folded value.
+ */
 function withoutItemLead(text) {
   return text.replace(ITEM_LEAD, "");
 }
@@ -912,7 +959,8 @@ function withoutItemLead(text) {
  * The text of the item at `start` and of its direct sub-items at every deeper level, joined with
  * ", ", and the last line used. `marker` is the full marker prefix of the parent line, so its
  * length is the column where the sub-item marker starts. `masked` is the same text with the lead
- * of each part left out.
+ * of each part left out, for the diagnostic outside-block text; its separators and lead markup can
+ * differ from the folded value.
  */
 function takeSubitems(lines, start, marker) {
   const [subMarker] = lines[start].match(foldableSubitem(marker));
@@ -1013,8 +1061,9 @@ function trimTrailingBlanks(out) {
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
  * `masked` holds, per label, one text for the outside-block check: the folded value with each
- * item's own lead left out as it is appended, and the same separators as the value. A continuation
- * line stays in the item text it continues.
+ * item's own lead left out, built as diagnostic text. Its separators and lead markup can differ
+ * from the folded value, so it is no copy of the value. A continuation line stays in the item text
+ * it continues.
  * @param {string[]} lines
  * @returns {{ lines: string[], masked: Map<string, string> } | null}
  */
@@ -1027,9 +1076,9 @@ function foldEmptyLabelLists(lines) {
   const sectioned = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
-  // The outside-block text of each label: the folded value with each item's own lead left out as
-  // it is appended, built with the same separators as the value. A later occurrence of a label
-  // replaces the earlier one.
+  // The outside-block text of each label: the folded value with each item's own lead left out,
+  // built as diagnostic text. Its separators and lead markup can differ from the folded value, so
+  // it is no copy of the value. A later occurrence of a label replaces the earlier one.
   const masked = new Map();
   const labelKey = (labelText) =>
     LABEL_KEY_BY_NAME.get(labelText.slice(0, labelText.indexOf(":")).trim().toLowerCase()) ?? null;
