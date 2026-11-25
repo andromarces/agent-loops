@@ -72,6 +72,23 @@ test("missingRequiredReportLabels reads a folded list under a required label", (
   expect(missingRequiredReportLabels(response)).toEqual(["Blockers"]);
 });
 
+// Usefulness: verifies a table under one label does not discard the folded value of another, so a
+// block that holds a table still names only the labels that are absent (issue #2014 review). The
+// table refusal stays in the report itself.
+test("missingRequiredReportLabels keeps a folded label when another label holds a table", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- 12 passed",
+    "Blockers: none",
+    "Notes:",
+    "| a | b |",
+    "| --- | --- |",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
 // Usefulness: verifies a folded list under each required label counts as present and the block
 // parses (issue #1520). A label is present exactly when the parser reads a value for it.
 test.each([
@@ -1820,6 +1837,40 @@ test("parseReportBlock returns null for a decorated label item outside a list ru
   expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- **Checks:** ran`)).toBeNull();
 });
 
+// Usefulness: verifies a list item inside a label's list run that opens with a plain report label
+// name is item text, so the closing block of issue #2013 keeps its fields; no existing test covers a
+// plain label-named lead inside a run.
+test("parseReportBlock folds an item that opens with a plain label name into the label above", () => {
+  const response = [
+    "Conclusion: done",
+    "Why:",
+    "- Finding 1: first evidence",
+    "- Checks: the pre-commit hook and the pre-push lint passed.",
+    "",
+    "Blockers: none",
+    "",
+    "Checks: pnpm test passed",
+    "Notes:",
+    "- a note",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toMatchObject({
+    why: "Finding 1: first evidence; Checks: the pre-commit hook and the pre-push lint passed.",
+    checks: "pnpm test passed",
+    notes: "a note",
+  });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n  - Notes: b\nBlockers: none"),
+  ).toMatchObject({ why: "a, Notes: b" });
+});
+
+// Usefulness: verifies a plain label item outside a list run still blanks the block when the same
+// shape folds inside a run (issue #2013), so the #243 refusal is not weakened.
+test("parseReportBlock returns null for a plain label item outside a list run", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n\n\n- Checks: ran`)).toBeNull();
+  expect(parseReportBlock(`${REPORT}\nVerdict: accept\n- Checks: ran`)).toBeNull();
+});
+
 // Usefulness: verifies a bold label after a folded list is read as a label. The list text and the
 // bold fields both survive (issue #1483).
 test("parseReportBlock reads a bold label after a folded list", () => {
@@ -1913,6 +1964,17 @@ test("parseReportBlock refuses a table after a list item", () => {
   ]) {
     const response = `Conclusion: table rows dropped\nWhy: measured figures\n- item\n\n${table}\nBlockers: none`;
     expect(parseReportBlock(response), table).toBeNull();
+  }
+});
+
+// Usefulness: verifies a table pair indented under a folded label item keeps the block unparseable,
+// so a reviewer accept cannot clear the gate through a table (issue #2014 review, ADR 0167). The
+// plain and bold item leads both count.
+test("parseReportBlock refuses a table indented under a folded label item", () => {
+  for (const lead of ["- Checks: the table follows", "- **Checks:** the table follows"]) {
+    const response = `Conclusion: done\nWhy:\n${lead}\n  | a | b |\n  | --- | --- |\n\nBlockers: none\nChecks: pnpm test passed\nVerdict: accept`;
+    expect(parseReportBlock(response), lead).toBeNull();
+    expect(acceptanceFailure(response), lead).toBe("checks");
   }
 });
 
@@ -2840,6 +2902,191 @@ test("outsideBlockReportLabels leaves a pointer that names a block label out", (
   expect(outsideBlockReportLabels(before, parseReportBlock(before))).toEqual([]);
 });
 
+// Usefulness: verifies the outside-block signal fires for a pointer inside a folded label item, so
+// an item lead is item text and not an internal cross-reference (issue #2014 review). The plain and
+// bold leads both count.
+test("outsideBlockReportLabels names a pointer inside a folded label item", () => {
+  for (const lead of [
+    "- Checks: see the test results before the closing block.",
+    "- **Checks:** see the test results before the closing block.",
+  ]) {
+    const response = `The test results sit above this block.\n\nConclusion: done\nWhy:\n- Finding 1: one\n${lead}\n\nBlockers: none\nChecks: pnpm test passed`;
+    expect(outsideBlockReportLabels(response, parseReportBlock(response)), lead).toEqual(["Why"]);
+  }
+});
+
+// Usefulness: verifies a folded item lead raises the outside-block signal at every fold position,
+// so a nested sub-item, a prose-led item, and their bold forms all keep the signal (issue #2014
+// review). The lead is item text wherever the fold places it.
+test("outsideBlockReportLabels names a folded label item at every fold position", () => {
+  const preamble = "The test results sit above this block.\n\n";
+  const pointer = "see the test results before the closing block.";
+  const responses = [
+    `Conclusion: done\nWhy:\n- Validation\n  - Checks: ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+    `Conclusion: done\nWhy:\n- Validation\n  - **Checks:** ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+    `Conclusion: done\nWhy: validated\n\nValidation\n- Checks: ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+    `Conclusion: done\nWhy: validated\n\nValidation\n- **Checks:** ${pointer}\nBlockers: none\nChecks: pnpm test passed`,
+  ];
+  for (const response of responses) {
+    const full = preamble + response;
+    expect(parseReportBlock(full), response).not.toBeNull();
+    expect(outsideBlockReportLabels(full, parseReportBlock(full)), response).toEqual(["Why"]);
+  }
+});
+
+// Usefulness: verifies a label name inside inline prose stays an internal reference after a
+// colon, so only the start of a dash item is a folded item lead (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps a label name after prose punctuation internal", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: The test results are listed above: Checks: all three jobs passed.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies a wrapped item sentence stays in one piece, so the pointer and the label
+// name of the same sentence reach the same check as on main (issue #2014 review). The first shape
+// points outside; the second names a field inside.
+test("outsideBlockReportLabels keeps a wrapped item sentence in one piece", () => {
+  const pointer = [
+    "The test results sit above this block.",
+    "",
+    "Conclusion: done",
+    "Why:",
+    "- Checks: See the test results before",
+    "  the closing block.",
+    "Blockers: none",
+    "Checks: pnpm test passed",
+  ].join("\n");
+  expect(outsideBlockReportLabels(pointer, parseReportBlock(pointer))).toEqual(["Why"]);
+  const internal = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why:",
+    "- As listed above",
+    "  in Checks, all three jobs passed.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(internal, parseReportBlock(internal))).toEqual([]);
+});
+
+// Usefulness: verifies one text per label reaches the check, so a label name in a pointer's value
+// keeps the pointer internal even when another item holds it (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels judges the whole label value once", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: All three jobs passed, as listed above.",
+    "- See the Checks field for the exact counts.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies the whole label value reaches one check with each item lead removed, so an
+// inline mention keeps the value internal while an item lead cannot shield a pointer (issue #2014
+// review, ADR 0139). The last shape is the observable lead removal.
+test("outsideBlockReportLabels judges the whole value with each item lead removed", () => {
+  const sameValue = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: **Checks:** is listed above with the exact counts.",
+    "- **Checks:** Run links are archived.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(sameValue, parseReportBlock(sameValue))).toEqual([]);
+  const pointer = [
+    "The test results sit above this block.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: **Checks:** is listed above with the exact counts.",
+    "- **Checks:** see the test results before the closing block.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(pointer, parseReportBlock(pointer))).toEqual([]);
+  const pointerOnly = [
+    "The test results sit above this block.",
+    "",
+    "Conclusion: done",
+    "Why: The results follow",
+    "- Checks: see the test results before the closing block.",
+    "Blockers: none",
+    "Checks: pnpm test passed",
+  ].join("\n");
+  expect(outsideBlockReportLabels(pointerOnly, parseReportBlock(pointerOnly))).toEqual(["Why"]);
+});
+
+// Usefulness: verifies the separator before a dash lead stays, so removing a lead never joins the
+// words around it and the internal reference survives (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps the separator before a dash item lead", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Notes: archived logs",
+    "Why: See the results as listed above in Notes",
+    "- **Checks**:CI logs are archived.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies a lead belongs only to the value its own dash item folded into, so the same
+// spelling in another label's list never strips an inline mention (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps a lead matched to its own label value", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: **Checks:** is listed above with the exact counts.",
+    "Blockers: none",
+    "Notes:",
+    "- **Checks:** Run links are archived.",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies a code-formatted label name inside inline text stays an internal reference,
+// so the base ADR 0139 result holds when the named field is in the same block (issue #2014 review).
+test("outsideBlockReportLabels keeps a code-formatted inline label mention internal", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: `Checks:` is listed above with the exact counts.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
+// Usefulness: verifies a label mention with a colon after a preposition stays an internal
+// reference, so the base outside-block result holds when the named field is in the same block
+// (issue #2014 review, ADR 0139).
+test("outsideBlockReportLabels keeps a label mention with a colon after a preposition", () => {
+  const response = [
+    "The gate listing is green.",
+    "",
+    "Conclusion: done",
+    "Checks: all three jobs passed",
+    "Why: As listed above in Checks: all three jobs passed.",
+    "Blockers: none",
+  ].join("\n");
+  expect(outsideBlockReportLabels(response, parseReportBlock(response))).toEqual([]);
+});
+
 // Usefulness: verifies a comparison in another label keeps the quoted-text exception (issue #1907).
 test("outsideBlockReportLabels keeps the quoted-text exception with a comparison label", () => {
   const response = [
@@ -2904,6 +3151,22 @@ test("copiedTaskReportLabels reads each label value of a partial task block", ()
   const report = parseReportBlock(response);
   expect(report).not.toBeNull();
   expect(copiedTaskReportLabels(report, task)).toEqual(["Conclusion", "Why"]);
+});
+
+// Usefulness: verifies a table in the init task does not hide the folded values of its other
+// labels, so an exact copy of Why is still named (issue #2014 review).
+test("copiedTaskReportLabels reads a folded task label beside a table", () => {
+  const task = [
+    "Conclusion: task conclusion",
+    "Why:",
+    "- 12 passed",
+    "Blockers: none",
+    "Notes:",
+    "| a | b |",
+    "| --- | --- |",
+  ].join("\n");
+  const response = "Conclusion: worker conclusion\nWhy: 12 passed\nBlockers: none";
+  expect(copiedTaskReportLabels(parseReportBlock(response), task)).toEqual(["Why"]);
 });
 
 // Usefulness: verifies a report whose values differ from the task carries no label, so the parent

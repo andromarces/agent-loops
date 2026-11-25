@@ -209,9 +209,11 @@ const DECORATED_LABEL_LINE = new RegExp(
   "i",
 );
 
-// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`. When it
-// folds into a label's list run, a label name in the bold lead is item text.
-const BOLD_DASH_ITEM = /^\s*- \*\*/;
+// A dash item or sub-item whose text opens with a bold mark, for example `- **Checks:** ran`, or a
+// plain report label name and a colon, for example `- Checks: ran`. When it folds into a label's
+// list run, the lead is item text (issues #1006 and #2013). Outside a run, the dropped-list guard
+// blanks the block.
+const LABEL_DASH_ITEM = new RegExp(`^\\s*- (?:\\*\\*|(?:${LABEL_NAMES}):)`, "i");
 
 // A list line the parser would drop, for example `- item`, `* item`, `1. item`,
 // or the same without the space after the marker (`-item`). A run of markers
@@ -444,19 +446,20 @@ function boldNarrationProseLine(lines, from) {
  * for it.
  * @param {string} response
  * @param {{ boldLabels?: boolean, diagnose?: boolean }} [options]
- * @returns {{ block: string[], lines: string[] | null, labels: Array<{ key: string, label: string, optional: boolean, value: string | null }> } | null}
+ * @returns {{ block: string[], lines: string[] | null, labels: Array<{ key: string, label: string, optional: boolean, value: string | null }>, masked: Map<string, string> } | null}
  */
 function foldedReportBlock(response, { boldLabels = true, diagnose = false } = {}) {
   const block = closingBlock(response, { unlabeled: true, boldLabels, diagnose });
   if (!block) {
     return null;
   }
-  const lines = foldEmptyLabelLists(block);
+  const folded = foldEmptyLabelLists(block);
+  const lines = folded?.lines ?? null;
   const labels = REPORT_LABELS.map(([key, label, optional]) => {
     const value = lastLabeled(lines ?? block, label)?.value ?? "";
     return { key, label, optional, value: value === "" ? null : value };
   });
-  return { block, lines, labels };
+  return { block, lines, labels, masked: folded?.masked ?? new Map() };
 }
 
 /**
@@ -471,7 +474,13 @@ function reportDetail(response, { boldLabels = true } = {}) {
     return null;
   }
   const { block, lines, labels } = shared;
-  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !BOLD_DASH_ITEM.test(line))) {
+  if (block.some((line) => DECORATED_LABEL_LINE.test(line) && !LABEL_DASH_ITEM.test(line))) {
+    return null;
+  }
+  // The fold consumes a table under a folded item or a new section, so the table guard reads the
+  // block first. ADR 0167 keeps a block that holds a table pair unparseable. The fold still runs,
+  // so the missing-label and copied-task diagnostics keep every other label's value.
+  if (hasTablePair(block)) {
     return null;
   }
   if (
@@ -549,8 +558,7 @@ function paragraphCount(text) {
 }
 
 /** The response text before the closing block, or the empty string when there is none. */
-function textBeforeBlock(response) {
-  const block = closingBlock(response, { unlabeled: true });
+function textBeforeBlock(response, block = closingBlock(response, { unlabeled: true })) {
   if (!block) {
     return "";
   }
@@ -563,7 +571,10 @@ function textBeforeBlock(response) {
  * order, for example `["Why"]`. The detection is a heuristic over a small pattern list: a noun
  * phrase whose `above` ends it, a verb before `above`, or a closing-block reference. A word after
  * `above` reads as a comparison and stays out, and a value that names a report label stays inside
- * the block.
+ * the block. The check reads one text per label: the folded value with each item's own lead left
+ * out, built with the fold's separators, so a label name that starts a dash item is item text rather
+ * than a reference, at any nesting depth, while a name inside prose or another item's text stays a
+ * reference and keeps the whole value internal, as main does.
  * The exception returns no label when `exception` is true and exactly one label points outside the
  * block, with quoted text or two paragraphs before it. Quoted text is a blockquote line or a fenced
  * code block. A reviewer turn passes `exception: false`, because its prompt bars every reference to
@@ -577,13 +588,16 @@ export function outsideBlockReportLabels(response, report, { exception = true } 
   if (!report) {
     return [];
   }
-  const labels = REPORT_LABELS.filter(([key]) => pointsOutsideBlock(report[key])).map(
-    ([, label]) => label,
-  );
+  const folded = foldedReportBlock(response);
+  const block = folded?.block ?? null;
+  const masked = folded?.masked ?? new Map();
+  const labels = REPORT_LABELS.filter(([key]) =>
+    pointsOutsideBlock(masked.get(key) ?? report[key]),
+  ).map(([, label]) => label);
   if (labels.length === 0) {
     return [];
   }
-  const before = textBeforeBlock(response);
+  const before = textBeforeBlock(response, block);
   if (before.trim() === "") {
     return [];
   }
@@ -886,21 +900,33 @@ function isContinuationLine(line) {
   );
 }
 
+// The lead of a dash or ordered item, plain or bold, for example `Checks:` or `**Checks:**`.
+const ITEM_LEAD = new RegExp(`^(?:\\*\\*)?(?:${LABEL_NAMES})(?:\\*\\*)?:`, "i");
+
+/** The text of an item without the report label lead it opens with. */
+function withoutItemLead(text) {
+  return text.replace(ITEM_LEAD, "");
+}
+
 /**
  * The text of the item at `start` and of its direct sub-items at every deeper level, joined with
  * ", ", and the last line used. `marker` is the full marker prefix of the parent line, so its
- * length is the column where the sub-item marker starts.
+ * length is the column where the sub-item marker starts. `masked` is the same text with the lead
+ * of each part left out.
  */
 function takeSubitems(lines, start, marker) {
   const [subMarker] = lines[start].match(foldableSubitem(marker));
-  const parts = [lines[start].slice(subMarker.length).trim()];
+  const text = lines[start].slice(subMarker.length).trim();
+  const parts = [text];
+  const masked = [withoutItemLead(text)];
   let i = start;
   while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], subMarker)) {
     const nested = takeSubitems(lines, i + 1, subMarker);
     parts.push(nested.text);
+    masked.push(nested.masked);
     i = nested.end;
   }
-  return { text: parts.join(", "), end: i };
+  return { text: parts.join(", "), masked: masked.join(", "), end: i };
 }
 
 /**
@@ -911,24 +937,33 @@ function takeSubitems(lines, start, marker) {
 function takeItems(lines, start, pattern, { refuseOrderedVerdict = false } = {}) {
   let i = start;
   const items = [];
+  const masked = [];
   while (i + 1 < lines.length && isFoldableItem(lines[i + 1], pattern)) {
     if (refuseOrderedVerdict && isOrderedVerdictItem(lines[i + 1])) {
       break;
     }
     const [marker] = lines[++i].match(pattern);
-    const parts = [lines[i].slice(marker.length).trim()];
+    const text = lines[i].slice(marker.length).trim();
+    const parts = [text];
+    const maskedParts = [withoutItemLead(text)];
     while (i + 1 < lines.length && isFoldableSubitem(lines[i + 1], marker)) {
       const nested = takeSubitems(lines, i + 1, marker);
       parts.push(nested.text);
+      maskedParts.push(nested.masked);
       i = nested.end;
     }
     const continuation = [];
     while (i + 1 < lines.length && isContinuationLine(lines[i + 1])) {
-      continuation.push(lines[++i].trim());
+      const next = lines[++i].trim();
+      continuation.push(next);
+      // A continuation joins the part it continues, with the space the fold uses, so a wrapped
+      // sentence reaches one check rather than two (issue #2014 review).
+      maskedParts[maskedParts.length - 1] += ` ${next}`;
     }
     items.push([parts.join(", "), ...continuation].join(" "));
+    masked.push(maskedParts.join(", "));
   }
-  return { items, end: i };
+  return { items, masked: masked.join("; "), end: i };
 }
 
 /** True when the line is a column-0 ordered item that reads as a Verdict line. */
@@ -975,30 +1010,55 @@ function trimTrailingBlanks(out) {
  * A prose lead follows the prose-lead rules, the whole-line bold heading included.
  * Markers drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
- * Null when the guards below reject a label in `sectioned`, a table pair beside one, or a folded
- * label that appears again.
+ * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
+ * pair is no concern of this fold, because the caller refuses it before it reads this result.
+ * `masked` holds, per label, one text for the outside-block check: the folded value with each
+ * item's own lead left out as it is appended, and the same separators as the value. A continuation
+ * line stays in the item text it continues.
  * @param {string[]} lines
- * @returns {string[] | null}
+ * @returns {{ lines: string[], masked: Map<string, string> } | null}
  */
 function foldEmptyLabelLists(lines) {
   const out = [];
   const folded = [];
-  const tableInBlock = hasTablePair(lines);
   // Labels that took a section fold, labels past the general rule, and labels that broke it.
   // `sectioned` gains a label from the `extra` dash loop, the bare-dash branch, or
   // `foldedAfterBlank`.
   const sectioned = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
+  // The outside-block text of each label: the folded value with each item's own lead left out as
+  // it is appended, built with the same separators as the value. A later occurrence of a label
+  // replaces the earlier one.
+  const masked = new Map();
+  const labelKey = (labelText) =>
+    LABEL_KEY_BY_NAME.get(labelText.slice(0, labelText.indexOf(":")).trim().toLowerCase()) ?? null;
+  const appendMasked = (text, addition) => `${text}${text.trim() === "" ? " " : "; "}${addition}`;
+  const addMasked = (labelText, addition) => {
+    const key = labelKey(labelText);
+    if (key !== null) {
+      masked.set(key, appendMasked(masked.get(key) ?? "", addition));
+    }
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (PLAIN_LABEL_LINE.test(line)) {
-      let { items, end } = takeItems(lines, i, FOLDABLE_ITEM);
+      const inlineKey = labelKey(line);
+      if (inlineKey !== null) {
+        masked.set(inlineKey, line.slice(line.indexOf(":") + 1).trim());
+      }
+      let { items, masked: itemMasked, end } = takeItems(lines, i, FOLDABLE_ITEM);
       if (items.length === 0 && lines[i + 1]?.trim() === "") {
         // One blank line then a dash or ordered run under the same label folds too.
         // Two blank lines and every other list shape stay for hasDroppedList.
         // A blank-line ordered item that reads as a Verdict line stays unparseable.
-        ({ items, end } = takeItems(lines, i + 1, FOLDABLE_ITEM, { refuseOrderedVerdict: true }));
+        ({
+          items,
+          masked: itemMasked,
+          end,
+        } = takeItems(lines, i + 1, FOLDABLE_ITEM, {
+          refuseOrderedVerdict: true,
+        }));
       }
       let extra = false;
       // Any number of bare dash sections, each after exactly one blank line (issue #2005).
@@ -1008,6 +1068,7 @@ function foldEmptyLabelLists(lines) {
           break;
         }
         items.push(...next.items);
+        itemMasked = appendMasked(itemMasked, next.masked);
         end = next.end;
         extra = true;
       }
@@ -1017,6 +1078,7 @@ function foldEmptyLabelLists(lines) {
         if (extra) {
           sectioned.add(out.length);
         }
+        addMasked(label, itemMasked);
         out.push(appendToLabel(label, items.join("; ")));
         i = end;
         continue;
@@ -1028,7 +1090,7 @@ function foldEmptyLabelLists(lines) {
     ) {
       const at = out.findLastIndex((entry) => entry.trim() !== "");
       const oneBlankBefore = i >= 2 && lines[i - 1]?.trim() === "" && lines[i - 2]?.trim() !== "";
-      let { items, end } = takeItems(lines, i, HEADING_ITEM);
+      let { items, masked: itemMasked, end } = takeItems(lines, i, HEADING_ITEM);
       let foldedAfterBlank = false;
       if (
         items.length === 0 &&
@@ -1039,7 +1101,7 @@ function foldEmptyLabelLists(lines) {
       ) {
         // Exactly one blank line before the prose and one before its dash list folds (issue #2005).
         // The fold consumes both blanks, so a later section needs its own blank line.
-        ({ items, end } = takeItems(lines, i + 1, HEADING_ITEM));
+        ({ items, masked: itemMasked, end } = takeItems(lines, i + 1, HEADING_ITEM));
         foldedAfterBlank = items.length > 0;
       }
       if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
@@ -1051,6 +1113,7 @@ function foldEmptyLabelLists(lines) {
           nonCanonical.add(at);
         }
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
+        addMasked(out[at], `${line.trim().replace(/:$/, "")}: ${itemMasked}`);
         out[at] = appendToLabel(out[at], `${line.trim().replace(/:$/, "")}: ${items.join("; ")}`);
         if (foldedAfterBlank) {
           sectioned.add(at);
@@ -1068,10 +1131,11 @@ function foldEmptyLabelLists(lines) {
       // A bare dash section after a preceding section, with exactly one blank line before it.
       const at = out.findLastIndex((entry) => entry.trim() !== "");
       if (at >= 0 && PLAIN_LABEL_LINE.test(out[at]) && !nonCanonical.has(at)) {
-        const { items, end } = takeItems(lines, i - 1, HEADING_ITEM);
+        const { items, masked: itemMasked, end } = takeItems(lines, i - 1, HEADING_ITEM);
         if (items.length > 0) {
           folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
           sectioned.add(at);
+          addMasked(out[at], itemMasked);
           out[at] = appendToLabel(out[at], items.join("; "));
           trimTrailingBlanks(out);
           i = end;
@@ -1096,14 +1160,15 @@ function foldEmptyLabelLists(lines) {
       }
     }
   }
-  // The fold flattens a table inside a new section, so the table guard reads the block first.
-  // Null when `invalid` is not empty, or `tableInBlock` holds and `sectioned` is not empty.
-  // Every block that parsed at ffaf28d0 still parses with the same values.
-  if (invalid.size > 0 || (tableInBlock && sectioned.size > 0)) {
+  // Null when `invalid` is not empty. Every block that parsed at ffaf28d0 keeps its values, except
+  // a table pair, which the caller refuses before it reads this result.
+  if (invalid.size > 0) {
     return null;
   }
   // Null when a folded label's `lastLabeled` index differs from its fold index.
-  return folded.every(({ label, index }) => lastLabeled(out, label).index === index) ? out : null;
+  return folded.every(({ label, index }) => lastLabeled(out, label).index === index)
+    ? { lines: out, masked }
+    : null;
 }
 
 /**

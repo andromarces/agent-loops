@@ -96,9 +96,9 @@ A report that parses only because bold labels were normalized fails closed into 
 OpenCode response has more than one unidentified part. The report is null in that case. A
 single-part response, and every response whose labels use only the `Label:` form or the lone `Label` form, keeps its result.
 
-A `- ` item or sub-item that opens with a bold report label name, for example
-`- **Notes:** ran`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
-makes the block unparseable. A prose line directly after the label with no blank line stays
+A `- ` item or sub-item that opens with a report label name, plain or bold, for example
+`- Notes: ran` or `- **Deferred:** later`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
+makes the block unparseable (issues #1006 and #2013). A prose line directly after the label with no blank line stays
 unparseable. A second prose line before the list, prose after
 the reviewer `Verdict:` line, and a later repeat of the label also stay unparseable.
 
@@ -138,7 +138,7 @@ Dispatch one worker turn that asks for the named result inside the closing block
 
 The parent dispatches no restatement turn when the pointer names the content of another label of the same report that holds the result.
 
-The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase whose `above` ends it, a verb before `above`, or a reference to the closing block. A word after `above`, such as `above target` or `above the limit`, reads as a comparison and stays out. A value that names a report label stays inside the block, for example `Why: as shown above in Conclusion`. A pointer that the list misses stays undetected.
+The detection is a heuristic over a small pattern list, anchored to a pointer to earlier response text. It reads a noun phrase whose `above` ends it, a verb before `above`, or a reference to the closing block. A word after `above`, such as `above target` or `above the limit`, reads as a comparison and stays out. A value that names a report label or `Verdict` stays inside the block, for example `Why: as shown above in Conclusion` or `Why: As listed above in Checks: all three jobs passed`. A folded item lead is an unformatted or bold report label name and a colon that starts a dash item, at any nesting depth, including a dash item that follows a prose line. The check reads one text per label: the folded value with each item's own lead left out as the text is built, and with the fold's separators kept. A continuation line stays in the item text it continues. A pointer inside an item keeps its signal, and a label name anywhere else in that text keeps the whole value internal, as it does in main. A label name inside prose text, after a colon or any other punctuation included, stays an internal reference, and so does a name in another item's text. A code-formatted name in inline text also stays an internal reference. A pointer that the list misses stays undetected.
 
 One documented worker exception returns no label. Exactly one label points outside the block, and the response text before the block holds quoted text or at least two paragraphs. Quoted text is a blockquote line or a fenced code block. A reviewer turn has no exception, because its prompt bars every reference to text outside the block.
 
