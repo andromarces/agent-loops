@@ -782,25 +782,23 @@ export function repairedReportMatches(
   const { sections: originals, named } = original;
   for (const [key] of REPORT_LABELS) {
     const originalTokens = originals.get(key) ?? [];
-    const repaired = reportContentTokens(report[key] ?? "");
     if (originalTokens.length === 0) {
-      // A label line with no value is empty, not absent: the repair must leave it empty. Only a
-      // label that no line names may gain `none`.
+      // The parsed value decides an empty or absent label, not its word count: a lone dash has no
+      // word but the parser reads it as a value. A label line with no value is empty, not absent,
+      // so the repair must leave it empty. Only a label that no line names may gain `none`.
+      const repairedValue = report[key];
       if (named.has(key)) {
-        if (repaired.length > 0) {
+        if (repairedValue !== null) {
           return false;
         }
         continue;
       }
-      if (
-        repaired.length > 0 &&
-        !(repaired.length === 1 && NO_REPAIRED_FINDING.test(repaired[0]))
-      ) {
+      if (repairedValue !== null && !NO_REPAIRED_FINDING.test(repairedValue)) {
         return false;
       }
       continue;
     }
-    if (!sameTokens(originalTokens, repaired)) {
+    if (!sameTokens(originalTokens, reportContentTokens(report[key] ?? ""))) {
       return false;
     }
   }

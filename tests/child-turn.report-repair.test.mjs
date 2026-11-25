@@ -125,6 +125,8 @@ const SWAPPED_WHY_REPAIRED = [
 const EMPTY_BLOCKERS = "Conclusion: done\nWhy: tests pass\nBlockers:\nChecks: npm test";
 const EMPTY_BLOCKERS_REPAIRED =
   "Conclusion: done\nWhy: tests pass\nBlockers: none\nChecks: npm test";
+// A dash carries no word, but the parser reads it as the label value.
+const BLOCKERS_DASH_REPAIRED = "Conclusion: done\nWhy: tests pass\nBlockers: -\nChecks: npm test";
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -594,6 +596,43 @@ test("a repair cannot fill an explicitly empty required label", async () => {
   expect(result.response).toBe(EMPTY_BLOCKERS);
   expect(result.report).toBeNull();
   expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a repair cannot fill an explicitly empty label with a value the
+// original did not hold" (issue #2015 review). A lone dash has no word but the parser reads it as a
+// value, so the matcher must refuse it.
+test("a repair cannot fill an explicitly empty label with a dash", async () => {
+  const agent = scripted([EMPTY_BLOCKERS, BLOCKERS_DASH_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(EMPTY_BLOCKERS);
+  expect(result.report).toBeNull();
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies requirement "a label that the original omits may gain only none" (issue
+// #2015 review). A lone dash is a value the original did not hold.
+test("a repair cannot gain a dash for an absent label", async () => {
+  const agent = scripted([INVALID, BLOCKERS_DASH_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(INVALID);
+  expect(result.report).toBeNull();
   expect(result.reportRepairOutcome).toBe("mismatched");
 });
 

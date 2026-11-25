@@ -17,7 +17,7 @@ A per-label exact match cannot accept a canonical restatement that moves the fol
 ## Decision
 
 1. **Keep the per-label exact match.** A repaired report is used only when every label holds the same normalized content as the same label in the original response. A repair never alters, adds, drops, or moves content between labels. The reviewer verdict rule and the accept evidence rule of ADR 0094 decision 5 stay.
-2. **Keep an empty label apart from an absent one.** A label line with no value is empty. Only a label that no line names may gain `none` on repair, and an empty label must stay empty.
+2. **Keep an empty label apart from an absent one.** A label line with no value is empty. Only a label that no line names may gain `none` on repair, and the added value must be exactly `none`: the parsed value decides, not its word count, so a lone dash or another wordless value is content the original did not hold. An empty label must stay empty.
 3. **Name the repair outcome on a null report.** When the repair does not recover the block, the turn result and the dispatch envelope carry `reportRepairOutcome` with one value: `not-run`, `failed`, `null`, or `mismatched`. The field holds no response text. `not-run` is the fallback when a null report has no repair attempt. `repairedReportMatches` in `src/lib/report.mjs` applies the content rule, and `runChild` in `src/child-turn.mjs` sets the outcome.
 4. **Take the outcome route for issue #2015.** The issue records the repair outcome as unknown, and the exact match does not accept a restatement that moves the folded section. A faithful restatement that keeps the section under its original label still recovers the report.
 5. **Change no parser shape.** The block that parses keeps its current behavior, and the envelope gains one field.
@@ -49,7 +49,7 @@ Andro Marces
 - [ADR 0167: Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md), which folds the issue shape's section under `Why`
 - Implementation:
   - Content match: `repairedReportMatches` in `src/lib/report.mjs`
-  - Repair outcome: `runChild` in `src/child-turn.mjs` and `dispatchPayload` in `src/role/dispatch.mjs`
-  - Docs: `docs/orchestrator/closing-block.md` and `docs/reference/role.md`
-  - Tests: `tests/child-turn.report-repair.test.mjs` and `tests/role/dispatch.reports.test.mjs`
+  - Repair outcome: `runChild` in `src/child-turn.mjs`, `dispatchPayload` in `src/role/dispatch.mjs`, and `resultPrompt` in `src/prompts/orchestrator.mjs`
+  - Docs: `docs/orchestrator/closing-block.md`, `docs/reference/role.md`, and `docs/orchestrator-instructions.md`
+  - Tests: `tests/child-turn.report-repair.test.mjs`, `tests/role/dispatch.reports.test.mjs`, and `tests/prompts/orchestrator.test.mjs`
 - [ADR Index](README.md)
