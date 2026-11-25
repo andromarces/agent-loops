@@ -48,6 +48,7 @@ Andro Marces
 ## Links
 
 - [Issue #2015](https://github.com/andromarces/agent-loops/issues/2015)
+- [PR #2018: Recover a worker report that lacks only Blockers after repair](https://github.com/andromarces/agent-loops/pull/2018)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md)
 - Implementation:
   - Content match: `repairedReportMatches`, `relabeledRepairMatches`, and `lacksOnlyRequiredLabels` in `src/lib/report.mjs`
