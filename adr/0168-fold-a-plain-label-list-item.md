@@ -53,6 +53,7 @@ Andro Marces
 ## Links
 
 - [Issue #2013](https://github.com/andromarces/agent-loops/issues/2013)
+- [PR #2014: Fold a closing-block list item that opens with a plain label name](https://github.com/andromarces/agent-loops/pull/2014)
 - [ADR 0167: Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md)
 - [ADR 0140: Fold every closing-block list level](0140-fold-every-closing-block-list-level.md)
 - Implementation:
